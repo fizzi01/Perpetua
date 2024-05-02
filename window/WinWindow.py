@@ -2,9 +2,11 @@ import tkinter as tk
 from sys import platform
 
 
-class TransparentFullscreenWindow:
-    def __init__(self):
-        self.root = tk.Tk()
+class TransparentFullscreenWindow(tk.Toplevel):
+    def __init__(self, parent):
+        super().__init__(parent)
+
+        self.root = self
         self.configure_window()
 
         # State of the window
@@ -21,7 +23,7 @@ class TransparentFullscreenWindow:
 
         if platform.startswith('linux'):
             self.root.wait_visibility(self.root)
-            self.root.wm_attributes('-alpha', 0.5)  # Set the transparency level
+            self.root.wm_attributes('-alpha', 0.01)  # Set the transparency level
 
         elif platform == 'darwin':
             self.root.wm_attributes('-topmost', True)  # Make the root window always on top
@@ -32,7 +34,7 @@ class TransparentFullscreenWindow:
             # Make the window transparent
             self.root.attributes('-alpha', 0.01)  # Set the transparency level. 0.0 is fully transparent, 1.0 is opaque
             # Bind the escape key to the close method
-            self.root.bind('<Escape>', self.handle_close)
+            # self.root.bind('<Escape>', self.handle_close)
 
         # Hide the mouse cursor
         self.root.config(cursor='none')
@@ -42,14 +44,12 @@ class TransparentFullscreenWindow:
         self.root.destroy()
 
     def minimize(self):
-        print("Minimizing window")
         self.root.overrideredirect(False)
         self.root.iconify()
         self.root.overrideredirect(True)
         self.is_fullscreen = False
 
     def maximize(self):
-        print("Expanding window")
         self.root.deiconify()
         self.root.overrideredirect(False)
         self.root.attributes('-fullscreen', True)
@@ -76,11 +76,11 @@ class TransparentFullscreenWindow:
     def run(self):
         # Start the Tkinter mainloop
         self.is_open = True
-        self.root.mainloop()
+        #TransparentFullscreenWindow(self.root)
         self.is_open = False
 
     def close(self):
         # Close the window
         if self.is_open:
-            self.root.destroy()
+            self.destroy()
             self.is_open = False

@@ -20,10 +20,13 @@ class Server:
     :param screen_height: Altezza dello schermo
     :param wait: Tempo di attesa per la connessione dei client
     :param logging: Enable logs
+    :param screen_threshold: Soglia per la transizione dello schermo
+    :param root: Main gui window
+    :param stdout: Funzione per la stampa dei messaggi
     """
 
     def __init__(self, host: str = "0.0.0.0", port: int = 5001, clients=None, screen_width=1920, screen_height=1080,
-                 wait: int = 5, logging: bool = False):
+                 wait: int = 5, logging: bool = False, screen_threshold: int = 10, root=None, stdout=print):
 
         if clients is None:
             clients = {"left": {"conn": None, "addr": None}}
@@ -32,26 +35,37 @@ class Server:
         self.host = host
         self.port = port
         self.clients = clients
+
         self.lock = threading.Lock()
 
         self.server_socket = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
         self.server_socket.settimeout(wait)
         self.wait = wait
 
+        # List of client handlers started
         self._client_handlers = []
+
+        # Main variable for server status, if False the server is stopped automatically
         self._started = False
 
         # Window initialization for screen transition
-        self.window = Window()
+        self.window = Window(root)
+        self.stdout = stdout
 
+        # Screen transition variables
         self.active_screen = None
         self._changed = False
         self.screen_width = screen_width
         self.screen_height = screen_height
+        self.screen_threshold = screen_threshold
+
+        # Screen transition orchestrator
         self._checker = threading.Thread(target=self.check_screen_transition)
 
+        # Server core thread
         self._main_thread = threading.Thread(target=self._accept_clients)
 
+        # Input listeners
         self.mouse_listener = None
         self.keyboard_listener = None
         self.mouse_controller = mouse.Controller()
@@ -60,61 +74,73 @@ class Server:
         try:
             self.server_socket.bind((self.host, self.port))
             self.server_socket.listen()
-            self.log(f"Server starting on {self.host}:{self.port}")
+            self.log(f"Server starting on {self.host}:{self.port}", 1)
+
+            self._started = True
 
             # Threads initialization
             self._main_thread.start()  # Accept clients
             self._start_listeners()  # Start listeners
             self._checker.start()  # Start screen transition checker
 
-            self._started = True
-            self.log(f"Server started.")
-
-            # Start the window that manages the screen transition
-            self.window.run()
+            self.log(f"Server started.", 1)
 
         except Exception as e:
+            self._started = False
             self.log(f"Errore nell'avvio del server: {e}")
             return self.stop()
 
         return True
 
     def stop(self):
-        self.log(f"Server stopping.", 1)
+
+        self.log(f"Server stopping...", 1)
+
         if not self._started:
             return False
 
+        # Stops threads
+        self._started = False
+
+        # --- Start cleanup ----
+        # Close window for transition
         self.window.close()
 
+        # Close all client handlers
         for handler in self._client_handlers:
             try:
-                handler.join()
+                handler.stop()
             except Exception as e:
-                self.log(f"Errore nella chiusura del client handler: {e}")
+                self.log(f"Errore nella chiusura del client handler: {e}", 2)
                 continue
+
         try:
-            self._checker.join()
-            self.mouse_listener.get_listener().stop()
-            self.server_socket.close()
+            self._checker.join()  # Screen transition orchestrator thread
+            self.mouse_listener.get_listener().stop()  # Mouse listener
+            self.server_socket.close()  # Server socket
+
             return True
         except Exception as e:
-            self.log(f"Errore nella chiusura del server: {e}", 1)
+            self.log(f"Errore nella chiusura del server: {e}", 2)
             return False
 
     def _start_listeners(self):
-        self.mouse_listener = InputHandler.ServerMouseListener(self._send_to_clients, self._change_screen,
-                                                               self._get_active_screen,
-                                                               self._get_clients, self.screen_width, self.screen_height,
-                                                               self.lock)
+        self.mouse_listener = InputHandler.ServerMouseListener(send_function=self._send_to_clients,
+                                                               change_screen_function=self._change_screen,
+                                                               get_active_screen=self._get_active_screen,
+                                                               get_clients=self._get_clients,
+                                                               screen_width=self.screen_width,
+                                                               screen_height=self.screen_height,
+                                                               screen_threshold=self.screen_threshold)
         try:
             self.mouse_listener.get_listener().start()
         except Exception as e:
-            self.log(f"Errore nell'avvio del mouse listener: {e}", 1)
-            raise Exception("Errore nell'avvio del mouse listener.")
+            self.log(f"Errore nell'avvio del mouse listener: {e}", 2)
+
         self.log("Mouse listener started.")
 
     def _accept_clients(self):
-        while True:
+        while self._started:
             for key in self.clients:
                 try:
                     if not self.clients[key]['conn']:
@@ -125,10 +151,15 @@ class Server:
                 except socket.timeout:
                     self.log("Waiting for clients.")
                     continue
+                except Exception as e:
+                    if self._started:
+                        self.log(f"{e}", 2)
+                    continue
 
                 self.clients[key]['conn'] = conn
                 self.clients[key]['addr'] = addr
-                client_handler = ClientHandler(conn, addr, self._process_client_command, self._on_disconnect)
+                client_handler = ClientHandler(conn, addr, self._process_client_command, self._on_disconnect,
+                                               logger=self.log)
                 client_handler.start()
                 self._client_handlers.append(client_handler)
 
@@ -182,17 +213,17 @@ class Server:
         try:
             conn = self.clients[screen].get('conn')
         except KeyError:
-            self.log(f"Errore nell'invio dei dati al client {screen}: Client non trovato.", 1)
+            self.log(f"Errore nell'invio dei dati al client {screen}: Client non trovato.", 2)
             return
         except Exception as e:
-            self.log(f"Errore nell'invio dei dati al client {screen}: {e}", 1)
+            self.log(f"Errore nell'invio dei dati al client {screen}: {e}", 2)
             return
 
         if conn:
             try:
                 conn.send(data.encode())
             except socket.error as e:
-                self.log(f"Errore nell'invio dei dati al client {screen}: {e}", 1)
+                self.log(f"Errore nell'invio dei dati al client {screen}: {e}", 2)
                 self._change_screen(None)
 
     def _change_screen(self, screen):
@@ -213,26 +244,27 @@ class Server:
         with self.lock:
             self.active_screen = screen
             self.current_mouse_position = self.mouse_controller.position
-            self.log(f"Changing screen to {screen}")
             self._changed = True
-
 
     """
     Funzione per la gestione del cambio di schermata.
     Disabilita o meno lo schermo dell'host al cambio di schermata.
     """
+
     def _screen_toggle(self, screen):
         if not screen:
+            # Disable screen transition
             self.window.minimize()
         else:
+            # Enable screen transition
             self.window.maximize()
 
     def check_screen_transition(self):
         self.log(f"Transition Checker started.")
-        while True:
+        while self._started:
             sleep(0.1)
             if self._changed:
-                self.log("!!! Checking for screen transition !!!")
+                self.log(f"Changing screen to {self.active_screen}", 1)
 
                 if self.active_screen == "left":
                     self._reset_mouse("right", self.current_mouse_position[1])
@@ -250,20 +282,25 @@ class Server:
 
     def _reset_mouse(self, param, y):
         if param == "left":
-            self.mouse_controller.position = (100, int(float(y)))
-            self.log(f"Moving mouse to x: {100}, y:{y}")
+            self.mouse_controller.position = (self.screen_threshold + 50, int(float(y)))
+            self.log(f"Moving mouse to x: {self.screen_threshold + 100}, y:{y}")
         elif param == "right":
-            self.mouse_controller.position = (self.screen_width - 100, int(float(y)))
-            self.log(f"Moving mouse to x: {self.screen_width - 100}, y:{y}")
-        elif param == "down":
-            self.mouse_controller.position = (int(float(y)), 100)
-            self.log(f"Moving mouse to x: {y}, y:{100}")
+            self.mouse_controller.position = (self.screen_width - self.screen_threshold - 50, int(float(y)))
+            self.log(f"Moving mouse to x: {self.screen_width - self.screen_threshold - 50}, y:{y}")
         elif param == "up":
-            self.mouse_controller.position = (int(float(y)), self.screen_height - 100)
-            self.log(f"Moving mouse to x: {y}, y:{self.screen_height - 100}")
+            self.mouse_controller.position = (int(float(y)), self.screen_threshold + 50)
+            self.log(f"Moving mouse to x: {y}, y:{self.screen_threshold + 5}")
+        elif param == "down":
+            self.mouse_controller.position = (int(float(y)), self.screen_height - self.screen_threshold - 50)
+            self.log(f"Moving mouse to x: {y}, y:{self.screen_height - self.screen_threshold - 50}")
 
     def log(self, message, priority: int = 0):
-        if priority == 1:
+        if priority == 2:
             print(f"ERROR: {message}")
+            self.stdout(f"ERROR: {message}")
+        elif priority == 1:
+            print(f"INFO: {message}")
+            self.stdout(f"INFO: {message}")
         elif self.logging:
             print(message)
+            self.stdout(message)

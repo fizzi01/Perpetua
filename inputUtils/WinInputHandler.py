@@ -7,15 +7,14 @@ from pynput import mouse
 class ServerMouseListener:
 
     def __init__(self, send_function: Callable, change_screen_function: Callable, get_active_screen: Callable,
-                 get_clients: Callable, screen_width: int, screen_height: int, lock):
+                 get_clients: Callable, screen_width: int, screen_height: int, screen_threshold: int = 5):
         self.send = send_function
         self.active_screen = get_active_screen
         self.change_screen = change_screen_function
         self.clients = get_clients
         self.screen_width = screen_width
         self.screen_height = screen_height
-
-        self.lock = lock  # TODO: Remove
+        self.screen_treshold = screen_threshold
 
         self._listener = mouse.Listener(on_move=self.on_move, on_scroll=self.on_scroll, on_click=self.on_click,
                                         suppress=False,
@@ -30,16 +29,16 @@ class ServerMouseListener:
         listener = self._listener
 
         if screen and (msg == 513 or msg == 514):  # Left click
-            print("Suppressing Mouse click")
+
             listener._suppress = True
         elif screen and (msg == 516 or msg == 517):  # Right click
-            print("Suppressing Mouse click")
+
             listener._suppress = True
         elif screen and (msg == 519 or msg == 520):  # Middle click
-            print("Suppressing Mouse click")
+
             listener._suppress = True
         elif screen and (msg == 522 or msg == 523):  # Scroll
-            print("Suppressing Mouse scroll")
+
             listener._suppress = True
         else:
             listener._suppress = False
@@ -57,14 +56,14 @@ class ServerMouseListener:
             except socket.error as e:
                 print(f"Error {e}")
         else:
-            if x >= self.screen_width - 10:  # Soglia per passare al monitor a destra
-                self.change_screen(None)
-            elif x <= 10:  # Soglia per passare al monitor a sinistra
+            if x >= self.screen_width - self.screen_treshold:  # Soglia per passare al monitor a destra
+                self.change_screen("right")
+            elif x <= self.screen_treshold:  # Soglia per passare al monitor a sinistra
                 self.change_screen("left")
-            elif y >= self.screen_height - 10:  # Soglia per passare al monitor sopra
-                self.change_screen("up")
-            elif y <= 10:  # Soglia per passare al monitor sotto
+            elif y >= self.screen_height - self.screen_treshold:  # Soglia per passare al monitor sopra
                 self.change_screen("down")
+            elif y <= self.screen_treshold:  # Soglia per passare al monitor sotto
+                self.change_screen("up")
 
         return True
 
