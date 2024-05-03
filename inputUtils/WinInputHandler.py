@@ -1,10 +1,20 @@
 import socket
 from collections.abc import Callable
 
-from pynput import mouse
+from pynput import mouse, keyboard
+from pynput.keyboard import Key, KeyCode
 
 
 class ServerMouseListener:
+    """
+    :param send_function: Function to send data to the clients
+    :param change_screen_function: Function to change the active screen
+    :param get_active_screen: Function to get the active screen
+    :param get_clients: Function to get the clients of the current screen
+    :param screen_width: Width of the screen
+    :param screen_height: Height of the screen
+    :param screen_threshold: Threshold to change the screen
+    """
 
     def __init__(self, send_function: Callable, change_screen_function: Callable, get_active_screen: Callable,
                  get_clients: Callable, screen_width: int, screen_height: int, screen_threshold: int = 5):
@@ -22,6 +32,12 @@ class ServerMouseListener:
 
     def get_listener(self):
         return self._listener
+
+    def start(self):
+        self._listener.start()
+
+    def stop(self):
+        self._listener.stop()
 
     def mouse_suppress_filter(self, msg, data):
 
@@ -93,8 +109,62 @@ class ServerMouseListener:
 
 
 class ServerKeyboardListener:
-    def __init__(self):
-        pass
+    """
+    :param send_function: Function to send data to the clients
+    :param get_clients: Function to get the clients of the current screen
+    :param get_active_screen: Function to get the active screen
+    """
+
+    def __init__(self, send_function: Callable, get_clients: Callable, get_active_screen: Callable):
+        self.clients = get_clients
+        self.active_screen = get_active_screen
+        self.send = send_function
+
+        self._listener = keyboard.Listener(on_press=self.on_press, on_release=self.on_release,
+                                           win32_event_filter=self.keyboard_suppress_filter)
+
+    def get_listener(self):
+        return self._listener
+
+    def start(self):
+        self._listener.start()
+
+    def stop(self):
+        self._listener.stop()
+
+    def keyboard_suppress_filter(self, msg, data):
+        screen = self.active_screen()
+        listener = self._listener
+
+        if screen:
+            listener._suppress = True
+        else:
+            listener._suppress = False
+
+    def on_press(self, key: Key | KeyCode | None):
+        screen = self.active_screen()
+        clients = self.clients(screen)
+
+        if isinstance(key, Key):
+            data = key.name
+
+        else:
+            data = key.char
+
+        if screen and clients:
+            self.send(screen, f"keyboard press {data}\n")
+
+    def on_release(self, key: Key | KeyCode | None):
+        screen = self.active_screen()
+        clients = self.clients(screen)
+
+        if isinstance(key, Key):
+            data = key.name
+        else:
+            data = key.char
+
+        if screen and clients:
+            self.send(screen, f"keyboard release {data}\n")
 
 
 class ServerClipboardListener:

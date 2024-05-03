@@ -116,9 +116,10 @@ class Server:
 
         try:
             self._checker.join()  # Screen transition orchestrator thread
-            self.mouse_listener.get_listener().stop()  # Mouse listener
+            self.mouse_listener.stop()  # Mouse listener
+            self.keyboard_listener.stop()  # Keyboard listener
             self.server_socket.close()  # Server socket
-
+            self.log(f"Server stopped.", 1)
             return True
         except Exception as e:
             self.log(f"Errore nella chiusura del server: {e}", 2)
@@ -132,8 +133,13 @@ class Server:
                                                                screen_width=self.screen_width,
                                                                screen_height=self.screen_height,
                                                                screen_threshold=self.screen_threshold)
+
+        self.keyboard_listener = InputHandler.ServerKeyboardListener(send_function=self._send_to_clients,
+                                                                     get_active_screen=self._get_active_screen,
+                                                                     get_clients=self._get_clients)
         try:
-            self.mouse_listener.get_listener().start()
+            self.mouse_listener.start()
+            self.keyboard_listener.start()
         except Exception as e:
             self.log(f"Errore nell'avvio del mouse listener: {e}", 2)
 

@@ -53,8 +53,10 @@ class TransparentFullscreenWindow(tk.Toplevel):
         self.root.deiconify()
         self.root.overrideredirect(False)
         self.root.attributes('-fullscreen', True)
-        self.root.overrideredirect(True)
         self.root.lift()
+        self.root.attributes('-topmost', True)
+        self.root.overrideredirect(True)
+
 
     def toggle(self):
         # Toggle window state between minimized and fullscreen
