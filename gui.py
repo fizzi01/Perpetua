@@ -5,12 +5,16 @@ from  utils import net
 
 
 class PositionDialog(simpledialog.Dialog):
-    def __init__(self, master, title="", positions=None):
-        self.checkboxes = None
+    def __init__(self, master, title="", positions=None, ips=None):
+        self.ips = None
         self.positions = None
-        self.result = None
-        self.current_positions = positions if positions else {"left": False, "right": False, "up": False,
-                                                              "down": False}
+        self.ip_result = None
+        self.pos_result = None
+
+        self.checkboxes = None
+
+        self.current_positions = positions if positions else {"left": False, "right": False, "up": False, "down": False}
+        self.current_ips = ips if ips else {"left": "", "right": "", "up": "", "down": ""}
         super().__init__(master, title=title)
 
     def body(self, master):
@@ -18,28 +22,46 @@ class PositionDialog(simpledialog.Dialog):
                           "right": tk.BooleanVar(value=self.current_positions.get("right", False)),
                           "up": tk.BooleanVar(value=self.current_positions.get("up", False)),
                           "down": tk.BooleanVar(value=self.current_positions.get("down", False))}
+
+        self.ips = {"left": tk.StringVar(value=self.current_ips.get("left", "")),
+                    "right": tk.StringVar(value=self.current_ips.get("right", "")),
+                    "up": tk.StringVar(value=self.current_ips.get("up", "")),
+                    "down": tk.StringVar(value=self.current_ips.get("down", ""))}
+
         self.checkboxes = {}
-        master.grid_columnconfigure(1, weight=1)
+        self.entries = {}
 
-        tk.Label(master, text="Host", relief=tk.RAISED).grid(row=1, column=1)
+        host_frame = tk.Frame(master)
+        host_frame.grid(row=1, column=1, pady=10)
 
-        # Creating checkboxes for each position
+        # Creating checkboxes and entries for each position
+        self.checkboxes["up"] = tk.Checkbutton(master, text="Up", var=self.positions["up"])
+        self.checkboxes["up"].grid(row=0, column=1, pady=(10, 0))
+        self.entries["up"] = tk.Entry(master, textvariable=self.ips["up"])
+        self.entries["up"].grid(row=1, column=1)
+
         self.checkboxes["left"] = tk.Checkbutton(master, text="Left", var=self.positions["left"])
-        self.checkboxes["left"].grid(row=1, column=0)
+        self.checkboxes["left"].grid(row=1, column=0, pady=(10, 0))
+        self.entries["left"] = tk.Entry(master, textvariable=self.ips["left"])
+        self.entries["left"].grid(row=2, column=0)
+
+        tk.Label(master, text="Host", relief=tk.RAISED).grid(row=2, column=1, pady=(15, 10)   )
 
         self.checkboxes["right"] = tk.Checkbutton(master, text="Right", var=self.positions["right"])
-        self.checkboxes["right"].grid(row=1, column=2)
+        self.checkboxes["right"].grid(row=1, column=2, pady=(10, 0))
+        self.entries["right"] = tk.Entry(master, textvariable=self.ips["right"])
+        self.entries["right"].grid(row=2, column=2)
 
-        self.checkboxes["top"] = tk.Checkbutton(master, text="Top", var=self.positions["up"])
-        self.checkboxes["top"].grid(row=0, column=1)
-
-        self.checkboxes["bottom"] = tk.Checkbutton(master, text="Bottom", var=self.positions["down"])
-        self.checkboxes["bottom"].grid(row=2, column=1)
+        self.checkboxes["down"] = tk.Checkbutton(master, text="Down", var=self.positions["down"])
+        self.checkboxes["down"].grid(row=3, column=1, pady=(10, 0))
+        self.entries["down"] = tk.Entry(master, textvariable=self.ips["down"])
+        self.entries["down"].grid(row=4, column=1)
 
         return master  # return the widget that should have initial focus
 
     def apply(self):
-        self.result = {pos: var.get() for pos, var in self.positions.items()}
+        self.pos_result = {pos: var.get() for pos, var in self.positions.items()}
+        self.ip_result = {pos: ip.get() for pos, ip in self.ips.items() if self.positions[pos].get()}
 
 
 class ServerConfigGUI:
@@ -56,6 +78,7 @@ class ServerConfigGUI:
         self.host = tk.StringVar(value=net.get_local_ip())
         self.port = tk.IntVar(value=5001)
         self.positions = {"left": True, "right": False, "up": False, "down": False}  # default values
+        self.ips = {"left": "", "right": "", "up": "", "down": ""}  # default values
         self.logging = tk.BooleanVar(value=True)
 
         self.process = None
@@ -131,12 +154,13 @@ class ServerConfigGUI:
         # Extract values from GUI
         host = self.host.get()
         port = self.port.get()
+        ips = self.ips
         position = self.get_active_positions()
         logging = self.logging.get()
 
         try:
             # Start the server
-            self.server = run_server(host, port, position, logging, 5, 5, self.master, self.update_output)
+            self.server = run_server(host=host,port=port, pos=position, ips=ips,logging=logging,wait= 5, screen_threshold= 5,root= self.master,stdout= self.update_output)
 
             # Update button visibility
             self.start_button.grid_remove()
@@ -154,10 +178,12 @@ class ServerConfigGUI:
             self.output.config(state='disabled')
 
     def configure_positions(self):
-        dialog = PositionDialog(self.master, title="Configure Positions", positions=self.positions)
-        if dialog.result:
-            self.positions = dialog.result  # Update positions based on dialog
+        dialog = PositionDialog(self.master, title="Configure Positions", positions=self.positions, ips=self.ips)
+        if dialog.pos_result and dialog.ip_result:
+            self.positions = dialog.pos_result  # Update positions based on dialog
+            self.ips = dialog.ip_result  # Update IPs based on dialog
             print(self.positions)
+            print(self.ips)
 
     def get_active_positions(self):
         # Create a list of positions that are set to True

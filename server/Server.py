@@ -162,12 +162,18 @@ class Server:
                         self.log(f"{e}", 2)
                     continue
 
-                self.clients[key]['conn'] = conn
-                self.clients[key]['addr'] = addr
-                client_handler = ClientHandler(conn, addr, self._process_client_command, self._on_disconnect,
-                                               logger=self.log)
-                client_handler.start()
-                self._client_handlers.append(client_handler)
+                # Adding corresponding client to the list
+                for key, info in self.clients.items():
+                    if info['addr'] == addr[0]:
+                        self.clients[key]['conn'] = conn
+
+                        client_handler = ClientHandler(conn, addr, self._process_client_command, self._on_disconnect,
+                                                       logger=self.log)
+                        client_handler.start()
+                        self._client_handlers.append(client_handler)
+                        break
+
+                continue
 
     def _on_disconnect(self, conn):
         # Set client connection to None and change screen to Host (None)
