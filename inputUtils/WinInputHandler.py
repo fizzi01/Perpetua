@@ -27,7 +27,6 @@ class ServerMouseListener:
         self.screen_treshold = screen_threshold
 
         self._listener = mouse.Listener(on_move=self.on_move, on_scroll=self.on_scroll, on_click=self.on_click,
-                                        suppress=False,
                                         win32_event_filter=self.mouse_suppress_filter)
 
     def get_listener(self):

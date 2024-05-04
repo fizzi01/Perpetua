@@ -28,11 +28,11 @@ class Client:
         self._connected = None
         self._client_thread = None
 
-        self.window = None  #TODO: Window(root)
+        self.window = None  # TODO: Window(root)
         self.stdout = stdout
 
-        self.on_screen = False
-        self.changed = False
+        self.on_screen = False  # TODO
+        self.changed = False  # TODO
         self.transition_handler = None  # Thread che controlla on_screen, se False chiama self.window.show()
         # Il server invierà un comando per avvertire il client che non è più on_screen
 
@@ -84,8 +84,10 @@ class Client:
                     self.client_socket.connect((self.server, self.port))
                     self._connected = True
                     self.log("Connected to the server.", 1)
-                    self.processor = ServerCommandProcessor(self.on_screen, self.mouse_controller, self.keyboard_controller, None)
-                    handler = ServerHandler(connection=self.client_socket, command_func=self.processor.process_command, on_disconnect=self.on_disconnect,logger=self.log)
+                    self.processor = ServerCommandProcessor(self.on_screen, self.mouse_controller,
+                                                            self.keyboard_controller, None)
+                    handler = ServerHandler(connection=self.client_socket, command_func=self.processor.process_command,
+                                            on_disconnect=self.on_disconnect, logger=self.log)
                     handler.start()
                     self._client_thread = handler
                 else:
