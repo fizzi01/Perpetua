@@ -28,7 +28,7 @@ class Client:
         self._connected = None
         self._client_thread = None
 
-        self.window = None  # Window(root)
+        self.window = None  #TODO: Window(root)
         self.stdout = stdout
 
         self.on_screen = False

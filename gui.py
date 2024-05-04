@@ -1,7 +1,7 @@
 import tkinter as tk
 from tkinter import messagebox, scrolledtext, simpledialog
 from main import run_server, run_client
-from utils.net import get_local_ip
+from  utils import net
 
 
 class PositionDialog(simpledialog.Dialog):
@@ -53,7 +53,7 @@ class ServerConfigGUI:
         self.master.title("Server Configuration")
 
         # Variables for server configuration
-        self.host = tk.StringVar(value=get_local_ip())
+        self.host = tk.StringVar(value=net.get_local_ip())
         self.port = tk.IntVar(value=5001)
         self.positions = {"left": True, "right": False, "up": False, "down": False}  # default values
         self.logging = tk.BooleanVar(value=True)
