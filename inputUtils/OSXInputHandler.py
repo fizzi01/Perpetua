@@ -2,6 +2,12 @@ import socket
 from collections.abc import Callable
 
 from pynput import mouse
+import threading
+import time
+
+import keyboard
+from pynput.mouse import Button, Controller as MouseController
+from pynput.mouse import Listener as MouseListener
 
 
 class ServerMouseListener:
@@ -97,3 +103,127 @@ class ServerKeyboardListener:
 class ServerClipboardListener:
     def __init__(self):
         pass
+
+
+class ClientKeyboardController:
+    def __init__(self):
+        self.pressed_keys = set()
+        self.key_filter = {  # Darwin specific key codes
+            "alt": 0x3a,  # Option key
+            "option": 0x3a,  # Option key
+            ",": "comma",
+            "+": "plus"
+        }
+
+    @staticmethod
+    def _key_cleanup(key_data):
+        if key_data.endswith("_l"):
+            key_data = key_data[:-2]
+        elif key_data.endswith("_r"):
+            key_data = key_data[:-2]
+        elif key_data.endswith("_gr"):
+            key_data = key_data[:-3]
+        return key_data
+
+    def data_filter(self, key_data):
+        if key_data in self.key_filter:
+            return self.key_filter[key_data]
+        return key_data
+
+    def process_key_command(self, key_data, key_action):
+        key_data = self._key_cleanup(key_data)
+        key_data = self.data_filter(key_data)
+
+        if key_action == "press":
+            if keyboard.is_modifier(key_data):
+                if key_data not in self.pressed_keys:
+                    keyboard.press(key_data)
+                    if key_data not in ["backspace", "tab", "delete", "enter", "space"]:
+                        self.pressed_keys.add(key_data)
+            else:
+                if len(self.pressed_keys) != 0:
+                    pressed_list = list(self.pressed_keys)
+                    pressed_list.append(key_data)
+                    hotkey = pressed_list
+                    keyboard.press(hotkey)
+                else:
+                    hotkey = key_data
+                    keyboard.press(hotkey)
+        elif key_action == "release":
+            try:
+                if keyboard.is_modifier(key_data):
+                    keyboard.release(key_data)
+                    self.pressed_keys.remove(key_data)
+                else:
+                    keyboard.release(key_data)
+            except IndexError:
+                pass
+
+
+class ClientMouseController:
+    def __init__(self):
+        self.mouse = MouseController()
+        self.pressed = False
+        self.last_press_time = -99
+        self.doubleclick_counter = 0
+
+    def process_mouse_command(self, x, y, mouse_action, is_pressed):
+        if mouse_action == "move":
+            self.mouse.position = (x, y)
+        elif mouse_action == "click":
+            self.handle_click(x, y, Button.left, is_pressed)
+        elif mouse_action == "right_click":
+            self.mouse.click(Button.right)
+        elif mouse_action == "scroll":
+            # High performance impact without threading
+            threading.Thread(target=self.smooth_scroll, args=(x, y)).start()
+
+    def handle_click(self, x, y, button, is_pressed):
+        current_time = time.time()
+        if self.pressed and not is_pressed:
+
+            self.mouse.release(button)
+            self.pressed = False
+        elif not self.pressed and is_pressed:
+            if current_time - self.last_press_time < 0.2:
+                self.mouse.click(button, 2 + self.doubleclick_counter)  # Perform a double click
+                self.doubleclick_counter = 0 if self.doubleclick_counter == 2 else 2
+                self.pressed = False
+            else:
+                self.mouse.press(button)
+                self.doubleclick_counter = 0
+                self.pressed = True
+            self.last_press_time = current_time
+
+    def smooth_scroll(self, x, y, delay=0.01, steps=5):
+        """Smoothly scroll the mouse."""
+        dx, dy = x, y
+        for _ in range(steps):
+            self.mouse.scroll(dx, dy)
+            time.sleep(delay)
+
+
+class ClientMouseListener:
+    def __init__(self, screen_width, screen_height, threshold, send_func: Callable, client_socket=None):
+        self.screen_width = screen_width
+        self.screen_height = screen_height
+        self.threshold = threshold
+        self.send = send_func
+        self.client_socket = client_socket
+        self._listener = MouseListener(on_move=self.handle_mouse)
+
+    def get_listener(self):
+        return self._listener
+
+    def start(self):
+        self._listener.start()
+
+    def stop(self):
+        self._listener.stop()
+
+    def handle_mouse(self, x, y):
+
+        if x <= 10:
+            self.send(f"return left {y}\n")
+        elif x >= self.screen_width - self.threshold:
+            self.send(f"return right {y}\n")

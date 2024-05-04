@@ -2,6 +2,7 @@ import argparse
 import distutils
 from distutils import util
 from server import Server
+from client import Client
 
 
 def run_server(host, port, pos, logging, wait, screen_threshold, root, stdout=None, stderr=None):
@@ -13,6 +14,12 @@ def run_server(host, port, pos, logging, wait, screen_threshold, root, stdout=No
                screen_threshold=screen_threshold, root=root, stdout=stdout)
     s.start()
     return s
+
+
+def run_client(server, port, logging, root, stdout=None, stderr=None):
+    c = Client(server=server, port=port, logging=logging, root=root, stdout=stdout)
+    c.start()
+    return c
 
 
 if __name__ == "__main__":

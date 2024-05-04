@@ -1,6 +1,6 @@
 import tkinter as tk
 from tkinter import messagebox, scrolledtext, simpledialog
-from main import run_server
+from main import run_server, run_client
 from utils.net import get_local_ip
 
 
@@ -45,7 +45,9 @@ class PositionDialog(simpledialog.Dialog):
 class ServerConfigGUI:
     def __init__(self, master):
 
+        self.client = None
         self.server = None
+
         self.master = master
         self.master.resizable(False, False)
         self.master.title("Server Configuration")
@@ -84,7 +86,7 @@ class ServerConfigGUI:
         label_host.grid(row=0, column=0, sticky="w")
         self.server_widgets.append(label_host)
 
-        entry_host = tk.Entry(self.master, textvariable=self.host, state="readonly" , font=("Helvetica", 10, "bold"))
+        entry_host = tk.Entry(self.master, textvariable=self.host, state="readonly", font=("Helvetica", 10, "bold"))
         entry_host.grid(row=0, column=1, sticky="ew")
 
         # Label and entry for port
@@ -201,6 +203,7 @@ class ServerConfigGUI:
 
     def stop_connection(self):
         self.client_connected = False
+        self.client.stop()
         self.update_server_widgets_state(disabled=False)
         self.stop_client_button.grid_remove()
         self.connect_button.grid()
@@ -212,11 +215,8 @@ class ServerConfigGUI:
         server_port = self.client_port.get()
         self.update_output(f"Attempting to connect to server at {server_ip}:{server_port}")
 
-        # Qui dovrai implementare o chiamare il metodo reale per connettere il client
-        # Assumendo che tu abbia un metodo 'connect_client' da qualche parte
         try:
-            # connect_client(server_ip, server_port)  # Assumi che questa funzione esista
-            self.update_output("Connected successfully!")
+            self.client = run_client(server_ip, server_port, True, self.master, self.update_output)
             self.client_connected = True
             self.update_server_widgets_state(disabled=True)
             self.connect_button.grid_remove()
@@ -227,28 +227,17 @@ class ServerConfigGUI:
     def update_server_widgets_state(self, disabled):
         for widget in self.server_widgets:
             if disabled:
-                try:
-                    widget.config(state='disabled')
-                except Exception:
-                    pass
+                widget.config(state='disabled')
             else:
-                try:
-                    widget.config(state='normal')
-                except Exception:
-                    pass
+                widget.config(state='normal')
 
     def update_client_widgets_state(self, disabled):
         for widget in self.client_widgets:
             if disabled:
-                try:
-                    widget.config(state='disabled')
-                except Exception:
-                    pass
+                widget.config(state='disabled')
             else:
-                try:
-                    widget.config(state='normal')
-                except Exception:
-                    pass
+                widget.config(state='normal')
+
 
 # Create the main window and pass it to the GUI
 root = tk.Tk()
