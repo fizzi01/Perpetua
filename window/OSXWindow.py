@@ -1,5 +1,4 @@
 import tkinter as tk
-from sys import platform
 
 
 class TransparentFullscreenWindow(tk.Toplevel):
@@ -21,20 +20,9 @@ class TransparentFullscreenWindow(tk.Toplevel):
         self.root.iconify()
         self.root.overrideredirect(True)  # Remove window decorations
 
-        if platform.startswith('linux'):
-            self.root.wait_visibility(self.root)
-            self.root.wm_attributes('-alpha', 0.01)  # Set the transparency level
-
-        elif platform == 'darwin':
-            self.root.wm_attributes('-topmost', True)  # Make the root window always on top
-            self.root.wm_attributes('-transparent', True)  # Enable transparency
-            self.root.config(bg='systemTransparent')  # Set the window background to transparent
-
-        elif platform == 'win32':
-            # Make the window transparent
-            self.root.attributes('-alpha', 0.01)  # Set the transparency level. 0.0 is fully transparent, 1.0 is opaque
-            # Bind the escape key to the close method
-            # self.root.bind('<Escape>', self.handle_close)
+        self.root.wm_attributes('-topmost', True)  # Make the root window always on top
+        self.root.wm_attributes('-transparent', True)  # Enable transparency
+        self.root.config(bg='systemTransparent')  # Set the window background to transparent
 
         # Hide the mouse cursor
         self.root.config(cursor='none')

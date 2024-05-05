@@ -1,8 +1,8 @@
 import tkinter as tk
 from tkinter import messagebox, scrolledtext, simpledialog
 from main import run_server, run_client
-from  utils import net
-
+from utils import net
+import platform as _platform
 
 class PositionDialog(simpledialog.Dialog):
     def __init__(self, master, title="", positions=None, ips=None):
@@ -196,8 +196,6 @@ class ServerConfigGUI:
         # Method to stop the server process
         if self.server:
             if self.server.stop():
-                self.update_output("Server stopped successfully!\n")
-                # When process ends, update the GUI
                 self.stop_button.grid_remove()
                 self.start_button.grid()
                 self.update_client_widgets_state(disabled=False)
@@ -229,10 +227,12 @@ class ServerConfigGUI:
 
     def stop_connection(self):
         self.client_connected = False
-        self.client.stop()
-        self.update_server_widgets_state(disabled=False)
-        self.stop_client_button.grid_remove()
-        self.connect_button.grid()
+        if self.client.stop():
+            self.update_server_widgets_state(disabled=False)
+            self.stop_client_button.grid_remove()
+            self.connect_button.grid()
+        else:
+            self.update_output("Failed to stop client connection")
         # Qui aggiungi la logica per interrompere la connessione
 
     def connect_to_server(self):
@@ -266,6 +266,12 @@ class ServerConfigGUI:
 
 
 # Create the main window and pass it to the GUI
-root = tk.Tk()
-app = ServerConfigGUI(root)
-root.mainloop()
+if __name__ == "__main__":
+
+    if _platform.system() == 'Darwin':
+        import utils.OSXaccessibilty as OSXaccessibilty
+        OSXaccessibilty.check_osx_permissions()
+    
+    root = tk.Tk()
+    app = ServerConfigGUI(root)
+    root.mainloop()

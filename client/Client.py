@@ -47,14 +47,15 @@ class Client:
     def start(self):
         try:
             if not self._running:
-                self._running = True
                 self._client_thread = threading.Thread(target=self._run)
                 self._client_thread.start()
                 self._start_listeners()
+                self._running = True
                 return True
             else:
                 self.log("Client already running.", 1)
                 return False
+
         except Exception as e:
             self.log(f"{e}", 2)
             return False
@@ -96,13 +97,18 @@ class Client:
             self.log(f"Error connecting to the server: {e}", 2)
 
     def stop(self):
-        self._running = False
-        try:
-            self._client_thread.stop()
-            self.mouse_listener.stop()
-            self.log("Client stopped.", 1)
-        except Exception as e:
-            self.log(f"Error stopping client: {e}", 2)
+        if self._running:
+            try:
+                self._client_thread.join()
+                self.mouse_listener.stop()
+                self._running = False
+                self.log("Client stopped.", 1)
+                return True
+            except Exception as e:
+                self.log(f"{e}", 2)
+                return False
+        else:
+            return True
 
     def _send_to(self, command):
         if self.client_socket:

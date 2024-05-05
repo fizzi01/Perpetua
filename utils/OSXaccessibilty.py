@@ -1,0 +1,154 @@
+import os
+import platform
+import sys
+import time
+from threading import Thread
+from packaging import version
+
+kIOHIDAccessTypeDenied = 1
+kIOHIDAccessTypeGranted = 0
+kIOHIDAccessTypeUnknown = 2
+kIOHIDRequestTypeListenEvent = 1
+kIOHIDRequestTypePostEvent = 0
+
+
+def is_keyboard_verified(ioset):
+    status = ioset['IOHIDCheckAccess'](kIOHIDRequestTypeListenEvent)
+    print("Keyboard verification status: {}".format(status))
+
+    return status == kIOHIDAccessTypeGranted
+
+
+def is_accessibility_verified():
+    import HIServices
+    return HIServices.AXIsProcessTrusted()
+
+
+def is_should_check_input():
+    return version.parse(platform.mac_ver()[0]) >= version.parse("10.15")
+
+
+def run_input_checks(ioset):
+    try:
+
+        time.sleep(1)
+        is_verified = is_keyboard_verified(ioset)
+        print("Is keyboard verified: {}".format(is_verified))
+
+    except Exception as ex:
+        print(ex)
+
+
+def run_accessibility_checks():
+    try:
+
+        time.sleep(1)
+        is_trusted = is_accessibility_verified()
+        print("Accessibilty verified: {}".format(is_trusted))
+
+    except Exception as ex:
+        print(ex)
+
+
+def load_iot():
+    try:
+        import objc
+        from Foundation import NSBundle
+        IOKit = NSBundle.bundleWithIdentifier_('com.apple.framework.IOKit')
+
+        ioset = {}
+        functions = [
+            ("IOHIDRequestAccess", b"BI"),
+            ("IOHIDCheckAccess", b"II"),
+        ]
+
+        objc.loadBundleFunctions(IOKit, ioset, functions)
+
+        return ioset
+
+    except Exception as e:
+        print(e)
+
+
+def on_accessibility_click():
+    try:
+        import HIServices
+        from ApplicationServices import kAXTrustedCheckOptionPrompt
+
+        HIServices.AXIsProcessTrustedWithOptions({
+            kAXTrustedCheckOptionPrompt: True
+        })
+
+        print("Called accessibility")
+        run_accessibility_checks()
+
+    except Exception as ex:
+        print(ex)
+
+
+def manual_request_input_access():
+    try:
+        from AppKit import NSWorkspace, NSURL
+
+        url = "x-apple.systempreferences:com.apple.preference.security?Privacy_ListenEvent"
+        url = NSURL.alloc().initWithString_(url)
+        NSWorkspace.sharedWorkspace().openURL_(url)
+
+    except Exception as e:
+        print(e)
+
+
+def on_input_monitor_click(
+        ioset,
+):
+    try:
+        result = ioset['IOHIDRequestAccess'](kIOHIDRequestTypeListenEvent)
+        print("Called IOHIDRequestAccess, result={}".format(result))
+
+        manual_request_input_access()
+
+        run_input_checks(ioset)
+
+    except Exception as e:
+        print(e)
+
+
+def is_mac_os():
+    return sys.platform == "darwin"
+
+
+def check_osx_permissions():
+    try:
+        print("[CHECK] Loading IOT")
+        ioset = load_iot()
+        is_input_monitor_required = is_should_check_input()
+
+        if is_input_monitor_required:
+            print("[CHECK] Input monitoring is required")
+
+            is_keyboard_ok = is_keyboard_verified(ioset)
+            print("[CHECK] Is keyboard trusted: {}".format(is_keyboard_ok))
+
+            if not is_keyboard_ok:
+
+                thread = Thread(target=on_input_monitor_click, args=(
+                    ioset,
+                ))
+                thread.start()
+
+            else:
+                print("[CHECK] Is keyboard trusted: {}".format(is_keyboard_ok))
+
+        else:
+
+            is_accessibility_ok = is_accessibility_verified()
+            print("[CHECK] Is accessibility trusted: {}".format(is_accessibility_ok))
+
+            if not is_accessibility_ok:
+                thread = Thread(target=on_accessibility_click)
+                thread.start()
+
+
+    except Exception as e:
+        print(e)
+

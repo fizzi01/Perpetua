@@ -1,5 +1,6 @@
 import socket
 import threading
+import time
 from time import sleep
 
 from pynput import mouse
@@ -64,11 +65,12 @@ class Server:
 
         # Server core thread
         self._main_thread = threading.Thread(target=self._accept_clients)
+        self._is_main_running = False
 
         # Input listeners
-        self.mouse_listener = None
-        self.keyboard_listener = None
-        self.mouse_controller = mouse.Controller()
+        self.mouse_listener = None  # Input listener for mouse
+        self.keyboard_listener = None   # Input listener for keyboard
+        self.mouse_controller = mouse.Controller()  # Mouse controller for mouse position
 
     def start(self):
         try:
@@ -80,6 +82,8 @@ class Server:
 
             # Threads initialization
             self._main_thread.start()  # Accept clients
+            self._is_main_running = True
+
             self._start_listeners()  # Start listeners
             self._checker.start()  # Start screen transition checker
 
@@ -119,11 +123,25 @@ class Server:
             self.mouse_listener.stop()  # Mouse listener
             self.keyboard_listener.stop()  # Keyboard listener
             self.server_socket.close()  # Server socket
-            self.log(f"Server stopped.", 1)
-            return True
+            if self._check_main_thread():
+                self.log(f"Server stopped.", 1)
+                return True
         except Exception as e:
-            self.log(f"Errore nella chiusura del server: {e}", 2)
+            self.log(f"{e}", 2)
             return False
+
+    def _check_main_thread(self):
+        max_retry = 5
+        retry = 0
+        while self._is_main_running and retry < max_retry:
+            sleep(0.5)
+            retry += 1
+
+        if retry < max_retry:
+            return True
+        else:
+            if self._is_main_running:
+                raise Exception("Thread principale non terminata.")
 
     def _start_listeners(self):
         self.mouse_listener = InputHandler.ServerMouseListener(send_function=self._send_to_clients,
@@ -155,17 +173,22 @@ class Server:
                         sleep(float(self.wait))
                         continue
                 except socket.timeout:
-                    self.log("Waiting for clients.")
-                    continue
+                    if self._started:  # Check if server is still running
+                        self.log("Waiting for clients.")
+                        continue
+                    else:
+                        break
                 except Exception as e:
-                    if self._started:
+                    if self._started:  # Check if server is still running
                         self.log(f"{e}", 2)
-                    continue
+                        continue
+                    else:
+                        break
 
                 # Adding corresponding client to the list
-                for key, info in self.clients.items():
+                for pos, info in self.clients.items():
                     if info['addr'] == addr[0]:
-                        self.clients[key]['conn'] = conn
+                        self.clients[pos]['conn'] = conn
 
                         client_handler = ClientHandler(conn, addr, self._process_client_command, self._on_disconnect,
                                                        logger=self.log)
@@ -173,7 +196,8 @@ class Server:
                         self._client_handlers.append(client_handler)
                         break
 
-                continue
+        self._is_main_running = False
+        self.log("Server listening stopped.", 1)
 
     def _on_disconnect(self, conn):
         # Set client connection to None and change screen to Host (None)

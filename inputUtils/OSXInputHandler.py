@@ -1,14 +1,15 @@
-import socket
 from collections.abc import Callable
 
 from pynput import mouse
 import Quartz
+
 import threading
 import time
 
 import keyboard
 from pynput.mouse import Button, Controller as MouseController
 from pynput.mouse import Listener as MouseListener
+from pynput.keyboard import Listener as KeyboardListener, Key, KeyCode
 
 
 class ServerMouseListener:
@@ -22,8 +23,7 @@ class ServerMouseListener:
         self.screen_width = screen_width
         self.screen_height = screen_height
         self.screen_treshold = screen_threshold
-        self._listener = mouse.Listener(on_move=self.on_move, on_scroll=self.on_scroll, on_click=self.on_click,
-                                        darwin_intercept=self.mouse_suppress_filter)
+        self._listener = MouseListener(on_move=self.on_move, on_scroll=self.on_scroll, on_click=self.on_click, darwin_intercept=self.mouse_suppress_filter)
 
     def get_listener(self):
         return self._listener
@@ -33,6 +33,11 @@ class ServerMouseListener:
 
     def stop(self):
         self._listener.stop()
+
+    """
+    Filter for mouse events and blocks them system wide if not in screen
+    Return event to not block it
+    """
 
     def mouse_suppress_filter(self, event_type, event):
 
@@ -51,8 +56,12 @@ class ServerMouseListener:
                 print("Trackpad right drag")
             elif event_type == Quartz.kCGEventOtherMouseDragged:
                 print("Other trackpad drag")
+            elif event_type == Quartz.kCGEventScrollWheel:
+                print("Scroll wheel")
             else:
                 return event
+        else:
+            return event
 
     def on_move(self, x, y):
 
@@ -60,10 +69,7 @@ class ServerMouseListener:
         clients = self.clients(screen)
 
         if screen and clients:
-            try:
-                self.send(screen, f"mouse move {x} {y}\n")
-            except socket.error as e:
-                print(f"Error {e}")
+            self.send(screen, f"mouse move {x} {y}\n")
         else:
             if x >= self.screen_width - self.screen_treshold:  # Soglia per passare al monitor a destra
                 self.change_screen("right")
@@ -102,8 +108,64 @@ class ServerMouseListener:
 
 
 class ServerKeyboardListener:
-    def __init__(self):
-        pass
+    """
+    :param send_function: Function to send data to the clients
+    :param get_clients: Function to get the clients of the current screen
+    :param get_active_screen: Function to get the active screen
+    """
+
+    def __init__(self, send_function: Callable, get_clients: Callable, get_active_screen: Callable):
+        self.clients = get_clients
+        self.active_screen = get_active_screen
+        self.send = send_function
+
+        self._listener = KeyboardListener(on_press=self.on_press, on_release=self.on_release,
+                                          darwin_intercept=self.keyboard_suppress_filter)
+
+    def get_listener(self):
+        return self._listener
+
+    def start(self):
+        self._listener.start()
+
+    def stop(self):
+        self._listener.stop()
+
+    def keyboard_suppress_filter(self, event_type, event):
+        screen = self.active_screen()
+        if screen:
+            if event_type == Quartz.kCGEventKeyDown:  # Key press event
+                print(f"Key pressed: {event}")
+            else:
+                return event
+        else:
+            print(f"NOT SUPPRESSING KEYBOARD EVENT {event_type} {event} {screen}")
+            return event
+
+    def on_press(self, key: Key | KeyCode | None):
+        screen = self.active_screen()
+        clients = self.clients(screen)
+
+        if isinstance(key, Key):
+            data = key.name
+
+        else:
+            data = key.char
+
+        if screen and clients:
+            self.send(screen, f"keyboard press {data}\n")
+
+    def on_release(self, key: Key | KeyCode | None):
+        screen = self.active_screen()
+        clients = self.clients(screen)
+
+        if isinstance(key, Key):
+            data = key.name
+        else:
+            data = key.char
+
+        if screen and clients:
+            self.send(screen, f"keyboard release {data}\n")
 
 
 class ServerClipboardListener:
@@ -229,7 +291,7 @@ class ClientMouseListener:
 
     def handle_mouse(self, x, y):
 
-        if x <= 10:
+        if x <= self.threshold:
             self.send(f"return left {y}\n")
         elif x >= self.screen_width - self.threshold:
             self.send(f"return right {y}\n")
