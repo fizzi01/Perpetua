@@ -12,6 +12,8 @@ on:
   push:
     branches:
       - dev
+    paths-ignore:
+      - '.github/**'
 
 jobs:
   build-windows:
