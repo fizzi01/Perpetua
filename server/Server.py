@@ -98,11 +98,10 @@ class Server:
 
     def stop(self):
 
-        self.log(f"Server stopping...", 1)
-
         if not self._started:
-            return False
+            return True
 
+        self.log(f"Server stopping...", 1)
         # Stops threads
         self._started = False
 
@@ -123,6 +122,8 @@ class Server:
             self.mouse_listener.stop()  # Mouse listener
             self.keyboard_listener.stop()  # Keyboard listener
             self.server_socket.close()  # Server socket
+
+            # Main thread checking
             if self._check_main_thread():
                 self.log(f"Server stopped.", 1)
                 return True
@@ -130,6 +131,11 @@ class Server:
             self.log(f"{e}", 2)
             return False
 
+    """
+    Check for main thread termination
+    :return True if main thread is terminated
+    :raise Exception if main thread is still running
+    """
     def _check_main_thread(self):
         max_retry = 5
         retry = 0
