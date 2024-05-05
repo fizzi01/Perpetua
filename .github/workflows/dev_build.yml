@@ -30,7 +30,7 @@ jobs:
           pip install -r requirements.txt
       - name: Run PyInstaller
         run: |
-          pyinstaller --windowed --onefile -n PyContinuity gui.py
+         python -m PyInstaller --windowed --onefile -n PyContinuity gui.py
           
       - uses: actions/upload-artifact@v4
         with:
