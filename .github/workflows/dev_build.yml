@@ -1,8 +1,16 @@
 name: Win64 Build
 
 on:
+  workflow_dispatch:
+    inputs:
+      logLevel:
+        description: 'Log level'     
+        required: true
+        default: 'warning'
+      tags:
+        description: 'Forced build' 
   push:
-    branches: 
+    branches:
       - dev
 
 jobs:
