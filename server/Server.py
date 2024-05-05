@@ -175,6 +175,7 @@ class Server:
                 try:
                     if not self.clients[key]['conn']:
                         conn, addr = self.server_socket.accept()
+                        self.log(f"Client handshake from {addr[0]}", 1)
                     else:
                         sleep(float(self.wait))
                         continue
