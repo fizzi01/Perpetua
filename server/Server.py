@@ -98,8 +98,9 @@ class Server:
 
     def stop(self):
 
-        if not self._started:
+        if not self._started and not self._is_main_running:
             return True
+
 
         self.log(f"Server stopping...", 1)
         # Stops threads
