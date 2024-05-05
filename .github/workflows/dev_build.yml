@@ -2,7 +2,8 @@ name: Win64 Build
 
 on:
   push:
-    branches: dev
+    branches: 
+      - dev
 
 jobs:
   build-windows:
