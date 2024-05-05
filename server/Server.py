@@ -35,7 +35,7 @@ class Server:
         self.logging = logging
         self.host = host
         self.port = port
-        self.clients = clients
+        self.clients = clients  # TODO: Comfiguration
 
         self.lock = threading.Lock()
 
