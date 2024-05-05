@@ -1,0 +1,54 @@
+name: Win64 Build
+
+on:
+  push:
+    branches: dev
+
+jobs:
+  build-windows:
+    name: Win64 Build
+    runs-on: windows-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+      - name: Install Python
+        uses: actions/setup-python@v1
+        with:
+          python-version: '3.11'
+          architecture: 'x64'
+      - name: Install requirements
+        run: |
+          python -m pip install pyinstaller
+          pip install -r requirements.txt
+      - name: Run PyInstaller
+        run: |
+          python -m PyInstaller --windowed --onefile -n PyContinuity gui.py
+          
+      - uses: actions/upload-artifact@v4
+        with:
+          name: PyContinuity_win64
+          path: dist/PyContinuity.exe
+          
+  build-mac:
+    name: MacOSX Build
+    runs-on: macos-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+      - name: Install Python
+        uses: actions/setup-python@v1
+        with:
+          python-version: '3.11'
+      - name: Install requirements
+        run: |
+          python -m pip install pyinstaller
+          pip install -r requirements.txt
+      - name: Run PyInstaller
+        run: |
+          python -m PyInstaller --windowed -n PyContinuity gui.py
+          
+      - uses: actions/upload-artifact@v4
+        with:
+          name: PyContinuity_win64
+          path: dist/PyContinuity.app
+
