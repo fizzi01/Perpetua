@@ -23,7 +23,8 @@ class ServerMouseListener:
         self.screen_width = screen_width
         self.screen_height = screen_height
         self.screen_treshold = screen_threshold
-        self._listener = MouseListener(on_move=self.on_move, on_scroll=self.on_scroll, on_click=self.on_click, darwin_intercept=self.mouse_suppress_filter)
+        self._listener = MouseListener(on_move=self.on_move, on_scroll=self.on_scroll, on_click=self.on_click,
+                                       darwin_intercept=self.mouse_suppress_filter)
 
     def get_listener(self):
         return self._listener
@@ -68,8 +69,11 @@ class ServerMouseListener:
         screen = self.active_screen()
         clients = self.clients(screen)
 
+        normalized_x = x / self.screen_width
+        normalized_y = y / self.screen_height
+
         if screen and clients:
-            self.send(screen, f"mouse move {x} {y}\n")
+            self.send(screen, f"mouse move {normalized_x} {normalized_y}\n")
         else:
             if x >= self.screen_width - self.screen_treshold:  # Soglia per passare al monitor a destra
                 self.change_screen("right")
@@ -229,24 +233,26 @@ class ClientKeyboardController:
 
 
 class ClientMouseController:
-    def __init__(self):
+    def __init__(self, screen_width, screen_height):
         self.mouse = MouseController()
+        self.screen_width = screen_width
+        self.screen_height = screen_height
         self.pressed = False
         self.last_press_time = -99
         self.doubleclick_counter = 0
 
     def process_mouse_command(self, x, y, mouse_action, is_pressed):
         if mouse_action == "move":
-            self.mouse.position = (x, y)
+            self.mouse.position = (x * self.screen_width, y * self.screen_height)
         elif mouse_action == "click":
-            self.handle_click(x, y, Button.left, is_pressed)
+            self.handle_click(Button.left, is_pressed)
         elif mouse_action == "right_click":
             self.mouse.click(Button.right)
         elif mouse_action == "scroll":
             # High performance impact without threading
             threading.Thread(target=self.smooth_scroll, args=(x, y)).start()
 
-    def handle_click(self, x, y, button, is_pressed):
+    def handle_click(self, button, is_pressed):
         current_time = time.time()
         if self.pressed and not is_pressed:
 
@@ -292,6 +298,6 @@ class ClientMouseListener:
     def handle_mouse(self, x, y):
 
         if x <= self.threshold:
-            self.send(f"return left {y}\n")
+            self.send(f"return left {y / self.screen_height}\n")
         elif x >= self.screen_width - self.threshold:
-            self.send(f"return right {y}\n")
+            self.send(f"return right {y / self.screen_height}\n")

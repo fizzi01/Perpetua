@@ -62,14 +62,16 @@ class ServerCommandProcessor:
     def process_command(self, command):
         parts = command.split()
         if parts[0] == "mouse":
-            x, y = int(parts[2]), int(parts[3])
+            x, y = float(parts[2]), float(parts[3])
+            event = parts[1]
             is_pressed = parts[4] == "true" if len(parts) > 4 else False
-            self.mouse_controller.process_mouse_command(x, y, parts[1], is_pressed)
+            self.mouse_controller.process_mouse_command(x, y, event, is_pressed)
         elif parts[0] == "keyboard":
-            threading.Thread(target=self.keyboard_controller.process_key_command, args=(parts[2], parts[1])).start()
+            key,event = parts[2], parts[1]
+            threading.Thread(target=self.keyboard_controller.process_key_command, args=(key, event)).start()
         elif parts[0] == "clipboard":
             content = ' '.join(parts[1:])
             self.pyperclip.copy(content)
         elif parts[0] == "screen":  # Update screen status
             is_on_screen = parts[1] == "true"
-            self.on_screen(is_on_screen)
+            self.on_screen(is_on_screen)    # TODO

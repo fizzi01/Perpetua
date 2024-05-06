@@ -26,7 +26,11 @@ class Client:
         self.lock = threading.Lock()
         self._running = False
         self._connected = None
+
         self._client_thread = None
+        self._is_client_thread_running = False
+
+        self._connection_thread = None
 
         self.window = None  # TODO: Window(root) screen transition
         self.stdout = stdout
@@ -39,7 +43,7 @@ class Client:
         self.processor = None
 
         self.keyboard_controller = inputHandler.ClientKeyboardController()
-        self.mouse_controller = inputHandler.ClientMouseController()
+        self.mouse_controller = inputHandler.ClientMouseController(self.screen_width, self.screen_height)
 
         self.mouse_listener = None
         self.clipboard_listener = None
@@ -50,6 +54,7 @@ class Client:
                 self._running = True
                 self._client_thread = threading.Thread(target=self._run)
                 self._client_thread.start()
+                self._is_client_thread_running = True
                 self._start_listeners()
                 return True
             else:
@@ -94,21 +99,32 @@ class Client:
                     self.log("Connected to the server.", 1)
                     self.processor = ServerCommandProcessor(self.on_screen, self.mouse_controller,
                                                             self.keyboard_controller, None)
-                    handler = ServerHandler(connection=self.client_socket, command_func=self.processor.process_command,
+                    self._connection_thread = ServerHandler(connection=self.client_socket, command_func=self.processor.process_command,
                                             on_disconnect=self.on_disconnect, logger=self.log)
-                    handler.start()
-                    self._client_thread = handler
+                    self._connection_thread.start()
                 else:
+                    self._is_client_thread_running = False
                     break
         except Exception as e:
             self.log(f"Error connecting to the server: {e}", 2)
+            self._is_client_thread_running = False
+
+        self.log("Client stopped.", 1)
 
     def stop(self):
-        if self._running:
+        if self._running and self._is_client_thread_running:
             try:
-                self._client_thread.stop()
+
+                if self._connection_thread:
+                    self._connection_thread.stop()
+
                 self.mouse_listener.stop()
                 self._running = False
+
+                if self._check_main_thread():
+                    self.log(f"Server stopped.", 1)
+                    return True
+
                 self.log("Client stopped.", 1)
                 return True
             except Exception as e:
@@ -116,6 +132,19 @@ class Client:
                 return False
         else:
             return True
+
+    def _check_main_thread(self):
+        max_retry = 5
+        retry = 0
+        while self._is_client_thread_running and retry < max_retry:
+            time.sleep(0.5)
+            retry += 1
+
+        if retry < max_retry:
+            return True
+        else:
+            if self._is_client_thread_running:
+                raise Exception("Thread principale non terminata.")
 
     def _send_to(self, command):
         if self.client_socket:
@@ -146,7 +175,10 @@ class Client:
     def log(self, msg, priority=0):
         if priority == 0 and self.logging:
             self.stdout(f"{msg}")
+            print(f"{msg}")
         if priority == 1:
             self.stdout(f"[INFO] {msg}")
+            print(f"[INFO] {msg}")
         if priority == 2:
             self.stdout(f"[ERROR] {msg}")
+            print(f"[ERROR] {msg}")

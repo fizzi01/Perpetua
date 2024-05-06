@@ -230,28 +230,32 @@ class Server:
 
     def _process_client_command(self, command):
         parts = command.split()
+        try:
+            y = float(parts[2])
+        except ValueError:
+            y = self.current_mouse_position[1]
 
         if parts[0] == 'return':
             if self.active_screen == "left" and parts[1] == "right":
                 with self.lock:
                     self.active_screen = None
                     self._changed = True
-                    self._reset_mouse("left", self.current_mouse_position[1])
+                    self._reset_mouse("left", y)
             elif self.active_screen == "right" and parts[1] == "left":
                 with self.lock:
                     self.active_screen = None
                     self._changed = True
-                    self._reset_mouse("right", self.current_mouse_position[1])
+                    self._reset_mouse("right", y)
             elif self.active_screen == "up" and parts[1] == "down":
                 with self.lock:
                     self.active_screen = None
                     self._changed = True
-                    self._reset_mouse("up", self.current_mouse_position[0])
+                    self._reset_mouse("up", y)
             elif self.active_screen == "down" and parts[1] == "up":
                 with self.lock:
                     self.active_screen = None
                     self._changed = True
-                    self._reset_mouse("down", self.current_mouse_position[0])
+                    self._reset_mouse("down", y)
 
     def _send_to_clients(self, screen, data):
 
@@ -325,18 +329,18 @@ class Server:
                 with self.lock:
                     self._changed = False
 
-    def _reset_mouse(self, param, y):
+    def _reset_mouse(self, param, y:float):
         if param == "left":
-            self.mouse_controller.position = (self.screen_threshold + 50, int(float(y)))
+            self.mouse_controller.position = (self.screen_threshold + 50, y)
             self.log(f"Moving mouse to x: {self.screen_threshold + 100}, y:{y}")
         elif param == "right":
-            self.mouse_controller.position = (self.screen_width - self.screen_threshold - 50, int(float(y)))
+            self.mouse_controller.position = (self.screen_width - self.screen_threshold - 50, y)
             self.log(f"Moving mouse to x: {self.screen_width - self.screen_threshold - 50}, y:{y}")
         elif param == "up":
-            self.mouse_controller.position = (int(float(y)), self.screen_threshold + 50)
+            self.mouse_controller.position = (y, self.screen_threshold + 50)
             self.log(f"Moving mouse to x: {y}, y:{self.screen_threshold + 5}")
         elif param == "down":
-            self.mouse_controller.position = (int(float(y)), self.screen_height - self.screen_threshold - 50)
+            self.mouse_controller.position = (y, self.screen_height - self.screen_threshold - 50)
             self.log(f"Moving mouse to x: {y}, y:{self.screen_height - self.screen_threshold - 50}")
 
     def log(self, message, priority: int = 0):
