@@ -105,6 +105,8 @@ class Server:
         # Stops threads
         self._started = False
 
+        self.server_socket.close()
+
         # --- Start cleanup ----
         # Close window for transition
         self.window.close()
@@ -164,7 +166,7 @@ class Server:
                                                                      get_clients=self._get_clients)
         try:
             self.mouse_listener.start()
-            time.sleep(0.3)
+            time.sleep(2)
             self.keyboard_listener.start()
         except Exception as e:
             self.log(f"Errore nell'avvio del mouse listener: {e}", 2)

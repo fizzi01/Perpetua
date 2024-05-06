@@ -1,12 +1,13 @@
+import time
 import tkinter as tk
 from Cocoa import NSApplication, NSApp, NSWindow, NSWindowStyleMaskBorderless, NSBackingStoreBuffered, NSMakeRect, \
     NSCursor
 from Quartz.CoreGraphics import CGDisplayHideCursor, CGMainDisplayID, CGAssociateMouseAndMouseCursorPosition, \
-    CGDisplayShowCursor
+    CGDisplayShowCursor, CGWindowListCreateDescriptionFromArray, kCGWindowListOptionOnScreenOnly, kCGNullWindowID, kCGWindowName
 from AppKit import NSView, NSRectFill, NSZeroRect, NSColor, NSScreen, NSMaxY, NSApplicationPresentationOptions, \
-    NSApplicationPresentationHideDock
+    NSApplicationPresentationHideDock,NSWorkspace, NSApplicationDidHideNotification, NSApplicationDidBecomeActiveNotification, NSApplicationDidResignActiveNotification, NSNotificationCenter
 import objc
-
+import Quartz
 
 class TransparentView(NSView):
     def drawRect_(self, rect):
@@ -17,6 +18,7 @@ class TransparentView(NSView):
 class HiddenWindow:
     def __init__(self, parent=None):
         self.app = NSApplication.sharedApplication()
+        self.app.activateIgnoringOtherApps_(True)
 
         # Ottieni le dimensioni dello schermo
         screen = NSScreen.mainScreen().frame()
@@ -51,6 +53,7 @@ class HiddenWindow:
 
     def minimize(self):
         # Mostra il cursore quando si minimizza la finestra
+        self.window.orderFrontRegardless()
         self.app.setPresentationOptions_(0)
         CGDisplayShowCursor(CGMainDisplayID())
         self.window.orderOut_(None)
@@ -59,14 +62,32 @@ class HiddenWindow:
         # Nascondi il cursore
         # Nasconde il Dock
         self.app.setPresentationOptions_(NSApplicationPresentationHideDock)
+        self.window.setLevel_(
+            CGMainDisplayID() * 1000)
         CGDisplayHideCursor(CGMainDisplayID())
         self.window.makeKeyAndOrderFront_(None)
+        self.window.orderFrontRegardless()
+        #self.app.activateIgnoringOtherApps_(True)
+        NSApplication.sharedApplication().activateIgnoringOtherApps_(True)
+
+
+    def bring_to_front(self):
+        NSApplication.sharedApplication().activateIgnoringOtherApps_(True)
+        self.window.orderFrontRegardless()
+        print("Bring to front")
+        # Gestisci l'evento quando l'applicazione diventa attiva
+
+    def applicationDidBecomeActive_(self, notification):
+        self.bring_to_front()
+
+        # Gestisci l'evento quando l'applicazione diventa inattiva
+
+    def applicationDidResignActive_(self, notification):
+        pass
 
     def close(self):
         # Close the window
-        self.app.setPresentationOptions_(0)
-        CGDisplayShowCursor(CGMainDisplayID())
-        self.window.orderOut_(None)
+        self.minimize()
         self.window.close()
 
 
