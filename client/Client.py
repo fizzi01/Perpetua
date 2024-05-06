@@ -47,10 +47,10 @@ class Client:
     def start(self):
         try:
             if not self._running:
+                self._running = True
                 self._client_thread = threading.Thread(target=self._run)
                 self._client_thread.start()
                 self._start_listeners()
-                self._running = True
                 return True
             else:
                 self.log("Client already running.", 1)
@@ -58,6 +58,7 @@ class Client:
 
         except Exception as e:
             self.log(f"{e}", 2)
+            self._running = False
             return False
 
     def _start_listeners(self):
@@ -82,7 +83,13 @@ class Client:
                         continue
 
                     self.client_socket = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
-                    self.client_socket.connect((self.server, self.port))
+
+                    try:    # Handle connection timeout
+                        self.client_socket.connect((self.server, self.port))
+                    except socket.error as e:
+                        self.log(f"{e}", 2)
+                        continue
+
                     self._connected = True
                     self.log("Connected to the server.", 1)
                     self.processor = ServerCommandProcessor(self.on_screen, self.mouse_controller,
@@ -99,7 +106,7 @@ class Client:
     def stop(self):
         if self._running:
             try:
-                self._client_thread.join()
+                self._client_thread.stop()
                 self.mouse_listener.stop()
                 self._running = False
                 self.log("Client stopped.", 1)
