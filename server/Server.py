@@ -26,7 +26,7 @@ class Server:
     :param stdout: Funzione per la stampa dei messaggi
     """
 
-    def __init__(self, host: str = "0.0.0.0", port: int = 5001, clients=None, screen_width=1920, screen_height=1080,
+    def __init__(self, host: str = "0.0.0.0", port: int = 5001, clients=None, screen_width=1792, screen_height=1120,
                  wait: int = 5, logging: bool = False, screen_threshold: int = 10, root=None, stdout=print):
 
         if clients is None:
@@ -69,7 +69,7 @@ class Server:
 
         # Input listeners
         self.mouse_listener = None  # Input listener for mouse
-        self.keyboard_listener = None   # Input listener for keyboard
+        self.keyboard_listener = None  # Input listener for keyboard
         self.mouse_controller = mouse.Controller()  # Mouse controller for mouse position
 
     def start(self):
@@ -100,7 +100,6 @@ class Server:
 
         if not self._started and not self._is_main_running:
             return True
-
 
         self.log(f"Server stopping...", 1)
         # Stops threads
@@ -137,6 +136,7 @@ class Server:
     :return True if main thread is terminated
     :raise Exception if main thread is still running
     """
+
     def _check_main_thread(self):
         max_retry = 5
         retry = 0
@@ -164,6 +164,7 @@ class Server:
                                                                      get_clients=self._get_clients)
         try:
             self.mouse_listener.start()
+            time.sleep(0.2)
             self.keyboard_listener.start()
         except Exception as e:
             self.log(f"Errore nell'avvio del mouse listener: {e}", 2)
