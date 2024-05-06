@@ -164,7 +164,7 @@ class Server:
                                                                      get_clients=self._get_clients)
         try:
             self.mouse_listener.start()
-            time.sleep(0.2)
+            time.sleep(0.3)
             self.keyboard_listener.start()
         except Exception as e:
             self.log(f"Errore nell'avvio del mouse listener: {e}", 2)
