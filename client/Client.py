@@ -5,17 +5,16 @@ from collections.abc import Callable
 
 from inputUtils import InputHandler as inputHandler
 from .ServerHandler import ServerHandler, ServerCommandProcessor
-
+from utils import screen_size
 
 class Client:
-    def __init__(self, server: str, port: int, screen_width: int = 1920, screen_height: int = 1080, threshold: int = 10,
+    def __init__(self, server: str, port: int, threshold: int = 10,
                  wait: int = 5,
                  logging: bool = False, stdout: Callable = print, root=None):
 
         self.server = server
         self.port = port
-        self.screen_width = screen_width
-        self.screen_height = screen_height
+        self.screen_width, self.screen_height = screen_size()
         self.threshold = threshold
         self.wait = wait
         self.logging = logging

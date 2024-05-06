@@ -10,4 +10,6 @@ elif _platform.system() == 'Darwin':
 else:
     raise OSError("Unsupported platform '{}'".format(_platform.system()))
 
-__all__ = ['net']
+from .screen import get_screen_size as screen_size
+
+__all__ = ['net', 'screen_size']

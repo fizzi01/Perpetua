@@ -8,7 +8,7 @@ from pynput import mouse
 from .ClientHandler import ClientHandler
 from inputUtils import InputHandler
 from window import Window
-
+from utils import screen_size
 
 class Server:
     """
@@ -26,7 +26,7 @@ class Server:
     :param stdout: Funzione per la stampa dei messaggi
     """
 
-    def __init__(self, host: str = "0.0.0.0", port: int = 5001, clients=None, screen_width=1792, screen_height=1120,
+    def __init__(self, host: str = "0.0.0.0", port: int = 5001, clients=None,
                  wait: int = 5, logging: bool = False, screen_threshold: int = 10, root=None, stdout=print):
 
         if clients is None:
@@ -56,8 +56,8 @@ class Server:
         # Screen transition variables
         self.active_screen = None
         self._changed = False
-        self.screen_width = screen_width
-        self.screen_height = screen_height
+        self.screen_width, self.screen_height = screen_size()
+
         self.screen_threshold = screen_threshold
 
         # Screen transition orchestrator
@@ -231,8 +231,8 @@ class Server:
     def _process_client_command(self, command):
         parts = command.split()
         try:
-            y = float(parts[2])
-        except ValueError:
+            y = float(parts[2]) * self.screen_height    # Denormalize y
+        except Exception:
             y = self.current_mouse_position[1]
 
         if parts[0] == 'return':
