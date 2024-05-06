@@ -83,5 +83,5 @@ jobs:
 
       - uses: actions/upload-artifact@v4
         with:
-          name: PyContinuity_macos
+          name: PyContinuity_macos_intel
           path: dist/*
