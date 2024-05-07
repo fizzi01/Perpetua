@@ -59,6 +59,13 @@ class ServerCommandProcessor:
         self.keyboard_controller = keyboard_controller
         self.pyperclip = pyperclip
 
+    @staticmethod
+    def format_data(data):
+        if '<NEWLINE>' in data:
+            return data.replace('<NEWLINE>', '\n')
+        else:
+            return data
+
     def process_command(self, command):
         parts = command.split()
         if parts[0] == "mouse":
@@ -70,7 +77,8 @@ class ServerCommandProcessor:
             key,event = parts[2], parts[1]
             threading.Thread(target=self.keyboard_controller.process_key_command, args=(key, event)).start()
         elif parts[0] == "clipboard":
-            content = ' '.join(parts[1:])
+            content = self.format_data(parts[1])
+            print(content)
             self.pyperclip.copy(content)
         elif parts[0] == "screen":  # Update screen status
             is_on_screen = parts[1] == "true"

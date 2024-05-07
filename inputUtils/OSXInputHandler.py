@@ -79,7 +79,7 @@ class ServerMouseListener:
         normalized_y = y / self.screen_height
 
         if screen and clients and is_transmitting:
-            self.send(screen, f"mouse move {normalized_x} {normalized_y}\n")
+            self.send(screen, f"mouse move {normalized_x} {normalized_y}")
         else:
             if x >= self.screen_width - self.screen_treshold:  # Soglia per passare al monitor a destra
                 self.change_screen("right")
@@ -98,22 +98,22 @@ class ServerMouseListener:
 
         if button == mouse.Button.left:
             if screen and clients and pressed:
-                self.send(screen, f"mouse click {x} {y} true\n")
+                self.send(screen, f"mouse click {x} {y} true")
             elif screen and clients and not pressed:
-                self.send(screen, f"mouse click {x} {y} false\n")
+                self.send(screen, f"mouse click {x} {y} false")
         elif button == mouse.Button.right:
             if screen and clients and pressed:
-                self.send(screen, f"mouse right_click {x} {y}\n")
+                self.send(screen, f"mouse right_click {x} {y}")
         elif button == mouse.Button.middle:
             if screen and clients and pressed:
-                self.send(screen, f"mouse middle_click {x} {y}\n")
+                self.send(screen, f"mouse middle_click {x} {y}")
         return True
 
     def on_scroll(self, x, y, dx, dy):
         screen = self.active_screen()
         clients = self.clients(screen)
         if screen and clients:
-            self.send(screen, f"mouse scroll {dx} {dy}\n")
+            self.send(screen, f"mouse scroll {dx} {dy}")
         return True
 
 
@@ -166,7 +166,7 @@ class ServerKeyboardListener:
             data = key.char
 
         if screen and clients:
-            self.send(screen, f"keyboard press {data}\n")
+            self.send(screen, f"keyboard press {data}")
 
     def on_release(self, key: Key | KeyCode | None):
         screen = self.active_screen()
@@ -178,7 +178,7 @@ class ServerKeyboardListener:
             data = key.char
 
         if screen and clients:
-            self.send(screen, f"keyboard release {data}\n")
+            self.send(screen, f"keyboard release {data}")
 
 
 class ServerClipboardListener:
@@ -252,7 +252,11 @@ class ClientMouseController:
 
     def process_mouse_command(self, x, y, mouse_action, is_pressed):
         if mouse_action == "move":
-            self.mouse.position = (x * self.screen_width, y * self.screen_height)
+            target_x = max(0, min(x * self.screen_width, self.screen_width))  # Ensure target_x is within screen bounds
+            target_y = max(0, min(y * self.screen_height, self.screen_height))  # Ensure target_y is within screen bounds
+
+            self.mouse.position = (target_x, target_y)
+
         elif mouse_action == "click":
             self.handle_click(Button.left, is_pressed)
         elif mouse_action == "right_click":
@@ -307,6 +311,6 @@ class ClientMouseListener:
     def handle_mouse(self, x, y):
 
         if x <= self.threshold:
-            self.send(f"return left {y / self.screen_height}\n")
+            self.send(f"return left {y / self.screen_height}")
         elif x >= self.screen_width - self.threshold:
-            self.send(f"return right {y / self.screen_height}\n")
+            self.send(f"return right {y / self.screen_height}")

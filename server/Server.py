@@ -276,7 +276,18 @@ class Server:
                     self._changed = True
                     self._reset_mouse("down", y)
 
+    @staticmethod
+    def format_data(data):
+        if '\n' in data:
+            return data.replace('\n', '<NEWLINE>')
+        else:
+            return data
+
     def _send_to_clients(self, screen, data):
+
+        # Preparing data to be sent
+        data = self.format_data(data)
+        data = data + "\n"  # Add newline to the end of the message to separate commands
 
         try:
             conn = self.clients[screen].get('conn')

@@ -1,6 +1,7 @@
 import threading
 import time
 from collections.abc import Callable
+import pyperclip
 
 from pynput import mouse, keyboard
 from pynput.keyboard import Key, KeyCode, Listener as KeyboardListener, Controller as KeyboardController
@@ -74,7 +75,7 @@ class ServerMouseListener:
         normalized_y = y / self.screen_height
 
         if screen and clients and is_transmitting:
-            self.send(screen, f"mouse move {normalized_x} {normalized_y}\n")
+            self.send(screen, f"mouse move {normalized_x} {normalized_y}")
         else:
             if x >= self.screen_width - self.screen_treshold:  # Soglia per passare al monitor a destra
                 self.change_screen("right")
@@ -93,22 +94,22 @@ class ServerMouseListener:
 
         if button == mouse.Button.left:
             if screen and clients and pressed:
-                self.send(screen, f"mouse click {x} {y} true\n")
+                self.send(screen, f"mouse click {x} {y} true")
             elif screen and clients and not pressed:
-                self.send(screen, f"mouse click {x} {y} false\n")
+                self.send(screen, f"mouse click {x} {y} false")
         elif button == mouse.Button.right:
             if screen and clients and pressed:
-                self.send(screen, f"mouse right_click {x} {y}\n")
+                self.send(screen, f"mouse right_click {x} {y}")
         elif button == mouse.Button.middle:
             if screen and clients and pressed:
-                self.send(screen, f"mouse middle_click {x} {y}\n")
+                self.send(screen, f"mouse middle_click {x} {y}")
         return True
 
     def on_scroll(self, x, y, dx, dy):
         screen = self.active_screen()
         clients = self.clients(screen)
         if screen and clients:
-            self.send(screen, f"mouse scroll {dx} {dy}\n")
+            self.send(screen, f"mouse scroll {dx} {dy}")
         return True
 
 
@@ -160,7 +161,7 @@ class ServerKeyboardListener:
             data = key.char
 
         if screen and clients:
-            self.send(screen, f"keyboard press {data}\n")
+            self.send(screen, f"keyboard press {data}")
 
     def on_release(self, key: Key | KeyCode | None):
         screen = self.active_screen()
@@ -172,12 +173,32 @@ class ServerKeyboardListener:
             data = key.char
 
         if screen and clients:
-            self.send(screen, f"keyboard release {data}\n")
+            self.send(screen, f"keyboard release {data}")
 
 
 class ServerClipboardListener:
-    def __init__(self):
-        pass
+    def __init__(self, send_func: Callable):
+
+        self.send = send_func
+        self._thread = None
+        self.last_clipboard_content = pyperclip.paste()  # Inizializza con il contenuto attuale della clipboard
+        self._stop_event = threading.Event()
+
+    def start(self):
+        self._stop_event.clear()
+        self._thread = threading.Thread(target=self._run)
+        self._thread.start()
+
+    def stop(self):
+        self._stop_event.set()
+
+    def _run(self):
+        while not self._stop_event.is_set():
+            current_clipboard_content = pyperclip.paste()
+            if current_clipboard_content != self.last_clipboard_content:
+                self.send("clipboard " + current_clipboard_content)
+                self.last_clipboard_content = current_clipboard_content
+            time.sleep(0.5)
 
 
 class ClientKeyboardController:
@@ -263,8 +284,9 @@ class ClientMouseController:
 
     def process_mouse_command(self, x, y, mouse_action, is_pressed):
         if mouse_action == "move":
-            target_x = x * self.screen_width
-            target_y = y * self.screen_height
+            target_x = max(0, min(x * self.screen_width, self.screen_width))  # Ensure target_x is within screen bounds
+            target_y = max(0, min(y * self.screen_height, self.screen_height))  # Ensure target_y is within screen bounds
+
             current_x, current_y = self.mouse.position
             self.smooth_move(current_x, current_y, target_x, target_y)
 
@@ -322,6 +344,6 @@ class ClientMouseListener:
     def handle_mouse(self, x, y):
 
         if x <= self.threshold:
-            self.send(f"return left {y / self.screen_height}\n")
+            self.send(f"return left {y / self.screen_height}")
         elif x >= self.screen_width - self.threshold:
-            self.send(f"return right {y / self.screen_height}\n")
+            self.send(f"return right {y / self.screen_height}")
