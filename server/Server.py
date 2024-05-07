@@ -10,6 +10,7 @@ from inputUtils import InputHandler
 from window import Window
 from utils import screen_size
 
+
 class Server:
     """
     Classe per la gestione del server.
@@ -62,6 +63,7 @@ class Server:
 
         # Screen transition orchestrator
         self._checker = threading.Thread(target=self.check_screen_transition)
+        self._is_transition = False
 
         # Server core thread
         self._main_thread = threading.Thread(target=self._accept_clients)
@@ -159,6 +161,7 @@ class Server:
         self.mouse_listener = InputHandler.ServerMouseListener(send_function=self._send_to_clients,
                                                                change_screen_function=self._change_screen,
                                                                get_active_screen=self._get_active_screen,
+                                                               get_status=self._get_status,
                                                                get_clients=self._get_clients,
                                                                screen_width=self.screen_width,
                                                                screen_height=self.screen_height,
@@ -228,6 +231,9 @@ class Server:
     def _get_active_screen(self):
         return self.active_screen
 
+    def _get_status(self):
+        return self._is_transition
+
     def _get_clients(self, screen):
         if screen:
             try:
@@ -240,7 +246,7 @@ class Server:
     def _process_client_command(self, command):
         parts = command.split()
         try:
-            y = float(parts[2]) * self.screen_height    # Denormalize y
+            y = float(parts[2]) * self.screen_height  # Denormalize y
         except Exception:
             y = self.current_mouse_position[1]
 
@@ -248,21 +254,25 @@ class Server:
             if self.active_screen == "left" and parts[1] == "right":
                 with self.lock:
                     self.active_screen = None
+                    self._is_transition = False
                     self._changed = True
                     self._reset_mouse("left", y)
             elif self.active_screen == "right" and parts[1] == "left":
                 with self.lock:
                     self.active_screen = None
+                    self._is_transition = False
                     self._changed = True
                     self._reset_mouse("right", y)
             elif self.active_screen == "up" and parts[1] == "down":
                 with self.lock:
                     self.active_screen = None
+                    self._is_transition = False
                     self._changed = True
                     self._reset_mouse("up", y)
             elif self.active_screen == "down" and parts[1] == "up":
                 with self.lock:
                     self.active_screen = None
+                    self._is_transition = False
                     self._changed = True
                     self._reset_mouse("down", y)
 
@@ -295,6 +305,7 @@ class Server:
             if self.active_screen:
                 with self.lock:
                     self.active_screen = None
+                    self._is_transition = False
                     self._changed = True
             return
 
@@ -302,6 +313,7 @@ class Server:
         with self.lock:
             self.active_screen = screen
             self.current_mouse_position = self.mouse_controller.position
+            self._is_transition = False
             self._changed = True
 
     """
@@ -320,9 +332,11 @@ class Server:
     def check_screen_transition(self):
         self.log(f"Transition Checker started.")
         while self._started:
-            sleep(0.1)
+            sleep(0.01)
             if self._changed:
                 self.log(f"Changing screen to {self.active_screen}", 1)
+
+                self._screen_toggle(self.active_screen)
 
                 if self.active_screen == "left":
                     self._reset_mouse("right", self.current_mouse_position[1])
@@ -333,24 +347,34 @@ class Server:
                 elif self.active_screen == "down":
                     self._reset_mouse("up", self.current_mouse_position[0])
 
-                self._screen_toggle(self.active_screen)
-
                 with self.lock:
                     self._changed = False
+                    self._is_transition = True
 
-    def _reset_mouse(self, param, y:float):
+    def _reset_mouse(self, param, y: float):
         if param == "left":
-            self.mouse_controller.position = (self.screen_threshold + 50, y)
-            self.log(f"Moving mouse to x: {self.screen_threshold + 100}, y:{y}")
+            self._force_mouse_position(self.screen_threshold + 50, y)
+
+            self.log(f"Moving mouse to x: {self.screen_threshold + 50}, y:{y}")
         elif param == "right":
-            self.mouse_controller.position = (self.screen_width - self.screen_threshold - 50, y)
+            self._force_mouse_position(self.screen_width - self.screen_threshold - 50, y)
+
             self.log(f"Moving mouse to x: {self.screen_width - self.screen_threshold - 50}, y:{y}")
         elif param == "up":
-            self.mouse_controller.position = (y, self.screen_threshold + 50)
+            self._force_mouse_position(y, self.screen_threshold + 50)
             self.log(f"Moving mouse to x: {y}, y:{self.screen_threshold + 5}")
         elif param == "down":
-            self.mouse_controller.position = (y, self.screen_height - self.screen_threshold - 50)
+            self._force_mouse_position(y, self.screen_height - self.screen_threshold - 50)
             self.log(f"Moving mouse to x: {y}, y:{self.screen_height - self.screen_threshold - 50}")
+
+    def _force_mouse_position(self, x, y):
+        desired_position = (x, y)
+        attempt = 0
+        max_attempts = 80
+        while self.mouse_controller.position != desired_position and attempt < max_attempts:
+            self.mouse_controller.position = desired_position
+            attempt += 1
+            time.sleep(0.001)
 
     def log(self, message, priority: int = 0):
         if priority == 2:
