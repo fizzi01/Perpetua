@@ -20,8 +20,6 @@ class Server:
     :param host: Indirizzo del server
     :param port: Porta del server
     :param clients: Dizionario contenente le posizioni dei client abilitate
-    :param screen_width: Larghezza dello schermo
-    :param screen_height: Altezza dello schermo
     :param wait: Tempo di attesa per la connessione dei client
     :param logging: Enable logs
     :param screen_threshold: Soglia per la transizione dello schermo
@@ -315,7 +313,8 @@ class Server:
                                 END_DELIMITER):  # Check if this is the last chunk and its length is > CHUNK_SIZE - END_DELIMITER
                             conn.send(chunk.encode())  # Send the last chunk without any terminator
                             conn.send(END_DELIMITER.encode())  # Send the terminator as a separate chunk
-                        elif i == len(chunks) - 1:  # This is the last chunk and its length is less than CHUNK_SIZE - END_DELIMITER
+                        elif i == len(
+                                chunks) - 1:  # This is the last chunk and its length is less than CHUNK_SIZE - END_DELIMITER
                             chunk = chunk + END_DELIMITER
                             conn.send(chunk.encode())
                         else:
@@ -404,7 +403,7 @@ class Server:
     def _force_mouse_position(self, x, y):
         desired_position = (x, y)
         attempt = 0
-        max_attempts = 80
+        max_attempts = 60
         while self.mouse_controller.position != desired_position and attempt < max_attempts:
             self.mouse_controller.position = desired_position
             attempt += 1

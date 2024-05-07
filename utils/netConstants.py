@@ -1,4 +1,4 @@
-NEWLINE = "::N::"
+NEWLINE = "\\N\\"
 TAB = ":T:"
 SPACE = ":S:"
 CHUNK_SIZE = 1024
