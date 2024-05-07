@@ -41,7 +41,7 @@ jobs:
           path: dist/PyContinuity.exe
           
   build-mac:
-    name: MacOSX Build
+    name: MacOSX (arm64) Build
     runs-on: macos-latest
     steps:
       - name: Checkout
@@ -64,7 +64,7 @@ jobs:
           path: dist/*
 
   build-mac-intel:
-    name: MacOSX (Universal) Build
+    name: MacOSX (x86_64) Build
     runs-on: macos-latest
     steps:
       - name: Checkout
