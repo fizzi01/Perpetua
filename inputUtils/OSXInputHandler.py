@@ -33,7 +33,11 @@ class ServerMouseListener:
         self._listener.start()
 
     def stop(self):
-        self._listener.stop()
+        if self.is_alive():
+            self._listener.stop()
+
+    def is_alive(self):
+        return self._listener.is_alive()
 
     """
     Filter for mouse events and blocks them system wide if not in screen
@@ -133,7 +137,11 @@ class ServerKeyboardListener:
         self._listener.start()
 
     def stop(self):
-        self._listener.stop()
+        if self.is_alive():
+            self._listener.stop()
+
+    def is_alive(self):
+        return self._listener.is_alive()
 
     def keyboard_suppress_filter(self, event_type, event):
         screen = self.active_screen()
@@ -143,7 +151,6 @@ class ServerKeyboardListener:
             else:
                 return event
         else:
-            print(f"NOT SUPPRESSING KEYBOARD EVENT {event_type} {event} {screen}")
             return event
 
     def on_press(self, key: Key | KeyCode | None):

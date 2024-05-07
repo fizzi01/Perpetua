@@ -39,7 +39,11 @@ class ServerMouseListener:
         self._listener.start()
 
     def stop(self):
-        self._listener.stop()
+        if self.is_alive():
+            self._listener.stop()
+
+    def is_alive(self):
+        return self._listener.is_alive()
 
     def mouse_suppress_filter(self, msg, data):
 
@@ -128,7 +132,11 @@ class ServerKeyboardListener:
         self._listener.start()
 
     def stop(self):
-        self._listener.stop()
+        if self.is_alive():
+            self._listener.stop()
+
+    def is_alive(self):
+        return self._listener.is_alive()
 
     def keyboard_suppress_filter(self, msg, data):
         screen = self.active_screen()

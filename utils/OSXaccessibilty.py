@@ -151,4 +151,3 @@ def check_osx_permissions():
 
     except Exception as e:
         print(e)
-

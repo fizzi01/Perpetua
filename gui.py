@@ -4,6 +4,20 @@ from main import run_server, run_client
 from utils import net
 import platform as _platform
 
+import re
+
+
+def is_valid_ipv4(ip):
+    # Regular expression per validare un indirizzo IPv4
+    ipv4_regex = r'^(\d{1,3})\.(\d{1,3})\.(\d{1,3})\.(\d{1,3})$'
+    match = re.match(ipv4_regex, ip)
+    if match:
+        # Verifica se ogni ottetto è compreso tra 0 e 255
+        return all(0 <= int(octet) <= 255 for octet in match.groups())
+    else:
+        return False
+
+
 class PositionDialog(simpledialog.Dialog):
     def __init__(self, master, title="", positions=None, ips=None):
         self.entries = None
@@ -36,33 +50,61 @@ class PositionDialog(simpledialog.Dialog):
         host_frame.grid(row=1, column=1, pady=10)
 
         # Creating checkboxes and entries for each position
-        self.checkboxes["up"] = tk.Checkbutton(master, text="Up", var=self.positions["up"])
+        self.checkboxes["up"] = tk.Checkbutton(master, text="Up", var=self.positions["up"],
+                                               command=lambda: self.toggle_entry("up"))
         self.checkboxes["up"].grid(row=0, column=1, pady=(10, 0))
         self.entries["up"] = tk.Entry(master, textvariable=self.ips["up"])
         self.entries["up"].grid(row=1, column=1)
 
-        self.checkboxes["left"] = tk.Checkbutton(master, text="Left", var=self.positions["left"])
+        self.checkboxes["left"] = tk.Checkbutton(master, text="Left", var=self.positions["left"],
+                                                 command=lambda: self.toggle_entry("left"))
         self.checkboxes["left"].grid(row=1, column=0, pady=(10, 0))
         self.entries["left"] = tk.Entry(master, textvariable=self.ips["left"])
         self.entries["left"].grid(row=2, column=0)
 
-        tk.Label(master, text="Host", relief=tk.RAISED).grid(row=2, column=1, pady=(15, 10)   )
+        tk.Label(master, text="Host", relief=tk.RAISED).grid(row=2, column=1, pady=(15, 10))
 
-        self.checkboxes["right"] = tk.Checkbutton(master, text="Right", var=self.positions["right"])
+        self.checkboxes["right"] = tk.Checkbutton(master, text="Right", var=self.positions["right"],
+                                                  command=lambda: self.toggle_entry("right"))
         self.checkboxes["right"].grid(row=1, column=2, pady=(10, 0))
         self.entries["right"] = tk.Entry(master, textvariable=self.ips["right"])
         self.entries["right"].grid(row=2, column=2)
 
-        self.checkboxes["down"] = tk.Checkbutton(master, text="Down", var=self.positions["down"])
+        self.checkboxes["down"] = tk.Checkbutton(master, text="Down", var=self.positions["down"],
+                                                 command=lambda: self.toggle_entry("down"))
         self.checkboxes["down"].grid(row=3, column=1, pady=(10, 0))
         self.entries["down"] = tk.Entry(master, textvariable=self.ips["down"])
         self.entries["down"].grid(row=4, column=1)
 
+        self.hide_entries()
+
         return master  # return the widget that should have initial focus
 
     def apply(self):
+        for position, ip in self.ips.items():
+            if self.positions[position].get():
+                if not ip or not is_valid_ipv4(ip.get()):
+                    messagebox.showerror("Errore", f"L'indirizzo IP per '{position}' non è valido.")
+                    return False
+
         self.pos_result = {pos: var.get() for pos, var in self.positions.items()}
         self.ip_result = {pos: ip.get() for pos, ip in self.ips.items() if self.positions[pos].get()}
+
+    def hide_entries(self):
+        for pos in self.entries.keys():
+            self.toggle_entry(pos)
+
+    def show_entry(self, position):
+        self.entries[position].grid()
+
+    def toggle_entry(self, position):
+        if self.positions[position].get():
+            self.show_entry(position)
+        else:
+            self.hide_entry(position)
+
+    def hide_entry(self, position):
+        self.entries[position].grid_remove()
 
 
 class ServerConfigGUI:
@@ -78,7 +120,7 @@ class ServerConfigGUI:
         # Variables for server configuration
         self.host = tk.StringVar(value=net.get_local_ip())
         self.port = tk.IntVar(value=5001)
-        self.positions = {"left": True, "right": False, "up": False, "down": False}  # default values
+        self.positions = {"left": False, "right": False, "up": False, "down": False}  # default values
         self.ips = {"left": "", "right": "", "up": "", "down": ""}  # default values
         self.logging = tk.BooleanVar(value=True)
 
@@ -161,7 +203,8 @@ class ServerConfigGUI:
 
         try:
             # Start the server
-            self.server = run_server(host=host,port=port, pos=position, ips=ips,logging=logging,wait= 5, screen_threshold= 5,root= self.master,stdout= self.update_output)
+            self.server = run_server(host=host, port=port, pos=position, ips=ips, logging=logging, wait=5,
+                                     screen_threshold=5, root=self.master, stdout=self.update_output)
 
             # Update button visibility
             self.start_button.grid_remove()
@@ -271,8 +314,9 @@ if __name__ == "__main__":
 
     if _platform.system() == 'Darwin':
         import utils.OSXaccessibilty as OSXaccessibilty
+
         OSXaccessibilty.check_osx_permissions()
-    
+
     root = tk.Tk()
     app = ServerConfigGUI(root)
     root.mainloop()

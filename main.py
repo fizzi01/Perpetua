@@ -6,9 +6,12 @@ from client import Client
 
 
 def run_server(host, port, pos, ips, logging, wait, screen_threshold, root, stdout=None, stderr=None):
-    filtered_pos = pos.split(',')
+    try:
+        filtered_pos = pos.split(',')
 
-    filtered_clients = {position: {"conn": None, "addr": ips[position]} for position in filtered_pos}
+        filtered_clients = {position: {"conn": None, "addr": ips[position]} for position in filtered_pos}
+    except KeyError as e:
+        raise ValueError(f"[ERROR] No positions provided")
 
     s = Server(host=host, port=port, clients=filtered_clients, logging=logging, wait=wait,
                screen_threshold=screen_threshold, root=root, stdout=stdout)

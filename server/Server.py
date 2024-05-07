@@ -33,9 +33,9 @@ class Server:
             clients = {"left": {"conn": None, "addr": None}}
 
         self.logging = logging
-        self.host = host
+        self.host = host if len(host) > 0 else "0.0.0.0"
         self.port = port
-        self.clients = clients  # TODO: Comfiguration
+        self.clients = clients  # TODO: Configuration
 
         self.lock = threading.Lock()
 
@@ -91,7 +91,7 @@ class Server:
 
         except Exception as e:
             self._started = False
-            self.log(f"Errore nell'avvio del server: {e}")
+            self.log(f"Server not started: {e}", 2)
             return self.stop()
 
         return True
@@ -120,7 +120,10 @@ class Server:
                 continue
 
         try:
-            self._checker.join()  # Screen transition orchestrator thread
+
+            if self._checker.is_alive():
+                self._checker.join()  # Screen transition orchestrator thread
+
             self.mouse_listener.stop()  # Mouse listener
             self.keyboard_listener.stop()  # Keyboard listener
             self.server_socket.close()  # Server socket
@@ -166,10 +169,14 @@ class Server:
                                                                      get_clients=self._get_clients)
         try:
             self.mouse_listener.start()
-            time.sleep(2)
             self.keyboard_listener.start()
+            time.sleep(1)
+            if not self.mouse_listener.is_alive():
+                raise Exception("Mouse listener not started")
+            if not self.mouse_listener.is_alive():
+                raise Exception("Keyboard listener not started")
         except Exception as e:
-            self.log(f"Errore nell'avvio del mouse listener: {e}", 2)
+            raise Exception(e)
 
         self.log("Mouse listener started.")
 
