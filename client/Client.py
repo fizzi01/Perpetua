@@ -104,6 +104,7 @@ class Client:
                 else:
                     self._is_client_thread_running = False
                     break
+            time.sleep(0.2)
         except Exception as e:
             self.log(f"Error connecting to the server: {e}", 2)
             self._is_client_thread_running = False

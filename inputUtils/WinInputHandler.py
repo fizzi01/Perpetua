@@ -3,7 +3,7 @@ import time
 from collections.abc import Callable
 
 from pynput import mouse, keyboard
-from pynput.keyboard import Key, KeyCode, Listener as KeyboardListener
+from pynput.keyboard import Key, KeyCode, Listener as KeyboardListener, Controller as KeyboardController
 import keyboard
 from pynput.mouse import Button, Controller as MouseController, Listener as MouseListener
 
@@ -182,53 +182,42 @@ class ClientKeyboardController:
     def __init__(self):
         self.pressed_keys = set()
         self.key_filter = {
-            ",": "comma",
-            "+": "plus"
+            "option": "alt",
+            "option_r": "alt_gr",
+            "alt_r": "alt_gr",
         }
-
-    @staticmethod
-    def _key_cleanup(key_data):
-        if key_data.endswith("_l"):
-            key_data = key_data[:-2]
-        elif key_data.endswith("_r"):
-            key_data = key_data[:-2]
-        elif key_data.endswith("_gr"):
-            key_data = key_data[:-3]
-        return key_data
+        self.controller = KeyboardController()
+        self.caps_lock_state = False
 
     def data_filter(self, key_data):
         if key_data in self.key_filter:
             return self.key_filter[key_data]
         return key_data
 
+    @staticmethod
+    def get_key(key_data: str):
+        try:
+            key = Key[key_data]
+            return key
+        except Exception:
+            return key_data
+
     def process_key_command(self, key_data, key_action):
-        key_data = self._key_cleanup(key_data)
         key_data = self.data_filter(key_data)
+        print(key_data, key_action)
 
         if key_action == "press":
-            if keyboard.is_modifier(key_data):
-                if key_data not in self.pressed_keys:
-                    keyboard.press(key_data)
-                    if key_data not in ["backspace", "tab", "delete", "enter", "space"]:
-                        self.pressed_keys.add(key_data)
+            if key_data is Key.caps_lock:
+                if self.caps_lock_state:
+                    self.controller.release(key_data)
+                    self.caps_lock_state = False
+                else:
+                    self.controller.press(key_data)
+                    self.caps_lock_state = True
             else:
-                if len(self.pressed_keys) != 0:
-                    pressed_list = list(self.pressed_keys)
-                    pressed_list.append(key_data)
-                    hotkey = pressed_list
-                    keyboard.press(hotkey)
-                else:
-                    hotkey = key_data
-                    keyboard.press(hotkey)
+                self.controller.press(self.get_key(key_data))
         elif key_action == "release":
-            try:
-                if keyboard.is_modifier(key_data):
-                    keyboard.release(key_data)
-                    self.pressed_keys.remove(key_data)
-                else:
-                    keyboard.release(key_data)
-            except IndexError:
-                pass
+            self.controller.release(self.get_key(key_data))
 
 
 class ClientMouseController:
@@ -240,9 +229,32 @@ class ClientMouseController:
         self.last_press_time = -99
         self.doubleclick_counter = 0
 
+    def smooth_move(self, start_x, start_y, end_x, end_y, steps=4, sleep_time=0.0006):
+        # Calcola la differenza tra la posizione iniziale e finale
+        dx = end_x - start_x
+        dy = end_y - start_y
+
+        # Calcola il passo per ogni dimensione
+        x_step = dx / steps
+        y_step = dy / steps
+
+        # Muovi il mouse attraverso i passaggi
+        for i in range(steps):
+            new_x = start_x + i * x_step
+            new_y = start_y + i * y_step
+            self.mouse.position = (new_x, new_y)
+            time.sleep(sleep_time)
+
+        # Assicurati che il mouse sia esattamente nella posizione finale
+        self.mouse.position = (end_x, end_y)
+
     def process_mouse_command(self, x, y, mouse_action, is_pressed):
         if mouse_action == "move":
-            self.mouse.position = (x * self.screen_width, y * self.screen_height)
+            target_x = x * self.screen_width
+            target_y = y * self.screen_height
+            current_x, current_y = self.mouse.position
+            self.smooth_move(current_x, current_y, target_x, target_y)
+
         elif mouse_action == "click":
             self.handle_click(Button.left, is_pressed)
         elif mouse_action == "right_click":
