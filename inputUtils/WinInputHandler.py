@@ -177,9 +177,11 @@ class ServerKeyboardListener:
 
 
 class ServerClipboardListener:
-    def __init__(self, send_func: Callable):
+    def __init__(self, send_function: Callable, get_clients: Callable, get_active_screen: Callable):
 
-        self.send = send_func
+        self.send = send_function
+        self.clients = get_clients
+        self.active_screen = get_active_screen
         self._thread = None
         self.last_clipboard_content = pyperclip.paste()  # Inizializza con il contenuto attuale della clipboard
         self._stop_event = threading.Event()

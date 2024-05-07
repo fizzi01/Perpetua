@@ -1,5 +1,6 @@
 from collections.abc import Callable
 
+import pyperclip
 from pynput import mouse
 import Quartz
 
@@ -182,8 +183,30 @@ class ServerKeyboardListener:
 
 
 class ServerClipboardListener:
-    def __init__(self):
-        pass
+    def __init__(self, send_function: Callable, get_clients: Callable, get_active_screen: Callable):
+
+        self.send = send_function
+        self.clients = get_clients
+        self.active_screen = get_active_screen
+        self._thread = None
+        self.last_clipboard_content = pyperclip.paste()  # Inizializza con il contenuto attuale della clipboard
+        self._stop_event = threading.Event()
+
+    def start(self):
+        self._stop_event.clear()
+        self._thread = threading.Thread(target=self._run)
+        self._thread.start()
+
+    def stop(self):
+        self._stop_event.set()
+
+    def _run(self):
+        while not self._stop_event.is_set():
+            current_clipboard_content = pyperclip.paste()
+            if current_clipboard_content != self.last_clipboard_content:
+                self.send("clipboard " + current_clipboard_content)
+                self.last_clipboard_content = current_clipboard_content
+            time.sleep(0.5)
 
 
 class ClientKeyboardController:

@@ -126,8 +126,10 @@ class Server:
             if self._checker.is_alive():
                 self._checker.join()  # Screen transition orchestrator thread
 
+            self.clipboard_listener.stop()  # Clipboard listener
             self.mouse_listener.stop()  # Mouse listener
             self.keyboard_listener.stop()  # Keyboard listener
+
             self.server_socket.close()  # Server socket
 
             # Main thread checking
@@ -170,7 +172,10 @@ class Server:
         self.keyboard_listener = InputHandler.ServerKeyboardListener(send_function=self._send_to_clients,
                                                                      get_active_screen=self._get_active_screen,
                                                                      get_clients=self._get_clients)
+
+        self.clipboard_listener = InputHandler.ServerClipboardListener(send_function=self._send_to_clients,get_clients=self._get_clients,get_active_screen=self._get_active_screen)
         try:
+            self.clipboard_listener.start()
             self.mouse_listener.start()
             self.keyboard_listener.start()
             time.sleep(1)

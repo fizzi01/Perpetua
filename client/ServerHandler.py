@@ -1,6 +1,8 @@
 import threading
 from collections.abc import Callable
 
+import pyperclip
+
 
 class ServerHandler:
     def __init__(self, connection, command_func: Callable, on_disconnect: Callable, logger: Callable):
@@ -57,7 +59,6 @@ class ServerCommandProcessor:
         self.on_screen = on_screen_func
         self.mouse_controller = mouse_controller
         self.keyboard_controller = keyboard_controller
-        self.pyperclip = pyperclip
 
     @staticmethod
     def format_data(data):
@@ -79,7 +80,7 @@ class ServerCommandProcessor:
         elif parts[0] == "clipboard":
             content = self.format_data(parts[1])
             print(content)
-            self.pyperclip.copy(content)
+            pyperclip.copy(content)
         elif parts[0] == "screen":  # Update screen status
             is_on_screen = parts[1] == "true"
             self.on_screen(is_on_screen)    # TODO
