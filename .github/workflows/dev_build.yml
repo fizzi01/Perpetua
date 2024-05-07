@@ -56,16 +56,16 @@ jobs:
           pip install -r requirements.txt
       - name: Run PyInstaller
         run: |
-          PyInstaller --windowed -n PyContinuity gui.py
+          PyInstaller --windowed --target-arch arm64 -n PyContinuity gui.py
           
       - uses: actions/upload-artifact@v4
         with:
-          name: PyContinuity_macos
+          name: PyContinuity_macos(arm64)
           path: dist/*
 
   build-mac-intel:
-    name: MacOSX (Intel) Build
-    runs-on: macos-13
+    name: MacOSX (Universal) Build
+    runs-on: macos-latest
     steps:
       - name: Checkout
         uses: actions/checkout@v4
@@ -79,9 +79,9 @@ jobs:
           pip install -r requirements.txt
       - name: Run PyInstaller
         run: |
-          PyInstaller --windowed -n PyContinuity gui.py
+          PyInstaller --windowed --target-arch x86_64 -n PyContinuity gui.py
 
       - uses: actions/upload-artifact@v4
         with:
-          name: PyContinuity_macos_intel
+          name: PyContinuity_macos(x86_64)
           path: dist/*

@@ -6,6 +6,7 @@ import platform as _platform
 
 class PositionDialog(simpledialog.Dialog):
     def __init__(self, master, title="", positions=None, ips=None):
+        self.entries = None
         self.ips = None
         self.positions = None
         self.ip_result = None
