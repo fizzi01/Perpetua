@@ -31,6 +31,7 @@ class ServerHandler:
 
     def handle_server_commands(self):
         """Handle commands continuously received from the server."""
+        temp_buffer = ""
         while self._running:
             try:
                 data = self.conn.recv(1024).decode()
@@ -38,16 +39,27 @@ class ServerHandler:
                     break
                 self.buffer += data
 
-                while '\n' in self.buffer:
-                    # Find the first newline delimiter
-                    pos = self.buffer.find('\n')
-                    # Extract the complete command
-                    command = self.buffer[:pos]
+                while '\0\0' in self.buffer or '\n' in self.buffer:
+                    if '\0\0' in self.buffer:
+                        # Find the first end delimiter
+                        pos = self.buffer.find('\0\0')
+                        # Extract the complete command
+                        command = temp_buffer + self.buffer[:pos]
+                        temp_buffer = ""  # Clear the temporary buffer
 
-                    # Remove the command from the buffer
-                    self.buffer = self.buffer[pos + 1:]
-                    # Process the command
-                    self.process_command(command)
+                        # Remove the command from the buffer
+                        self.buffer = self.buffer[pos + 2:]  # Skip the length of '\0\0'
+                        # Process the command
+                        self.process_command(command)
+                    elif '\n' in self.buffer:
+                        # Find the first message end delimiter
+                        pos = self.buffer.find('\n')
+                        # Add the chunk to the temporary buffer
+                        temp_buffer += self.buffer[:pos]
+
+                        # Remove the chunk from the buffer
+                        self.buffer = self.buffer[pos + 1:]  # Skip the length of '<MSG_END>'
+
             except Exception as e:
                 self.log(f"Error receiving data: {e}", 2)
                 break

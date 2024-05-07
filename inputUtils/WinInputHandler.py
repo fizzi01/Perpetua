@@ -20,7 +20,8 @@ class ServerMouseListener:
     :param screen_threshold: Threshold to change the screen
     """
 
-    def __init__(self, send_function: Callable, change_screen_function: Callable, get_active_screen: Callable,get_status: Callable,
+    def __init__(self, send_function: Callable, change_screen_function: Callable, get_active_screen: Callable,
+                 get_status: Callable,
                  get_clients: Callable, screen_width: int, screen_height: int, screen_threshold: int = 5):
         self.send = send_function
         self.active_screen = get_active_screen
@@ -180,7 +181,7 @@ class ServerClipboardListener:
     def __init__(self, send_function: Callable, get_clients: Callable, get_active_screen: Callable):
 
         self.send = send_function
-        self.clients = get_clients
+        self.active_clients = get_clients
         self.active_screen = get_active_screen
         self._thread = None
         self.last_clipboard_content = pyperclip.paste()  # Inizializza con il contenuto attuale della clipboard
@@ -198,7 +199,7 @@ class ServerClipboardListener:
         while not self._stop_event.is_set():
             current_clipboard_content = pyperclip.paste()
             if current_clipboard_content != self.last_clipboard_content:
-                self.send("clipboard " + current_clipboard_content)
+                self.send("all", f"clipboard {len(current_clipboard_content)} " + current_clipboard_content)
                 self.last_clipboard_content = current_clipboard_content
             time.sleep(0.5)
 
@@ -287,7 +288,8 @@ class ClientMouseController:
     def process_mouse_command(self, x, y, mouse_action, is_pressed):
         if mouse_action == "move":
             target_x = max(0, min(x * self.screen_width, self.screen_width))  # Ensure target_x is within screen bounds
-            target_y = max(0, min(y * self.screen_height, self.screen_height))  # Ensure target_y is within screen bounds
+            target_y = max(0,
+                           min(y * self.screen_height, self.screen_height))  # Ensure target_y is within screen bounds
 
             current_x, current_y = self.mouse.position
             self.smooth_move(current_x, current_y, target_x, target_y)

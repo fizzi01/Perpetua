@@ -288,27 +288,47 @@ class Server:
         else:
             return data
 
-    def _send_to_clients(self, screen, data):
+    def _send_to_clients(self, screen: str, data):
 
-        # Preparing data to be sent
-        data = self.format_data(data)
-        data = data + "\n"  # Add newline to the end of the message to separate commands
+        if screen == "all":
+            for key in self.clients:
+                self._send_to_clients(key, data)
+        else:
+            # Preparing data to send
+            data = self.format_data(data)
 
-        try:
-            conn = self.clients[screen].get('conn')
-        except KeyError:
-            self.log(f"Errore nell'invio dei dati al client {screen}: Client non trovato.", 2)
-            return
-        except Exception as e:
-            self.log(f"Errore nell'invio dei dati al client {screen}: {e}", 2)
-            return
-
-        if conn:
             try:
-                conn.send(data.encode())
-            except socket.error as e:
+                conn = self.clients[screen].get('conn')
+            except KeyError:
+                self.log(f"Errore nell'invio dei dati al client {screen}: Client non trovato.", 2)
+                return
+            except Exception as e:
                 self.log(f"Errore nell'invio dei dati al client {screen}: {e}", 2)
-                self._change_screen(None)
+                return
+
+
+
+            if conn:
+                try:
+                    # Split the command into chunks of 1024 bytes
+                    if len(data) > 1022:
+                        chunks = [data[i:i + 1024] for i in range(0, len(data), 1024)]
+                        for i, chunk in enumerate(chunks):
+                            if i == len(chunks) - 1 and len(chunk) > 1022:  # Check if this is the last chunk and its length is > 1022
+                                conn.send(chunk.encode())  # Send the last chunk without any terminator
+                                conn.send("\0\0".encode())  # Send the terminator as a separate chunk
+                            elif i == len(chunks) - 1:  # This is the last chunk and its length is less than 1022
+                                chunk = chunk + "\0\0"
+                                conn.send(chunk.encode())
+                            else:
+                                chunk = chunk + "\n"
+                                conn.send(chunk.encode())
+                    else:
+                        data = data + "\0\0"
+                        conn.send(data.encode())
+                except socket.error as e:
+                    self.log(f"Errore nell'invio dei dati al client {screen}: {e}", 2)
+                    self._change_screen(None)
 
     def _change_screen(self, screen):
 
