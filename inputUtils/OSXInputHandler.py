@@ -136,6 +136,8 @@ class ServerKeyboardListener:
         self._listener = KeyboardListener(on_press=self.on_press, on_release=self.on_release,
                                           darwin_intercept=self.keyboard_suppress_filter)
 
+        self._caps_lock = False
+
     def get_listener(self):
         return self._listener
 
@@ -151,9 +153,16 @@ class ServerKeyboardListener:
 
     def keyboard_suppress_filter(self, event_type, event):
         screen = self.active_screen()
+
+        flags = Quartz.CGEventGetFlags(event)
+        caps_lock = flags & Quartz.kCGEventFlagMaskAlphaShift
+
         if screen:
-            if event_type == Quartz.kCGEventKeyDown:  # Key press event
-                print(f"Key pressed: {event}")
+            if caps_lock != 0:
+                print("Caps Lock is pressed")
+                return event
+            elif event_type == Quartz.kCGEventKeyDown:  # Key press event
+                print(f"Key pressed blocked: {event}")
             else:
                 return event
         else:
@@ -165,7 +174,6 @@ class ServerKeyboardListener:
 
         if isinstance(key, Key):
             data = key.name
-
         else:
             data = key.char
 

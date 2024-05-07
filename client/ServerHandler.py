@@ -2,8 +2,6 @@ import socket
 import threading
 from collections.abc import Callable
 
-import pyperclip
-
 from utils.netData import *
 
 
@@ -77,7 +75,7 @@ class ServerCommandProcessor:
         self.clipboard = clipboard
 
     def process_command(self, command):
-        parts = command.split()
+        parts = extract_command_parts(command)
         if parts[0] == "mouse":
             x, y = float(parts[2]), float(parts[3])
             event = parts[1]
@@ -88,7 +86,6 @@ class ServerCommandProcessor:
             threading.Thread(target=self.keyboard_controller.process_key_command, args=(key, event)).start()
         elif parts[0] == "clipboard":
             content = extract_text(parts[1])
-            print(content)
             self.clipboard.set_clipboard(content)
         elif parts[0] == "screen":  # Update screen status
             is_on_screen = parts[1] == "true"
