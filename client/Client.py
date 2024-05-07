@@ -7,6 +7,7 @@ from inputUtils import InputHandler as inputHandler
 from .ServerHandler import ServerHandler, ServerCommandProcessor
 from utils import screen_size
 
+
 class Client:
     def __init__(self, server: str, port: int, threshold: int = 10,
                  wait: int = 5,
@@ -88,7 +89,7 @@ class Client:
 
                     self.client_socket = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
 
-                    try:    # Handle connection timeout
+                    try:  # Handle connection timeout
                         self.client_socket.connect((self.server, self.port))
                     except socket.error as e:
                         self.log(f"{e}", 2)
@@ -98,8 +99,9 @@ class Client:
                     self.log("Connected to the server.", 1)
                     self.processor = ServerCommandProcessor(self.on_screen, self.mouse_controller,
                                                             self.keyboard_controller, None)
-                    self._connection_thread = ServerHandler(connection=self.client_socket, command_func=self.processor.process_command,
-                                            on_disconnect=self.on_disconnect, logger=self.log)
+                    self._connection_thread = ServerHandler(connection=self.client_socket,
+                                                            command_func=self.processor.process_command,
+                                                            on_disconnect=self.on_disconnect, logger=self.log)
                     self._connection_thread.start()
                 else:
                     self._is_client_thread_running = False
@@ -146,7 +148,18 @@ class Client:
             if self._is_client_thread_running:
                 raise Exception("Thread principale non terminata.")
 
+    @staticmethod
+    def format_data(data):
+        if '\n' in data:
+            return data.replace('\n', '<NEWLINE>')
+        else:
+            return data
+
     def _send_to(self, command):
+
+        command = self.format_data(command)
+        command = command + "\n"  # Add newline to the end of the message to separate commands
+
         if self.client_socket:
             try:
                 self.client_socket.send(command.encode())
