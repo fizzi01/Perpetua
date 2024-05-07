@@ -186,6 +186,8 @@ class ClientKeyboardController:
             "option_r": "alt_gr",
             "alt_r": "alt_gr",
         }
+        self.special_keys = ["{", "}", "[", "]", "@", "#", "~", "«", "»", "€", "£", "“", "”", "’", "‘", "´", "`", "^",
+                             "¨", "‹", "÷", "≠", "¡", "ˆ", "¥"]
         self.controller = KeyboardController()
         self.caps_lock_state = False
 
@@ -202,9 +204,14 @@ class ClientKeyboardController:
         except Exception:
             return key_data
 
+    def is_special_key(self, key_data: str | Key):
+        if isinstance(key_data, Key):
+            return Key.name in self.special_keys
+        else:
+            return key_data in self.special_keys
+
     def process_key_command(self, key_data, key_action):
         key_data = self.data_filter(key_data)
-        print(key_data, key_action)
 
         if key_action == "press":
             if key_data is Key.caps_lock:
@@ -215,6 +222,10 @@ class ClientKeyboardController:
                     self.controller.press(key_data)
                     self.caps_lock_state = True
             else:
+                if self.is_special_key(key_data):  # Special key handler
+                    self.controller.release(Key.alt_gr)
+                    self.controller.release(Key.alt)
+
                 self.controller.press(self.get_key(key_data))
         elif key_action == "release":
             self.controller.release(self.get_key(key_data))
@@ -229,7 +240,7 @@ class ClientMouseController:
         self.last_press_time = -99
         self.doubleclick_counter = 0
 
-    def smooth_move(self, start_x, start_y, end_x, end_y, steps=4, sleep_time=0.0006):
+    def smooth_move(self, start_x, start_y, end_x, end_y, steps=6, sleep_time=0.0006):
         # Calcola la differenza tra la posizione iniziale e finale
         dx = end_x - start_x
         dy = end_y - start_y
@@ -280,7 +291,7 @@ class ClientMouseController:
                 self.pressed = True
             self.last_press_time = current_time
 
-    def smooth_scroll(self, x, y, delay=0.01, steps=5):
+    def smooth_scroll(self, x, y, delay=0.01, steps=2):
         """Smoothly scroll the mouse."""
         dx, dy = x, y
         for _ in range(steps):
