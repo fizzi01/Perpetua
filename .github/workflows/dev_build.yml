@@ -57,7 +57,8 @@ jobs:
       - name: Run PyInstaller
         run: |
           PyInstaller --windowed --target-arch arm64 -n PyContinuity gui.py
-          
+      - name: Change permissions
+        run: chmod +x dist/PyContinuity.app/Contents/MacOS/PyContinuity
       - uses: actions/upload-artifact@v4
         with:
           name: PyContinuity_macos(arm64)
@@ -80,7 +81,8 @@ jobs:
       - name: Run PyInstaller
         run: |
           PyInstaller --windowed --target-arch x86_64 -n PyContinuity gui.py
-
+      - name: Change permissions
+        run: chmod +x dist/PyContinuity.app/Contents/MacOS/PyContinuity
       - uses: actions/upload-artifact@v4
         with:
           name: PyContinuity_macos(x86_64)
