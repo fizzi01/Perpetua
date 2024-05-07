@@ -2,6 +2,8 @@ import socket
 import threading
 from collections.abc import Callable
 
+from utils.netData import *
+
 
 class ClientHandler:
     """
@@ -35,30 +37,41 @@ class ClientHandler:
     """
     Chiude la connessione col client e termina la thread.
     """
+
     def stop(self):
         self._running = False
         self._cleanup()
-        #self.thread.join()
+        # self.thread.join()
 
     def _handle(self):
+        temp_buffer = ""
         while self._running:
             try:
-                buffer = ""
-
                 data = self.conn.recv(1024).decode()
                 if not data:
                     break
-                buffer += data
+                self.buffer += data
 
-                while '\n' in buffer:
-                    # Trova il primo delimitatore di nuova riga
-                    pos = buffer.find('\n')
-                    # Estrai il comando completo
-                    command = buffer[:pos]
-                    # Rimuovi il comando dal buffer
-                    buffer = buffer[pos + 1:]
-                    # Processa il comando
-                    self._process(command)
+                while END_DELIMITER in self.buffer or CHUNK_DELIMITER in self.buffer:
+                    if END_DELIMITER in self.buffer:
+                        # Find the first end delimiter
+                        pos = self.buffer.find(END_DELIMITER)
+                        # Extract the complete command
+                        command = temp_buffer + self.buffer[:pos]
+                        temp_buffer = ""  # Clear the temporary buffer
+
+                        # Remove the command from the buffer
+                        self.buffer = self.buffer[pos + len(END_DELIMITER):]  # Skip the length of END_DELIMITER
+                        # Process the command
+                        self._process(command)
+                    elif CHUNK_DELIMITER in self.buffer:
+                        # Find the first message end delimiter
+                        pos = self.buffer.find(CHUNK_DELIMITER)
+                        # Add the chunk to the temporary buffer
+                        temp_buffer += self.buffer[:pos]
+
+                        # Remove the chunk from the buffer
+                        self.buffer = self.buffer[pos + len(CHUNK_DELIMITER):]  # Skip the length of CHUNK_DELIMITER
 
             except socket.error:
                 if self._running:
@@ -74,6 +87,6 @@ class ClientHandler:
 
     def _cleanup(self):
         self.conn.close()
-        self.logger(f"Client {self.address} disconnected.",1)
+        self.logger(f"Client {self.address} disconnected.", 1)
         self.on_disconnect(self.conn)
         return

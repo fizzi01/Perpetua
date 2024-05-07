@@ -2,6 +2,7 @@ import socket
 import threading
 import time
 from time import sleep
+from typing import Union
 
 from pynput import mouse
 
@@ -9,6 +10,7 @@ from .ClientHandler import ClientHandler
 from inputUtils import InputHandler
 from window import Window
 from utils import screen_size
+from utils.netData import *
 
 
 class Server:
@@ -173,7 +175,9 @@ class Server:
                                                                      get_active_screen=self._get_active_screen,
                                                                      get_clients=self._get_clients)
 
-        self.clipboard_listener = InputHandler.ServerClipboardListener(send_function=self._send_to_clients,get_clients=self._get_clients,get_active_screen=self._get_active_screen)
+        self.clipboard_listener = InputHandler.ServerClipboardListener(send_function=self._send_to_clients,
+                                                                       get_clients=self._get_clients,
+                                                                       get_active_screen=self._get_active_screen)
         try:
             self.clipboard_listener.start()
             self.mouse_listener.start()
@@ -239,7 +243,7 @@ class Server:
     def _get_status(self):
         return self._is_transition
 
-    def _get_clients(self, screen):
+    def _get_clients(self, screen) -> Union[socket.socket, None]:
         if screen:
             try:
                 return self.clients[screen]['conn']
@@ -249,7 +253,7 @@ class Server:
             return None
 
     def _process_client_command(self, command):
-        parts = command.split()
+        parts = extract_command_parts(command)
         try:
             y = float(parts[2]) * self.screen_height  # Denormalize y
         except Exception:
@@ -280,13 +284,9 @@ class Server:
                     self._is_transition = False
                     self._changed = True
                     self._reset_mouse("down", y)
-
-    @staticmethod
-    def format_data(data):
-        if '\n' in data:
-            return data.replace('\n', '<NEWLINE>')
-        else:
-            return data
+        elif parts[0] == 'clipboard':
+            text = extract_text(parts[1])
+            self.clipboard_listener.set_clipboard(text)
 
     def _send_to_clients(self, screen: str, data):
 
@@ -295,10 +295,10 @@ class Server:
                 self._send_to_clients(key, data)
         else:
             # Preparing data to send
-            data = self.format_data(data)
+            data = format_data(data)
 
             try:
-                conn = self.clients[screen].get('conn')
+                conn = self._get_clients(screen)
             except KeyError:
                 self.log(f"Errore nell'invio dei dati al client {screen}: Client non trovato.", 2)
                 return
@@ -306,29 +306,27 @@ class Server:
                 self.log(f"Errore nell'invio dei dati al client {screen}: {e}", 2)
                 return
 
-
-
-            if conn:
-                try:
-                    # Split the command into chunks of 1024 bytes
-                    if len(data) > 1022:
-                        chunks = [data[i:i + 1024] for i in range(0, len(data), 1024)]
-                        for i, chunk in enumerate(chunks):
-                            if i == len(chunks) - 1 and len(chunk) > 1022:  # Check if this is the last chunk and its length is > 1022
-                                conn.send(chunk.encode())  # Send the last chunk without any terminator
-                                conn.send("\0\0".encode())  # Send the terminator as a separate chunk
-                            elif i == len(chunks) - 1:  # This is the last chunk and its length is less than 1022
-                                chunk = chunk + "\0\0"
-                                conn.send(chunk.encode())
-                            else:
-                                chunk = chunk + "\n"
-                                conn.send(chunk.encode())
-                    else:
-                        data = data + "\0\0"
-                        conn.send(data.encode())
-                except socket.error as e:
-                    self.log(f"Errore nell'invio dei dati al client {screen}: {e}", 2)
-                    self._change_screen(None)
+            try:
+                # Split the command into chunks if it's too long
+                if len(data) > CHUNK_SIZE - len(END_DELIMITER):
+                    chunks = [data[i:i + CHUNK_SIZE] for i in range(0, len(data), CHUNK_SIZE)]
+                    for i, chunk in enumerate(chunks):
+                        if i == len(chunks) - 1 and len(chunk) > CHUNK_SIZE - len(
+                                END_DELIMITER):  # Check if this is the last chunk and its length is > CHUNK_SIZE - END_DELIMITER
+                            conn.send(chunk.encode())  # Send the last chunk without any terminator
+                            conn.send(END_DELIMITER.encode())  # Send the terminator as a separate chunk
+                        elif i == len(chunks) - 1:  # This is the last chunk and its length is less than CHUNK_SIZE - END_DELIMITER
+                            chunk = chunk + END_DELIMITER
+                            conn.send(chunk.encode())
+                        else:
+                            chunk = chunk + CHUNK_DELIMITER
+                            conn.send(chunk.encode())
+                else:
+                    data = data + END_DELIMITER
+                    conn.send(data.encode())
+            except socket.error as e:
+                self.log(f"Errore nell'invio dei dati al client {screen}: {e}", 2)
+                self._change_screen(None)
 
     def _change_screen(self, screen):
 

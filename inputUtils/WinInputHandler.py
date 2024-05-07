@@ -8,6 +8,8 @@ from pynput.keyboard import Key, KeyCode, Listener as KeyboardListener, Controll
 import keyboard
 from pynput.mouse import Button, Controller as MouseController, Listener as MouseListener
 
+from utils.netData import *
+
 
 class ServerMouseListener:
     """
@@ -76,7 +78,8 @@ class ServerMouseListener:
         normalized_y = y / self.screen_height
 
         if screen and clients and is_transmitting:
-            self.send(screen, f"mouse move {normalized_x} {normalized_y}")
+            command = format_command(f"mouse move {normalized_x} {normalized_y}")
+            self.send(screen, command)
         else:
             if x >= self.screen_width - self.screen_treshold:  # Soglia per passare al monitor a destra
                 self.change_screen("right")
@@ -95,22 +98,22 @@ class ServerMouseListener:
 
         if button == mouse.Button.left:
             if screen and clients and pressed:
-                self.send(screen, f"mouse click {x} {y} true")
+                self.send(screen, format_command(f"mouse click {x} {y} true"))
             elif screen and clients and not pressed:
-                self.send(screen, f"mouse click {x} {y} false")
+                self.send(screen, format_command(f"mouse click {x} {y} false"))
         elif button == mouse.Button.right:
             if screen and clients and pressed:
-                self.send(screen, f"mouse right_click {x} {y}")
+                self.send(screen, format_command(f"mouse right_click {x} {y}"))
         elif button == mouse.Button.middle:
             if screen and clients and pressed:
-                self.send(screen, f"mouse middle_click {x} {y}")
+                self.send(screen, format_command(f"mouse middle_click {x} {y}"))
         return True
 
     def on_scroll(self, x, y, dx, dy):
         screen = self.active_screen()
         clients = self.clients(screen)
         if screen and clients:
-            self.send(screen, f"mouse scroll {dx} {dy}")
+            self.send(screen, format_command(f"mouse scroll {dx} {dy}"))
         return True
 
 
@@ -162,7 +165,7 @@ class ServerKeyboardListener:
             data = key.char
 
         if screen and clients:
-            self.send(screen, f"keyboard press {data}")
+            self.send(screen, format_command(f"keyboard press {data}"))
 
     def on_release(self, key: Key | KeyCode | None):
         screen = self.active_screen()
@@ -174,7 +177,7 @@ class ServerKeyboardListener:
             data = key.char
 
         if screen and clients:
-            self.send(screen, f"keyboard release {data}")
+            self.send(screen, format_command(f"keyboard release {data}"))
 
 
 class ServerClipboardListener:
@@ -195,11 +198,56 @@ class ServerClipboardListener:
     def stop(self):
         self._stop_event.set()
 
+    def is_alive(self):
+        return self._thread.is_alive()
+
+    def set_clipboard(self, content):
+        pyperclip.copy(content)
+        self.last_clipboard_content = content
+
+    def get_clipboard(self):
+        return self.last_clipboard_content
+
     def _run(self):
         while not self._stop_event.is_set():
             current_clipboard_content = pyperclip.paste()
             if current_clipboard_content != self.last_clipboard_content:
-                self.send("all", f"clipboard {len(current_clipboard_content)} " + current_clipboard_content)
+                self.send("all", format_command("clipboard ") + current_clipboard_content)
+                self.last_clipboard_content = current_clipboard_content
+            time.sleep(0.5)
+
+
+class ClientClipboardListener:
+    def __init__(self, send_func: Callable):
+
+        self.send = send_func
+        self._thread = None
+        self.last_clipboard_content = pyperclip.paste()  # Inizializza con il contenuto attuale della clipboard
+        self._stop_event = threading.Event()
+
+    def start(self):
+        self._stop_event.clear()
+        self._thread = threading.Thread(target=self._run)
+        self._thread.start()
+
+    def stop(self):
+        self._stop_event.set()
+
+    def is_alive(self):
+        return self._thread.is_alive()
+
+    def set_clipboard(self, content):
+        pyperclip.copy(content)
+        self.last_clipboard_content = content
+
+    def get_clipboard(self):
+        return self.last_clipboard_content
+
+    def _run(self):
+        while not self._stop_event.is_set():
+            current_clipboard_content = pyperclip.paste()
+            if current_clipboard_content != self.last_clipboard_content:
+                self.send(format_command("clipboard ") + current_clipboard_content)
                 self.last_clipboard_content = current_clipboard_content
             time.sleep(0.5)
 
@@ -348,6 +396,6 @@ class ClientMouseListener:
     def handle_mouse(self, x, y):
 
         if x <= self.threshold:
-            self.send(f"return left {y / self.screen_height}")
+            self.send(format_command(f"return left {y / self.screen_height}"))
         elif x >= self.screen_width - self.threshold:
-            self.send(f"return right {y / self.screen_height}")
+            self.send(format_command(f"return right {y / self.screen_height}"))

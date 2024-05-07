@@ -1,11 +1,14 @@
+import socket
 import threading
 from collections.abc import Callable
 
 import pyperclip
 
+from utils.netData import *
+
 
 class ServerHandler:
-    def __init__(self, connection, command_func: Callable, on_disconnect: Callable, logger: Callable):
+    def __init__(self, connection: socket, command_func: Callable, on_disconnect: Callable, logger: Callable):
         self.buffer = ""
         self.conn = connection
         self.process_command = command_func
@@ -39,26 +42,26 @@ class ServerHandler:
                     break
                 self.buffer += data
 
-                while '\0\0' in self.buffer or '\n' in self.buffer:
-                    if '\0\0' in self.buffer:
+                while END_DELIMITER in self.buffer or CHUNK_DELIMITER in self.buffer:
+                    if END_DELIMITER in self.buffer:
                         # Find the first end delimiter
-                        pos = self.buffer.find('\0\0')
+                        pos = self.buffer.find(END_DELIMITER)
                         # Extract the complete command
                         command = temp_buffer + self.buffer[:pos]
                         temp_buffer = ""  # Clear the temporary buffer
 
                         # Remove the command from the buffer
-                        self.buffer = self.buffer[pos + 2:]  # Skip the length of '\0\0'
+                        self.buffer = self.buffer[pos + len(END_DELIMITER):]  # Skip the length of END_DELIMITER
                         # Process the command
                         self.process_command(command)
-                    elif '\n' in self.buffer:
+                    elif CHUNK_DELIMITER in self.buffer:
                         # Find the first message end delimiter
-                        pos = self.buffer.find('\n')
+                        pos = self.buffer.find(CHUNK_DELIMITER)
                         # Add the chunk to the temporary buffer
                         temp_buffer += self.buffer[:pos]
 
                         # Remove the chunk from the buffer
-                        self.buffer = self.buffer[pos + 1:]  # Skip the length of '<MSG_END>'
+                        self.buffer = self.buffer[pos + len(CHUNK_DELIMITER):]  # Skip the length of CHUNK_DELIMITER
 
             except Exception as e:
                 self.log(f"Error receiving data: {e}", 2)
@@ -67,17 +70,11 @@ class ServerHandler:
 
 
 class ServerCommandProcessor:
-    def __init__(self, on_screen_func, mouse_controller, keyboard_controller, pyperclip):
+    def __init__(self, on_screen_func, mouse_controller, keyboard_controller, clipboard):
         self.on_screen = on_screen_func
         self.mouse_controller = mouse_controller
         self.keyboard_controller = keyboard_controller
-
-    @staticmethod
-    def format_data(data):
-        if '<NEWLINE>' in data:
-            return data.replace('<NEWLINE>', '\n')
-        else:
-            return data
+        self.clipboard = clipboard
 
     def process_command(self, command):
         parts = command.split()
@@ -87,12 +84,12 @@ class ServerCommandProcessor:
             is_pressed = parts[4] == "true" if len(parts) > 4 else False
             self.mouse_controller.process_mouse_command(x, y, event, is_pressed)
         elif parts[0] == "keyboard":
-            key,event = parts[2], parts[1]
+            key, event = parts[2], parts[1]
             threading.Thread(target=self.keyboard_controller.process_key_command, args=(key, event)).start()
         elif parts[0] == "clipboard":
-            content = self.format_data(parts[1])
+            content = extract_text(parts[1])
             print(content)
-            pyperclip.copy(content)
+            self.clipboard.set_clipboard(content)
         elif parts[0] == "screen":  # Update screen status
             is_on_screen = parts[1] == "true"
-            self.on_screen(is_on_screen)    # TODO
+            self.on_screen(is_on_screen)  # TODO

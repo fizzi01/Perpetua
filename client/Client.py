@@ -6,6 +6,7 @@ from collections.abc import Callable
 from inputUtils import InputHandler as inputHandler
 from .ServerHandler import ServerHandler, ServerCommandProcessor
 from utils import screen_size
+from utils.netData import *
 
 
 class Client:
@@ -40,13 +41,20 @@ class Client:
         self.transition_handler = None  # Thread che controlla on_screen, se False chiama self.window.show()
         # Il server invierà un comando per avvertire il client che non è più on_screen
 
-        self.processor = None
-
         self.keyboard_controller = inputHandler.ClientKeyboardController()
         self.mouse_controller = inputHandler.ClientMouseController(self.screen_width, self.screen_height)
 
-        self.mouse_listener = None
-        self.clipboard_listener = None
+        self.mouse_listener = inputHandler.ClientMouseListener(screen_width=self.screen_width,
+                                                               screen_height=self.screen_height,
+                                                               send_func=self._send_to,
+                                                               client_socket=self.client_socket,
+                                                               threshold=self.threshold)
+
+        self.clipboard_listener = inputHandler.ClientClipboardListener(send_func=self._send_to)
+
+        self.processor = ServerCommandProcessor(self.on_screen, self.mouse_controller,
+                                                self.keyboard_controller, self.clipboard_listener)
+
 
     def start(self):
         try:
@@ -67,13 +75,9 @@ class Client:
             return False
 
     def _start_listeners(self):
-        self.mouse_listener = inputHandler.ClientMouseListener(screen_width=self.screen_width,
-                                                               screen_height=self.screen_height,
-                                                               send_func=self._send_to,
-                                                               client_socket=self.client_socket,
-                                                               threshold=self.threshold)
         try:
             self.mouse_listener.start()
+            self.clipboard_listener.start()
         except Exception as e:
             self.log(f"Error starting mouse listener: {e}")
             self.stop()
@@ -97,8 +101,7 @@ class Client:
 
                     self._connected = True
                     self.log("Connected to the server.", 1)
-                    self.processor = ServerCommandProcessor(self.on_screen, self.mouse_controller,
-                                                            self.keyboard_controller, None)
+
                     self._connection_thread = ServerHandler(connection=self.client_socket,
                                                             command_func=self.processor.process_command,
                                                             on_disconnect=self.on_disconnect, logger=self.log)
@@ -148,21 +151,30 @@ class Client:
             if self._is_client_thread_running:
                 raise Exception("Thread principale non terminata.")
 
-    @staticmethod
-    def format_data(data):
-        if '\n' in data:
-            return data.replace('\n', '<NEWLINE>')
-        else:
-            return data
-
     def _send_to(self, command):
 
-        command = self.format_data(command)
-        command = command + "\n"  # Add newline to the end of the message to separate commands
+        command = format_data(command)
 
         if self.client_socket:
             try:
-                self.client_socket.send(command.encode())
+                # Split the command into chunks if it's too long
+                if len(command) > CHUNK_SIZE - len(END_DELIMITER):
+                    chunks = [command[i:i + CHUNK_SIZE] for i in range(0, len(command), CHUNK_SIZE)]
+                    for i, chunk in enumerate(chunks):
+                        if i == len(chunks) - 1 and len(chunk) > CHUNK_SIZE - len(
+                                END_DELIMITER):  # Check if this is the last chunk and its length is > CHUNK_SIZE - END_DELIMITER
+                            self.client_socket.send(chunk.encode())  # Send the last chunk without any terminator
+                            self.client_socket.send(END_DELIMITER.encode())  # Send the terminator as a separate chunk
+                        elif i == len(
+                                chunks) - 1:  # This is the last chunk and its length is less than CHUNK_SIZE - END_DELIMITER
+                            chunk = chunk + END_DELIMITER
+                            self.client_socket.send(chunk.encode())
+                        else:
+                            chunk = chunk + CHUNK_DELIMITER
+                            self.client_socket.send(chunk.encode())
+                else:
+                    command = command + END_DELIMITER
+                    self.client_socket.send(command.encode())
             except Exception as e:
                 self.log(f"Error sending data: {e}", 2)
                 self.stop()

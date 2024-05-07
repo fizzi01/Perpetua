@@ -11,5 +11,6 @@ else:
     raise OSError("Unsupported platform '{}'".format(_platform.system()))
 
 from .screen import get_screen_size as screen_size
+from netConstants import *
 
 __all__ = ['net', 'screen_size']

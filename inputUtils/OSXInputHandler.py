@@ -12,10 +12,13 @@ from pynput.mouse import Button, Controller as MouseController
 from pynput.mouse import Listener as MouseListener
 from pynput.keyboard import Listener as KeyboardListener, Key, KeyCode
 
+from utils.netData import *
+
 
 class ServerMouseListener:
 
-    def __init__(self, send_function: Callable, change_screen_function: Callable, get_active_screen: Callable,get_status: Callable,
+    def __init__(self, send_function: Callable, change_screen_function: Callable, get_active_screen: Callable,
+                 get_status: Callable,
                  get_clients: Callable, screen_width: int, screen_height: int, screen_threshold: int = 5):
         self.send = send_function
         self.active_screen = get_active_screen
@@ -80,7 +83,7 @@ class ServerMouseListener:
         normalized_y = y / self.screen_height
 
         if screen and clients and is_transmitting:
-            self.send(screen, f"mouse move {normalized_x} {normalized_y}")
+            self.send(screen, format_command(f"mouse move {normalized_x} {normalized_y}"))
         else:
             if x >= self.screen_width - self.screen_treshold:  # Soglia per passare al monitor a destra
                 self.change_screen("right")
@@ -99,22 +102,22 @@ class ServerMouseListener:
 
         if button == mouse.Button.left:
             if screen and clients and pressed:
-                self.send(screen, f"mouse click {x} {y} true")
+                self.send(screen, format_command(f"mouse click {x} {y} true"))
             elif screen and clients and not pressed:
-                self.send(screen, f"mouse click {x} {y} false")
+                self.send(screen, format_command(f"mouse click {x} {y} false"))
         elif button == mouse.Button.right:
             if screen and clients and pressed:
-                self.send(screen, f"mouse right_click {x} {y}")
+                self.send(screen, format_command(f"mouse right_click {x} {y}"))
         elif button == mouse.Button.middle:
             if screen and clients and pressed:
-                self.send(screen, f"mouse middle_click {x} {y}")
+                self.send(screen, format_command(f"mouse middle_click {x} {y}"))
         return True
 
     def on_scroll(self, x, y, dx, dy):
         screen = self.active_screen()
         clients = self.clients(screen)
         if screen and clients:
-            self.send(screen, f"mouse scroll {dx} {dy}")
+            self.send(screen, format_command(f"mouse scroll {dx} {dy}"))
         return True
 
 
@@ -167,7 +170,7 @@ class ServerKeyboardListener:
             data = key.char
 
         if screen and clients:
-            self.send(screen, f"keyboard press {data}")
+            self.send(screen, format_command(f"keyboard press {data}"))
 
     def on_release(self, key: Key | KeyCode | None):
         screen = self.active_screen()
@@ -179,7 +182,7 @@ class ServerKeyboardListener:
             data = key.char
 
         if screen and clients:
-            self.send(screen, f"keyboard release {data}")
+            self.send(screen, format_command(f"keyboard release {data}"))
 
 
 class ServerClipboardListener:
@@ -200,11 +203,56 @@ class ServerClipboardListener:
     def stop(self):
         self._stop_event.set()
 
+    def is_alive(self):
+        return self._thread.is_alive()
+
+    def set_clipboard(self, content):
+        pyperclip.copy(content)
+        self.last_clipboard_content = content
+
+    def get_clipboard(self):
+        return self.last_clipboard_content
+
     def _run(self):
         while not self._stop_event.is_set():
             current_clipboard_content = pyperclip.paste()
             if current_clipboard_content != self.last_clipboard_content:
-                self.send("clipboard " + current_clipboard_content)
+                self.send("all", format_command("clipboard ") + current_clipboard_content)
+                self.last_clipboard_content = current_clipboard_content
+            time.sleep(0.5)
+
+
+class ClientClipboardListener:
+    def __init__(self, send_func: Callable):
+
+        self.send = send_func
+        self._thread = None
+        self.last_clipboard_content = pyperclip.paste()  # Inizializza con il contenuto attuale della clipboard
+        self._stop_event = threading.Event()
+
+    def start(self):
+        self._stop_event.clear()
+        self._thread = threading.Thread(target=self._run)
+        self._thread.start()
+
+    def stop(self):
+        self._stop_event.set()
+
+    def is_alive(self):
+        return self._thread.is_alive()
+
+    def set_clipboard(self, content):
+        pyperclip.copy(content)
+        self.last_clipboard_content = content
+
+    def get_clipboard(self):
+        return self.last_clipboard_content
+
+    def _run(self):
+        while not self._stop_event.is_set():
+            current_clipboard_content = pyperclip.paste()
+            if current_clipboard_content != self.last_clipboard_content:
+                self.send(format_command("clipboard ") + current_clipboard_content)
                 self.last_clipboard_content = current_clipboard_content
             time.sleep(0.5)
 
@@ -276,7 +324,8 @@ class ClientMouseController:
     def process_mouse_command(self, x, y, mouse_action, is_pressed):
         if mouse_action == "move":
             target_x = max(0, min(x * self.screen_width, self.screen_width))  # Ensure target_x is within screen bounds
-            target_y = max(0, min(y * self.screen_height, self.screen_height))  # Ensure target_y is within screen bounds
+            target_y = max(0,
+                           min(y * self.screen_height, self.screen_height))  # Ensure target_y is within screen bounds
 
             self.mouse.position = (target_x, target_y)
 
@@ -334,6 +383,6 @@ class ClientMouseListener:
     def handle_mouse(self, x, y):
 
         if x <= self.threshold:
-            self.send(f"return left {y / self.screen_height}")
+            self.send(format_command(f"return left {y / self.screen_height}"))
         elif x >= self.screen_width - self.threshold:
-            self.send(f"return right {y / self.screen_height}")
+            self.send(format_command(f"return right {y / self.screen_height}"))
