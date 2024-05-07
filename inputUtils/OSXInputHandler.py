@@ -14,11 +14,12 @@ from pynput.keyboard import Listener as KeyboardListener, Key, KeyCode
 
 class ServerMouseListener:
 
-    def __init__(self, send_function: Callable, change_screen_function: Callable, get_active_screen: Callable,
+    def __init__(self, send_function: Callable, change_screen_function: Callable, get_active_screen: Callable,get_status: Callable,
                  get_clients: Callable, screen_width: int, screen_height: int, screen_threshold: int = 5):
         self.send = send_function
         self.active_screen = get_active_screen
         self.change_screen = change_screen_function
+        self.get_trasmission_status = get_status
         self.clients = get_clients
         self.screen_width = screen_width
         self.screen_height = screen_height
@@ -72,11 +73,12 @@ class ServerMouseListener:
 
         screen = self.active_screen()
         clients = self.clients(screen)
+        is_transmitting = self.get_trasmission_status()
 
         normalized_x = x / self.screen_width
         normalized_y = y / self.screen_height
 
-        if screen and clients:
+        if screen and clients and is_transmitting:
             self.send(screen, f"mouse move {normalized_x} {normalized_y}\n")
         else:
             if x >= self.screen_width - self.screen_treshold:  # Soglia per passare al monitor a destra
