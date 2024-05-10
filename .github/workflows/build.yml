@@ -1,0 +1,89 @@
+name: Build
+
+on:
+  workflow_dispatch:
+    inputs:
+      logLevel:
+        description: 'Log level'     
+        required: true
+        default: 'warning'
+      tags:
+        description: 'Forced build' 
+  push:
+    branches:
+      - master
+    paths-ignore:
+      - '.github/**'
+
+jobs:
+  build-windows:
+    name: Win64 Build
+    runs-on: windows-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+      - name: Install Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.10'
+          architecture: 'x64'
+      - name: Install requirements
+        run: |
+          pip install -r requirements.txt
+      - name: Run PyInstaller
+        run: |
+          pip install pyinstaller
+          PyInstaller --windowed --onefile -n PyContinuity gui.py
+          
+      - uses: actions/upload-artifact@v4
+        with:
+          name: PyContinuity_win64
+          path: dist/PyContinuity.exe
+          
+  build-mac:
+    name: MacOSX (arm64) Build
+    runs-on: macos-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+      - name: Install Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.10'
+      - name: Install requirements
+        run: |
+          python -m pip install pyinstaller
+          pip install -r requirements.txt
+      - name: Run PyInstaller
+        run: |
+          PyInstaller --windowed --target-arch arm64 -n PyContinuity gui.py
+      - name: Change permissions
+        run: chmod +x dist/PyContinuity.app/Contents/MacOS/PyContinuity
+      - uses: actions/upload-artifact@v4
+        with:
+          name: PyContinuity_macos(arm64)
+          path: dist/*
+
+  build-mac-intel:
+    name: MacOSX (x86_64) Build
+    runs-on: macos-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+      - name: Install Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.10'
+      - name: Install requirements
+        run: |
+          python -m pip install pyinstaller
+          pip install -r requirements.txt
+      - name: Run PyInstaller
+        run: |
+          PyInstaller --windowed --target-arch x86_64 -n PyContinuity gui.py
+      - name: Change permissions
+        run: chmod +x dist/PyContinuity.app/Contents/MacOS/PyContinuity
+      - uses: actions/upload-artifact@v4
+        with:
+          name: PyContinuity_macos(x86_64)
+          path: dist/*

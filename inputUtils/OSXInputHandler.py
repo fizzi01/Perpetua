@@ -7,10 +7,10 @@ import Quartz
 import threading
 import time
 
-import keyboard
+import keyboard as hotkey_controller
 from pynput.mouse import Button, Controller as MouseController
 from pynput.mouse import Listener as MouseListener
-from pynput.keyboard import Listener as KeyboardListener, Key, KeyCode
+from pynput.keyboard import Listener as KeyboardListener, Key, KeyCode, Controller as KeyboardController
 
 from utils.netData import *
 
@@ -268,56 +268,77 @@ class ClientClipboardListener:
 class ClientKeyboardController:
     def __init__(self):
         self.pressed_keys = set()
-        self.key_filter = {  # Darwin specific key codes
-            "alt": 0x3a,  # Option key
-            "option": 0x3a,  # Option key
-            ",": "comma",
-            "+": "plus"
+        # self.key_filter = {  # Darwin specific key codes
+        #     "alt": 0x3a,  # Option key
+        #     "option": 0x3a,  # Option key
+        #     "caps_lock": 0x39,  # Caps lock key
+        #     "media_volume_mute": 0x4a,  # Mute key
+        #     "media_volume_down": "volume down",  # Volume down key
+        #     "media_volume_up": "volume up",  # Volume up key
+        #     ",": "comma",
+        #     "+": "plus"
+        # }
+        self.key_filter = {
         }
+        self.not_shift = ["1", "2", "3", "4", "5", "6", "7", "8", "9", "0", ",", "+", "-"]
+        self.hotkey_filter = {"+": "plus", ",": "comma", "alt_l": 0x3a}
 
-    @staticmethod
-    def _key_cleanup(key_data):
-        if key_data.endswith("_l"):
-            key_data = key_data[:-2]
-        elif key_data.endswith("_r"):
-            key_data = key_data[:-2]
-        elif key_data.endswith("_gr"):
-            key_data = key_data[:-3]
-        return key_data
+        self.keyboard = KeyboardController()
+        self.hotkey = hotkey_controller
 
     def data_filter(self, key_data):
         if key_data in self.key_filter:
             return self.key_filter[key_data]
         return key_data
 
+    def get_hotkey_filter(self, key_data):
+        if key_data in self.hotkey_filter:
+            return self.hotkey_filter[key_data]
+        return key_data
+
+    @staticmethod
+    def get_key(key_data: str):
+        try:
+            key = Key[key_data]
+            return key
+        except Exception:
+            return key_data
+
+    @staticmethod
+    def is_alt_gr(key_data):
+        return key_data == "alt_gr" or key_data == "alt_r"
+
+    @staticmethod
+    def is_shift(key_data):
+        return key_data == "shift"
+
+    @staticmethod
+    def is_alt(key_data):
+        return key_data == "alt_l"
+
     def process_key_command(self, key_data, key_action):
-        key_data = self._key_cleanup(key_data)
         key_data = self.data_filter(key_data)
 
         if key_action == "press":
-            if keyboard.is_modifier(key_data):
-                if key_data not in self.pressed_keys:
-                    keyboard.press(key_data)
-                    if key_data not in ["backspace", "tab", "delete", "enter", "space"]:
-                        self.pressed_keys.add(key_data)
+            if self.is_alt_gr(key_data):
+                self.keyboard.release(Key.ctrl_r)
+            if self.is_shift(key_data) or self.is_alt(key_data):
+                self.pressed_keys.add(key_data)
+                self.keyboard.press(self.get_key(key_data))
             else:
-                if len(self.pressed_keys) != 0:
-                    pressed_list = list(self.pressed_keys)
-                    pressed_list.append(key_data)
-                    hotkey = pressed_list
-                    keyboard.press(hotkey)
+                if len(self.pressed_keys) != 0 and self.get_key(key_data) in self.not_shift:
+                    key_data = self.get_hotkey_filter(key_data)
+                    hotkey = []
+                    for key in self.pressed_keys:
+                        hotkey.append(self.get_hotkey_filter(key))
+                    hotkey.append(key_data)
+                    self.hotkey.press_and_release(hotkey)
                 else:
-                    hotkey = key_data
-                    keyboard.press(hotkey)
+                    self.keyboard.press(self.get_key(key_data))
         elif key_action == "release":
-            try:
-                if keyboard.is_modifier(key_data):
-                    keyboard.release(key_data)
-                    self.pressed_keys.remove(key_data)
-                else:
-                    keyboard.release(key_data)
-            except IndexError:
-                pass
+            if self.is_shift(key_data) or self.is_alt(key_data) and len(self.pressed_keys) > 0:
+                self.pressed_keys.remove(key_data)
+            self.keyboard.release(self.get_key(key_data))
 
 
 class ClientMouseController:
