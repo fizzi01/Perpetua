@@ -386,24 +386,24 @@ class Server:
 
     def _reset_mouse(self, param, y: float):
         if param == "left":
-            self._force_mouse_position(self.screen_threshold + 50, y)
+            self._force_mouse_position(self.screen_threshold + 10, y)
 
-            self.log(f"Moving mouse to x: {self.screen_threshold + 50}, y:{y}")
+            self.log(f"Moving mouse to x: {self.screen_threshold + 10}, y:{y}")
         elif param == "right":
-            self._force_mouse_position(self.screen_width - self.screen_threshold - 50, y)
+            self._force_mouse_position(self.screen_width - self.screen_threshold - 10, y)
 
-            self.log(f"Moving mouse to x: {self.screen_width - self.screen_threshold - 50}, y:{y}")
+            self.log(f"Moving mouse to x: {self.screen_width - self.screen_threshold - 10}, y:{y}")
         elif param == "up":
-            self._force_mouse_position(y, self.screen_threshold + 50)
-            self.log(f"Moving mouse to x: {y}, y:{self.screen_threshold + 5}")
+            self._force_mouse_position(y, self.screen_threshold + 10)
+            self.log(f"Moving mouse to x: {y}, y:{self.screen_threshold + 10}")
         elif param == "down":
-            self._force_mouse_position(y, self.screen_height - self.screen_threshold - 50)
-            self.log(f"Moving mouse to x: {y}, y:{self.screen_height - self.screen_threshold - 50}")
+            self._force_mouse_position(y, self.screen_height - self.screen_threshold - 10)
+            self.log(f"Moving mouse to x: {y}, y:{self.screen_height - self.screen_threshold - 10}")
 
     def _force_mouse_position(self, x, y):
         desired_position = (x, y)
         attempt = 0
-        max_attempts = 60
+        max_attempts = 50
         while self.mouse_controller.position != desired_position and attempt < max_attempts:
             self.mouse_controller.position = desired_position
             attempt += 1
