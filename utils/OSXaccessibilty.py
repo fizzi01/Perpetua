@@ -45,9 +45,11 @@ def run_accessibility_checks():
         time.sleep(1)
         is_trusted = is_accessibility_verified()
         print("Accessibilty verified: {}".format(is_trusted))
+        return is_trusted
 
     except Exception as ex:
         print(ex)
+        return False
 
 
 def load_iot():
@@ -80,10 +82,11 @@ def on_accessibility_click():
         })
 
         print("Called accessibility")
-        run_accessibility_checks()
+        return run_accessibility_checks()
 
     except Exception as ex:
         print(ex)
+        return False
 
 
 def manual_request_input_access():
@@ -130,14 +133,15 @@ def check_osx_permissions():
             print("[CHECK] Is keyboard trusted: {}".format(is_keyboard_ok))
 
             if not is_keyboard_ok:
-
-                thread = Thread(target=on_input_monitor_click, args=(
+                on_input_monitor_click(ioset)
+                """thread = Thread(target=on_input_monitor_click, args=(
                     ioset,
                 ))
-                thread.start()
+                thread.start()"""
 
             else:
                 print("[CHECK] Is keyboard trusted: {}".format(is_keyboard_ok))
+                return is_keyboard_ok
 
         else:
 
@@ -145,9 +149,9 @@ def check_osx_permissions():
             print("[CHECK] Is accessibility trusted: {}".format(is_accessibility_ok))
 
             if not is_accessibility_ok:
-                thread = Thread(target=on_accessibility_click)
-                thread.start()
+                is_accessibility_ok = on_accessibility_click()
 
+            return is_accessibility_ok
 
     except Exception as e:
         print(e)

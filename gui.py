@@ -311,12 +311,15 @@ class ServerConfigGUI:
 
 # Create the main window and pass it to the GUI
 if __name__ == "__main__":
-
+    permission = False
     if _platform.system() == 'Darwin':
         import utils.OSXaccessibilty as OSXaccessibilty
+        permission = OSXaccessibilty.check_osx_permissions()
 
-        OSXaccessibilty.check_osx_permissions()
+    if not permission:
+        messagebox.showerror("Errore", "Permessi non concessi")
 
     root = tk.Tk()
     app = ServerConfigGUI(root)
     root.mainloop()
+

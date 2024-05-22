@@ -51,7 +51,7 @@ class ServerHandler:
                         # Remove the command from the buffer
                         self.buffer = self.buffer[pos + len(END_DELIMITER):]  # Skip the length of END_DELIMITER
                         # Process the command
-                        self.process_command(command)
+                        threading.Thread(target=self.process_command, args=(command,)).start()
                     elif CHUNK_DELIMITER in self.buffer:
                         # Find the first message end delimiter
                         pos = self.buffer.find(CHUNK_DELIMITER)
@@ -83,7 +83,7 @@ class ServerCommandProcessor:
             self.mouse_controller.process_mouse_command(x, y, event, is_pressed)
         elif parts[0] == "keyboard":
             key, event = parts[2], parts[1]
-            threading.Thread(target=self.keyboard_controller.process_key_command, args=(key, event)).start()
+            self.keyboard_controller.process_key_command(key, event)
         elif parts[0] == "clipboard":
             content = extract_text(parts[1])
             self.clipboard.set_clipboard(content)
