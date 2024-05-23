@@ -33,13 +33,13 @@ jobs:
       - name: Run PyInstaller
         run: |
           pip install pyinstaller
-          PyInstaller --windowed --onefile -n PyContinuity gui.py
-          
+          PyInstaller --windowed --onefile -n PyContinuity --icon="logo/logo.ico"  gui.py
+
       - uses: actions/upload-artifact@v4
         with:
           name: PyContinuity_win64
           path: dist/PyContinuity.exe
-          
+
   build-mac:
     name: MacOSX (arm64) Build
     runs-on: macos-latest
@@ -56,7 +56,7 @@ jobs:
           pip install -r requirements.txt
       - name: Run PyInstaller
         run: |
-          PyInstaller --windowed --target-arch arm64 -n PyContinuity gui.py
+          PyInstaller --windowed --target-arch arm64 -n PyContinuity --icon="logo/logo.icns" gui.py
       - name: Change permissions
         run: chmod +x dist/PyContinuity.app/Contents/MacOS/PyContinuity
       - uses: actions/upload-artifact@v4
@@ -80,7 +80,7 @@ jobs:
           pip install -r requirements.txt
       - name: Run PyInstaller
         run: |
-          PyInstaller --windowed --target-arch x86_64 -n PyContinuity gui.py
+          PyInstaller --windowed --target-arch x86_64 -n PyContinuity --icon="logo/logo.icns" gui.py
       - name: Change permissions
         run: chmod +x dist/PyContinuity.app/Contents/MacOS/PyContinuity
       - uses: actions/upload-artifact@v4
