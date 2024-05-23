@@ -369,18 +369,18 @@ class Server:
             if self._changed:
                 self.log(f"Changing screen to {self.active_screen}", 1)
 
-                self._screen_toggle(self.active_screen)
-
-                if self.active_screen == "left":
-                    self._reset_mouse("right", self.current_mouse_position[1])
-                elif self.active_screen == "right":
-                    self._reset_mouse("left", self.current_mouse_position[1])
-                elif self.active_screen == "up":
-                    self._reset_mouse("down", self.current_mouse_position[0])
-                elif self.active_screen == "down":
-                    self._reset_mouse("up", self.current_mouse_position[0])
-
                 with self.lock:
+                    self._screen_toggle(self.active_screen)
+
+                    if self.active_screen == "left":
+                        self._reset_mouse("right", self.current_mouse_position[1])
+                    elif self.active_screen == "right":
+                        self._reset_mouse("left", self.current_mouse_position[1])
+                    elif self.active_screen == "up":
+                        self._reset_mouse("down", self.current_mouse_position[0])
+                    elif self.active_screen == "down":
+                        self._reset_mouse("up", self.current_mouse_position[0])
+
                     self._changed = False
                     self._is_transition = True
 
