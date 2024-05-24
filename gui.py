@@ -318,6 +318,7 @@ if __name__ == "__main__":
 
         if not permission:
             messagebox.showerror("Errore", "Permessi non concessi")
+            exit(1)
 
     root = tk.Tk()
     app = ServerConfigGUI(root)
