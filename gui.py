@@ -1,3 +1,4 @@
+import sys
 import tkinter as tk
 from tkinter import messagebox, scrolledtext, simpledialog
 from main import run_server, run_client
@@ -318,7 +319,7 @@ if __name__ == "__main__":
 
         if not permission:
             messagebox.showerror("Errore", "Permessi non concessi")
-            exit(1)
+            sys.exit(1)
 
     root = tk.Tk()
     app = ServerConfigGUI(root)
