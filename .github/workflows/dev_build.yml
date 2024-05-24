@@ -85,7 +85,7 @@ jobs:
 
   build-mac-intel:
     name: MacOSX (x86_64) Build
-    runs-on: macos-latest
+    runs-on: macos-13
     steps:
       - name: Checkout
         uses: actions/checkout@v4
