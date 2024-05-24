@@ -1,8 +1,6 @@
-import os
 import platform
 import sys
 import time
-from threading import Thread
 from packaging import version
 
 kIOHIDAccessTypeDenied = 1
