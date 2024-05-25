@@ -132,3 +132,4 @@ dmypy.json
 .idea/
 *.iml
 README.md
+entitlements.plist

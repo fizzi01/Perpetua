@@ -1,6 +1,7 @@
 import socket
 import threading
 from collections.abc import Callable
+from time import sleep
 
 from utils.netData import *
 
@@ -60,7 +61,7 @@ class ServerHandler:
 
                         # Remove the chunk from the buffer
                         self.buffer = self.buffer[pos + len(CHUNK_DELIMITER):]  # Skip the length of CHUNK_DELIMITER
-
+                    sleep(0.1)
             except Exception as e:
                 self.log(f"Error receiving data: {e}", 2)
                 break
