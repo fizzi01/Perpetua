@@ -183,7 +183,8 @@ class Server:
 
             self.mouse_listener.start()
             time.sleep(0.5)
-            #self.keyboard_listener.start()
+            self.log("Starting keyboard listener.")
+            self.keyboard_listener.start()
 
             if not self.mouse_listener.is_alive():
                 raise Exception("Mouse listener not started")
