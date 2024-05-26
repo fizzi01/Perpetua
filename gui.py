@@ -1,9 +1,17 @@
 import sys
-import tkinter as tk
-from tkinter import messagebox, scrolledtext, simpledialog
+import platform as _platform
+
+from mttkinter import mtTkinter as tk
+
+if _platform.system() == 'Darwin':
+    from tkinter import messagebox, scrolledtext, simpledialog
+    from tkmacosx import Button
+else:
+    from tkinter import messagebox, scrolledtext, simpledialog, Button
+
 from main import run_server, run_client
 from utils import net
-import platform as _platform
+
 
 import re
 
@@ -166,7 +174,7 @@ class ServerConfigGUI:
         self.server_widgets.append(entry_port)
 
         # Button to configure positions
-        configure_button = tk.Button(self.master, text="Configure Client Positions", command=self.configure_positions)
+        configure_button = Button(self.master, text="Configure Client Positions", command=self.configure_positions)
         configure_button.grid(row=2, column=1, sticky="ew")
         self.server_widgets.append(configure_button)
 
@@ -178,12 +186,12 @@ class ServerConfigGUI:
         # Start server button
 
         # Button to start the server
-        self.start_button = tk.Button(self.master, text="Start Server", command=self.start_server)
+        self.start_button = Button(self.master, text="Start Server", command=self.start_server)
         self.start_button.grid(row=4, column=0, sticky="ew")
         self.server_widgets.append(self.start_button)
 
         # Button to stop the server
-        self.stop_button = tk.Button(self.master, text="Stop Server", command=self.stop_server)
+        self.stop_button = Button(self.master, text="Stop Server", command=self.stop_server)
         self.stop_button.grid(row=4, column=1, sticky="ew")
         self.stop_button.grid_remove()  # Hide the stop button initially
         self.server_widgets.append(self.stop_button)
@@ -206,6 +214,7 @@ class ServerConfigGUI:
             # Start the server
             self.server = run_server(host=host, port=port, pos=position, ips=ips, logging=logging, wait=5,
                                      screen_threshold=5, root=self.master, stdout=self.update_output)
+
 
             # Update button visibility
             self.start_button.grid_remove()
@@ -262,10 +271,10 @@ class ServerConfigGUI:
         self.client_widgets.append(entry_client_port)
 
         # Bottone per connettersi
-        self.connect_button = tk.Button(self.master, text="Connect to Server", command=self.connect_to_server)
+        self.connect_button = Button(self.master, text="Connect to Server", command=self.connect_to_server)
         self.connect_button.grid(row=11, columnspan=2, sticky="ew")
         self.client_widgets.append(self.connect_button)
-        self.stop_client_button = tk.Button(self.master, text="Stop Connection", command=self.stop_connection)
+        self.stop_client_button = Button(self.master, text="Stop Connection", command=self.stop_connection)
         self.stop_client_button.grid(row=11, columnspan=2, sticky="ew")
         self.client_widgets.append(self.stop_client_button)
         self.stop_client_button.grid_remove()

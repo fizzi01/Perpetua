@@ -1,5 +1,3 @@
-import time
-import tkinter as tk
 from Cocoa import NSApplication, NSApp, NSWindow, NSWindowStyleMaskBorderless, NSBackingStoreBuffered, NSMakeRect, \
     NSCursor
 from Quartz.CoreGraphics import CGDisplayHideCursor, CGMainDisplayID, CGAssociateMouseAndMouseCursorPosition, \
