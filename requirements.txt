@@ -3,3 +3,5 @@ keyboard==0.13.5
 screeninfo==0.8.1
 packaging==24.0
 pyperclip==1.8.2
+mttkinter==0.6.1
+tkmacosx==1.0.5
