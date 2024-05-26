@@ -52,7 +52,7 @@ jobs:
           python-version: '3.11'
       - name: Install requirements
         run: |
-          pip install -r requirements.txt
+          pip install -r requirements_mac.txt
       - name: Install ccache
         run: |
           brew install ccache
@@ -100,7 +100,7 @@ jobs:
           python-version: '3.11'
       - name: Install requirements
         run: |
-          pip install -r requirements.txt
+          pip install -r requirements_mac.txt
       - name: Build app
         run: |
           nuitka3 --standalone --macos-app-icon=logo/logo.icns --enable-plugin=tk-inter --follow-imports --output-dir=dist --macos-create-app-bundle --disable-console --include-package=Quartz --output-filename=PyContinuity --product-name="PyContinuity" -o PyContinuity gui.py
