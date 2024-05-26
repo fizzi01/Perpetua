@@ -169,6 +169,8 @@ class Server:
                                                                screen_height=self.screen_height,
                                                                screen_threshold=self.screen_threshold)
 
+        time.sleep(0.5)
+
         self.keyboard_listener = InputHandler.ServerKeyboardListener(send_function=self._send_to_clients,
                                                                      get_active_screen=self._get_active_screen,
                                                                      get_clients=self._get_clients)
@@ -178,17 +180,20 @@ class Server:
                                                                        get_active_screen=self._get_active_screen)
         try:
             self.clipboard_listener.start()
+
             self.mouse_listener.start()
+            time.sleep(0.5)
             self.keyboard_listener.start()
-            time.sleep(1)
+
             if not self.mouse_listener.is_alive():
                 raise Exception("Mouse listener not started")
-            if not self.mouse_listener.is_alive():
+            if not self.keyboard_listener.is_alive():
                 raise Exception("Keyboard listener not started")
         except Exception as e:
-            raise Exception(e)
+            self.log(f"Errore nell'avvio dei listener: {e}", 2)
+            self.stop()
 
-        self.log("Mouse listener started.")
+        self.log("Listeners started.")
 
     def _accept_clients(self):
         while self._started:
@@ -290,7 +295,8 @@ class Server:
 
         if screen == "all":
             for key in self.clients:
-                self._send_to_clients(key, data)
+                if key:
+                    self._send_to_clients(key, data)
         else:
             # Preparing data to send
             data = format_data(data)

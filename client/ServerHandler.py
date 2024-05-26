@@ -61,7 +61,7 @@ class ServerHandler:
 
                         # Remove the chunk from the buffer
                         self.buffer = self.buffer[pos + len(CHUNK_DELIMITER):]  # Skip the length of CHUNK_DELIMITER
-                    sleep(0.1)
+                    sleep(0.000001)
             except Exception as e:
                 self.log(f"Error receiving data: {e}", 2)
                 break
