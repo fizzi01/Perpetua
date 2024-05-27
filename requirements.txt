@@ -21,8 +21,7 @@ pyperclip==1.8.2
 requests==2.31.0	
 screeninfo==0.8.1	
 setuptools==68.2.0	
-six==1.16.0	
-tkmacosx==1.0.5	
+six==1.16.0
 urllib3==2.2.1	
 wheel==0.41.2	
 zstandard==0.22.0	

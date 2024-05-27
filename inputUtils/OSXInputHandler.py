@@ -280,8 +280,24 @@ class ClientKeyboardController:
         # }
         self.key_filter = {
         }
+
         self.not_shift = ["1", "2", "3", "4", "5", "6", "7", "8", "9", "0", ",", "+", "-"]
-        self.hotkey_filter = {"+": "plus", ",": "comma", "alt_l": 0x3a}
+
+        # Needed on macos silicon
+        self.hotkey_filter = {"1": 0x12,
+                              "2": 0x13,
+                              "3": 0x14,
+                              "4": 0x15,
+                              "5": 0x17,
+                              "6": 0x16,
+                              "7": 0x1a,
+                              "8": 0x1c,
+                              "9": 0x19,
+                              "0": 0x1d,
+                              "+": 0x1e,
+                              ",": 0x2b,
+                              "-": 0x2C,
+                              "alt_l": 0x3a}
 
         self.keyboard = KeyboardController()
         self.hotkey = hotkey_controller
@@ -320,6 +336,7 @@ class ClientKeyboardController:
         key_data = self.data_filter(key_data)
 
         if key_action == "press":
+            print(key_data)
             if self.is_alt_gr(key_data):
                 self.keyboard.release(Key.ctrl_r)
             if self.is_shift(key_data) or self.is_alt(key_data):

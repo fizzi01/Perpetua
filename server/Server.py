@@ -183,7 +183,6 @@ class Server:
 
             self.mouse_listener.start()
             time.sleep(0.5)
-            self.log("Starting keyboard listener.")
             self.keyboard_listener.start()
 
             if not self.mouse_listener.is_alive():
