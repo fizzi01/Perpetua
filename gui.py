@@ -12,7 +12,6 @@ else:
 from main import run_server, run_client
 from utils import net
 
-
 import re
 
 
@@ -154,6 +153,24 @@ class ServerConfigGUI:
 
         # Aggiungi alla GUI i componenti del client
         self.create_client_widgets()
+        self.master.protocol("WM_DELETE_WINDOW", self.on_close)
+
+    def on_close(self):
+        close = False
+        if self.server:
+            if not self.server.stop():
+                self.update_output("Failed to stop server")
+            else:
+                close = True
+
+        if self.client:
+            if not self.client.stop():
+                self.update_output("Failed to stop client")
+            else:
+                close = True
+
+        if close:
+            self.master.destroy()
 
     def create_widgets(self):
         # Label and entry for host
@@ -214,7 +231,6 @@ class ServerConfigGUI:
             # Start the server
             self.server = run_server(host=host, port=port, pos=position, ips=ips, logging=logging, wait=5,
                                      screen_threshold=5, root=self.master, stdout=self.update_output)
-
 
             # Update button visibility
             self.start_button.grid_remove()
@@ -324,6 +340,7 @@ if __name__ == "__main__":
 
     if _platform.system() == 'Darwin':
         import utils.OSXaccessibilty as OSXaccessibilty
+
         permission = OSXaccessibilty.check_osx_permissions()
 
         if not permission:
@@ -337,4 +354,3 @@ if __name__ == "__main__":
         root.iconbitmap("logo\logo.ico")
 
     root.mainloop()
-
