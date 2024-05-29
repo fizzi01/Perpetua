@@ -59,7 +59,7 @@ jobs:
           export PATH="/usr/local/opt/ccache/libexec:$PATH"
       - name: Build app
         run: |
-          nuitka3 --standalone --macos-app-icon=logo/logo.icns --enable-plugin=tk-inter --follow-imports --output-dir=dist --macos-create-app-bundle --disable-console --include-package=Quartz --include-module=Quartz --include-package=pynput --include-module=pynput --include-package-data=pynput --output-filename=PyContinuity --product-name="PyContinuity" -o PyContinuity gui.py
+          nuitka3 --standalone --macos-app-icon=logo/logo.icns --enable-plugin=tk-inter --follow-imports --output-dir=dist --macos-create-app-bundle --disable-console --include-package=AppKit --include-module=AppKit --include-package=Quartz --include-module=Quartz --include-package=pynput --include-module=pynput --include-package-data=pynput --output-filename=PyContinuity --product-name="PyContinuity" -o PyContinuity gui.py
           mv dist/gui.app dist/PyContinuity.app
 
       - name: Decode and import certificate
