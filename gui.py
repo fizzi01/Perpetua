@@ -1,5 +1,6 @@
 import sys
 import platform as _platform
+from time import sleep
 
 from mttkinter import mtTkinter as tk
 
@@ -156,21 +157,17 @@ class ServerConfigGUI:
         self.master.protocol("WM_DELETE_WINDOW", self.on_close)
 
     def on_close(self):
-        close = False
         if self.server:
-            if not self.server.stop():
-                self.update_output("Failed to stop server")
-            else:
-                close = True
+            self.server.stop()
 
         if self.client:
-            if not self.client.stop():
-                self.update_output("Failed to stop client")
-            else:
-                close = True
+            self.client.stop()
 
-        if close:
+        sleep(0.5)
+        try:
             self.master.destroy()
+        except Exception:
+            messagebox.showerror("Errore", "Errore durante la chiusura dell'applicazione")
 
     def create_widgets(self):
         # Label and entry for host
@@ -354,3 +351,4 @@ if __name__ == "__main__":
         root.iconbitmap("logo\logo.ico")
 
     root.mainloop()
+    sys.exit(0)

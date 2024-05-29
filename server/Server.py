@@ -62,11 +62,11 @@ class Server:
         self.screen_threshold = screen_threshold
 
         # Screen transition orchestrator
-        self._checker = threading.Thread(target=self.check_screen_transition)
+        self._checker = threading.Thread(target=self.check_screen_transition, daemon=True)
         self._is_transition = False
 
         # Server core thread
-        self._main_thread = threading.Thread(target=self._accept_clients)
+        self._main_thread = threading.Thread(target=self._accept_clients, daemon=True)
         self._is_main_running = False
 
         # Input listeners
@@ -181,9 +181,9 @@ class Server:
         try:
             self.clipboard_listener.start()
 
-            self.mouse_listener.start()
-            time.sleep(0.5)
             self.keyboard_listener.start()
+            time.sleep(0.2)
+            self.mouse_listener.start()
 
             if not self.mouse_listener.is_alive():
                 raise Exception("Mouse listener not started")

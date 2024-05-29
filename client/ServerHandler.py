@@ -18,7 +18,7 @@ class ServerHandler:
 
     def start(self):
         self._running = True
-        self.thread = threading.Thread(target=self.handle_server_commands)
+        self.thread = threading.Thread(target=self.handle_server_commands, daemon=True)
         try:
             self.thread.start()
             self.log("Client in listening mode.")

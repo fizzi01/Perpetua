@@ -60,7 +60,7 @@ class Client:
         try:
             if not self._running:
                 self._running = True
-                self._client_thread = threading.Thread(target=self._run)
+                self._client_thread = threading.Thread(target=self._run, daemon=True)
                 self._client_thread.start()
                 self._is_client_thread_running = True
                 self._start_listeners()

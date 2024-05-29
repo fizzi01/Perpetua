@@ -26,7 +26,7 @@ class ClientHandler:
         self.thread = None
 
     def start(self):
-        self.thread = threading.Thread(target=self._handle)
+        self.thread = threading.Thread(target=self._handle, daemon=True)
         self._running = True
         try:
             self.thread.start()
