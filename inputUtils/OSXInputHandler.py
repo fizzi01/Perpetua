@@ -35,6 +35,7 @@ class ServerMouseListener:
         return self._listener
 
     def start(self):
+        print("DEBUG: Starting mouse listener")
         self._listener.start()
 
     def stop(self):
@@ -142,6 +143,7 @@ class ServerKeyboardListener:
         return self._listener
 
     def start(self):
+        print("DEBUG: Starting keyboard listener")
         self._listener.start()
 
     def stop(self):
