@@ -74,7 +74,7 @@ jobs:
           security unlock-keychain -p "action" build.keychain
           security set-key-partition-list -S apple-tool:,apple:,codesign: -s -k "action" build.keychain
       - name: Change permissions
-        run: chmod +x dist/PyContinuity.app/Contents/MacOS/PyContinuity
+        run: chmod +x dist/PyContinuity.app/Contents/MacOS/*
 
       - name: Sign the app
         run: |
