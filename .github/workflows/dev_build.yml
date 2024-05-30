@@ -59,7 +59,7 @@ jobs:
           export PATH="/usr/local/opt/ccache/libexec:$PATH"
       - name: Build app
         run: |
-          PyInstaller --windowed -n PyContinuity --hidden-import pynput.keyboard._darwin --hidden-import pynput.mouse._darwin --collect-submodule pynput.keyboard --noconfirm --icon="logo/logo.icns" gui.py
+          PyInstaller --windowed -n PyContinuity --hidden-import pynput.keyboard._darwin --hidden-import pynput.mouse._darwin --hidden-import=pyobjc --log-level=DEBUG --collect-submodule pynput.keyboard --noconfirm --icon="logo/logo.icns" gui.py
 
       - name: Decode and import certificate
         env:
