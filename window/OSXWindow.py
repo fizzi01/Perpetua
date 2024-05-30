@@ -53,8 +53,12 @@ class HiddenWindow:
         # Mostra il cursore quando si minimizza la finestra
         self.window.orderFrontRegardless()
         self.app.setPresentationOptions_(0)
+        self.window.setLevel_(CGMainDisplayID())
         CGDisplayShowCursor(CGMainDisplayID())
+        #Forza show cursor
+        NSCursor.unhide()
         self.window.orderOut_(None)
+        CGDisplayShowCursor(CGMainDisplayID())
 
     def maximize(self):
         # Nascondi il cursore
