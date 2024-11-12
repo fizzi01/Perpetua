@@ -10,16 +10,21 @@ class Client:
     :param key_map: Mapping of the keys pressed by the client. Es: {"ctrl": "cmd"}
     """
 
-    def __init__(self, conn: socket.socket, addr: str, key_map: Dict[str, str]):
-        self.conn: socket.socket | None = conn
+    def __init__(self, conn: Optional[socket.socket] = None, addr: str = "", port: int = 5000,
+                 key_map: Dict[str, str] = None):
+        self.conn: Optional[socket.socket] = conn
         self.addr: str = addr
-        self.key_map = key_map
+        self.port: int = port
+        self.key_map = key_map if key_map is not None else {}
 
-    def get_connection(self) -> socket.socket:
+    def get_connection(self) -> Optional[socket.socket]:
         return self.conn
 
     def get_address(self) -> str:
         return self.addr
+
+    def get_port(self) -> int:
+        return self.port
 
     def get_key_map(self) -> Dict[str, str]:
         return self.key_map
@@ -28,47 +33,73 @@ class Client:
         self.key_map = key_map
 
     def get_key(self, key: str) -> str:
-        return key if not self.key_map.get(key) else self.key_map.get(key)
+        return self.key_map.get(key, key)
 
-    def set_connection(self, conn: socket.socket | None):
+    def set_connection(self, conn: Optional[socket.socket]):
         self.conn = conn
 
     def set_address(self, addr: str):
         self.addr = addr
 
+    def set_port(self, port: int):
+        self.port = port
+
+    def is_connected(self) -> bool:
+        return self.conn is not None
+
 
 class Clients:
     """
     Class to manage the possible clients of the server.
-    :param clients: Client.
+    :param clients: Dictionary of client positions and their associated Client objects.
     """
 
-    def __init__(self, clients):
-        self.clients: Dict[str, Client] = clients
+    def __init__(self, clients: Optional[Dict[str, Client]] = None):
+        self.clients: Dict[str, Client] = clients if clients is not None else {}
 
-    def get_client(self, position: str) -> Optional[socket.socket]:
+    def get_client(self, position: str) -> Optional[Client]:
         return self.clients.get(position)
 
     def set_client(self, position: str, client: Client):
         self.clients[position] = client
 
     def get_connection(self, position: str) -> Optional[socket.socket]:
-        return self.clients[position].get_connection()
+        client = self.get_client(position)
+        return client.get_connection() if client else None
 
     def set_connection(self, position: str, conn: socket.socket):
-        self.clients[position].set_connection(conn)
+        client = self.get_client(position)
+        if client:
+            client.set_connection(conn)
 
     def remove_connection(self, position: str):
-        self.clients[position].set_connection(None)
+        client = self.get_client(position)
+        if client:
+            client.set_connection(None)
 
     def get_possible_positions(self):
         return self.clients.keys()
 
     def get_address(self, position: str) -> str:
-        return self.clients[position].get_address()
+        client = self.get_client(position)
+        return client.get_address() if client else ""
 
     def set_address(self, position: str, addr: str):
-        self.clients[position].set_address(addr)
+        client = self.get_client(position)
+        if client:
+            client.set_address(addr)
+
+    def remove_client(self, position: str):
+        if position in self.clients:
+            del self.clients[position]
+
+    def get_connected_clients(self) -> Dict[str, Client]:
+        return {pos: client for pos, client in self.clients.items() if client.is_connected()}
+
+    def __str__(self):
+        return str(self.clients)
+
+
 
 
 class ServerConfig:
@@ -79,10 +110,33 @@ class ServerConfig:
     :param clients: Clients of the server.
     """
 
-    def __init__(self, server_ip: str, server_port: int, clients: Clients):
+    def __init__(self, server_ip: str, server_port: int, clients: Optional[Clients] = None, wait: int = 5,
+                 screen_threshold: int = 10, logging: bool = True):
         self.server_ip = server_ip
         self.server_port = server_port
-        self.clients = clients
+        self.clients = clients if clients is not None else Clients()
+
+        self.wait = wait
+        self.screen_threshold = screen_threshold
+        self.logging = logging
+
+    def get_wait(self) -> int:
+        return self.wait
+
+    def get_screen_threshold(self) -> int:
+        return self.screen_threshold
+
+    def get_logging(self) -> bool:
+        return self.logging
+
+    def set_wait(self, wait: int):
+        self.wait = wait
+
+    def set_screen_threshold(self, screen_threshold: int):
+        self.screen_threshold = screen_threshold
+
+    def set_logging(self, logging: bool):
+        self.logging = logging
 
     def get_server_ip(self) -> str:
         return self.server_ip

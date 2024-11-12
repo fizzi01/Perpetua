@@ -19,7 +19,7 @@ class ServerMouseListener:
 
     def __init__(self, send_function: Callable, change_screen_function: Callable, get_active_screen: Callable,
                  get_status: Callable,
-                 get_clients: Callable, screen_width: int, screen_height: int, screen_threshold: int = 5):
+                 get_clients: Callable, screen_width: int, screen_height: int, screen_threshold: int = 5, logger=None, update_mouse_position: Callable = None):
         self.send = send_function
         self.active_screen = get_active_screen
         self.change_screen = change_screen_function
@@ -28,6 +28,8 @@ class ServerMouseListener:
         self.screen_width = screen_width
         self.screen_height = screen_height
         self.screen_treshold = screen_threshold
+        self.logger = logger
+        self.update_mouse_position = update_mouse_position
         self._listener = MouseListener(on_move=self.on_move, on_scroll=self.on_scroll, on_click=self.on_click,
                                        darwin_intercept=self.mouse_suppress_filter)
 
@@ -35,7 +37,7 @@ class ServerMouseListener:
         return self._listener
 
     def start(self):
-        print("DEBUG: Starting mouse listener")
+        self.logger("Starting mouse listener")
         self._listener.start()
 
     def stop(self):
@@ -75,6 +77,9 @@ class ServerMouseListener:
             return event
 
     def on_move(self, x, y):
+
+        if self.update_mouse_position:
+            self.update_mouse_position(x, y)
 
         screen = self.active_screen()
         clients = self.clients(screen)
@@ -129,10 +134,11 @@ class ServerKeyboardListener:
     :param get_active_screen: Function to get the active screen
     """
 
-    def __init__(self, send_function: Callable, get_clients: Callable, get_active_screen: Callable):
+    def __init__(self, send_function: Callable, get_clients: Callable, get_active_screen: Callable, logger=None):
         self.clients = get_clients
         self.active_screen = get_active_screen
         self.send = send_function
+        self.logger = logger
 
         self._listener = KeyboardListener(on_press=self.on_press, on_release=self.on_release,
                                           darwin_intercept=self.keyboard_suppress_filter)
@@ -143,7 +149,7 @@ class ServerKeyboardListener:
         return self._listener
 
     def start(self):
-        print("DEBUG: Starting keyboard listener")
+        self.logger("Starting keyboard listener")
         self._listener.start()
 
     def stop(self):
