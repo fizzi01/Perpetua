@@ -7,7 +7,7 @@
   - OSX: Utilize rumps to handle Cocoa window and GUI (So that screen transition is smooth)
   - Windows: Utilize PyQT6
 - [ ] Better Connection Logic
-- [ ] Fix caps lock issue on OSX
+- [X] Fix caps lock issue on OSX
 - [ ] Improve OSX server key binding
 - [ ] Shared Drag and Drop
 - [ ] Better Connection Security
