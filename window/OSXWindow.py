@@ -141,7 +141,6 @@ class HiddenWindow:
 
     def _window_proc_controller(self, input_conn):
         """Controller thread to receive commands from the main process and control the window."""
-        print("External control started")
         while True:
             command = input_conn.recv()
             if command == "minimize":

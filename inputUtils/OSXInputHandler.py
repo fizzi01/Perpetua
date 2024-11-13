@@ -58,20 +58,16 @@ class ServerMouseListener:
         screen = self.active_screen()
 
         if screen:
-            if event_type == Quartz.kCGEventLeftMouseDown:
-                print("Trackpad left click")
-            elif event_type == Quartz.kCGEventRightMouseDown:
-                print("Trackpad right click")
-            elif event_type == Quartz.kCGEventOtherMouseDown:
-                print("Other trackpad action")
-            elif event_type == Quartz.kCGEventLeftMouseDragged:
-                print("Trackpad left drag")
-            elif event_type == Quartz.kCGEventRightMouseDragged:
-                print("Trackpad right drag")
-            elif event_type == Quartz.kCGEventOtherMouseDragged:
-                print("Other trackpad drag")
-            elif event_type == Quartz.kCGEventScrollWheel:
-                print("Scroll wheel")
+            if event_type in [
+                Quartz.kCGEventLeftMouseDown,
+                Quartz.kCGEventRightMouseDown,
+                Quartz.kCGEventOtherMouseDown,
+                Quartz.kCGEventLeftMouseDragged,
+                Quartz.kCGEventRightMouseDragged,
+                Quartz.kCGEventOtherMouseDragged,
+                Quartz.kCGEventScrollWheel
+            ]:
+                pass
             else:
                 return event
         else:
@@ -171,10 +167,10 @@ class ServerKeyboardListener:
 
         if screen:
             if caps_lock != 0:
-                print("Caps Lock is pressed")
+                self.logger("Caps Lock is pressed")
                 return event
             elif event_type == Quartz.kCGEventKeyDown:  # Key press event
-                print(f"Key pressed blocked: {event}")
+                pass
             else:
                 return event
         else:

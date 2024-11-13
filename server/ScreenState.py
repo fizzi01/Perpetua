@@ -18,7 +18,6 @@ class NoScreenState(ScreenState):
         self.server = server
 
     def handle(self):
-        print("NoScreenState")
         self.server.active_screen = None
         self.server._is_transition = False
         self.server.changed.set()

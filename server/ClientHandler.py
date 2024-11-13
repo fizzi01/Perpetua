@@ -2,6 +2,7 @@ import socket
 import threading
 from collections.abc import Callable
 
+from utils.Logging import Logger
 from utils.netData import *
 
 
@@ -14,14 +15,14 @@ class ClientHandler:
     :param on_disconnect: Funzione da chiamare alla disconnessione del client
     """
 
-    def __init__(self, conn, address, process: Callable, on_disconnect: Callable, logger: Callable):
+    def __init__(self, conn, address, process: Callable, on_disconnect: Callable):
         self.buffer = ""
 
         self.conn = conn
         self.address = address
         self.process = process
         self.on_disconnect = on_disconnect
-        self.logger = logger
+        self.logger = Logger.get_instance().log
         self._running = False
         self.thread = None
 
@@ -75,7 +76,7 @@ class ClientHandler:
 
             except socket.error:
                 if self._running:
-                    self.logger(f"{self.address}: Socket error occurred.", 2)
+                    self.logger(f"Socket {self.address} error occurred.", 2)
                 break
 
         if self._running:

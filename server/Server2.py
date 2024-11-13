@@ -371,7 +371,6 @@ class Server:
                 if key:
                     self.message_queue.put((key, data))
         else:
-            self.log(f"Sending data to {screen}: {data}")
             self.message_queue.put((screen, data))
 
     def _process_queue(self):

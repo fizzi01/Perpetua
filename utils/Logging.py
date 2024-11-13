@@ -1,5 +1,6 @@
 # Strategy Pattern per la gestione del logging
 import threading
+from datetime import datetime
 
 
 class LoggingStrategy:
@@ -9,14 +10,15 @@ class LoggingStrategy:
 
 class ConsoleLoggingStrategy(LoggingStrategy):
     def log(self, stdout, message, priority):
+        cur_time = datetime.now().strftime("%H:%M:%S.%f")[:-3]
         if priority == 2:
-            stdout(f"\033[91mERROR: {message}\033[0m")
+            stdout(f"\033[91m[{cur_time}] ERROR: {message}\033[0m")
         elif priority == 1:
-            stdout(f"\033[94mINFO: {message}\033[0m")
+            stdout(f"\033[94m[{cur_time}] INFO: {message}\033[0m")
         elif priority == 0:
-            stdout(f"\033[92mDEBUG: {message}\033[0m")
+            stdout(f"\033[92m[{cur_time}] DEBUG: {message}\033[0m")
         else:
-            stdout(message)
+            stdout(f"[{cur_time}] ", message)
 
 
 class SilentLoggingStrategy(LoggingStrategy):
