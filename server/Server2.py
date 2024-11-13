@@ -25,7 +25,7 @@ from server.ScreenState import ScreenStateFactory
 from server.ClientHandler import ClientHandler
 
 # Logging
-from utils.Logging import LoggingStrategyFactory
+from utils.Logging import Logger
 
 
 # Observer Pattern per la gestione degli eventi di input
@@ -48,7 +48,7 @@ class InputEventSubject:
 class ClientHandlerFactory:
     @staticmethod
     def create_client_handler(conn, addr, server):
-        return ClientHandler(conn, addr, server.process_client_command, server.on_disconnect, logger=server.log)
+        return ClientHandler(conn, addr, server.process_client_command, server.on_disconnect)
 
 
 class Server:
@@ -57,11 +57,14 @@ class Server:
 
         self._thread_pool = []
         self._started = False  # Main variable for server status, if False the server is stopped automatically
+        self.lock = threading.RLock()
+
+        # Initialize logging
+        self._initialize_logging(logging, stdout)
 
         # Initialize server variables
         self._initialize_clients(clients)
         self._initialize_server_socket(host, port, wait)
-        self._initialize_logging(logging, stdout)
 
         # Screen transition variables
         self._is_transition = False
@@ -94,8 +97,8 @@ class Server:
 
     def _initialize_logging(self, logging, stdout):
         self.logging = logging
-        self.lock = threading.RLock()
         self.stdout = stdout
+        self.logger = Logger(self.logging, self.stdout)  # Initialize logger
 
     def _initialize_screen_transition(self, root, screen_threshold):
         self.window = self._create_window(root)
@@ -281,8 +284,7 @@ class Server:
 
     # Strategy Pattern per la gestione del logging
     def log(self, message, priority: int = 0):
-        logging_strategy = LoggingStrategyFactory.get_logging_strategy(self.logging)
-        logging_strategy.log(self.stdout, message, priority)
+        self.logger.log(message, priority)
 
     def update_mouse_position(self, x, y):
         self.current_mouse_position = (x, y)
@@ -317,8 +319,7 @@ class Server:
                                                                screen_width=self.screen_width,
                                                                screen_height=self.screen_height,
                                                                screen_threshold=self.screen_threshold,
-                                                               update_mouse_position=self.update_mouse_position,
-                                                               logger=self.log)
+                                                               update_mouse_position=self.update_mouse_position)
         self.mouse_listener.start()
         self.input_event_subject.add_observer(self.mouse_listener)
         return self.mouse_listener
@@ -327,8 +328,7 @@ class Server:
         # Metodo hook per impostare il listener della tastiera
         self.keyboard_listener = InputHandler.ServerKeyboardListener(send_function=self._send_to_clients,
                                                                      get_active_screen=self._get_active_screen,
-                                                                     get_clients=self._get_clients,
-                                                                     logger=self.log)
+                                                                     get_clients=self._get_clients)
         self.keyboard_listener.start()
         self.input_event_subject.add_observer(self.keyboard_listener)
         return self.keyboard_listener

@@ -12,6 +12,7 @@ from pynput.mouse import Button, Controller as MouseController
 from pynput.mouse import Listener as MouseListener
 from pynput.keyboard import Listener as KeyboardListener, Key, KeyCode, Controller as KeyboardController
 
+from utils.Logging import Logger
 from utils.netData import *
 
 
@@ -19,7 +20,7 @@ class ServerMouseListener:
 
     def __init__(self, send_function: Callable, change_screen_function: Callable, get_active_screen: Callable,
                  get_status: Callable,
-                 get_clients: Callable, screen_width: int, screen_height: int, screen_threshold: int = 5, logger=None, update_mouse_position: Callable = None):
+                 get_clients: Callable, screen_width: int, screen_height: int, screen_threshold: int = 5, update_mouse_position: Callable = None):
         self.send = send_function
         self.active_screen = get_active_screen
         self.change_screen = change_screen_function
@@ -28,7 +29,7 @@ class ServerMouseListener:
         self.screen_width = screen_width
         self.screen_height = screen_height
         self.screen_treshold = screen_threshold
-        self.logger = logger
+        self.logger = Logger.get_instance().log
         self.update_mouse_position = update_mouse_position
         self._listener = MouseListener(on_move=self.on_move, on_scroll=self.on_scroll, on_click=self.on_click,
                                        darwin_intercept=self.mouse_suppress_filter)
@@ -137,11 +138,11 @@ class ServerKeyboardListener:
     :param get_active_screen: Function to get the active screen
     """
 
-    def __init__(self, send_function: Callable, get_clients: Callable, get_active_screen: Callable, logger=None):
+    def __init__(self, send_function: Callable, get_clients: Callable, get_active_screen: Callable):
         self.clients = get_clients
         self.active_screen = get_active_screen
         self.send = send_function
-        self.logger = logger
+        self.logger = Logger.get_instance().log
 
         self._listener = KeyboardListener(on_press=self.on_press, on_release=self.on_release,
                                           darwin_intercept=self.keyboard_suppress_filter)
@@ -216,6 +217,7 @@ class ServerClipboardListener:
         self._thread = None
         self.last_clipboard_content = pyperclip.paste()  # Inizializza con il contenuto attuale della clipboard
         self._stop_event = threading.Event()
+        self.logger = Logger.get_instance().log
 
     def start(self):
         self._stop_event.clear()
@@ -254,6 +256,7 @@ class ClientClipboardListener:
         self._thread = None
         self.last_clipboard_content = pyperclip.paste()  # Inizializza con il contenuto attuale della clipboard
         self._stop_event = threading.Event()
+        self.logger = Logger.get_instance().log
 
     def start(self):
         self._stop_event.clear()
@@ -321,6 +324,7 @@ class ClientKeyboardController:
 
         self.keyboard = KeyboardController()
         self.hotkey = hotkey_controller
+        self.logger = Logger.get_instance().log
 
     def data_filter(self, key_data):
         if key_data in self.key_filter:
@@ -389,6 +393,7 @@ class ClientMouseController:
         self.pressed = False
         self.last_press_time = -99
         self.doubleclick_counter = 0
+        self.logger = Logger.get_instance().log
 
     def process_mouse_command(self, x, y, mouse_action, is_pressed):
         if mouse_action == "move":
@@ -442,6 +447,7 @@ class ClientMouseListener:
         self.send = send_func
         self.client_socket = client_socket
         self._listener = MouseListener(on_move=self.handle_mouse)
+        self.logger = Logger.get_instance().log
 
     def get_listener(self):
         return self._listener

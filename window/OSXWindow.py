@@ -1,10 +1,6 @@
-import sys
-import argparse
 import threading
-import datetime
-import time
 from multiprocessing import Process, Pipe
-from typing import Optional
+from utils.Logging import Logger
 
 import AppKit
 import objc
@@ -22,12 +18,6 @@ from AppKit import (
 from Foundation import NSMakeRect, NSMutableArray, NSProcessInfo
 from objc import objc_method, python_method, super
 from PyObjCTools import AppHelper
-
-EDGE_INSET = 20
-EDGE_INSETS = (EDGE_INSET, EDGE_INSET, EDGE_INSET, EDGE_INSET)
-PADDING = 8
-WINDOW_WIDTH = 800
-WINDOW_HEIGHT = 600
 
 
 class FullScreenTransparentWindow(NSObject):
@@ -136,8 +126,11 @@ transparent_window_instance = None
 class HiddenWindow:
     def __init__(self, root=None):
         self.output_conn, self.input_conn = Pipe(duplex=False)
+
         self.process = Process(target=self._start_window_app, args=(self.output_conn,), daemon=True)
         self.process.start()
+
+        self.log = Logger.get_instance().log
 
     def _start_window_app(self, input_conn):
         """Start the window application and handle external commands."""
@@ -154,15 +147,12 @@ class HiddenWindow:
             if command == "minimize":
                 if transparent_window_instance:
                     transparent_window_instance.minimize()
-                    print("Minimized window")
             elif command == "maximize":
                 if transparent_window_instance:
                     transparent_window_instance.maximize()
-                    print("Maximized window")
             elif command == "close":
                 if transparent_window_instance:
                     transparent_window_instance.close()
-                    print("Closed window")
                     # Exit the controller thread
                     break
 
@@ -176,6 +166,7 @@ class HiddenWindow:
         self.send_command("close")
         self.process.terminate()
         self.process.join()
+        self.log("Window closed correctly")
         return True
 
     def minimize(self):
