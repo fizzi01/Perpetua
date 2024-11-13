@@ -8,10 +8,11 @@ from abc import ABC, abstractmethod
 
 
 class BaseGUIController(ABC):
-    def __init__(self, server_config, start_event, stop_event, is_server_running, messager):
+    def __init__(self, server_config, start_server_event, stop_server_event, exit_event, is_server_running, messager):
         self.server_config = server_config
-        self.start_event = start_event
-        self.stop_event = stop_event
+        self.start_server_event = start_server_event
+        self.stop_server_event = stop_server_event
+        self.exit_event = exit_event
         self.is_server_running = is_server_running
         self.messager = messager
 
@@ -50,9 +51,9 @@ class BaseGUIController(ABC):
 
 class GUIControllerFactory:
     @staticmethod
-    def get_controller(gui_type, server_config, start_event, stop_event, is_server_running, messager):
+    def get_controller(gui_type, server_config, start_server_event, stop_server_event, exit_event, is_server_running, messager):
         if gui_type == "terminal":
-            return TerminalGUIController(server_config, start_event, stop_event, is_server_running, messager)
+            return TerminalGUIController(server_config, start_server_event, stop_server_event, exit_event, is_server_running, messager)
         # Aggiungi altre implementazioni di GUI qui
         else:
             raise ValueError(f"Unknown GUI type: {gui_type}")
@@ -85,7 +86,6 @@ class TerminalGUIController(BaseGUIController):
                 self.start_server()
             elif choice == "5":
                 self.stop_server()
-                break
             elif choice == "6":
                 filename = self.messager.input(
                     "Enter configuration file name to save (default 'server_config.json'): ") or "server_config.json"
@@ -159,14 +159,14 @@ class TerminalGUIController(BaseGUIController):
 
     def start_server(self):
         if not self.is_server_running.is_set():
-            self.stop_event.clear()
-            self.start_event.set()
+            self.stop_server_event.clear()
+            self.start_server_event.set()
         else:
             self.messager.print("Server is already running.")
 
     def stop_server(self):
         if self.is_server_running.is_set():
-            self.stop_event.set()
+            self.stop_server_event.set()
         else:
             self.messager.print("No server is currently running.")
 
@@ -188,5 +188,6 @@ class TerminalGUIController(BaseGUIController):
         print(f"Configuration saved to {filename} at {os.getcwd()}")
 
     def exit(self):
-        self.stop_event.set()
+        self.stop_server_event.set()
+        self.exit_event.set()
         self.messager.print("Exiting ...")

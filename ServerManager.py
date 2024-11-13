@@ -1,5 +1,3 @@
-from multiprocessing import Event
-
 from server import Server
 
 
@@ -32,3 +30,7 @@ class ServerManager:
     def monitor_server(self):
         self.stop_event.wait()
         self.stop_server()
+
+        # Clear status
+        self.stop_event.clear()
+        self.is_server_running.clear()

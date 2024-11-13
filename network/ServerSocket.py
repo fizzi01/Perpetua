@@ -6,7 +6,7 @@ class ServerSocket:
     _instance = None
 
     def __new__(cls, host: str, port: int, wait: int):
-        if cls._instance is None:
+        if cls._instance is None or not cls._instance.is_socket_open():
             cls._instance = super(ServerSocket, cls).__new__(cls)
             cls._instance._initialize_socket(host, port, wait)
         return cls._instance
@@ -24,5 +24,16 @@ class ServerSocket:
     def accept(self):
         return self.socket.accept()
 
+    def pause(self):
+        self.socket.detach()
+
     def close(self):
         self.socket.close()
+
+    def is_socket_open(self):
+        try:
+            self.socket.getsockname()
+            return True
+        except socket.error:
+            return False
+

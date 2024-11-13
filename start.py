@@ -1,13 +1,13 @@
 import sys
-import threading
 from threading import Thread
 from typing import Optional
 import errno
 
 from ServerManager import ServerManager
-from config.ServerConfig import Clients, Client, ServerConfig
+
+from config.ServerConfig import Clients, ServerConfig
 from gui.GUIController import GUIControllerFactory
-from server import Server2 as Server
+
 from multiprocessing import Process, Event, Pipe
 from multiprocessing.managers import BaseManager
 from queue import Queue, Empty
@@ -125,9 +125,9 @@ def check_osx_accessibility():
     return True
 
 
-def process_monitor(stop_event, start_event, controller_proc, threads, pipes, logger):
+def process_monitor(exit_event, start_event, controller_proc, threads, pipes, logger):
     # Wait for the stop event to be set
-    stop_event.wait()
+    exit_event.wait()
 
     # Clean up
     controller_proc.terminate()
@@ -171,9 +171,10 @@ def main():
     server_config = manager.ServerConfig(server_ip=net.get_local_ip(), server_port=5001, clients=Clients(), wait=5,
                                          screen_threshold=10, logging=True)
 
-    stop_event = Event()
-    start_event = Event()
+    stop_server_event = Event()
+    start_server_event = Event()
     is_server_running = Event()
+    exit_event = Event()
 
     logger = QueueLogger(Queue())
 
@@ -183,7 +184,7 @@ def main():
     p1_output_conn, p2_output_conn = Pipe(duplex=True)
     controllerMessager = ProcessMessage(p2_input_conn, p2_output_conn)
 
-    gui_controller = GUIControllerFactory.get_controller("terminal", server_config, start_event, stop_event,
+    gui_controller = GUIControllerFactory.get_controller("terminal", server_config, start_server_event, stop_server_event, exit_event,
                                                          is_server_running, controllerMessager)
 
     controller_process = Process(target=gui_controller.run, daemon=True)
@@ -194,8 +195,8 @@ def main():
     server_reader_thread = Thread(target=server_reader, args=(logger,), daemon=True)
 
     # Starting monitor thread
-    monitor_thread = Thread(target=process_monitor, args=(stop_event,
-                                                          start_event,
+    monitor_thread = Thread(target=process_monitor, args=(exit_event,
+                                                          start_server_event,
                                                           controller_process,
                                                           [input_thread, output_thread, server_reader_thread],
                                                           [p2_input_conn,p2_output_conn,p1_input_conn, p1_output_conn],
@@ -207,15 +208,25 @@ def main():
     server_reader_thread.start()
     monitor_thread.start()
 
-    # Wait for the start event to be set
-    start_event.wait()
-    if not stop_event.is_set():  # Check if the server has been stopped, if stop_event is set before start_event
+    # Check if the server is running and the exit event is not set
+    while not exit_event.is_set():
+
+        # Wait for the start event to be set
+        start_server_event.wait()
+
+        # Recheck if the exit event is set
+        if exit_event.is_set():
+            break
+
         server_manager = ServerManager(server_config=server_config, logger=logger,
-                                       server_started_event=is_server_running, server_stop_event=stop_event)
+                                       server_started_event=is_server_running, server_stop_event=stop_server_event)
         server_monitor_thread = Thread(target=server_manager.monitor_server, daemon=True)
         server_monitor_thread.start()
+
         server_manager.start_server()
+
         server_monitor_thread.join()
+        start_server_event.clear()
 
     monitor_thread.join()
 

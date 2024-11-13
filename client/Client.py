@@ -55,7 +55,6 @@ class Client:
         self.processor = ServerCommandProcessor(self.on_screen, self.mouse_controller,
                                                 self.keyboard_controller, self.clipboard_listener)
 
-
     def start(self):
         try:
             if not self._running:
