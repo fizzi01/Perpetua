@@ -4,40 +4,28 @@ import time
 from queue import Queue, Empty
 from typing import Union
 from pynput import mouse
-import asyncio
-from .ClientHandler import ClientHandler
+
+# Core utilities
 from inputUtils import InputHandler
 from window import Window
+
+# Configuration
 from utils import screen_size
 from utils.netData import *
 from config.ServerConfig import Client, Clients
 
+# Network
+from network.ServerSocket import ServerSocket
 
-# Singleton Pattern per il socket del server
-class ServerSocket:
-    _instance = None
+# Server
+from server.ScreenTransition import ScreenTransitionFactory
+from server.ScreenReset import ScreenResetStrategyFactory
+from server.Command import CommandFactory
+from server.ScreenState import ScreenStateFactory
+from server.ClientHandler import ClientHandler
 
-    def __new__(cls, host: str, port: int, wait: int):
-        if cls._instance is None:
-            cls._instance = super(ServerSocket, cls).__new__(cls)
-            cls._instance._initialize_socket(host, port, wait)
-        return cls._instance
-
-    def _initialize_socket(self, host: str, port: int, wait: int):
-        self.socket = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
-        self.socket.settimeout(wait)
-        self.host = host
-        self.port = port
-
-    def bind_and_listen(self):
-        self.socket.bind((self.host, self.port))
-        self.socket.listen()
-
-    def accept(self):
-        return self.socket.accept()
-
-    def close(self):
-        self.socket.close()
+# Logging
+from utils.Logging import LoggingStrategyFactory
 
 
 # Observer Pattern per la gestione degli eventi di input
@@ -56,178 +44,6 @@ class InputEventSubject:
             observer.update(event)
 
 
-class ScreenTransitionFactory:
-    """
-    Factory class for creating screen transition state objects based on the active screen.
-    """
-
-    @staticmethod
-    def get_transition_state(screen, server):
-        if screen == "left":
-            return LeftScreenTransition(server)
-        elif screen == "right":
-            return RightScreenTransition(server)
-        elif screen == "up":
-            return UpScreenTransition(server)
-        elif screen == "down":
-            return DownScreenTransition(server)
-        else:
-            return NoScreenTransition(server)
-
-
-class ScreenTransitionState:
-    """
-    Base class for screen transition states.
-    """
-
-    def __init__(self, server):
-        self.server = server
-
-    def handle_transition(self):
-        raise NotImplementedError("Subclasses should implement this method.")
-
-
-class LeftScreenTransition(ScreenTransitionState):
-    def handle_transition(self):
-        self.server.reset_mouse("right", self.server.current_mouse_position[1])
-
-
-class RightScreenTransition(ScreenTransitionState):
-    def handle_transition(self):
-        self.server.reset_mouse("left", self.server.current_mouse_position[1])
-
-
-class UpScreenTransition(ScreenTransitionState):
-    def handle_transition(self):
-        self.server.reset_mouse("down", self.server.current_mouse_position[0])
-
-
-class DownScreenTransition(ScreenTransitionState):
-    def handle_transition(self):
-        self.server.reset_mouse("up", self.server.current_mouse_position[0])
-
-
-class NoScreenTransition(ScreenTransitionState):
-    def handle_transition(self):
-        # No transition needed
-        pass
-
-
-class ScreenResetStrategyFactory:
-    """
-    Factory class for creating screen reset strategy objects based on the screen parameter.
-    """
-
-    @staticmethod
-    def get_reset_strategy(param, server):
-        if param == "left":
-            return LeftScreenResetStrategy(server)
-        elif param == "right":
-            return RightScreenResetStrategy(server)
-        elif param == "up":
-            return UpScreenResetStrategy(server)
-        elif param == "down":
-            return DownScreenResetStrategy(server)
-        else:
-            raise ValueError("Invalid screen parameter.")
-
-
-class ScreenResetStrategy:
-    """
-    Base class for screen reset strategies.
-    """
-
-    def __init__(self, server):
-        self.server = server
-
-    def reset(self, y: float):
-        raise NotImplementedError("Subclasses should implement this method.")
-
-
-class LeftScreenResetStrategy(ScreenResetStrategy):
-    def reset(self, y: float):
-        self.server.force_mouse_position(self.server.screen_threshold + 25, y)
-        self.server.log(f"Moving mouse to x: {self.server.screen_threshold + 15}, y:{y}")
-
-
-class RightScreenResetStrategy(ScreenResetStrategy):
-    def reset(self, y: float):
-        self.server.force_mouse_position(self.server.screen_width - self.server.screen_threshold - 25, y)
-        self.server.log(f"Moving mouse to x: {self.server.screen_width - self.server.screen_threshold - 15}, y:{y}")
-
-
-class UpScreenResetStrategy(ScreenResetStrategy):
-    def reset(self, y: float):
-        self.server.force_mouse_position(y, self.server.screen_threshold + 10)
-        self.server.log(f"Moving mouse to x: {y}, y:{self.server.screen_threshold + 10}")
-
-
-class DownScreenResetStrategy(ScreenResetStrategy):
-    def reset(self, y: float):
-        self.server.force_mouse_position(y, self.server.screen_height - self.server.screen_threshold - 10)
-        self.server.log(f"Moving mouse to x: {y}, y:{self.server.screen_height - self.server.screen_threshold - 10}")
-
-
-# Command Pattern per gestire i comandi dei client
-class Command:
-    def execute(self):
-        raise NotImplementedError("Subclasses should implement this!")
-
-
-class ClipboardCommand(Command):
-    def __init__(self, server, data):
-        self.server = server
-        self.data = data
-
-    def execute(self):
-        text = extract_text(self.data)
-        self.server.clipboard_listener.set_clipboard(text)
-
-
-class ReturnCommand(Command):
-    def __init__(self, server, direction):
-        self.server = server
-        self.direction = direction
-
-    def execute(self):
-        # Implementazione della logica di ritorno dello schermo
-        if self.server.active_screen == "left" and self.direction == "right":
-            with self.server.lock:
-                self.server.active_screen = None
-                self.server._is_transition = False
-                self.server.changed.set()
-                self.server.reset_mouse("left", self.server.current_mouse_position[1])
-        elif self.server.active_screen == "right" and self.direction == "left":
-            with self.server.lock:
-                self.server.active_screen = None
-                self.server._is_transition = False
-                self.server.changed.set()
-                self.server.reset_mouse("right", self.server.current_mouse_position[1])
-        elif self.server.active_screen == "up" and self.direction == "down":
-            with self.server.lock:
-                self.server.active_screen = None
-                self.server._is_transition = False
-                self.server.changed.set()
-                self.server.reset_mouse("up", self.server.current_mouse_position[0])
-        elif self.server.active_screen == "down" and self.direction == "up":
-            with self.server.lock:
-                self.server.active_screen = None
-                self.server._is_transition = False
-                self.server.changed.set()
-                self.server.reset_mouse("down", self.server.current_mouse_position[0])
-
-
-class CommandFactory:
-    @staticmethod
-    def create_command(command, server):
-        parts = extract_command_parts(command)
-        if parts[0] == 'clipboard':
-            return ClipboardCommand(server, parts[1])
-        elif parts[0] == 'return':
-            return ReturnCommand(server, parts[1])
-        return None
-
-
 # Factory Pattern per la creazione dei ClientHandler
 class ClientHandlerFactory:
     @staticmethod
@@ -235,200 +51,78 @@ class ClientHandlerFactory:
         return ClientHandler(conn, addr, server.process_client_command, server.on_disconnect, logger=server.log)
 
 
-# State Pattern per la gestione delle transizioni di schermo
-class ScreenState:
-    def handle(self):
-        raise NotImplementedError("Subclasses should implement this!")
-
-
-class NoStateTransition(ScreenState):
-    def __init__(self, server):
-        self.server = server
-
-    def handle(self):
-        pass
-
-
-class NoScreenState(ScreenState):
-    def __init__(self, server):
-        self.server = server
-
-    def handle(self):
-        print("NoScreenState")
-        self.server.active_screen = None
-        self.server._is_transition = False
-        self.server.changed.set()
-
-
-class LeftScreenState(ScreenState):
-    def __init__(self, server):
-        self.server = server
-
-    def handle(self):
-        self.server.active_screen = "left"
-        self.server._is_transition = False
-        self.server.changed.set()
-        self.server.reset_mouse("left", self.server.current_mouse_position[1])
-
-
-class UpScreenState(ScreenState):
-    def __init__(self, server):
-        self.server = server
-
-    def handle(self):
-        self.server.active_screen = "up"
-        self.server._is_transition = False
-        self.server.changed.set()
-        self.server.reset_mouse("up", self.server.current_mouse_position[0])
-
-
-class RightScreenState(ScreenState):
-    def __init__(self, server):
-        self.server = server
-
-    def handle(self):
-        self.server.active_screen = "right"
-        self.server._is_transition = False
-        self.server.changed.set()
-        self.server.reset_mouse("right", self.server.current_mouse_position[1])
-
-
-class DownScreenState(ScreenState):
-    def __init__(self, server):
-        self.server = server
-
-    def handle(self):
-        self.server.active_screen = "down"
-        self.server._is_transition = False
-        self.server.changed.set()
-        self.server.reset_mouse("down", self.server.current_mouse_position[0])
-
-
-class ScreenStateFactory:
-    @staticmethod
-    def get_screen_state(screen, server):
-
-        # First check if the screen is the same as the active screen
-        if screen == server.active_screen:
-            return NoStateTransition(server)  # No transition needed
-
-        # Check if the screen is None
-        if not screen:
-            return NoScreenState(server)
-
-        # Check if the client is present
-        if screen not in server.clients.get_possible_positions():
-            return NoStateTransition(server)  # No transition needed
-
-        # Check if client is connected
-        if not server.clients.get_connection(screen):
-            return NoStateTransition(server)  # No transition needed
-
-        # Fall back to None only if both screens are not None
-        if screen and server.active_screen:
-            return NoScreenState(server)  # Transition to None
-
-        # Check if the screen is valid
-        if screen == "left":
-            return LeftScreenState(server)
-        elif screen == "right":
-            return RightScreenState(server)
-        elif screen == "up":
-            return UpScreenState(server)
-        elif screen == "down":
-            return DownScreenState(server)
-        else:
-            return NoScreenState(server)
-
-
-# Strategy Pattern per la gestione del logging
-class LoggingStrategy:
-    def log(self, stdout, message, priority):
-        raise NotImplementedError("Subclasses should implement this!")
-
-
-class ConsoleLoggingStrategy(LoggingStrategy):
-    def log(self, stdout, message, priority):
-        if priority == 2:
-            stdout(f"\033[91mERROR: {message}\033[0m")
-        elif priority == 1:
-            stdout(f"\033[94mINFO: {message}\033[0m")
-        elif priority == 0:
-            stdout(f"\033[92mDEBUG: {message}\033[0m")
-        else:
-            stdout(message)
-
-
-class SilentLoggingStrategy(LoggingStrategy):
-    def log(self, stdout, message, priority):
-        if priority == 2:
-            stdout(f"\033[91mERROR: {message}\033[0m")
-        elif priority == 1:
-            stdout(f"\033[94mINFO: {message}\033[0m")
-        else:
-            pass
-
-
-class LoggingStrategyFactory:
-    @staticmethod
-    def get_logging_strategy(logging_enabled):
-        if logging_enabled:
-            return ConsoleLoggingStrategy()
-        else:
-            return SilentLoggingStrategy()
-
-
 class Server:
     def __init__(self, host: str = "0.0.0.0", port: int = 5001, clients=None,
                  wait: int = 5, logging: bool = False, screen_threshold: int = 10, root=None, stdout=print):
 
-        # Inizializzazione dei client utilizzando la nuova classe Clients
+        self._thread_pool = []
+        self._started = False  # Main variable for server status, if False the server is stopped automatically
+
+        # Initialize server variables
+        self._initialize_clients(clients)
+        self._initialize_server_socket(host, port, wait)
+        self._initialize_logging(logging, stdout)
+
+        # Screen transition variables
+        self._is_transition = False
+        self.active_screen = None
+        self._initialize_screen_transition(root, screen_threshold)
+
+        # Initialize main threads
+        self._initialize_threads()
+
+        # Listeners
+        self.listeners = []
+        self.mouse_listener = None
+        self.keyboard_listener = None
+        self.clipboard_listener = None
+        self.current_mouse_position = None
+        self._initialize_input_listeners()
+
+        # Message queue
+        self._initialize_message_queue()
+
+    def _initialize_clients(self, clients):
         if clients is None:
             clients = Clients({"left": Client()})
         self.clients = clients
 
+    def _initialize_server_socket(self, host, port, wait):
+        self.server_socket = ServerSocket(host, port, wait)
+        self.wait = wait
+        self._client_handlers = []
+
+    def _initialize_logging(self, logging, stdout):
         self.logging = logging
         self.lock = threading.RLock()
         self.stdout = stdout
 
-        # Singleton per il socket del server
-        self.server_socket = ServerSocket(host, port, wait)
-        self.wait = wait
-
-        # List of client handlers started
-        self._client_handlers = []
-
-        # Main variable for server status, if False the server is stopped automatically
-        self._started = False
-
-        # Window initialization for screen transition
+    def _initialize_screen_transition(self, root, screen_threshold):
         self.window = self._create_window(root)
 
         # Screen transition variables
-        self.active_screen = None
         self.changed = threading.Event()
         self.screen_width, self.screen_height = screen_size()
         self.screen_threshold = screen_threshold
 
         # Screen transition orchestrator
         self._checker = threading.Thread(target=self.check_screen_transition, daemon=True)
-        self._is_transition = False
+        self._thread_pool.append(self._checker)
 
-        # Server core thread
-        self._main_thread = self._main_thread = threading.Thread(target=self._accept_clients, daemon=True)
+    def _initialize_threads(self):
+        self._main_thread = threading.Thread(target=self._accept_clients, daemon=True)
+        self._thread_pool.append(self._main_thread)
         self._is_main_running_event = threading.Event()
 
-        # Input listeners as observers
+    def _initialize_input_listeners(self):
         self.input_event_subject = InputEventSubject()
-        self.mouse_listener = None  # Input listener for mouse
-        self.keyboard_listener = None  # Input listener for keyboard
-        self.mouse_controller = mouse.Controller()  # Mouse controller for mouse position
+        self.mouse_controller = mouse.Controller()
         self.current_mouse_position = self.mouse_controller.position
-        self.clipboard_listener = None  # Clipboard listener
 
-        # Queue for client messages
+    def _initialize_message_queue(self):
         self.message_queue = Queue()
         self._process_queue_thread = threading.Thread(target=self._process_queue, daemon=True)
+        self._thread_pool.append(self._process_queue_thread)
 
     def is_running(self):
         return self._started
@@ -490,17 +184,15 @@ class Server:
         try:
             # Trigger checker
             self.changed.set()
-            # Wait for checker to finish
-            if self._checker.is_alive():
-                self._checker.join()  # Screen transition orchestrator thread
 
-            if self.mouse_listener:
-                self.mouse_listener.stop()
-            if self.keyboard_listener:
-                self.keyboard_listener.stop()
+            # Wait for all threads to finish
+            for thread in self._thread_pool:
+                if thread.is_alive():
+                    thread.join()
 
-            if self._process_queue_thread.is_alive():
-                self._process_queue_thread.join()
+            # Close listeners
+            for listener in self.listeners:
+                listener.stop()
 
             # Main thread checking
             if self._check_main_thread():
@@ -598,18 +290,19 @@ class Server:
     # Template Method Pattern per la sequenza di avvio del server
     def _start_listeners(self):
         try:
-            self._setup_clipboard_listener()
+            self.listeners.append(self._setup_clipboard_listener())
 
-            self._setup_keyboard_listener()
-            time.sleep(0.2)
-            self._setup_mouse_listener()
+            self.listeners.append(self._setup_keyboard_listener())
 
-            if not self.mouse_listener.is_alive():
-                raise Exception("Mouse listener not started")
-            if not self.keyboard_listener.is_alive():
-                raise Exception("Keyboard listener not started")
+            time.sleep(0.2)  # Wait for the keyboard listener to start -> Crash fix
+            self.listeners.append(self._setup_mouse_listener())
+
+            for listener in self.listeners:
+                # Check if the listeners are started
+                if not listener.is_alive():
+                    raise Exception(f"{listener} non avviato.")
         except Exception as e:
-            self.log(f"Errore nell'avvio dei listener: {e}", 2)
+            self.log(f"{e}", 2)
             self.stop()
 
         self.log("Listeners started.")
@@ -628,6 +321,7 @@ class Server:
                                                                logger=self.log)
         self.mouse_listener.start()
         self.input_event_subject.add_observer(self.mouse_listener)
+        return self.mouse_listener
 
     def _setup_keyboard_listener(self):
         # Metodo hook per impostare il listener della tastiera
@@ -637,17 +331,20 @@ class Server:
                                                                      logger=self.log)
         self.keyboard_listener.start()
         self.input_event_subject.add_observer(self.keyboard_listener)
+        return self.keyboard_listener
 
     def _setup_clipboard_listener(self):
         self.clipboard_listener = InputHandler.ServerClipboardListener(send_function=self._send_to_clients,
                                                                        get_clients=self._get_clients,
                                                                        get_active_screen=self._get_active_screen)
         self.clipboard_listener.start()
+        return self.clipboard_listener
 
-    # Factory Method Pattern per la gestione della finestra
     @staticmethod
     def _create_window(root):
-        return Window(root)
+        win = Window(root)
+        win.minimize()
+        return win
 
     def _check_main_thread(self):
         """
@@ -674,7 +371,7 @@ class Server:
                 if key:
                     self.message_queue.put((key, data))
         else:
-            self.log(f"Sending data to {screen}: {data}", 0)
+            self.log(f"Sending data to {screen}: {data}")
             self.message_queue.put((screen, data))
 
     def _process_queue(self):

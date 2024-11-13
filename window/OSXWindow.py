@@ -68,13 +68,12 @@ class FullScreenTransparentWindow(NSObject):
             return self.window
 
     def minimize(self):
-        if hasattr(self, 'window') and self.window is not None:
-            self.window.miniaturize_(None)
+        with objc.autorelease_pool():
+            # Cursore visibile e finestra assente
             NSCursor.unhide()
+            self.window.setIsVisible_(False)
             self.window.setIgnoresMouseEvents_(True)
-            # La finestra viene completamente nascosta, quindi non è possibile riattivarla con il mouse
-            # self.window.setIsVisible_(False)
-            # self.window.setLevel_(AppKit.NSNormalWindowLevel - 1)
+            self.window.setLevel_(AppKit.NSNormalWindowLevel - 1)
 
     def maximize(self):
         if hasattr(self, 'window') and self.window is not None:
@@ -117,7 +116,7 @@ class TransparentWindowApp:
         with objc.autorelease_pool():
             # create the app
             NSApplication.sharedApplication()
-            NSApp.setActivationPolicy_(AppKit.NSApplicationActivationPolicyRegular)
+            NSApp.setActivationPolicy_(AppKit.NSApplicationActivationPolicyAccessory)  # No dock icon
 
             # create the delegate and attach it to the app
             delegate = AppDelegate.alloc().init()

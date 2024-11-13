@@ -126,6 +126,9 @@ class ServerMouseListener:
             self.send(screen, format_command(f"mouse scroll {dx} {dy}"))
         return True
 
+    def __str__(self):
+        return "ServerMouseListener"
+
 
 class ServerKeyboardListener:
     """
@@ -200,6 +203,9 @@ class ServerKeyboardListener:
         if screen and clients:
             self.send(screen, format_command(f"keyboard release {data}"))
 
+    def __str__(self):
+        return "ServerKeyboardListener"
+
 
 class ServerClipboardListener:
     def __init__(self, send_function: Callable, get_clients: Callable, get_active_screen: Callable):
@@ -237,6 +243,9 @@ class ServerClipboardListener:
                 self.last_clipboard_content = current_clipboard_content
             time.sleep(0.5)
 
+    def __str__(self):
+        return "ServerClipboardListener"
+
 
 class ClientClipboardListener:
     def __init__(self, send_func: Callable):
@@ -271,6 +280,9 @@ class ClientClipboardListener:
                 self.send(format_command("clipboard ") + current_clipboard_content)
                 self.last_clipboard_content = current_clipboard_content
             time.sleep(0.5)
+
+    def __str__(self):
+        return "ClientClipboardListener"
 
 
 class ClientKeyboardController:
@@ -365,6 +377,9 @@ class ClientKeyboardController:
                 self.pressed_keys.remove(key_data)
             self.keyboard.release(self.get_key(key_data))
 
+    def __str__(self):
+        return "ClientKeyboardController"
+
 
 class ClientMouseController:
     def __init__(self, screen_width, screen_height):
@@ -415,6 +430,9 @@ class ClientMouseController:
             self.mouse.scroll(dx, dy)
             time.sleep(delay)
 
+    def __str__(self):
+        return "ClientMouseController"
+
 
 class ClientMouseListener:
     def __init__(self, screen_width, screen_height, threshold, send_func: Callable, client_socket=None):
@@ -440,3 +458,6 @@ class ClientMouseListener:
             self.send(format_command(f"return left {y / self.screen_height}"))
         elif x >= self.screen_width - self.threshold:
             self.send(format_command(f"return right {y / self.screen_height}"))
+
+    def __str__(self):
+        return "ClientMouseListener"
