@@ -12,7 +12,7 @@ kIOHIDRequestTypePostEvent = 0
 
 def is_keyboard_verified(ioset):
     status = ioset['IOHIDCheckAccess'](kIOHIDRequestTypeListenEvent)
-    print("Keyboard verification status: {}".format(status))
+    print("[CHECK] Keyboard verification status: {}".format(status))
 
     return status == kIOHIDAccessTypeGranted
 
@@ -31,7 +31,7 @@ def run_input_checks(ioset):
 
         time.sleep(1)
         is_verified = is_keyboard_verified(ioset)
-        print("Is keyboard verified: {}".format(is_verified))
+        print("[CHECK] Is keyboard verified: {}".format(is_verified))
 
     except Exception as ex:
         print(ex)
@@ -42,7 +42,7 @@ def run_accessibility_checks():
 
         time.sleep(1)
         is_trusted = is_accessibility_verified()
-        print("Accessibilty verified: {}".format(is_trusted))
+        print("[CHECK] Accessibilty verified: {}".format(is_trusted))
         return is_trusted
 
     except Exception as ex:
@@ -79,7 +79,7 @@ def on_accessibility_click():
             kAXTrustedCheckOptionPrompt: True
         })
 
-        print("Called accessibility")
+        print("[CHECK] Called accessibility")
         return run_accessibility_checks()
 
     except Exception as ex:
@@ -99,12 +99,24 @@ def manual_request_input_access():
         print(e)
 
 
+def open_accessibility_settings():
+    try:
+        from AppKit import NSWorkspace, NSURL
+
+        url = "x-apple.systempreferences:com.apple.preference.security?Privacy_Accessibility"
+        url = NSURL.alloc().initWithString_(url)
+        NSWorkspace.sharedWorkspace().openURL_(url)
+
+    except Exception as e:
+        print(e)
+
+
 def on_input_monitor_click(
         ioset,
 ):
     try:
         result = ioset['IOHIDRequestAccess'](kIOHIDRequestTypeListenEvent)
-        print("Called IOHIDRequestAccess, result={}".format(result))
+        print("[CHECK] Called IOHIDRequestAccess, result={}".format(result))
 
         manual_request_input_access()
 
@@ -139,17 +151,17 @@ def check_osx_permissions():
 
             else:
                 print("[CHECK] Is keyboard trusted: {}".format(is_keyboard_ok))
-                return is_keyboard_ok
 
-        else:
+                is_accessibility_ok = is_accessibility_verified()
+                print("[CHECK] Is accessibility trusted: {}".format(is_accessibility_ok))
 
-            is_accessibility_ok = is_accessibility_verified()
-            print("[CHECK] Is accessibility trusted: {}".format(is_accessibility_ok))
+                if not is_accessibility_ok:
+                    is_accessibility_ok = on_accessibility_click()
 
-            if not is_accessibility_ok:
-                is_accessibility_ok = on_accessibility_click()
+                # if not is_accessibility_ok:
+                #     open_accessibility_settings()
 
-            return is_accessibility_ok
+                return is_accessibility_ok
 
     except Exception as e:
         print(e)

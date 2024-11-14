@@ -33,4 +33,7 @@ class ServerManager:
 
         # Clear status
         self.stop_event.clear()
+
+        # Retrigger the start event to signal the server has stopped
+        self.is_server_running.set()
         self.is_server_running.clear()

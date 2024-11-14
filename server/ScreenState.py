@@ -71,6 +71,10 @@ class ScreenStateFactory:
     @staticmethod
     def get_screen_state(screen, server):
 
+        # Check if the server is still in transition
+        if server.block_transition.is_set():
+            return NoStateTransition(server)
+
         # First check if the screen is the same as the active screen
         if screen == server.active_screen:
             return NoStateTransition(server)  # No transition needed

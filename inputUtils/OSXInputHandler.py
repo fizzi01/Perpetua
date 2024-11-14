@@ -16,11 +16,16 @@ from utils.Logging import Logger
 from utils.netData import *
 
 
+class ServerMouseController:
+    pass
+
+
 class ServerMouseListener:
 
     def __init__(self, send_function: Callable, change_screen_function: Callable, get_active_screen: Callable,
                  get_status: Callable,
-                 get_clients: Callable, screen_width: int, screen_height: int, screen_threshold: int = 5, update_mouse_position: Callable = None):
+                 get_clients: Callable, screen_width: int, screen_height: int, screen_threshold: int = 5,
+                 update_mouse_position: Callable = None):
         self.send = send_function
         self.active_screen = get_active_screen
         self.change_screen = change_screen_function
@@ -33,6 +38,10 @@ class ServerMouseListener:
         self.update_mouse_position = update_mouse_position
         self._listener = MouseListener(on_move=self.on_move, on_scroll=self.on_scroll, on_click=self.on_click,
                                        darwin_intercept=self.mouse_suppress_filter)
+
+        self.last_x = None
+        self.last_y = None
+        self.move_threshold = 2  # Minimum movement required to trigger on_move
 
     def get_listener(self):
         return self._listener
@@ -74,6 +83,14 @@ class ServerMouseListener:
             return event
 
     def on_move(self, x, y):
+        # Filter minor mouse movements
+        if self.last_x is not None and self.last_y is not None:
+            if abs(x - self.last_x) < self.move_threshold and abs(y - self.last_y) < self.move_threshold:
+                return True
+
+        # Update last known mouse position
+        self.last_x = x
+        self.last_y = y
 
         if self.update_mouse_position:
             self.update_mouse_position(x, y)

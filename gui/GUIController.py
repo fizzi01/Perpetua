@@ -34,11 +34,22 @@ class BaseGUIController(ABC):
 
     @abstractmethod
     def start_server(self):
-        pass
+        if not self.is_server_running.is_set():
+            self.stop_server_event.clear()
+            self.start_server_event.set()
+        else:
+            self.messager.print("Server is already running.")
 
     @abstractmethod
     def stop_server(self):
-        pass
+        if self.is_server_running.is_set():
+            self.is_server_running.clear()  # Clear the server running status
+            self.stop_server_event.set()
+
+            # Wait for the server to stop
+            self.is_server_running.wait()
+        else:
+            self.messager.print("No server is currently running.")
 
     @abstractmethod
     def save_configuration(self, filename):
@@ -46,7 +57,9 @@ class BaseGUIController(ABC):
 
     @abstractmethod
     def exit(self):
-        pass
+        self.stop_server()
+        self.exit_event.set()
+        self.messager.print("Exiting ...")
 
 
 class GUIControllerFactory:
@@ -110,7 +123,7 @@ class TerminalGUIController(BaseGUIController):
             if add_client == "no":
                 break
             position = self.messager.input(
-                "Enter client position (e.g., 'left', 'right', 'up', 'down', 'up-left', 'up-right', 'down-left', 'down-right'): ")
+                "Enter client position (e.g., 'left', 'right', 'up', 'down'): ")
             address = self.messager.input("Enter client address (IP:PORT): ")
             try:
                 ip, port = address.split(":")
@@ -158,17 +171,10 @@ class TerminalGUIController(BaseGUIController):
         pass
 
     def start_server(self):
-        if not self.is_server_running.is_set():
-            self.stop_server_event.clear()
-            self.start_server_event.set()
-        else:
-            self.messager.print("Server is already running.")
+        super().start_server()
 
     def stop_server(self):
-        if self.is_server_running.is_set():
-            self.stop_server_event.set()
-        else:
-            self.messager.print("No server is currently running.")
+        super().stop_server()
 
     def save_configuration(self, filename="server_config.json"):
         """
@@ -188,6 +194,4 @@ class TerminalGUIController(BaseGUIController):
         print(f"Configuration saved to {filename} at {os.getcwd()}")
 
     def exit(self):
-        self.stop_server_event.set()
-        self.exit_event.set()
-        self.messager.print("Exiting ...")
+        super().exit()

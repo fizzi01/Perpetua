@@ -11,11 +11,13 @@ class LoggingStrategy:
 class ConsoleLoggingStrategy(LoggingStrategy):
     def log(self, stdout, message, priority):
         cur_time = datetime.now().strftime("%H:%M:%S.%f")[:-3]
-        if priority == 2:
+        if priority == Logger.WARNING:
+            stdout(f"\033[93m[{cur_time}] WARNING: {message}\033[0m")
+        elif priority == Logger.ERROR:
             stdout(f"\033[91m[{cur_time}] ERROR: {message}\033[0m")
-        elif priority == 1:
+        elif priority == Logger.INFO:
             stdout(f"\033[94m[{cur_time}] INFO: {message}\033[0m")
-        elif priority == 0:
+        elif priority == Logger.DEBUG:
             stdout(f"\033[92m[{cur_time}] DEBUG: {message}\033[0m")
         else:
             stdout(f"[{cur_time}] ", message)
@@ -23,10 +25,12 @@ class ConsoleLoggingStrategy(LoggingStrategy):
 
 class SilentLoggingStrategy(LoggingStrategy):
     def log(self, stdout, message, priority):
-        if priority == 2:
+        if priority == Logger.ERROR:
             stdout(f"\033[91mERROR: {message}\033[0m")
-        elif priority == 1:
+        elif priority == Logger.INFO:
             stdout(f"\033[94mINFO: {message}\033[0m")
+        elif priority == Logger.WARNING:
+            stdout(f"\033[93mWARNING: {message}\033[0m")
         else:
             pass
 
@@ -43,6 +47,11 @@ class LoggingStrategyFactory:
 class Logger:
     _instance = None
     _lock = threading.Lock()
+
+    WARNING = 3
+    ERROR = 2
+    INFO = 1
+    DEBUG = 0
 
     def __new__(cls, logging, stdout):
         if cls._instance is None:

@@ -1,3 +1,6 @@
+import time
+
+
 class ScreenResetStrategyFactory:
     """
     Factory class for creating screen reset strategy objects based on the screen parameter.
@@ -24,6 +27,7 @@ class ScreenResetStrategy:
 
     def __init__(self, server):
         self.server = server
+        self.secure_threshold = 10
 
     def reset(self, y: float):
         raise NotImplementedError("Subclasses should implement this method.")
@@ -31,23 +35,30 @@ class ScreenResetStrategy:
 
 class LeftScreenResetStrategy(ScreenResetStrategy):
     def reset(self, y: float):
-        self.server.force_mouse_position(self.server.screen_threshold + 25, y)
-        self.server.log(f"Moving mouse to x: {self.server.screen_threshold + 15}, y:{y}")
+        self.server.force_mouse_position(self.server.screen_threshold + self.secure_threshold, y)
+        self.server.log(f"Moving mouse to x: {self.server.screen_threshold + self.secure_threshold}, y:{y}")
 
 
 class RightScreenResetStrategy(ScreenResetStrategy):
     def reset(self, y: float):
-        self.server.force_mouse_position(self.server.screen_width - self.server.screen_threshold - 25, y)
-        self.server.log(f"Moving mouse to x: {self.server.screen_width - self.server.screen_threshold - 15}, y:{y}")
+        self.server.force_mouse_position(self.server.screen_width - self.server.screen_threshold - self.secure_threshold, y)
+        self.server.log(f"Moving mouse to x: {self.server.screen_width - self.server.screen_threshold - self.secure_threshold}, y:{y}")
 
 
 class UpScreenResetStrategy(ScreenResetStrategy):
     def reset(self, y: float):
-        self.server.force_mouse_position(y, self.server.screen_threshold + 10)
-        self.server.log(f"Moving mouse to x: {y}, y:{self.server.screen_threshold + 10}")
+        # Force position in center of screen
+        self.server.force_mouse_position(self.server.screen_width // 2, self.server.screen_height // 2)
+
+        self.server.force_mouse_position(y, self.server.screen_threshold + self.secure_threshold)
+        self.server.log(f"Moving mouse to x: {y}, y:{self.server.screen_threshold + self.secure_threshold}")
 
 
 class DownScreenResetStrategy(ScreenResetStrategy):
     def reset(self, y: float):
-        self.server.force_mouse_position(y, self.server.screen_height - self.server.screen_threshold - 10)
-        self.server.log(f"Moving mouse to x: {y}, y:{self.server.screen_height - self.server.screen_threshold - 10}")
+        # Force position in center of screen
+        self.server.force_mouse_position(self.server.screen_width // 2, self.server.screen_height // 2)
+
+        # Then move to the desired position
+        self.server.force_mouse_position(y, self.server.screen_height - self.server.screen_threshold - self.secure_threshold)
+        self.server.log(f"Moving mouse to x: {y}, y:{self.server.screen_height - self.server.screen_threshold - self.secure_threshold}")
