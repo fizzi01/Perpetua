@@ -1,8 +1,9 @@
 NEWLINE = "\\N\\"
 TAB = ":T:"
 SPACE = ":S:"
-CHUNK_SIZE = 1024
+CHUNK_SIZE = 4096
 END_DELIMITER = '\0\0'
 CHUNK_DELIMITER = '\n'
 
 CMD = '::'
+

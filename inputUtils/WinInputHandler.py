@@ -266,9 +266,7 @@ class ClientKeyboardController:
         self.caps_lock_state = False
 
     def data_filter(self, key_data):
-        if key_data in self.key_filter:
-            return self.key_filter[key_data]
-        return key_data
+        return self.key_filter.get(key_data, key_data)
 
     @staticmethod
     def get_key(key_data: str):
@@ -286,24 +284,32 @@ class ClientKeyboardController:
 
     def process_key_command(self, key_data, key_action):
         key_data = self.data_filter(key_data)
+        key = self.get_key(key_data)
 
         if key_action == "press":
+            # Gestione del caps lock
             if key_data is Key.caps_lock:
                 if self.caps_lock_state:
                     self.controller.release(key_data)
-                    self.caps_lock_state = False
                 else:
                     self.controller.press(key_data)
-                    self.caps_lock_state = True
+                self.caps_lock_state = not self.caps_lock_state
             else:
+                # Gestione dei tasti speciali
                 if self.is_special_key(key_data):  # Special key handler
-                    self.controller.release(Key.alt_gr)
-                    self.controller.release(Key.alt)
+                    if Key.alt_gr in self.pressed_keys:
+                        self.controller.release(Key.alt_gr)
+                        self.pressed_keys.discard(Key.alt_gr)
+                    if Key.alt in self.pressed_keys:
+                        self.controller.release(Key.alt)
+                        self.pressed_keys.discard(Key.alt)
 
-                self.controller.press(self.get_key(key_data))
+                self.controller.press(key)
+                self.pressed_keys.add(key)
         elif key_action == "release":
-            self.controller.release(self.get_key(key_data))
-
+            if key in self.pressed_keys:
+                self.controller.release(key)
+                self.pressed_keys.discard(key)
 
 class ClientMouseController:
     def __init__(self, screen_width, screen_height):
@@ -314,7 +320,7 @@ class ClientMouseController:
         self.last_press_time = -99
         self.doubleclick_counter = 0
 
-    def smooth_move(self, start_x, start_y, end_x, end_y, steps=6, sleep_time=0.0006):
+    def smooth_move(self, start_x, start_y, end_x, end_y, steps=80, sleep_time=0.00001):
         # Calcola la differenza tra la posizione iniziale e finale
         dx = end_x - start_x
         dy = end_y - start_y
@@ -399,3 +405,7 @@ class ClientMouseListener:
             self.send(format_command(f"return left {y / self.screen_height}"))
         elif x >= self.screen_width - self.threshold:
             self.send(format_command(f"return right {y / self.screen_height}"))
+        elif y <= self.threshold:
+            self.send(format_command(f"return up {x / self.screen_width}"))
+        elif y >= self.screen_height - self.threshold:
+            self.send(format_command(f"return down {x / self.screen_width}"))

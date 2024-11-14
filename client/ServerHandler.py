@@ -2,14 +2,15 @@ import socket
 import threading
 import time
 from collections.abc import Callable
+from concurrent.futures import ThreadPoolExecutor
 from time import sleep
 from queue import Queue, Empty
 
 from utils.netData import *
 
-BATCH_PROCESS_INTERVAL = 0.02
+BATCH_PROCESS_INTERVAL = 0.01
 MAX_BATCH_SIZE = 10
-
+MAX_WORKERS = 10  # Numero massimo di worker nel thread pool
 
 class ServerHandler:
     def __init__(self, connection: socket.socket, command_func: Callable, on_disconnect: Callable, logger: Callable):
@@ -21,6 +22,8 @@ class ServerHandler:
         self._running = False
         self.thread = None
         self.message_queue = Queue()
+        self.batch_ready_event = threading.Event()
+        self.executor = ThreadPoolExecutor(max_workers=MAX_WORKERS)
 
     def start(self):
         self._running = True
@@ -37,7 +40,9 @@ class ServerHandler:
 
     def stop(self):
         self._running = False
+        self.batch_ready_event.set()  # Wake up the processor thread
         self.conn.close()
+        self.executor.shutdown(wait=True)
         self.on_disconnect()
         self.log("Client disconnected.", 1)
 
@@ -46,7 +51,7 @@ class ServerHandler:
         buffer = ""
         while self._running:
             try:
-                data = self.conn.recv(1024).decode()
+                data = self.conn.recv(CHUNK_SIZE).decode()
                 if not data:
                     break
                 buffer += data
@@ -60,6 +65,7 @@ class ServerHandler:
 
                         # Aggiungi il batch alla coda
                         self.message_queue.put(batch)
+                        self.batch_ready_event.set()
                     elif CHUNK_DELIMITER in buffer:
                         # Trova il primo delimitatore di chunk e rimuovilo dal buffer
                         pos = buffer.find(CHUNK_DELIMITER)
@@ -68,6 +74,7 @@ class ServerHandler:
 
                         # I chunk fanno parte del batch, quindi li concateno al batch
                         self.message_queue.put(chunk)
+                        self.batch_ready_event.set()
 
                 sleep(0.001)
             except Exception as e:
@@ -78,32 +85,30 @@ class ServerHandler:
     def _process_message_queue(self):
         """Process messages from the queue in a batched manner."""
         batch_buffer = []
-        last_process_time = time.time()
 
         while self._running:
             try:
-                # Prova a ottenere un messaggio dalla coda
-                message = self.message_queue.get(timeout=0.01)
-                batch_buffer.append(message)
+                # Attendi fino a quando ci sono nuovi messaggi o il tempo massimo è trascorso
+                self.batch_ready_event.wait(BATCH_PROCESS_INTERVAL)
 
-                # Controlla se è il momento di elaborare il batch
-                current_time = time.time()
-                if current_time - last_process_time >= BATCH_PROCESS_INTERVAL or len(batch_buffer) >= MAX_BATCH_SIZE:
+                # Raccogli i messaggi dalla coda fino a raggiungere la dimensione massima del batch
+                while not self.message_queue.empty() and len(batch_buffer) < MAX_BATCH_SIZE:
+                    batch_buffer.append(self.message_queue.get())
+
+                # Se il batch è pronto per essere elaborato, processalo
+                if batch_buffer:
                     self._process_batch(batch_buffer)
                     batch_buffer.clear()
-                    last_process_time = current_time
 
-            except Empty:
-                # Se non ci sono messaggi, processa comunque se è il momento di elaborare
-                current_time = time.time()
-                if batch_buffer and current_time - last_process_time >= BATCH_PROCESS_INTERVAL:
-                    self._process_batch(batch_buffer)
-                    batch_buffer.clear()
-                    last_process_time = current_time
+                # Reset l'evento dopo aver processato il batch
+                self.batch_ready_event.clear()
+
+            except Exception as e:
+                self.log(f"Error processing message queue: {e}", 2)
 
     def _process_batch(self, batch_buffer):
         for command in batch_buffer:
-            threading.Thread(target=self.process_command, args=(command,)).start()
+            self.executor.submit(self.process_command, command)
 
 
 class ServerCommandProcessor:
