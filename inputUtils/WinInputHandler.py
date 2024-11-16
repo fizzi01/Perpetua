@@ -252,6 +252,35 @@ class ClientClipboardListener:
             time.sleep(0.5)
 
 
+class ClientMouseListener:
+    def __init__(self, screen_width, screen_height, threshold, send_func: Callable, client_socket=None):
+        self.screen_width = screen_width
+        self.screen_height = screen_height
+        self.threshold = threshold
+        self.send = send_func
+        self.client_socket = client_socket
+        self._listener = MouseListener(on_move=self.handle_mouse)
+
+    def get_listener(self):
+        return self._listener
+
+    def start(self):
+        self._listener.start()
+
+    def stop(self):
+        self._listener.stop()
+
+    def handle_mouse(self, x, y):
+        if x <= self.threshold:
+            self.send(format_command(f"return left {y / self.screen_height}"))
+        elif x >= self.screen_width - self.threshold:
+            self.send(format_command(f"return right {y / self.screen_height}"))
+        elif y <= self.threshold:
+            self.send(format_command(f"return up {x / self.screen_width}"))
+        elif y >= self.screen_height - self.threshold:
+            self.send(format_command(f"return down {x / self.screen_width}"))
+
+
 class ClientKeyboardController:
     def __init__(self):
         self.pressed_keys = set()
@@ -311,6 +340,7 @@ class ClientKeyboardController:
                 self.controller.release(key)
                 self.pressed_keys.discard(key)
 
+
 class ClientMouseController:
     def __init__(self, screen_width, screen_height):
         self.mouse = MouseController()
@@ -353,8 +383,7 @@ class ClientMouseController:
         elif mouse_action == "right_click":
             self.mouse.click(Button.right)
         elif mouse_action == "scroll":
-            # High performance impact without threading
-            threading.Thread(target=self.smooth_scroll, args=(x, y)).start()
+            self.smooth_scroll(x, y)    # Fall back without threading
 
     def handle_click(self, button, is_pressed):
         current_time = time.time()
@@ -379,33 +408,3 @@ class ClientMouseController:
         for _ in range(steps):
             self.mouse.scroll(dx, dy)
             time.sleep(delay)
-
-
-class ClientMouseListener:
-    def __init__(self, screen_width, screen_height, threshold, send_func: Callable, client_socket=None):
-        self.screen_width = screen_width
-        self.screen_height = screen_height
-        self.threshold = threshold
-        self.send = send_func
-        self.client_socket = client_socket
-        self._listener = MouseListener(on_move=self.handle_mouse)
-
-    def get_listener(self):
-        return self._listener
-
-    def start(self):
-        self._listener.start()
-
-    def stop(self):
-        self._listener.stop()
-
-    def handle_mouse(self, x, y):
-
-        if x <= self.threshold:
-            self.send(format_command(f"return left {y / self.screen_height}"))
-        elif x >= self.screen_width - self.threshold:
-            self.send(format_command(f"return right {y / self.screen_height}"))
-        elif y <= self.threshold:
-            self.send(format_command(f"return up {x / self.screen_width}"))
-        elif y >= self.screen_height - self.threshold:
-            self.send(format_command(f"return down {x / self.screen_width}"))

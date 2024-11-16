@@ -1,4 +1,9 @@
+import shutil
+import socket
+import ssl
+import subprocess
 import sys
+import os
 from threading import Thread
 from typing import Optional
 import errno
@@ -12,6 +17,7 @@ from multiprocessing import Process, Event, Pipe
 from multiprocessing.managers import BaseManager
 from queue import Queue, Empty
 from utils import net
+from utils.configConstants import *
 
 
 class QueueLogger:
@@ -49,19 +55,29 @@ class ProcessMessage:
         return self.output_conn.recv()
 
 
+def clear_terminal():
+    if 'TERM' not in os.environ:
+        os.environ['TERM'] = 'xterm-256color'
+    os.system('cls' if os.name == 'nt' else 'clear')
+
+
 def inputter(input_conn):
     """ get requests to do input calls """
     while True:
         try:
             input_msg = input_conn.recv()  # wait for input request
+
             if input_msg is None:
-                print("Inputter received None. Exiting.")
                 break
+
             value = input(input_msg)
+            clear_terminal()
+
             # Check if stdin is closed
             if sys.stdin.closed:
                 print("Input pipe closed. Exiting.")
                 break
+
             input_conn.send(value)  # send inputted value
         except Exception as e:
             if e.args[0] == errno.EBADF:
@@ -76,7 +92,6 @@ def reader(output_conn):
         try:
             output_msg = output_conn.recv()  # wait for output request
             if output_msg is None:
-                print("Reader received None. Exiting.")
                 break
             print(output_msg)
         except Exception as e:
@@ -113,14 +128,25 @@ def check_osx_accessibility():
     if _platform.system() == 'Darwin':
         import utils.OSXaccessibilty as OSXaccessibilty
 
+        print("\033[94mChecking app permissions\033[0m")
         permission = OSXaccessibilty.check_osx_permissions()
 
         if not permission:
             print(
-                "\033[91mPlease enable the accessibility permission in System Preferences -> Security & Privacy -> Monitoring Input\033[0m")
+                "\033[91mA problem occurred while checking app permissions. Please make sure the app has the required permissions.\033[0m")
+
+            from AppKit import NSAlert, NSApp
+
+            alert = NSAlert.alloc().init()
+            alert.setMessageText_("A problem occurred while checking app permissions.")
+            alert.setInformativeText_("Please make sure the app has the required permissions.")
+            alert.addButtonWithTitle_("OK")
+            NSApp.activateIgnoringOtherApps_(True)
+            alert.runModal()
+
             return False
         else:
-            print("\033[92mAccessibility permission granted\033[0m")
+            print("\033[92mApp permissions OK!\033[0m")
             return True
     return True
 
@@ -152,6 +178,39 @@ def process_monitor(exit_event, start_event, controller_proc, threads, pipes, lo
         thread.join()
 
 
+def create_ssl_client(certfile: str, host: str, port: int):
+    context = ssl.create_default_context(cafile=certfile)
+    conn = context.wrap_socket(socket.socket(socket.AF_INET), server_hostname=host)
+    conn.connect((host, port))
+    return conn
+
+
+def generate_ssl_certificate(certfile: str, keyfile: str):
+    if os.name == 'nt':
+        return
+
+    # Check if openssl is installed
+    if not shutil.which("openssl"):
+        print("Please install openssl to generate SSL certificates.")
+        return
+
+    if not os.path.exists(certfile) or not os.path.exists(keyfile):
+        print("Generating SSL certificate...")
+        subprocess.run([
+            "openssl", "req", "-x509", "-newkey", "rsa:4096", "-keyout", keyfile,
+            "-out", certfile, "-days", "365", "-nodes", "-subj", "/CN=localhost"
+        ])
+        print("SSL certificate generated.")
+    else:
+        print("SSL certificate already exists.")
+
+
+def initialize_configuration(config_dir: str, certfile, keyfile):
+    if not os.path.exists(config_dir):
+        os.makedirs(config_dir)
+    generate_ssl_certificate(certfile, keyfile)
+
+
 class MyClassProxy(BaseManager):
     pass
 
@@ -163,6 +222,12 @@ MyClassProxy.register('ProcessMessage', ProcessMessage)
 def main():
     if not check_osx_accessibility():
         return
+
+    config_dir = CONFIG_PATH
+    certfile = os.path.join(config_dir, SSL_CERTFILE_NAME)
+    keyfile = os.path.join(config_dir, SSL_KEYFILE_NAME)
+
+    initialize_configuration(config_dir, certfile, keyfile)
 
     manager = MyClassProxy()
     manager.start()
@@ -184,8 +249,9 @@ def main():
     p1_output_conn, p2_output_conn = Pipe(duplex=True)
     controllerMessager = ProcessMessage(p2_input_conn, p2_output_conn)
 
-    gui_controller = GUIControllerFactory.get_controller("terminal", server_config, start_server_event, stop_server_event, exit_event,
-                                                         is_server_running, controllerMessager)
+    gui_controller = GUIControllerFactory.get_controller("terminal", server_config, start_server_event,
+                                                         stop_server_event, exit_event,
+                                                         is_server_running, controllerMessager, config_dir)
 
     controller_process = Process(target=gui_controller.run, daemon=True)
 
@@ -199,7 +265,8 @@ def main():
                                                           start_server_event,
                                                           controller_process,
                                                           [input_thread, output_thread, server_reader_thread],
-                                                          [p2_input_conn,p2_output_conn,p1_input_conn, p1_output_conn],
+                                                          [p2_input_conn, p2_output_conn, p1_input_conn,
+                                                           p1_output_conn],
                                                           logger), daemon=True)
 
     controller_process.start()
@@ -213,6 +280,7 @@ def main():
 
         # Wait for the start event to be set
         start_server_event.wait()
+        start_server_event.clear()
 
         # Recheck if the exit event is set
         if exit_event.is_set():
@@ -226,7 +294,6 @@ def main():
         server_manager.start_server()
 
         server_monitor_thread.join()
-        start_server_event.clear()
 
     monitor_thread.join()
 

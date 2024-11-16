@@ -1,5 +1,3 @@
-import time
-
 
 class ScreenResetStrategyFactory:
     """
@@ -47,18 +45,12 @@ class RightScreenResetStrategy(ScreenResetStrategy):
 
 class UpScreenResetStrategy(ScreenResetStrategy):
     def reset(self, y: float):
-        # Force position in center of screen
-        self.server.force_mouse_position(self.server.screen_width // 2, self.server.screen_height // 2)
-
         self.server.force_mouse_position(y, self.server.screen_threshold + self.secure_threshold)
         self.server.log(f"Moving mouse to x: {y}, y:{self.server.screen_threshold + self.secure_threshold}")
 
 
 class DownScreenResetStrategy(ScreenResetStrategy):
     def reset(self, y: float):
-        # Force position in center of screen
-        self.server.force_mouse_position(self.server.screen_width // 2, self.server.screen_height // 2)
-
         # Then move to the desired position
         self.server.force_mouse_position(y, self.server.screen_height - self.server.screen_threshold - self.secure_threshold)
         self.server.log(f"Moving mouse to x: {y}, y:{self.server.screen_height - self.server.screen_threshold - self.secure_threshold}")

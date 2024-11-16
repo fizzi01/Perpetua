@@ -1,9 +1,23 @@
 import socket
 import threading
 from collections.abc import Callable
+from concurrent.futures import ThreadPoolExecutor
+from queue import Queue
 
+from server.Command import CommandFactory
 from utils.Logging import Logger
 from utils.netData import *
+
+BATCH_PROCESS_INTERVAL = 0.01
+MAX_BATCH_SIZE = 10
+MAX_WORKERS = 10
+
+
+# Factory Pattern per la creazione dei ClientHandler
+class ClientHandlerFactory:
+    @staticmethod
+    def create_client_handler(conn, addr, command_processor):
+        return ClientHandler(conn, addr, command_processor)
 
 
 class ClientHandler:
@@ -15,16 +29,19 @@ class ClientHandler:
     :param on_disconnect: Funzione da chiamare alla disconnessione del client
     """
 
-    def __init__(self, conn, address, process: Callable, on_disconnect: Callable):
-        self.buffer = ""
-
+    def __init__(self, conn, address, command_processor):
         self.conn = conn
         self.address = address
-        self.process = process
-        self.on_disconnect = on_disconnect
         self.logger = Logger.get_instance().log
         self._running = False
         self.thread = None
+
+        self.process = command_processor
+
+        self.message_queue = Queue()
+        self.clipboard_queue = Queue()
+        self.batch_ready_event = threading.Event()
+        self.executor = ThreadPoolExecutor(max_workers=MAX_WORKERS)
 
     def start(self):
         self.thread = threading.Thread(target=self._handle, daemon=True)
@@ -35,59 +52,97 @@ class ClientHandler:
         except Exception as e:
             self.logger(f"Failed to start client connection: {e}", 2)
 
-    """
-    Chiude la connessione col client e termina la thread.
-    """
+        # Start thread to process messages in the queue
+        self.processor_thread = threading.Thread(target=self._process_message_queue, daemon=True)
+        self.processor_thread.start()
+
+        self.clipboard_thread = threading.Thread(target=self._process_clipboard_queue, daemon=True)
+        self.clipboard_thread.start()
 
     def stop(self):
         self._running = False
-        self._cleanup()
-        # self.thread.join()
+        self.batch_ready_event.set()  # Wake up the processor thread
+        self.executor.shutdown(wait=True)
+        self.conn.close()
+        self.process(("disconnect", self.conn))
+        self.processor_thread.join()
+        self.clipboard_thread.join()
 
     def _handle(self):
-        temp_buffer = ""
+        buffer = bytearray()
         while self._running:
             try:
-                data = self.conn.recv(1024).decode()
+                data = self.conn.recv(CHUNK_SIZE)
                 if not data:
                     break
-                self.buffer += data
+                buffer.extend(data)
 
-                while END_DELIMITER in self.buffer or CHUNK_DELIMITER in self.buffer:
-                    if END_DELIMITER in self.buffer:
-                        # Find the first end delimiter
-                        pos = self.buffer.find(END_DELIMITER)
-                        # Extract the complete command
-                        command = temp_buffer + self.buffer[:pos]
-                        temp_buffer = ""  # Clear the temporary buffer
+                while END_DELIMITER.encode() in buffer or CHUNK_DELIMITER.encode() in buffer:
+                    if END_DELIMITER.encode() in buffer:
+                        pos = buffer.find(END_DELIMITER.encode())
+                        batch = buffer[:pos]
+                        buffer = buffer[pos + len(END_DELIMITER):]  # Remove the batch from the buffer
 
-                        # Remove the command from the buffer
-                        self.buffer = self.buffer[pos + len(END_DELIMITER):]  # Skip the length of END_DELIMITER
-                        # Process the command
-                        self._process(command)
-                    elif CHUNK_DELIMITER in self.buffer:
-                        # Find the first message end delimiter
-                        pos = self.buffer.find(CHUNK_DELIMITER)
-                        # Add the chunk to the temporary buffer
-                        temp_buffer += self.buffer[:pos]
+                        # Add the batch to the queue
+                        self.message_queue.put(batch.decode())
+                        self.batch_ready_event.set()
+                    elif CHUNK_DELIMITER.encode() in buffer:
+                        pos = buffer.find(CHUNK_DELIMITER.encode())
+                        chunk = buffer[:pos]
+                        buffer = buffer[pos + len(CHUNK_DELIMITER):]  # Remove the chunk from the buffer
 
-                        # Remove the chunk from the buffer
-                        self.buffer = self.buffer[pos + len(CHUNK_DELIMITER):]  # Skip the length of CHUNK_DELIMITER
+                        # Add the chunk to the queue
+                        self.message_queue.put(chunk.decode())
+                        self.batch_ready_event.set()
 
-            except socket.error:
-                if self._running:
-                    self.logger(f"Socket {self.address} error occurred.", 2)
+            except Exception as e:
+                self.logger(f"Error receiving data: {e}", 2)
                 break
+        self.stop()
 
-        if self._running:
-            self._cleanup()
-        return
+    def _process_message_queue(self):
+        batch_buffer = []
+
+        while self._running:
+            try:
+                self.batch_ready_event.wait(BATCH_PROCESS_INTERVAL)
+
+                while not self.message_queue.empty() and len(batch_buffer) < MAX_BATCH_SIZE:
+                    batch_buffer.append(self.message_queue.get())
+
+                if batch_buffer:
+                    self._process_batch(batch_buffer)
+                    batch_buffer.clear()
+
+                self.batch_ready_event.clear()
+            except Exception as e:
+                self.logger(f"Error processing message queue: {e}", 2)
+
+    def _process_clipboard_queue(self):
+        while self._running:
+            command = self.clipboard_queue.get()
+            self._process(command)
+            self.clipboard_queue.task_done()
+
+    def _process_batch(self, batch_buffer):
+        for command in batch_buffer:
+            if "clipboard" in command:
+                self.clipboard_queue.put(command)
+            else:
+                self.executor.submit(self._process, command)
 
     def _process(self, command):
         self.process(command)
 
-    def _cleanup(self):
-        self.conn.close()
-        self.logger(f"Client {self.address} disconnected.", 1)
-        self.on_disconnect(self.conn)
-        return
+
+class ClientCommandProcessor:
+    def __init__(self, server):
+        self.server = server
+        self.logger = Logger.get_instance().log
+
+    def process_client_command(self, command):
+        command_handler = CommandFactory.create_command(command, self.server)
+        if command_handler:
+            command_handler.execute()
+        else:
+            self.logger(f"Invalid client command: {command}", Logger.ERROR)

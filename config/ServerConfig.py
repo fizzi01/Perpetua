@@ -100,8 +100,6 @@ class Clients:
         return str(self.clients)
 
 
-
-
 class ServerConfig:
     """
     Class to manage the configuration of the server.
@@ -111,7 +109,7 @@ class ServerConfig:
     """
 
     def __init__(self, server_ip: str, server_port: int, clients: Optional[Clients] = None, wait: int = 5,
-                 screen_threshold: int = 10, logging: bool = True):
+                 screen_threshold: int = 10, logging: bool = True, use_ssl: bool = False):
         self.server_ip = server_ip
         self.server_port = server_port
         self.clients = clients if clients is not None else Clients()
@@ -119,6 +117,10 @@ class ServerConfig:
         self.wait = wait
         self.screen_threshold = screen_threshold
         self.logging = logging
+        self.use_ssl = use_ssl
+
+    def get_use_ssl(self) -> bool:
+        return self.use_ssl
 
     def get_wait(self) -> int:
         return self.wait
@@ -137,6 +139,9 @@ class ServerConfig:
 
     def set_logging(self, logging: bool):
         self.logging = logging
+
+    def set_use_ssl(self, use_ssl: bool):
+        self.use_ssl = use_ssl
 
     def get_server_ip(self) -> str:
         return self.server_ip

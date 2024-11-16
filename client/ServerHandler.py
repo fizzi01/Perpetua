@@ -1,16 +1,16 @@
 import socket
 import threading
-import time
 from collections.abc import Callable
 from concurrent.futures import ThreadPoolExecutor
 from time import sleep
-from queue import Queue, Empty
+from queue import Queue
 
 from utils.netData import *
 
 BATCH_PROCESS_INTERVAL = 0.01
 MAX_BATCH_SIZE = 10
-MAX_WORKERS = 10  # Numero massimo di worker nel thread pool
+MAX_WORKERS = 10
+
 
 class ServerHandler:
     def __init__(self, connection: socket.socket, command_func: Callable, on_disconnect: Callable, logger: Callable):
@@ -48,32 +48,32 @@ class ServerHandler:
 
     def _handle_server_commands(self):
         """Handle commands continuously received from the server."""
-        buffer = ""
+        buffer = bytearray()
         while self._running:
             try:
-                data = self.conn.recv(CHUNK_SIZE).decode()
+                data = self.conn.recv(CHUNK_SIZE)
                 if not data:
                     break
-                buffer += data
+                buffer.extend(data)
 
-                while END_DELIMITER in buffer or CHUNK_DELIMITER in buffer:
-                    if END_DELIMITER in buffer:
+                while END_DELIMITER.encode() in buffer or CHUNK_DELIMITER.encode() in buffer:
+                    if END_DELIMITER.encode() in buffer:
                         # Trova il primo delimitatore di fine batch
-                        pos = buffer.find(END_DELIMITER)
+                        pos = buffer.find(END_DELIMITER.encode())
                         batch = buffer[:pos]
                         buffer = buffer[pos + len(END_DELIMITER):]  # Rimuovi il batch dal buffer
 
                         # Aggiungi il batch alla coda
-                        self.message_queue.put(batch)
+                        self.message_queue.put(batch.decode())
                         self.batch_ready_event.set()
-                    elif CHUNK_DELIMITER in buffer:
+                    elif CHUNK_DELIMITER.encode() in buffer:
                         # Trova il primo delimitatore di chunk e rimuovilo dal buffer
-                        pos = buffer.find(CHUNK_DELIMITER)
+                        pos = buffer.find(CHUNK_DELIMITER.encode())
                         chunk = buffer[:pos]
                         buffer = buffer[pos + len(CHUNK_DELIMITER):]
 
                         # I chunk fanno parte del batch, quindi li concateno al batch
-                        self.message_queue.put(chunk)
+                        self.message_queue.put(chunk.decode())
                         self.batch_ready_event.set()
 
                 sleep(0.001)
@@ -117,6 +117,15 @@ class ServerCommandProcessor:
         self.mouse_controller = mouse_controller
         self.keyboard_controller = keyboard_controller
         self.clipboard = clipboard
+
+        self.keyboard_queue = Queue()  # Needed to process commands sequentially, preserving the order
+        self.keyboard_thread = threading.Thread(target=self._process_keyboard_queue, daemon=True)
+        self.keyboard_thread.start()
+
+        self.clipboard_queue = Queue()  # Needed to process commands sequentially, preserving the order
+        self.clipboard_thread = threading.Thread(target=self._process_clipboard_queue, daemon=True)
+        self.clipboard_thread.start()
+
         self.log = print  # TODO: Usare il logger
 
     def process_command(self, command):
@@ -141,6 +150,12 @@ class ServerCommandProcessor:
         except Exception as e:
             self.log(f"Error processing mouse command: {e}", 2)
 
+    def _process_keyboard_queue(self):
+        while True:
+            parts = self.keyboard_queue.get()
+            self._process_keyboard_command(parts)
+            self.keyboard_queue.task_done()
+
     def _process_keyboard_command(self, parts):
         try:
             event = parts[1]
@@ -155,6 +170,12 @@ class ServerCommandProcessor:
             self.clipboard.set_clipboard(content)
         except Exception as e:
             self.log(f"Error processing clipboard command: {e}", 2)
+
+    def _process_clipboard_queue(self):
+        while True:
+            parts = self.clipboard_queue.get()
+            self._process_clipboard_command(parts)
+            self.clipboard_queue.task_done()
 
     def _process_screen_command(self, parts):
         try:

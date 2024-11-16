@@ -1,20 +1,30 @@
 import json
 import os
 
-from config.ServerConfig import Clients, Client
+from tabulate import tabulate
+
+from config.ServerConfig import Clients, Client, ServerConfig
 from utils import net
 
 from abc import ABC, abstractmethod
 
+from utils.configConstants import *
+from utils.metadataExtractor import extract_metadata
+
 
 class BaseGUIController(ABC):
-    def __init__(self, server_config, start_server_event, stop_server_event, exit_event, is_server_running, messager):
+
+    def __init__(self, server_config, start_server_event, stop_server_event, exit_event, is_server_running, messager, folder_path):
+
         self.server_config = server_config
+        self.server_config_metadata = extract_metadata(ServerConfig)
+
         self.start_server_event = start_server_event
         self.stop_server_event = stop_server_event
         self.exit_event = exit_event
         self.is_server_running = is_server_running
         self.messager = messager
+        self.folder_path = folder_path
 
     @abstractmethod
     def run(self):
@@ -24,9 +34,41 @@ class BaseGUIController(ABC):
     def configure_server(self):
         pass
 
-    @abstractmethod
-    def load_configuration(self, filename):
-        pass
+    def load_configuration(self):
+        """
+        Load the server configuration from a JSON file.
+        """
+        filename = os.path.join(self.folder_path, CONFIG_FILE)
+        if not os.path.exists(filename):
+            self.messager.print(f"Configuration file {filename} not found.")
+            if not os.path.exists(self.folder_path):
+                self.messager.print(f"Creating folder {self.folder_path}")
+                os.makedirs(self.folder_path, exist_ok=True)
+            return
+
+        with open(filename) as config_file:
+            config_data = json.load(config_file)
+
+        metadata = self.server_config_metadata
+        for param_name, methods in metadata["set_methods"].items():
+            try:
+                set_method = getattr(self.server_config, param_name)
+                value = config_data.get(param_name[4:], None)  # Remove 'set_' prefix
+                if value is not None:
+                    set_method(value)
+            except Exception as e:
+                self.messager.print(f"Error setting {param_name}: {e}")
+
+        clients_dict = {}
+        for position, address in config_data.get("clients", {}).items():
+            try:
+                ip, port = address.split(":")
+                clients_dict[position] = Client(addr=ip, port=int(port), key_map={})
+            except ValueError as e:
+                self.messager.print(f"Error parsing client address {address}: {e}")
+
+        clients = Clients(clients_dict)
+        self.server_config.set_clients(clients)
 
     @abstractmethod
     def display_clients_matrix(self):
@@ -52,8 +94,28 @@ class BaseGUIController(ABC):
             self.messager.print("No server is currently running.")
 
     @abstractmethod
-    def save_configuration(self, filename):
-        pass
+    def save_configuration(self):
+        """
+        Save the server configuration to a JSON file using metadata.
+        """
+        path = os.path.join(self.folder_path, CONFIG_FILE)
+        metadata = self.server_config_metadata
+        config_data = {}
+
+        for param_name, methods in metadata["get_methods"].items():
+            try:
+                get_method = getattr(self.server_config, param_name)
+                value = get_method()
+                config_data[param_name[4:]] = value  # Remove 'get_' prefix
+            except Exception as e:
+                self.messager.print(f"Error getting {param_name}: {e}")
+
+        # Save clients separately
+        config_data["clients"] = {position: f"{client.get_address()}:{client.get_port()}" for position, client in
+                                  self.server_config.get_clients().clients.items()}
+
+        with open(path, 'w') as config_file:
+            json.dump(config_data, config_file, indent=4)
 
     @abstractmethod
     def exit(self):
@@ -64,9 +126,9 @@ class BaseGUIController(ABC):
 
 class GUIControllerFactory:
     @staticmethod
-    def get_controller(gui_type, server_config, start_server_event, stop_server_event, exit_event, is_server_running, messager):
+    def get_controller(gui_type, server_config, start_server_event, stop_server_event, exit_event, is_server_running, messager, folder_path):
         if gui_type == "terminal":
-            return TerminalGUIController(server_config, start_server_event, stop_server_event, exit_event, is_server_running, messager)
+            return TerminalGUIController(server_config, start_server_event, stop_server_event, exit_event, is_server_running, messager, folder_path)
         # Aggiungi altre implementazioni di GUI qui
         else:
             raise ValueError(f"Unknown GUI type: {gui_type}")
@@ -75,35 +137,30 @@ class GUIControllerFactory:
 class TerminalGUIController(BaseGUIController):
 
     def run(self):
+        # Startup load configuration
+        self.load_configuration()
         while True:
             self.messager.print("\n--- Server Configuration Menu ---")
             self.messager.print("1. Configure server manually")
-            self.messager.print("2. Load server configuration from file")
-            self.messager.print("3. Display clients matrix")
-            self.messager.print("4. Start server")
-            self.messager.print("5. Stop server")
-            self.messager.print("6. Save current configuration to file")
-            self.messager.print("7. Exit")
+            self.messager.print("2. Display clients matrix")
+            self.messager.print("3. Start server")
+            self.messager.print("4. Stop server")
+            self.messager.print("5. Save current configuration to file")
+            self.messager.print("6. Exit")
             self.messager.print("\n")
             choice = self.messager.input("Choose an option:")
 
             if choice == "1":
                 self.configure_server()
             elif choice == "2":
-                filename = self.messager.input(
-                    "Enter configuration file name (default 'server_config.json'): ") or "server_config.json"
-                self.load_configuration(filename)
-            elif choice == "3":
                 self.display_clients_matrix()
-            elif choice == "4":
+            elif choice == "3":
                 self.start_server()
-            elif choice == "5":
+            elif choice == "4":
                 self.stop_server()
+            elif choice == "5":
+                self.save_configuration()
             elif choice == "6":
-                filename = self.messager.input(
-                    "Enter configuration file name to save (default 'server_config.json'): ") or "server_config.json"
-                self.save_configuration(filename)
-            elif choice == "7":
                 self.exit()
                 break
             else:
@@ -111,87 +168,83 @@ class TerminalGUIController(BaseGUIController):
 
     def configure_server(self):
         self.messager.print("Configure your server:")
-        server_ip = self.messager.input(f"Enter server IP (default {net.get_local_ip()}): ") or net.get_local_ip()
-        server_port = int(self.messager.input("Enter server port (default 5001): ") or 5001)
-        wait = int(self.messager.input("Enter wait time for server socket timeout (default 5): ") or 5)
-        logging = self.messager.input("Enable logging? (yes/no, default no): ").lower() == "yes"
-        screen_threshold = int(self.messager.input("Enter screen threshold (default 10): ") or 10)
+        metadata = self.server_config_metadata
 
+        for param_name, methods in metadata["set_methods"].items():
+            if param_name == "set_clients":
+                continue  # Skip client-related methods initially
+
+            display_name = methods["display_name"]
+            get_method_name = f"get_{param_name[4:]}"
+            get_method = getattr(self.server_config, get_method_name, None)
+            if callable(get_method):
+                current_value = get_method()
+                input_value = self.messager.input(
+                    f"Set {display_name} (default {current_value}): ") or current_value
+
+                # Convert input to the correct type
+                param_type = methods["parameters"][0]["type"]
+                if param_type == 'int':
+                    input_value = int(input_value)
+                elif param_type == 'bool':
+                    input_value = input_value.lower() in ['true', 'yes', '1']
+
+                # Set the value using the set method
+                set_method = getattr(self.server_config, param_name)
+                set_method(input_value)
+
+        # Configure clients
         clients_dict = {}
         while True:
             add_client = self.messager.input("Do you want to add a client? (yes/no): ").lower()
             if add_client == "no":
                 break
-            position = self.messager.input(
-                "Enter client position (e.g., 'left', 'right', 'up', 'down'): ")
+            position = self.messager.input("Enter client position (e.g., 'left', 'right', 'up', 'down'): ")
             address = self.messager.input("Enter client address (IP:PORT): ")
             try:
                 ip, port = address.split(":")
-                clients_dict[position] = Client(addr=ip, port=port, key_map={})
+                clients_dict[position] = Client(addr=ip, port=int(port), key_map={})
             except ValueError:
                 self.messager.print("Invalid address format. Please try again.")
                 continue
 
         clients = Clients(clients_dict)
-
-        # Set up server configuration
-        self.server_config.set_ip(server_ip)
-        self.server_config.set_port(server_port)
         self.server_config.set_clients(clients)
-        self.server_config.set_wait(wait)
-        self.server_config.set_screen_threshold(screen_threshold)
-        self.server_config.set_logging(logging)
 
-    def load_configuration(self, filename="server_config.json"):
-        """
-        Load the server configuration from a JSON file.
-        """
-        if not os.path.exists(filename):
-            print(f"Configuration file {filename} not found.")
-            return None
+        self.save_configuration()
+        self.load_configuration()
 
-        with open(filename) as config_file:
-            config_data = json.load(config_file)
-
-        clients_dict = {}
-        for position, address in config_data["clients"].items():
-            ip, port = address.split(":")
-            clients_dict[position] = Client(addr=ip, key_map={})
-
-        clients = Clients(clients_dict)
-        self.server_config.set_ip(config_data["server_ip"])
-        self.server_config.set_port(config_data["server_port"])
-        self.server_config.set_clients(clients)
-        self.server_config.set_wait(config_data["wait"])
-        self.server_config.set_screen_threshold(config_data["screen_threshold"])
-        self.server_config.set_logging(config_data["logging"])
+    def save_configuration(self):
+        super().save_configuration()
 
     def display_clients_matrix(self):
-        # Implement display clients matrix logic
-        pass
+        # Dynamic matrix display
+        clients = self.server_config.get_clients().clients
+        matrix = [["" for _ in range(3)] for _ in range(3)]
+
+        # Add server at the center
+        server_address = "Host"
+        matrix[1][1] = server_address
+
+        for position, client in clients.items():
+            address = f"{client.get_address()}:{client.get_port()}"
+            if position == "left":
+                matrix[1][0] = address
+            elif position == "right":
+                matrix[1][2] = address
+            elif position == "up":
+                matrix[0][1] = address
+            elif position == "down":
+                matrix[2][1] = address
+
+        # Print the matrix in a formatted way using tabulate
+        print(tabulate(matrix, tablefmt="grid",colalign=("center", "center", "center"),headers=["Left", "", "Right"], showindex=["Up", "Host", "Down"]))
 
     def start_server(self):
         super().start_server()
 
     def stop_server(self):
         super().stop_server()
-
-    def save_configuration(self, filename="server_config.json"):
-        """
-        Save the server configuration to a JSON file.
-        """
-        config_data = {
-            "server_ip": self.server_config.get_server_ip(),
-            "server_port": self.server_config.get_server_port(),
-            "clients": {position: f"{client.get_address()}:{client.get_port()}" for position, client in
-                        self.server_config.get_clients().clients.items()},
-            "wait": self.server_config.get_wait(),
-            "screen_threshold": self.server_config.get_screen_threshold(),
-            "logging": self.server_config.get_logging()
-        }
-        with open(filename, 'w') as config_file:
-            json.dump(config_data, config_file, indent=4)
-        print(f"Configuration saved to {filename} at {os.getcwd()}")
 
     def exit(self):
         super().exit()

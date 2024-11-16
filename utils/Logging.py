@@ -61,7 +61,7 @@ class Logger:
                     cls._instance._initialize(logging, stdout)
         return cls._instance
 
-    def _initialize(self, logging, stdout):
+    def _initialize(self, logging, stdout=print):
         self.logging = logging
         self.stdout = stdout
         self.logging_strategy = LoggingStrategyFactory.get_logging_strategy(self.logging)

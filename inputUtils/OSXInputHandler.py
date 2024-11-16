@@ -15,6 +15,8 @@ from pynput.keyboard import Listener as KeyboardListener, Key, KeyCode, Controll
 from utils.Logging import Logger
 from utils.netData import *
 
+from network.IOManager import QueueManager
+
 
 class ServerMouseController:
     pass
@@ -22,11 +24,10 @@ class ServerMouseController:
 
 class ServerMouseListener:
 
-    def __init__(self, send_function: Callable, change_screen_function: Callable, get_active_screen: Callable,
+    def __init__(self, change_screen_function: Callable, get_active_screen: Callable,
                  get_status: Callable,
                  get_clients: Callable, screen_width: int, screen_height: int, screen_threshold: int = 5,
                  update_mouse_position: Callable = None):
-        self.send = send_function
         self.active_screen = get_active_screen
         self.change_screen = change_screen_function
         self.get_trasmission_status = get_status
@@ -34,7 +35,10 @@ class ServerMouseListener:
         self.screen_width = screen_width
         self.screen_height = screen_height
         self.screen_treshold = screen_threshold
+
         self.logger = Logger.get_instance().log
+        self.send = QueueManager(None).send_mouse
+
         self.update_mouse_position = update_mouse_position
         self._listener = MouseListener(on_move=self.on_move, on_scroll=self.on_scroll, on_click=self.on_click,
                                        darwin_intercept=self.mouse_suppress_filter)
@@ -105,13 +109,13 @@ class ServerMouseListener:
         if screen and clients and is_transmitting:
             self.send(screen, format_command(f"mouse move {normalized_x} {normalized_y}"))
         else:
-            if x >= self.screen_width - self.screen_treshold:  # Soglia per passare al monitor a destra
+            if x >= self.screen_width - self.screen_treshold:
                 self.change_screen("right")
-            elif x <= self.screen_treshold:  # Soglia per passare al monitor a sinistra
+            elif x <= self.screen_treshold:
                 self.change_screen("left")
-            elif y >= self.screen_height - self.screen_treshold:  # Soglia per passare al monitor sopra
+            elif y >= self.screen_height - self.screen_treshold:
                 self.change_screen("down")
-            elif y <= self.screen_treshold:  # Soglia per passare al monitor sotto
+            elif y <= self.screen_treshold:
                 self.change_screen("up")
 
         return True
@@ -151,10 +155,10 @@ class ServerKeyboardListener:
     :param get_active_screen: Function to get the active screen
     """
 
-    def __init__(self, send_function: Callable, get_clients: Callable, get_active_screen: Callable):
+    def __init__(self, get_clients: Callable, get_active_screen: Callable):
         self.clients = get_clients
         self.active_screen = get_active_screen
-        self.send = send_function
+        self.send = QueueManager(None).send_keyboard
         self.logger = Logger.get_instance().log
 
         self._listener = KeyboardListener(on_press=self.on_press, on_release=self.on_release,
@@ -222,9 +226,10 @@ class ServerKeyboardListener:
 
 
 class ServerClipboardListener:
-    def __init__(self, send_function: Callable, get_clients: Callable, get_active_screen: Callable):
+    def __init__(self, get_clients: Callable, get_active_screen: Callable):
 
-        self.send = send_function
+        self.send = QueueManager(None).send_clipboard
+
         self.clients = get_clients
         self.active_screen = get_active_screen
         self._thread = None
@@ -472,11 +477,14 @@ class ClientMouseListener:
         self._listener.stop()
 
     def handle_mouse(self, x, y):
-
         if x <= self.threshold:
             self.send(format_command(f"return left {y / self.screen_height}"))
         elif x >= self.screen_width - self.threshold:
             self.send(format_command(f"return right {y / self.screen_height}"))
+        elif y <= self.threshold:
+            self.send(format_command(f"return up {x / self.screen_width}"))
+        elif y >= self.screen_height - self.threshold:
+            self.send(format_command(f"return down {x / self.screen_width}"))
 
     def __str__(self):
         return "ClientMouseListener"

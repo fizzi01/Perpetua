@@ -1,69 +1,51 @@
 import socket
 import threading
 import time
-from queue import Queue, Empty
-from typing import Union, Optional
+from typing import Union
 from pynput import mouse
 
 # Core utilities
 from inputUtils import InputHandler
+from network.IOManager import MessageQueueManager, QueueManager
 from window import Window
 
 # Configuration
 from utils import screen_size
-from utils.netData import *
 from config.ServerConfig import Client, Clients
 
 # Network
-from network.ServerSocket import ServerSocket
+from network.ServerSocket import ServerSocket, ConnectionHandlerFactory
 
 # Server
 from server.ScreenTransition import ScreenTransitionFactory
 from server.ScreenReset import ScreenResetStrategyFactory
 from server.Command import CommandFactory
 from server.ScreenState import ScreenStateFactory
-from server.ClientHandler import ClientHandler
+from server.ClientHandler import ClientCommandProcessor
 
 # Logging
 from utils.Logging import Logger
 
 
-class InputEventSubject:
-    def __init__(self):
-        self._observers = []
-
-    def add_observer(self, observer):
-        self._observers.append(observer)
-
-    def remove_observer(self, observer):
-        self._observers.remove(observer)
-
-    def notify_observers(self, event):
-        for observer in self._observers:
-            observer.update(event)
-
-
-# Factory Pattern per la creazione dei ClientHandler
-class ClientHandlerFactory:
-    @staticmethod
-    def create_client_handler(conn, addr, server):
-        return ClientHandler(conn, addr, server.process_client_command, server.on_disconnect)
-
-
 class Server:
     def __init__(self, host: str = "0.0.0.0", port: int = 5001, clients=None,
-                 wait: int = 5, logging: bool = False, screen_threshold: int = 10, root=None, stdout=print):
+                 wait: int = 5, logging: bool = False, screen_threshold: int = 10, root=None, stdout=print,
+                 use_ssl: bool = False, certfile: str = None, keyfile: str = None):
 
         self._thread_pool = []
         self._started = False  # Main variable for server status, if False the server is stopped automatically
         self.lock = threading.RLock()
 
+        # Logging and IO Managers are shared resources (should be initialized first)
         # Initialize logging
         self._initialize_logging(logging, stdout)
+        # Initialize IO Managers
+        self._initialize_io_managers()
 
         # Initialize server variables
         self._initialize_clients(clients)
         self._initialize_server_socket(host, port, wait)
+        self._initalize_connections_handler(use_ssl, certfile, keyfile)
 
         # Screen transition variables
         self._is_transition = False
@@ -73,21 +55,38 @@ class Server:
         # Initialize main threads
         self._initialize_threads()
 
-        # Listeners
+        # Input Listeners
         self.listeners = []
         self.mouse_listener = None
         self.keyboard_listener = None
         self.clipboard_listener = None
         self.current_mouse_position = None
-        self._initialize_input_listeners()
 
-        # Message queue
-        self._initialize_message_queue()
+        # Input controllers
+        self._initialize_input_controllers()
 
     def _initialize_clients(self, clients):
         if clients is None:
             clients = Clients({"left": Client()})
         self.clients = clients
+
+    def _initalize_connections_handler(self, use_ssl: bool = False, certfile: str = None, keyfile: str = None):
+        self.use_ssl = use_ssl
+        self.certfile = certfile
+        self.keyfile = keyfile
+
+        self.command_processor = ClientCommandProcessor(self)
+        self.connection_handler = ConnectionHandlerFactory.create_handler(ssl_enabled=use_ssl,
+                                                                          certfile=certfile,
+                                                                          keyfile=keyfile,
+                                                                          command_processor=self.command_processor.process_client_command)
+
+    def _initialize_io_managers(self):
+        self.messagesManager = MessageQueueManager(self.get_connected_clients, self.get_client, self.change_screen)
+        self.listenersQueueManager = QueueManager(self.messagesManager)
+        # Add IO Managers to the thread pool, they could be considered as threads too
+        self._thread_pool.append(self.messagesManager)
+        self._thread_pool.append(self.listenersQueueManager)
 
     def _initialize_server_socket(self, host, port, wait):
         self.server_socket = ServerSocket(host, port, wait)
@@ -124,21 +123,12 @@ class Server:
         self._thread_pool.append(self._main_thread)
         self._is_main_running_event = threading.Event()
 
-    def _initialize_input_listeners(self):
-        self.input_event_subject = InputEventSubject()
+    def _initialize_input_controllers(self):
         self.mouse_controller = mouse.Controller()
         self.current_mouse_position = self.mouse_controller.position
 
-    def _initialize_message_queue(self):
-        self.message_queue = Queue()
-        self._process_queue_thread = threading.Thread(target=self._process_queue, daemon=True)
-        self._thread_pool.append(self._process_queue_thread)
-
     def is_running(self):
         return self._started
-
-    def join(self):
-        self._main_thread.join()
 
     def start(self):
         try:
@@ -161,7 +151,8 @@ class Server:
             self._securer.start()  # Start screen transition securer
 
             # Start message processing thread
-            self._process_queue_thread.start()
+            self.messagesManager.start()
+            self.listenersQueueManager.start()
 
             self.log(f"Server started.", Logger.INFO)
 
@@ -184,13 +175,8 @@ class Server:
         if self.window:
             self.window.stop()
 
-        # Close all client handlers
-        for handler in self._client_handlers:
-            try:
-                handler.stop()
-            except Exception as e:
-                self.log(f"Errore nella chiusura del client handler: {e}", Logger.ERROR)
-                continue
+        # Close connections handler
+        self.connection_handler.stop()
 
         try:
             # Trigger checker
@@ -215,50 +201,33 @@ class Server:
 
     def _accept_clients(self):
         self._is_main_running_event.set()
-        while self._started:  # Todo gestire socket per accettare richieste di connessione per poi creare un socket per la comunicazione
-            for key in self.clients.get_possible_positions():
-                try:
-                    if not self.clients.get_connection(key):
-                        conn, addr = self.server_socket.accept()
-                        self.log(f"Client handshake from {addr[0]}", Logger.INFO)
-                        # TODO : Inserire logica di handshake per sincronizzare inofrmazioni di connessione
-                        #  come le costanti per i messaggi
-                    else:
-                        time.sleep(2)
-                        continue
-                except socket.timeout:
-                    if self._started:
-                        self.log("Waiting for clients ...", Logger.INFO)
-                        continue
-                    else:
-                        break
-                except Exception as e:
-                    if self._started:
-                        self.log(f"{e}", Logger.ERROR)
-                        continue
-                    else:
-                        break
+        while self._started:
+            try:
+                conn, addr = self.server_socket.accept()
+                self.log(f"Client handshake from {addr[0]}", Logger.INFO)
 
-                # Adding corresponding client to the list
-                for pos in self.clients.get_possible_positions():
-                    if self.clients.get_address(pos) == addr[0]:
-                        self.clients.set_connection(pos, conn)
+                # Check if the client is already connected
+                if self.clients.is_client_connected(addr):
+                    self.log(f"Client {addr[0]} already connected.", Logger.WARNING)
+                    conn.close()
+                    continue
 
-                        client_handler = ClientHandlerFactory.create_client_handler(conn, addr, self)
-                        client_handler.start()
-                        self._client_handlers.append(client_handler)
-                        break
+                self.connection_handler.handle_connection(conn, addr, self.clients)
 
-                time.sleep(1)
+            except socket.timeout:
+                if self._started:
+                    self.log("Waiting for clients ...", Logger.INFO)
+                    continue
+                else:
+                    break
+            except Exception as e:
+                if self._started:
+                    self.log(f"{e}", Logger.ERROR)
+                    continue
+                else:
+                    break
 
-            # Handle client disconnections
-            for key, client in self.clients.get_connected_clients().items():
-                try:
-                    # Check if the connection is still active
-                    client.get_connection().send(b'\x00')
-                except (socket.error, ConnectionResetError):
-                    self.log(f"Client {key} disconnected.", Logger.WARNING)
-                    self.on_disconnect(client.get_connection())
+            self.connection_handler.check_client_connections()
 
         self._is_main_running_event.clear()
         self._is_main_running_event.set()  # Set the event to True to indicate the main thread is terminated
@@ -298,7 +267,8 @@ class Server:
         self.logger.log(message, priority)
 
     def update_mouse_position(self, x, y):
-        self.current_mouse_position = (x, y)
+        if not self.block_transition.is_set():
+            self.current_mouse_position = (x, y)
 
     # Template Method Pattern per la sequenza di avvio del server
     def _start_listeners(self):
@@ -321,8 +291,7 @@ class Server:
 
     def _setup_mouse_listener(self):
         # Metodo hook per impostare il listener del mouse
-        self.mouse_listener = InputHandler.ServerMouseListener(send_function=self._send_to_clients,
-                                                               change_screen_function=self.change_screen,
+        self.mouse_listener = InputHandler.ServerMouseListener(change_screen_function=self.change_screen,
                                                                get_active_screen=self._get_active_screen,
                                                                get_status=self._get_status,
                                                                get_clients=self.get_client,
@@ -331,30 +300,20 @@ class Server:
                                                                screen_threshold=self.screen_threshold,
                                                                update_mouse_position=self.update_mouse_position)
         self.mouse_listener.start()
-        self.input_event_subject.add_observer(self.mouse_listener)
         return self.mouse_listener
 
     def _setup_keyboard_listener(self):
         # Metodo hook per impostare il listener della tastiera
-        self.keyboard_listener = InputHandler.ServerKeyboardListener(send_function=self._send_to_clients,
-                                                                     get_active_screen=self._get_active_screen,
+        self.keyboard_listener = InputHandler.ServerKeyboardListener(get_active_screen=self._get_active_screen,
                                                                      get_clients=self.get_client)
         self.keyboard_listener.start()
-        self.input_event_subject.add_observer(self.keyboard_listener)
         return self.keyboard_listener
 
     def _setup_clipboard_listener(self):
-        self.clipboard_listener = InputHandler.ServerClipboardListener(send_function=self._send_to_clients,
-                                                                       get_clients=self.get_client,
+        self.clipboard_listener = InputHandler.ServerClipboardListener(get_clients=self.get_client,
                                                                        get_active_screen=self._get_active_screen)
         self.clipboard_listener.start()
         return self.clipboard_listener
-
-    @staticmethod
-    def _create_window(root):
-        win = Window(root)
-        win.minimize()
-        return win
 
     def _check_main_thread(self):
         """
@@ -375,60 +334,6 @@ class Server:
     def _get_status(self):
         return self._is_transition
 
-    def _send_to_clients(self, screen: str, data):
-        if screen == "all":
-            for key in self.clients.get_possible_positions():
-                if key:
-                    self.message_queue.put((key, data))
-        else:
-            self.message_queue.put((screen, data))
-
-    def _process_queue(self):
-        while self._started:
-            try:
-                screen, data = self.message_queue.get(timeout=0.1)
-
-                # Preparing data to send
-                data = format_data(data)
-
-                try:
-                    conn = self.get_client(screen)
-                    if not conn:
-                        raise KeyError
-                except KeyError:
-                    self.log(f"Errore nell'invio dei dati al client {screen}: Client non trovato.", Logger.ERROR)
-                    continue
-                except Exception as e:
-                    self.log(f"Errore nell'invio dei dati al client {screen}: {e}", Logger.ERROR)
-                    continue
-
-                try:
-                    # Split the command into chunks if it's too long
-                    if len(data) > CHUNK_SIZE - len(END_DELIMITER):
-                        chunks = [data[i:i + CHUNK_SIZE] for i in range(0, len(data), CHUNK_SIZE)]
-                        for i, chunk in enumerate(chunks):
-                            if i == len(chunks) - 1 and len(chunk) > CHUNK_SIZE - len(
-                                    END_DELIMITER):  # Check if this is the last chunk and its length is > CHUNK_SIZE - END_DELIMITER
-                                conn.send(chunk.encode())
-                                conn.send(END_DELIMITER.encode())
-                            elif i == len(
-                                    chunks) - 1:  # This is the last chunk and its length is less than CHUNK_SIZE - END_DELIMITER
-                                chunk = chunk.encode() + END_DELIMITER.encode()
-                                conn.send(chunk)
-                            else:
-                                chunk = chunk.encode() + CHUNK_DELIMITER.encode()
-                                conn.send(chunk)
-                    else:
-                        data = data.encode() + END_DELIMITER.encode()
-                        conn.send(data)
-                except socket.error as e:
-                    self.log(f"Errore nell'invio dei dati al client {screen}: {e}", Logger.ERROR)
-                    self.change_screen()
-            except Empty:
-                continue
-            except Exception as e:
-                self.log(f"Errore durante l'elaborazione della coda dei messaggi: {e}", Logger.ERROR)
-
     def _screen_toggle(self, screen):
         """
          Funzione per la gestione del cambio di schermata.
@@ -437,12 +342,10 @@ class Server:
         if self.window:
             if not screen:
                 # Disable screen transition
-                #self.window.minimize()
-                self.window.close()
+                self.window.minimize()
             else:
                 # Enable screen transition
                 self.window.maximize()
-                # self.window.maximize()
 
     def check_screen_transition(self):
         while self._started:
@@ -497,10 +400,10 @@ class Server:
     def force_mouse_position(self, x, y):
         desired_position = (x, y)
         attempt = 0
-        max_attempts = 10
+        max_attempts = 5
 
         # Condizione per ridurre la frequenza degli aggiornamenti della posizione
-        update_interval = 0.05  # intervallo tra gli aggiornamenti
+        update_interval = 0.01  # intervallo tra gli aggiornamenti
         last_update_time = time.time()
 
         while not self._is_mouse_position_reached(desired_position) and attempt < max_attempts:
@@ -510,11 +413,12 @@ class Server:
                 attempt += 1
                 last_update_time = current_time
 
-            self._wait_for_mouse_position_update(desired_position)
+            time.sleep(0.001)
 
-    def _is_mouse_position_reached(self, desired_position):
-        return self.mouse_controller.position == desired_position
-
-    @staticmethod
-    def _wait_for_mouse_position_update(desired_position):
-        time.sleep(0.001)
+    def _is_mouse_position_reached(self, desired_position, margin=600):
+        """
+        Check if the mouse position is reached, with a margin of error
+        """
+        current_position = self.mouse_controller.position
+        return (abs(current_position[0] - desired_position[0]) <= margin and
+                abs(current_position[1] - desired_position[1]) <= margin)
