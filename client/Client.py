@@ -4,34 +4,48 @@ import time
 from collections.abc import Callable
 
 from inputUtils import InputHandler as inputHandler
-from .ServerHandler import ServerHandler, ServerCommandProcessor
+from network.ClientSocket import ClientSocket, ConnectionHandlerFactory
+from network.IOManager import ClientMessageQueueManager, QueueManager
+from utils.Logging import Logger
+from .ServerHandler import ServerCommandProcessor
 from utils import screen_size
-from utils.netData import *
 
 
 class Client:
     def __init__(self, server: str, port: int, threshold: int = 10,
                  wait: int = 5,
-                 logging: bool = False, stdout: Callable = print, root=None):
+                 logging: bool = False, stdout: Callable = print, root=None, certfile=None, use_ssl=False,
+                 keyfile=None):
 
-        self.server = server
-        self.port = port
-        self.screen_width, self.screen_height = screen_size()
-        self.threshold = threshold
-        self.wait = wait
-        self.logging = logging
-        self.stdout = stdout
+        self._thread_pool = []
+        self._started = False  # Main variable for client status, if False the client is stopped automatically
+        self.lock = threading.RLock()
 
-        self.client_socket = None
+        # Logging and IO Managers are shared resources (should be initialized first)
+        # Initialize logging
+        self._initialize_logging(logging, stdout)
+        # Initialize IO Managers
+        self._initialize_io_managers()
+
+        # Initialize the client
+        self._initialize_client(server, port, threshold, wait, use_ssl, certfile, keyfile)
+
+        # Screen transition handler
+        self._is_transition = False
+        self._initialize_screen_transition(root, threshold)
+
+        # Initialize main thread
+        self._initialize_main_thread()
+
+        # Initialize listeners
+        self._initialize_listeners()
+
+        # Initalize input controllers
+        self._initialize_input_controllers()
 
         self.lock = threading.Lock()
         self._running = False
         self._connected = None
-
-        self._client_thread = None
-        self._is_client_thread_running = False
-
-        self._connection_thread = None
 
         self.window = None  # TODO: Window(root) screen transition
         self.stdout = stdout
@@ -41,142 +55,143 @@ class Client:
         self.transition_handler = None  # Thread che controlla on_screen, se False chiama self.window.show()
         # Il server invierà un comando per avvertire il client che non è più on_screen
 
-        self.keyboard_controller = inputHandler.ClientKeyboardController()
-        self.mouse_controller = inputHandler.ClientMouseController(self.screen_width, self.screen_height)
+    def _initialize_logging(self, logging, stdout):
+        self.logging = logging
+        self.stdout = stdout
+        self.logger = Logger(self.logging, self.stdout)  # Initialize logger
+        self.log = self.logger.log
 
+    def _initialize_io_managers(self):
+        self.messagesManager = ClientMessageQueueManager(self.client_socket)
+        self.listenersQueueManager = QueueManager(self.messagesManager, keyboard=False)
+        # Add IO Managers to the thread pool, they could be considered as threads too
+        self._thread_pool.append(self.messagesManager)
+        self._thread_pool.append(self.listenersQueueManager)
+
+    def _initialize_client(self, server, port, threshold, wait, use_ssl, certfile, keyfile):
+        self.server = server
+        self.port = port
+        self.threshold = threshold
+        self.wait = wait
+        self.client_socket = ClientSocket(host=server,
+                                          port=port,
+                                          wait=wait,
+                                          use_ssl=use_ssl,
+                                          certfile=certfile,
+                                          keyfile=keyfile)
+
+    def _initialize_connection_handler(self):
+        self.processor = ServerCommandProcessor(self)
+        self.connection_handler = ConnectionHandlerFactory.create_handler(self.client_socket, command_processor=self.processor.process_command)
+
+    def _initialize_screen_transition(self, root, threshold):
+        pass
+
+    def _initialize_main_thread(self):
+        self._client_thread = threading.Thread(target=self._run, daemon=True)
+        self._thread_pool.append(self._client_thread)
+        self._is_main_running_event = threading.Event()
+
+    def _initialize_listeners(self):
         self.mouse_listener = inputHandler.ClientMouseListener(screen_width=self.screen_width,
                                                                screen_height=self.screen_height,
-                                                               send_func=self._send_to,
                                                                client_socket=self.client_socket,
                                                                threshold=self.threshold)
 
-        self.clipboard_listener = inputHandler.ClientClipboardListener(send_func=self._send_to)
+        self.clipboard_listener = inputHandler.ClientClipboardListener()
+        self._listeners = [self.mouse_listener, self.clipboard_listener]
 
-        self.processor = ServerCommandProcessor(self.on_screen, self.mouse_controller,
-                                                self.keyboard_controller, self.clipboard_listener)
+    def _initialize_input_controllers(self):
+        self.screen_width, self.screen_height = screen_size()
+        self.keyboard_controller = inputHandler.ClientKeyboardController()
+        self.mouse_controller = inputHandler.ClientMouseController(self.screen_width, self.screen_height)
 
     def start(self):
         try:
             if not self._running:
                 self._running = True
-                self._client_thread = threading.Thread(target=self._run, daemon=True)
                 self._client_thread.start()
-                self._is_client_thread_running = True
+
+                self._is_main_running_event.wait(timeout=1)
+                if not self._is_main_running_event.is_set():
+                    return self.stop()
+                self._is_main_running_event.clear()
+
                 self._start_listeners()
-                return True
+
+                # Start message processing thread
+                self.messagesManager.start()
+                self.listenersQueueManager.start()
             else:
-                self.log("Client already running.", 1)
-                return False
+                raise Exception("Client already started.")
 
         except Exception as e:
-            self.log(f"{e}", 2)
-            self._running = False
-            return False
+            self.log(f"{e}", Logger.ERROR)
+            return self.stop()
+
+        return True
 
     def _start_listeners(self):
         try:
-            self.mouse_listener.start()
-            self.clipboard_listener.start()
+            for listener in self._listeners:
+                listener.start()
         except Exception as e:
             self.log(f"Error starting mouse listener: {e}")
             self.stop()
 
     def _run(self):
-        try:
-            while True:
+        self._is_main_running_event.set()
+        while self._running:
+            try:
+                if self._connected:
+                    time.sleep(self.wait)
+                    continue
+
+                self._connected = self.connection_handler.handle_connection()
+            except socket.timeout as e:
                 if self._running:
-
-                    if self._connected:
-                        time.sleep(self.wait)
-                        continue
-
-                    self.client_socket = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
-
-                    try:  # Handle connection timeout
-                        self.client_socket.connect((self.server, self.port))
-                    except socket.error as e:
-                        self.log(f"{e}", 2)
-                        continue
-
-                    self._connected = True
-                    self.log("Connected to the server.", 1)
-
-                    self._connection_thread = ServerHandler(connection=self.client_socket,
-                                                            command_func=self.processor.process_command,
-                                                            on_disconnect=self.on_disconnect, logger=self.log)
-                    self._connection_thread.start()
+                    self.log("Connection timeout.", Logger.ERROR)
+                    continue
                 else:
-                    self._is_client_thread_running = False
                     break
-            time.sleep(0.2)
-        except Exception as e:
-            self.log(f"Error connecting to the server: {e}", 2)
-            self._is_client_thread_running = False
+            except socket.error as e:
+                self.log(f"{e}", 2)
+                continue
+            except Exception as e:
+                self.log(f"Error connecting to the server: {e}", 2)
+                break
 
-        self.log("Client stopped.", 1)
+            self._connected = self.connection_handler.check_server_connection()
+
+        self._is_main_running_event.clear()
+        self._is_main_running_event.set()
+        self.log("Client listening stopped.", Logger.WARNING)
 
     def stop(self):
-        if self._running and self._is_client_thread_running:
+        if self._running and self._is_main_running_event.is_set():
             try:
 
-                if self._connection_thread:
-                    self._connection_thread.stop()
-
-                self.mouse_listener.stop()
+                self.log("Stopping client...", Logger.WARNING)
                 self._running = False
 
-                if self._check_main_thread():
-                    self.log(f"Server stopped.", 1)
-                    return True
+                self.client_socket.close()
+                self.connection_handler.stop()
 
-                self.log("Client stopped.", 1)
-                return True
+                for threads in self._thread_pool:
+                    if threads.is_alive():
+                        threads.join()
+
+                for listener in self._listeners:
+                    listener.stop()
+
+                if self._check_main_thread():
+                    self.log("Client stopped.", Logger.INFO)
+                    return True
             except Exception as e:
                 self.log(f"{e}", 2)
                 return False
         else:
             return True
-
-    def _check_main_thread(self):
-        max_retry = 5
-        retry = 0
-        while self._is_client_thread_running and retry < max_retry:
-            time.sleep(0.5)
-            retry += 1
-
-        if retry < max_retry:
-            return True
-        else:
-            if self._is_client_thread_running:
-                raise Exception("Thread principale non terminata.")
-
-    def _send_to(self, command):
-
-        command = format_data(command)
-
-        if self.client_socket:
-            try:
-                # Split the command into chunks if it's too long
-                if len(command) > CHUNK_SIZE - len(END_DELIMITER):
-                    chunks = [command[i:i + CHUNK_SIZE] for i in range(0, len(command), CHUNK_SIZE)]
-                    for i, chunk in enumerate(chunks):
-                        if i == len(chunks) - 1 and len(chunk) > CHUNK_SIZE - len(
-                                END_DELIMITER):  # Check if this is the last chunk and its length is > CHUNK_SIZE - END_DELIMITER
-                            self.client_socket.send(chunk.encode())  # Send the last chunk without any terminator
-                            self.client_socket.send(END_DELIMITER.encode())  # Send the terminator as a separate chunk
-                        elif i == len(
-                                chunks) - 1:  # This is the last chunk and its length is less than CHUNK_SIZE - END_DELIMITER
-                            chunk = chunk + END_DELIMITER
-                            self.client_socket.send(chunk.encode())
-                        else:
-                            chunk = chunk + CHUNK_DELIMITER
-                            self.client_socket.send(chunk.encode())
-                else:
-                    command = command + END_DELIMITER
-                    self.client_socket.send(command.encode())
-            except Exception as e:
-                self.log(f"Error sending data: {e}", 2)
-                self.stop()
 
     def on_disconnect(self):
         self._connected = False
@@ -196,13 +211,15 @@ class Client:
                 self.changed = False
             time.sleep(0.1)
 
-    def log(self, msg, priority=0):
-        if priority == 0 and self.logging:
-            self.stdout(f"{msg}")
-            print(f"{msg}")
-        if priority == 1:
-            self.stdout(f"[INFO] {msg}")
-            print(f"[INFO] {msg}")
-        if priority == 2:
-            self.stdout(f"[ERROR] {msg}")
-            print(f"[ERROR] {msg}")
+    def _check_main_thread(self):
+        """
+        Check for main thread termination
+        :return True if main thread is terminated
+        :raise Exception if main thread is still running
+        """
+        self._is_main_running_event.wait(timeout=5)
+
+        if self._is_main_running_event.is_set():
+            return True
+        else:
+            raise Exception("Thread principale non terminata.")

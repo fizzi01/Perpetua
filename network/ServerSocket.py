@@ -47,8 +47,8 @@ class ConnectionHandler(ABC):
                     handler.conn.send(b'\x00')
                 except (socket.error, ConnectionResetError):
                     self.log(f"Client {handler.address} disconnected.", Logger.WARNING)
-                    self.command_processor(("disconnect", handler.conn))
                     handler.stop()
+                    self.client_handlers.remove(handler)
             self.recent_activity = False
             self.last_check_time = current_time
 

@@ -22,9 +22,10 @@ class QueueManager:
     KEYBOARD = "keyboard"
     CLIPBOARD = "clipboard"
 
-    MOUSE_PRIORITY = 3
-    KEYBOARD_PRIORITY = 2
-    CLIPBOARD_PRIORITY = 1
+    SCREEN_NOTIFICATION_PRIORITY = 1
+    MOUSE_PRIORITY = 4
+    KEYBOARD_PRIORITY = 3
+    CLIPBOARD_PRIORITY = 2
 
     def __new__(cls, *args, **kwargs):
         if not cls._instance:
@@ -71,6 +72,9 @@ class QueueManager:
     def send_clipboard(self, screen, message):
         if self.manage_clipboard:
             self.clipboard_queue.put((screen, message))
+
+    def send_screen_notification(self, screen, message):
+        self.MessageSender.send(self.SCREEN_NOTIFICATION_PRIORITY, (screen, message))
 
     def start(self):
         if not self._threads_started:
@@ -177,7 +181,7 @@ class QueueManager:
         return self._threads_started
 
 
-class MessageQueueManager:
+class BaseMessageQueueManager:
     _instance = None
     _lock = threading.Lock()
     _stop_event = threading.Event()
@@ -186,16 +190,12 @@ class MessageQueueManager:
         if not cls._instance:
             with cls._lock:
                 if not cls._instance:
-                    cls._instance = super(MessageQueueManager, cls).__new__(cls)
+                    cls._instance = super(BaseMessageQueueManager, cls).__new__(cls)
         return cls._instance
 
-    def __init__(self, connected_clients, get_client, change_screen):
+    def __init__(self):
         if not hasattr(self, 'initialized'):
             self.send_queue = PriorityQueue()
-
-            self.get_connected_clients = connected_clients
-            self.get_client = get_client
-            self.change_screen = change_screen
 
             self._sending_thread = threading.Thread(target=self._process_send_queue, daemon=True)
             self._threads_started = False
@@ -232,6 +232,41 @@ class MessageQueueManager:
                 self.log(f"Error processing send queue: {e}", Logger.ERROR)
 
     def _send_message(self, message):
+        pass
+
+    def _send_to_client(self, client_key, data):
+        pass
+
+    @staticmethod
+    def _send_in_chunks(conn, data):
+        # Send data in chunks to ensure it fits within the buffer limit
+        data_bytes = data.encode()
+        data_length = len(data_bytes)
+
+        if data_length > CHUNK_SIZE:
+            chunks = [data_bytes[i:i + CHUNK_SIZE] for i in range(0, data_length, CHUNK_SIZE)]
+            for i, chunk in enumerate(chunks):
+                if i == len(chunks) - 1:
+                    # Last chunk - add the END_DELIMITER
+                    conn.send(chunk + END_DELIMITER.encode())
+                else:
+                    # Intermediate chunk - add the CHUNK_DELIMITER
+                    conn.send(chunk + CHUNK_DELIMITER.encode())
+        else:
+            # Data fits in a single chunk - add END_DELIMITER
+            conn.send(data_bytes + END_DELIMITER.encode())
+
+
+class ServerMessageQueueManager(BaseMessageQueueManager):
+
+    def __init__(self, connected_clients, get_client, change_screen):
+        super().__init__()
+        if not hasattr(self, 'initialized'):
+            self.get_connected_clients = connected_clients
+            self.get_client = get_client
+            self.change_screen = change_screen
+
+    def _send_message(self, message):
         screen, data = message
 
         if screen == "all":
@@ -262,21 +297,17 @@ class MessageQueueManager:
         except Exception as e:
             self.log(f"Error sending data to client {client_key}: {e}", Logger.ERROR)
 
-    @staticmethod
-    def _send_in_chunks(conn, data):
-        # Send data in chunks to ensure it fits within the buffer limit
-        data_bytes = data.encode()
-        data_length = len(data_bytes)
 
-        if data_length > CHUNK_SIZE:
-            chunks = [data_bytes[i:i + CHUNK_SIZE] for i in range(0, data_length, CHUNK_SIZE)]
-            for i, chunk in enumerate(chunks):
-                if i == len(chunks) - 1:
-                    # Last chunk - add the END_DELIMITER
-                    conn.send(chunk + END_DELIMITER.encode())
-                else:
-                    # Intermediate chunk - add the CHUNK_DELIMITER
-                    conn.send(chunk + CHUNK_DELIMITER.encode())
-        else:
-            # Data fits in a single chunk - add END_DELIMITER
-            conn.send(data_bytes + END_DELIMITER.encode())
+class ClientMessageQueueManager(BaseMessageQueueManager):
+
+    def __init__(self, conn):
+        if not hasattr(self, 'initialized'):
+            super().__init__()
+            self.conn = conn
+
+    def _send_message(self, message):
+        try:
+            formatted_data = format_data(message)
+            self._send_in_chunks(self.conn, formatted_data)
+        except Exception as e:
+            self.log(f"Error sending data: {e}", Logger.ERROR)

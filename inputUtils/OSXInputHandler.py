@@ -268,9 +268,9 @@ class ServerClipboardListener:
 
 
 class ClientClipboardListener:
-    def __init__(self, send_func: Callable):
+    def __init__(self):
 
-        self.send = send_func
+        self.send = QueueManager(None).send_clipboard
         self._thread = None
         self.last_clipboard_content = pyperclip.paste()  # Inizializza con il contenuto attuale della clipboard
         self._stop_event = threading.Event()
@@ -458,11 +458,11 @@ class ClientMouseController:
 
 
 class ClientMouseListener:
-    def __init__(self, screen_width, screen_height, threshold, send_func: Callable, client_socket=None):
+    def __init__(self, screen_width, screen_height, threshold, client_socket=None):
         self.screen_width = screen_width
         self.screen_height = screen_height
         self.threshold = threshold
-        self.send = send_func
+        self.send = QueueManager(None).send_mouse
         self.client_socket = client_socket
         self._listener = MouseListener(on_move=self.handle_mouse)
         self.logger = Logger.get_instance().log

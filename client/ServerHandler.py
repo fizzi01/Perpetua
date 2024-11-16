@@ -5,6 +5,7 @@ from concurrent.futures import ThreadPoolExecutor
 from time import sleep
 from queue import Queue
 
+from utils.Logging import Logger
 from utils.netData import *
 
 BATCH_PROCESS_INTERVAL = 0.01
@@ -12,13 +13,19 @@ MAX_BATCH_SIZE = 10
 MAX_WORKERS = 10
 
 
+class ServerHandlerFactory:
+    @staticmethod
+    def create_server_handler(connection: socket.socket, command_func: Callable):
+        return ServerHandler(connection, command_func)
+
+
 class ServerHandler:
-    def __init__(self, connection: socket.socket, command_func: Callable, on_disconnect: Callable, logger: Callable):
+    def __init__(self, connection: socket.socket, command_func: Callable):
         self.processor_thread = None
         self.conn = connection
         self.process_command = command_func
-        self.on_disconnect = on_disconnect
-        self.log = logger
+        self.on_disconnect = None
+        self.log = Logger.get_instance().log
         self._running = False
         self.thread = None
         self.message_queue = Queue()
@@ -112,11 +119,12 @@ class ServerHandler:
 
 
 class ServerCommandProcessor:
-    def __init__(self, on_screen_func, mouse_controller, keyboard_controller, clipboard):
-        self.on_screen = on_screen_func
-        self.mouse_controller = mouse_controller
-        self.keyboard_controller = keyboard_controller
-        self.clipboard = clipboard
+    def __init__(self, client):
+        self.client = client
+        self.on_screen = self.client.on_screen_func
+        self.mouse_controller = self.client.mouse_controller
+        self.keyboard_controller = self.client.keyboard_controller
+        self.clipboard = self.client.clipboard
 
         self.keyboard_queue = Queue()  # Needed to process commands sequentially, preserving the order
         self.keyboard_thread = threading.Thread(target=self._process_keyboard_queue, daemon=True)
@@ -126,7 +134,7 @@ class ServerCommandProcessor:
         self.clipboard_thread = threading.Thread(target=self._process_clipboard_queue, daemon=True)
         self.clipboard_thread.start()
 
-        self.log = print  # TODO: Usare il logger
+        self.log = Logger.get_instance().log
 
     def process_command(self, command):
         parts = extract_command_parts(command)

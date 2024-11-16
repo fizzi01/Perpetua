@@ -34,6 +34,10 @@ class BaseGUIController(ABC):
     def configure_server(self):
         pass
 
+    @abstractmethod
+    def edit_configuration(self):
+        pass
+
     def load_configuration(self):
         """
         Load the server configuration from a JSON file.
@@ -144,7 +148,7 @@ class TerminalGUIController(BaseGUIController):
             self.messager.print("2. Display clients matrix")
             self.messager.print("3. Start server")
             self.messager.print("4. Stop server")
-            self.messager.print("5. Save current configuration to file")
+            self.messager.print("5. Edit configuration")
             self.messager.print("6. Exit")
             self.messager.print("\n")
             choice = self.messager.input("Choose an option:")
@@ -158,12 +162,57 @@ class TerminalGUIController(BaseGUIController):
             elif choice == "4":
                 self.stop_server()
             elif choice == "5":
-                self.save_configuration()
+                self.edit_configuration()
             elif choice == "6":
                 self.exit()
                 break
             else:
                 self.messager.print("Invalid choice. Please try again.")
+
+    def edit_configuration(self):
+        while True:
+            self.messager.print("Current configuration:")
+            metadata = self.server_config_metadata
+
+            # Display current configuration
+            for param_name, methods in metadata["set_methods"].items():
+                if param_name == "set_clients":
+                    continue  # Skip client-related methods initially
+
+                display_name = methods["display_name"]
+                get_method_name = f"get_{param_name[4:]}"
+                get_method = getattr(self.server_config, get_method_name, None)
+                if callable(get_method):
+                    current_value = get_method()
+                    self.messager.print(f"{display_name} ({param_name[4:]}): {current_value}")
+
+            # Ask user which parameter to modify
+            param_to_modify = self.messager.input("Enter the parameter name to modify (or 'exit' to finish): ")
+            if param_to_modify.lower() == 'exit':
+                break
+
+            # Find the corresponding set method
+            set_method_name = f"set_{param_to_modify}"
+            set_method = getattr(self.server_config, set_method_name, None)
+            if callable(set_method):
+                current_value = getattr(self.server_config, f"get_{param_to_modify}")()
+                new_value = self.messager.input(
+                    f"Enter new value for {param_to_modify} (current value: {current_value}): ")
+
+                # Convert input to the correct type
+                param_type = metadata["set_methods"][set_method_name]["parameters"][0]["type"]
+                if param_type.find("int") != -1:
+                    new_value = int(new_value)
+                elif param_type.find("bool") != -1:
+                    new_value = new_value.lower() in ['true', 'yes', '1']
+
+                # Set the new value
+                set_method(new_value)
+
+                # Save the configuration automatically
+                self.save_configuration()
+            else:
+                self.messager.print(f"Invalid parameter name: {param_to_modify}. Please try again.")
 
     def configure_server(self):
         self.messager.print("Configure your server:")
@@ -183,9 +232,9 @@ class TerminalGUIController(BaseGUIController):
 
                 # Convert input to the correct type
                 param_type = methods["parameters"][0]["type"]
-                if param_type == 'int':
+                if param_type.find("int") != -1:
                     input_value = int(input_value)
-                elif param_type == 'bool':
+                elif param_type.find("bool") != -1:
                     input_value = input_value.lower() in ['true', 'yes', '1']
 
                 # Set the value using the set method

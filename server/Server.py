@@ -6,7 +6,8 @@ from pynput import mouse
 
 # Core utilities
 from inputUtils import InputHandler
-from network.IOManager import MessageQueueManager, QueueManager
+from network.IOManager import ServerMessageQueueManager, QueueManager
+from utils.netData import format_command
 from window import Window
 
 # Configuration
@@ -19,7 +20,6 @@ from network.ServerSocket import ServerSocket, ConnectionHandlerFactory
 # Server
 from server.ScreenTransition import ScreenTransitionFactory
 from server.ScreenReset import ScreenResetStrategyFactory
-from server.Command import CommandFactory
 from server.ScreenState import ScreenStateFactory
 from server.ClientHandler import ClientCommandProcessor
 
@@ -82,7 +82,8 @@ class Server:
                                                                           command_processor=self.command_processor.process_client_command)
 
     def _initialize_io_managers(self):
-        self.messagesManager = MessageQueueManager(self.get_connected_clients, self.get_client, self.change_screen)
+        self.messagesManager = ServerMessageQueueManager(self.get_connected_clients, self.get_client,
+                                                         self.change_screen)
         self.listenersQueueManager = QueueManager(self.messagesManager)
         # Add IO Managers to the thread pool, they could be considered as threads too
         self._thread_pool.append(self.messagesManager)
@@ -216,7 +217,7 @@ class Server:
 
             except socket.timeout:
                 if self._started:
-                    self.log("Waiting for clients ...", Logger.INFO)
+                    self.log("Waiting for clients ...", Logger.DEBUG)
                     continue
                 else:
                     break
@@ -247,14 +248,6 @@ class Server:
 
     def get_connected_clients(self):
         return self.clients.get_connected_clients()
-
-    # Command Pattern per l'elaborazione dei comandi dei client
-    def process_client_command(self, command):
-        command_handler = CommandFactory.create_command(command, self)
-        if command_handler:
-            command_handler.execute()
-        else:
-            self.log(f"Invalid client command: {command}", Logger.ERROR)
 
     # State Pattern per la gestione delle transizioni di schermo
     def change_screen(self, screen=None):
