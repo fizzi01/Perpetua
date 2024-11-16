@@ -11,7 +11,6 @@ pyobjc_framework_Cocoa==10.2
 pyobjc_framework_ExceptionHandling==10.2
 pyobjc_framework_Quartz==10.2
 pyperclip==1.8.2
-Quartz==0.0.1.dev0
 screeninfo==0.8.1
 tabulate==0.9.0
 tkmacosx==1.0.5
