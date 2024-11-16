@@ -65,6 +65,10 @@ class ClientHandler:
         self.executor.shutdown(wait=True)
         self.conn.close()
         self.process(("disconnect", self.conn))
+        # Trigger the clipboard thread to process the last command
+        self.clipboard_queue.put("")
+        # Trigger the processor thread to process the last batch
+        self.message_queue.put("")
         self.processor_thread.join()
         self.clipboard_thread.join()
 

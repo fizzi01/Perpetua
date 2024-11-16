@@ -62,8 +62,7 @@ class BaseGUIController(ABC):
         clients_dict = {}
         for position, address in config_data.get("clients", {}).items():
             try:
-                ip, port = address.split(":")
-                clients_dict[position] = Client(addr=ip, port=int(port), key_map={})
+                clients_dict[position] = Client(addr=address, key_map={})
             except ValueError as e:
                 self.messager.print(f"Error parsing client address {address}: {e}")
 
@@ -111,7 +110,7 @@ class BaseGUIController(ABC):
                 self.messager.print(f"Error getting {param_name}: {e}")
 
         # Save clients separately
-        config_data["clients"] = {position: f"{client.get_address()}:{client.get_port()}" for position, client in
+        config_data["clients"] = {position: f"{client.get_address()}" for position, client in
                                   self.server_config.get_clients().clients.items()}
 
         with open(path, 'w') as config_file:
@@ -200,10 +199,9 @@ class TerminalGUIController(BaseGUIController):
             if add_client == "no":
                 break
             position = self.messager.input("Enter client position (e.g., 'left', 'right', 'up', 'down'): ")
-            address = self.messager.input("Enter client address (IP:PORT): ")
+            address = self.messager.input("Enter client address (IP): ")
             try:
-                ip, port = address.split(":")
-                clients_dict[position] = Client(addr=ip, port=int(port), key_map={})
+                clients_dict[position] = Client(addr=address, key_map={})
             except ValueError:
                 self.messager.print("Invalid address format. Please try again.")
                 continue
@@ -227,7 +225,7 @@ class TerminalGUIController(BaseGUIController):
         matrix[1][1] = server_address
 
         for position, client in clients.items():
-            address = f"{client.get_address()}:{client.get_port()}"
+            address = f"{client.get_address()}"
             if position == "left":
                 matrix[1][0] = address
             elif position == "right":

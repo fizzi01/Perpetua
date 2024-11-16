@@ -116,7 +116,7 @@ class QueueManager:
         # Prepara i messaggi per l'invio come batch
         batch_message = END_DELIMITER.join([format_data(data) for _, data in self.mouse_batch_buffer])
         screen = self.mouse_batch_buffer[0][0]  # Assume che tutti i messaggi del batch siano per lo stesso schermo
-        self.MessageSender.send(self.MOUSE_PRIORITY,(screen, batch_message))
+        self.MessageSender.send(self.MOUSE_PRIORITY, (screen, batch_message))
 
         # Pulisce il buffer dopo l'invio
         self.mouse_batch_buffer.clear()
@@ -224,7 +224,7 @@ class MessageQueueManager:
     def _process_send_queue(self):
         while not self._stop_event.is_set():
             try:
-                message = self.send_queue.get(timeout=0.1)
+                _, message = self.send_queue.get(timeout=0.1)
                 self._send_message(message)
             except Empty:
                 continue

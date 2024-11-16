@@ -29,7 +29,7 @@ jobs:
           architecture: 'x64'
       - name: Install requirements
         run: |
-          pip install -r requirements.txt
+          pip install -r requirements/Win/requirements.txt
       - name: Run PyInstaller
         run: |
           pip install pyinstaller
@@ -52,14 +52,14 @@ jobs:
           python-version: '3.11'
       - name: Install requirements
         run: |
-          pip install -r requirements_mac.txt
+          pip install -r requirements/Osx/requirements.txt
       - name: Install ccache
         run: |
           brew install ccache
           export PATH="/usr/local/opt/ccache/libexec:$PATH"
       - name: Build app
         run: |
-          PyInstaller --windowed -n PyContinuity --hidden-import pynput.keyboard._darwin --hidden-import pynput.mouse._darwin --hidden-import=pyobjc --log-level=DEBUG --collect-submodule pynput.keyboard --noconfirm --icon="logo/logo.icns" gui.py
+          PyInstaller --windowed -n PyContinuity --hidden-import pynput.keyboard._darwin --hidden-import pynput.mouse._darwin --hidden-import=pyobjc --log-level=DEBUG --collect-submodule pynput.keyboard --noconfirm --icon="logo/logo.icns" start.py
 
       - name: Decode and import certificate
         env:
@@ -87,49 +87,49 @@ jobs:
           name: PyContinuity_macos(silicon)
           path: PyContinuity_macos(silicon).tar.gz
 
-  build-mac-intel:
-    name: MacOSX (x86_64) Build
-    runs-on: macos-13
-    steps:
-      - name: Checkout
-        uses: actions/checkout@v4
-      - name: Install Python
-        uses: actions/setup-python@v5
-        with:
-          python-version: '3.11'
-      - name: Install requirements
-        run: |
-          pip install -r requirements_mac.txt
-      - name: Build app
-        run: |
-          nuitka3 --standalone --macos-app-icon=logo/logo.icns --enable-plugin=tk-inter --follow-imports --output-dir=dist --macos-create-app-bundle --disable-console --include-package=Quartz --include-package=pynput --output-filename=PyContinuity --product-name="PyContinuity" -o PyContinuity gui.py
-          mv dist/gui.app dist/PyContinuity.app
-          
-
-      - name: Decode and import certificate
-        env:
-          MAC_CERTIFICATE: ${{ secrets.CERTIFICATE }}
-          MAC_CERTIFICATE_PASSWORD: ${{ secrets.CERTIFICATE_PASSWORD }}
-        run: |
-          echo "$MAC_CERTIFICATE" | base64 --decode > certificate.p12
-          security create-keychain -p "action" build.keychain
-          security import certificate.p12 -k build.keychain -P "$MAC_CERTIFICATE_PASSWORD" -T /usr/bin/codesign
-          security list-keychains -s build.keychain
-          security unlock-keychain -p "action" build.keychain
-          security set-key-partition-list -S apple-tool:,apple:,codesign: -s -k "action" build.keychain
-
-      - name: Change permissions
-        run: chmod +x dist/PyContinuity.app/Contents/MacOS/PyContinuity
-
-      - name: Sign the app
-        run: |
-          codesign --deep --force --verify --verbose --sign "PyContinuity" dist/PyContinuity.app
-      
-
-      - name: Create tarball of the app
-        run: tar -czvf "PyContinuity_macos(x86_64).tar.gz" -C dist PyContinuity.app
-
-      - uses: actions/upload-artifact@v4
-        with:
-          name: PyContinuity_macos(x86_64)
-          path: PyContinuity_macos(x86_64).tar.gz
+#  build-mac-intel:
+#    name: MacOSX (x86_64) Build
+#    runs-on: macos-13
+#    steps:
+#      - name: Checkout
+#        uses: actions/checkout@v4
+#      - name: Install Python
+#        uses: actions/setup-python@v5
+#        with:
+#          python-version: '3.11'
+#      - name: Install requirements
+#        run: |
+#          pip install -r requirements_mac.txt
+#      - name: Build app
+#        run: |
+#          nuitka3 --standalone --macos-app-icon=logo/logo.icns --enable-plugin=tk-inter --follow-imports --output-dir=dist --macos-create-app-bundle --disable-console --include-package=Quartz --include-package=pynput --output-filename=PyContinuity --product-name="PyContinuity" -o PyContinuity gui.py
+#          mv dist/gui.app dist/PyContinuity.app
+#
+#
+#      - name: Decode and import certificate
+#        env:
+#          MAC_CERTIFICATE: ${{ secrets.CERTIFICATE }}
+#          MAC_CERTIFICATE_PASSWORD: ${{ secrets.CERTIFICATE_PASSWORD }}
+#        run: |
+#          echo "$MAC_CERTIFICATE" | base64 --decode > certificate.p12
+#          security create-keychain -p "action" build.keychain
+#          security import certificate.p12 -k build.keychain -P "$MAC_CERTIFICATE_PASSWORD" -T /usr/bin/codesign
+#          security list-keychains -s build.keychain
+#          security unlock-keychain -p "action" build.keychain
+#          security set-key-partition-list -S apple-tool:,apple:,codesign: -s -k "action" build.keychain
+#
+#      - name: Change permissions
+#        run: chmod +x dist/PyContinuity.app/Contents/MacOS/PyContinuity
+#
+#      - name: Sign the app
+#        run: |
+#          codesign --deep --force --verify --verbose --sign "PyContinuity" dist/PyContinuity.app
+#
+#
+#      - name: Create tarball of the app
+#        run: tar -czvf "PyContinuity_macos(x86_64).tar.gz" -C dist PyContinuity.app
+#
+#      - uses: actions/upload-artifact@v4
+#        with:
+#          name: PyContinuity_macos(x86_64)
+#          path: PyContinuity_macos(x86_64).tar.gz

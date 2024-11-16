@@ -207,7 +207,7 @@ class Server:
                 self.log(f"Client handshake from {addr[0]}", Logger.INFO)
 
                 # Check if the client is already connected
-                if self.clients.is_client_connected(addr):
+                if self.connection_handler.is_client_connected(addr):
                     self.log(f"Client {addr[0]} already connected.", Logger.WARNING)
                     conn.close()
                     continue
