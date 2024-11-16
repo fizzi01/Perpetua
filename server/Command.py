@@ -50,12 +50,32 @@ class ReturnCommand(Command):
                 self.server.reset_mouse("down", self.server.current_mouse_position[0])
 
 
+class DisconnectCommand(Command):
+    def __init__(self, server, conn):
+        self.server = server
+        self.conn = conn
+
+    def execute(self):
+        for key in self.server.clients.get_possible_positions():
+            if self.server.clients.get_connection(key) == self.conn:
+                self.server.clients.remove_connection(key)
+                self.server.change_screen()
+                return
+
+
 class CommandFactory:
     @staticmethod
-    def create_command(command, server):
-        parts = extract_command_parts(command)
+    def create_command(command: [tuple | str], server):
+        # Check if command is a tuple
+        if not isinstance(command, tuple):  # Commands received from clients
+            parts = extract_command_parts(command)
+        else:   # Case in which command is already a tuple (internal use)
+            parts = command
+
         if parts[0] == 'clipboard':
             return ClipboardCommand(server, parts[1])
         elif parts[0] == 'return':
             return ReturnCommand(server, parts[1])
+        elif parts[0] == 'disconnect':
+            return DisconnectCommand(server, parts[1])
         return None
