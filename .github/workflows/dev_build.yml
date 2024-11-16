@@ -46,6 +46,8 @@ jobs:
     steps:
       - name: Checkout
         uses: actions/checkout@v4
+      - name: Install gobject-introspection
+        run: brew install gobject-introspection
       - name: Install Python
         uses: actions/setup-python@v5
         with:
