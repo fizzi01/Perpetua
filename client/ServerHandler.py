@@ -50,7 +50,7 @@ class ServerHandler:
         self.batch_ready_event.set()  # Wake up the processor thread
         self.conn.close()
         self.executor.shutdown(wait=True)
-        self.on_disconnect()
+        #self.on_disconnect()
         self.log("Client disconnected.", 1)
 
     def _handle_server_commands(self):
@@ -121,10 +121,10 @@ class ServerHandler:
 class ServerCommandProcessor:
     def __init__(self, client):
         self.client = client
-        self.on_screen = self.client.on_screen_func
+        self.on_screen = self.client.on_screen
         self.mouse_controller = self.client.mouse_controller
         self.keyboard_controller = self.client.keyboard_controller
-        self.clipboard = self.client.clipboard
+        self.clipboard = self.client.clipboard_listener
 
         self.keyboard_queue = Queue()  # Needed to process commands sequentially, preserving the order
         self.keyboard_thread = threading.Thread(target=self._process_keyboard_queue, daemon=True)

@@ -59,6 +59,8 @@ class ConnectionHandler(ABC):
         self.recent_activity = False
         self.last_check_time = time.time()
 
+        self.first_connection = True
+
         self.logger = Logger.get_instance().log
 
     @abstractmethod
@@ -88,7 +90,10 @@ class ConnectionHandler(ABC):
             self.last_check_time = current_time
 
         if self.server_handler is None:
-            self.logger("Server connection lost.", Logger.WARNING)
+            if not self.first_connection:
+                self.logger("Server connection lost.", Logger.WARNING)
+            else:
+                self.logger("Cannot establish server connection.", Logger.ERROR)
             return False
 
         return True
@@ -100,6 +105,7 @@ class SSLConnectionHandler(ConnectionHandler):
             self.client_socket.connect()
             self.add_server_connection()
             self.logger("SSL connection established.")
+            self.first_connection = False
             return True
         except Exception as e:
             self.logger(f"Error establishing SSL connection: {e}", Logger.ERROR)

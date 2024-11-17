@@ -458,12 +458,11 @@ class ClientMouseController:
 
 
 class ClientMouseListener:
-    def __init__(self, screen_width, screen_height, threshold, client_socket=None):
+    def __init__(self, screen_width, screen_height, threshold):
         self.screen_width = screen_width
         self.screen_height = screen_height
         self.threshold = threshold
         self.send = QueueManager(None).send_mouse
-        self.client_socket = client_socket
         self._listener = MouseListener(on_move=self.handle_mouse)
         self.logger = Logger.get_instance().log
 

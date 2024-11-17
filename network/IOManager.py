@@ -307,7 +307,11 @@ class ClientMessageQueueManager(BaseMessageQueueManager):
 
     def _send_message(self, message):
         try:
-            formatted_data = format_data(message)
-            self._send_in_chunks(self.conn, formatted_data)
+            if isinstance(message, tuple):
+                screen, data = message
+                formatted_data = format_data(data)
+                self._send_in_chunks(self.conn, formatted_data)
+            else:
+                self._send_in_chunks(self.conn, message)
         except Exception as e:
             self.log(f"Error sending data: {e}", Logger.ERROR)

@@ -24,11 +24,10 @@ class Client:
         # Logging and IO Managers are shared resources (should be initialized first)
         # Initialize logging
         self._initialize_logging(logging, stdout)
-        # Initialize IO Managers
-        self._initialize_io_managers()
-
         # Initialize the client
         self._initialize_client(server, port, threshold, wait, use_ssl, certfile, keyfile)
+        # Initialize IO Managers
+        self._initialize_io_managers()
 
         # Screen transition handler
         self._is_transition = False
@@ -36,12 +35,13 @@ class Client:
 
         # Initialize main thread
         self._initialize_main_thread()
-
+        # Initalize input controllers
+        self._initialize_input_controllers()
         # Initialize listeners
         self._initialize_listeners()
 
-        # Initalize input controllers
-        self._initialize_input_controllers()
+        # Connection handler
+        self._initialize_connection_handler()
 
         self.lock = threading.Lock()
         self._running = False
@@ -95,7 +95,6 @@ class Client:
     def _initialize_listeners(self):
         self.mouse_listener = inputHandler.ClientMouseListener(screen_width=self.screen_width,
                                                                screen_height=self.screen_height,
-                                                               client_socket=self.client_socket,
                                                                threshold=self.threshold)
 
         self.clipboard_listener = inputHandler.ClientClipboardListener()
@@ -115,7 +114,6 @@ class Client:
                 self._is_main_running_event.wait(timeout=1)
                 if not self._is_main_running_event.is_set():
                     return self.stop()
-                self._is_main_running_event.clear()
 
                 self._start_listeners()
 

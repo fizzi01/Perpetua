@@ -20,7 +20,7 @@ def run_server(host, port, pos, ips, logging, wait, screen_threshold, root, stdo
 
 
 def run_client(server, port, logging, root, stdout=None, stderr=None):
-    c = Client(server=server, port=port, wait=1, logging=logging, root=root, stdout=stdout)
+    c = Client(server=server, port=port, wait=5, logging=logging, root=root, stdout=print)
     c.start()
     return c
 

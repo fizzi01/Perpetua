@@ -8,6 +8,7 @@ from pynput.keyboard import Key, KeyCode, Listener as KeyboardListener, Controll
 import keyboard
 from pynput.mouse import Button, Controller as MouseController, Listener as MouseListener
 
+from network.IOManager import QueueManager
 from utils.netData import *
 
 
@@ -22,10 +23,10 @@ class ServerMouseListener:
     :param screen_threshold: Threshold to change the screen
     """
 
-    def __init__(self, send_function: Callable, change_screen_function: Callable, get_active_screen: Callable,
+    def __init__(self, change_screen_function: Callable, get_active_screen: Callable,
                  get_status: Callable,
                  get_clients: Callable, screen_width: int, screen_height: int, screen_threshold: int = 5):
-        self.send = send_function
+        self.send = QueueManager(None).send_mouse
         self.active_screen = get_active_screen
         self.change_screen = change_screen_function
         self.get_trasmission_status = get_status
@@ -218,9 +219,9 @@ class ServerClipboardListener:
 
 
 class ClientClipboardListener:
-    def __init__(self, send_func: Callable):
+    def __init__(self):
 
-        self.send = send_func
+        self.send = QueueManager(None).send_clipboard
         self._thread = None
         self.last_clipboard_content = pyperclip.paste()  # Inizializza con il contenuto attuale della clipboard
         self._stop_event = threading.Event()
@@ -247,18 +248,17 @@ class ClientClipboardListener:
         while not self._stop_event.is_set():
             current_clipboard_content = pyperclip.paste()
             if current_clipboard_content != self.last_clipboard_content:
-                self.send(format_command("clipboard ") + current_clipboard_content)
+                self.send(None, format_command("clipboard ") + current_clipboard_content)
                 self.last_clipboard_content = current_clipboard_content
             time.sleep(0.5)
 
 
 class ClientMouseListener:
-    def __init__(self, screen_width, screen_height, threshold, send_func: Callable, client_socket=None):
+    def __init__(self, screen_width, screen_height, threshold):
         self.screen_width = screen_width
         self.screen_height = screen_height
         self.threshold = threshold
-        self.send = send_func
-        self.client_socket = client_socket
+        self.send = QueueManager(None).send_mouse
         self._listener = MouseListener(on_move=self.handle_mouse)
 
     def get_listener(self):
@@ -272,13 +272,13 @@ class ClientMouseListener:
 
     def handle_mouse(self, x, y):
         if x <= self.threshold:
-            self.send(format_command(f"return left {y / self.screen_height}"))
+            self.send(None,format_command(f"return left {y / self.screen_height}"))
         elif x >= self.screen_width - self.threshold:
-            self.send(format_command(f"return right {y / self.screen_height}"))
+            self.send(None, format_command(f"return right {y / self.screen_height}"))
         elif y <= self.threshold:
-            self.send(format_command(f"return up {x / self.screen_width}"))
+            self.send(None,format_command(f"return up {x / self.screen_width}"))
         elif y >= self.screen_height - self.threshold:
-            self.send(format_command(f"return down {x / self.screen_width}"))
+            self.send(None,format_command(f"return down {x / self.screen_width}"))
 
 
 class ClientKeyboardController:
