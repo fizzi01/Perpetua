@@ -1,14 +1,16 @@
-import shutil
+
 import socket
 import ssl
-import subprocess
+
 import sys
 import os
 from threading import Thread
 from typing import Optional
 import errno
 
+from ClientManager import ClientManager
 from ServerManager import ServerManager
+from config.ClientConfig import ClientConfig
 
 from config.ServerConfig import Clients, ServerConfig
 from gui.GUIController import GUIControllerFactory
@@ -17,7 +19,7 @@ from multiprocessing import Process, Event, Pipe
 from multiprocessing.managers import BaseManager
 from queue import Queue, Empty
 from utils import net
-from utils.configConstants import *
+from config.configConstants import *
 
 
 class QueueLogger:
@@ -45,7 +47,8 @@ class ProcessMessage:
         self.output_conn = output_conn
 
     def input(self, msg):
-        self.input_conn.send(msg)
+        if msg:
+           self.input_conn.send(msg)
         return self.input_conn.recv()
 
     def print(self, msg):
@@ -185,26 +188,6 @@ def create_ssl_client(certfile: str, host: str, port: int):
     return conn
 
 
-def generate_ssl_certificate(certfile: str, keyfile: str):
-    if os.name == 'nt':
-        return
-
-    # Check if openssl is installed
-    if not shutil.which("openssl"):
-        print("Please install openssl to generate SSL certificates.")
-        return
-
-    if not os.path.exists(certfile) or not os.path.exists(keyfile):
-        print("Generating SSL certificate...")
-        subprocess.run([
-            "openssl", "req", "-x509", "-newkey", "rsa:4096", "-keyout", keyfile,
-            "-out", certfile, "-days", "365", "-nodes", "-subj", "/CN=localhost"
-        ])
-        print("SSL certificate generated.")
-    else:
-        print("SSL certificate already exists.")
-
-
 def initialize_configuration(config_dir: str, certfile, keyfile):
     if not os.path.exists(config_dir):
         os.makedirs(config_dir)
@@ -217,17 +200,13 @@ class MyClassProxy(BaseManager):
 
 MyClassProxy.register('ServerConfig', ServerConfig)
 MyClassProxy.register('ProcessMessage', ProcessMessage)
+MyClassProxy.register('ClientConfig', ClientConfig)
 
 
 def main():
     if not check_osx_accessibility():
         return
 
-    config_dir = CONFIG_PATH
-    certfile = os.path.join(config_dir, SSL_CERTFILE_NAME)
-    keyfile = os.path.join(config_dir, SSL_KEYFILE_NAME)
-
-    initialize_configuration(config_dir, certfile, keyfile)
 
     manager = MyClassProxy()
     manager.start()
@@ -236,9 +215,20 @@ def main():
     server_config = manager.ServerConfig(server_ip=net.get_local_ip(), server_port=5001, clients=Clients(), wait=5,
                                          screen_threshold=10, logging=True)
 
+    # Shared client configuration
+    client_config = manager.ClientConfig(server_ip="", server_port=5001, use_ssl=True, certfile=None, logging=True)
+
+    # Shared events (server)
     stop_server_event = Event()
     start_server_event = Event()
     is_server_running = Event()
+
+    # Shared events (client)
+    stop_client_event = Event()
+    start_client_event = Event()
+    is_client_running = Event()
+
+    # Shared exit event
     exit_event = Event()
 
     logger = QueueLogger(Queue())
@@ -249,9 +239,13 @@ def main():
     p1_output_conn, p2_output_conn = Pipe(duplex=True)
     controllerMessager = ProcessMessage(p2_input_conn, p2_output_conn)
 
-    gui_controller = GUIControllerFactory.get_controller("terminal", server_config, start_server_event,
-                                                         stop_server_event, exit_event,
-                                                         is_server_running, controllerMessager, config_dir)
+    gui_controller = GUIControllerFactory.get_controller("terminal", server_config=server_config,
+                                                         client_config=client_config,
+                                                         start_server_event=start_server_event,stop_server_event=stop_server_event, exit_event=exit_event,
+                                                         is_server_running=is_server_running,
+                                                         messager=controllerMessager,
+                                                         stop_client_event=stop_client_event,start_client_event=start_client_event,
+                                                         is_client_running=is_client_running)
 
     controller_process = Process(target=gui_controller.run, daemon=True)
 
@@ -278,22 +272,46 @@ def main():
     # Check if the server is running and the exit event is not set
     while not exit_event.is_set():
 
-        # Wait for the start event to be set
-        start_server_event.wait()
-        start_server_event.clear()
+        # Wait for either start_client_event or start_server_event to be set
+        while not (start_client_event.is_set() or start_server_event.is_set()):
+            if exit_event.wait(timeout=0.1):
+                break
 
-        # Recheck if the exit event is set
         if exit_event.is_set():
             break
 
-        server_manager = ServerManager(server_config=server_config, logger=logger,
-                                       server_started_event=is_server_running, server_stop_event=stop_server_event)
-        server_monitor_thread = Thread(target=server_manager.monitor_server, daemon=True)
-        server_monitor_thread.start()
+        # Wait for the start event to be set
+        if start_server_event.is_set():
+            start_server_event.clear()
 
-        server_manager.start_server()
+            # Recheck if the exit event is set
+            if exit_event.is_set():
+                break
 
-        server_monitor_thread.join()
+            server_manager = ServerManager(server_config=server_config, logger=logger,
+                                           server_started_event=is_server_running, server_stop_event=stop_server_event)
+            server_monitor_thread = Thread(target=server_manager.monitor_server, daemon=True)
+            server_monitor_thread.start()
+
+            server_manager.start_server()
+
+            server_monitor_thread.join()
+
+        if start_client_event.is_set():
+            start_client_event.clear()
+
+            # Recheck if the exit event is set
+            if exit_event.is_set():
+                break
+
+            client_manager = ClientManager(client_config=client_config, logger=logger,
+                                           client_started_event=is_client_running, client_stop_event=stop_client_event)
+            client_monitor_thread = Thread(target=client_manager.monitor_client, daemon=True)
+            client_monitor_thread.start()
+
+            client_manager.start_client()
+
+            client_monitor_thread.join()
 
     monitor_thread.join()
 
@@ -305,3 +323,113 @@ def main():
 
 if __name__ == "__main__":
     main()
+
+
+
+"""
+def setup_manager():
+    manager = MyClassProxy()
+    manager.start()
+    return manager
+
+
+def setup_events():
+    return {
+        "stop_server_event": Event(),
+        "start_server_event": Event(),
+        "is_server_running": Event(),
+        "stop_client_event": Event(),
+        "start_client_event": Event(),
+        "is_client_running": Event(),
+        "exit_event": Event()
+    }
+
+
+def setup_gui_controller(manager, config_dir, events, logger):
+    server_config = manager.ServerConfig(server_ip=net.get_local_ip(), server_port=5001, clients=Clients(), wait=5,
+                                         screen_threshold=10, logging=True)
+    client_config = manager.ClientConfig(server_ip="", server_port=5001, use_ssl=True, certfile=os.path.join(config_dir, SSL_CERTFILE_NAME),
+                                         keyfile=os.path.join(config_dir, SSL_KEYFILE_NAME), logging=True)
+    p1_input_conn, p2_input_conn = Pipe(duplex=True)
+    p1_output_conn, p2_output_conn = Pipe(duplex=True)
+    controllerMessager = ProcessMessage(p2_input_conn, p2_output_conn)
+    gui_controller = GUIControllerFactory.get_controller("terminal", server_config=server_config,
+                                                         client_config=client_config,
+                                                         start_server_event=events["start_server_event"],
+                                                         stop_server_event=events["stop_server_event"],
+                                                         exit_event=events["exit_event"],
+                                                         is_server_running=events["is_server_running"],
+                                                         messager=controllerMessager, folder_path=config_dir,
+                                                         stop_client_event=events["stop_client_event"],
+                                                         start_client_event=events["start_client_event"],
+                                                         is_client_running=events["is_client_running"])
+    return gui_controller, p1_input_conn, p1_output_conn, p2_input_conn, p2_output_conn
+
+
+def start_threads(controller_process, p1_output_conn, p1_input_conn, logger):
+    output_thread = Thread(target=reader, args=(p1_output_conn,), daemon=True)
+    input_thread = Thread(target=inputter, args=(p1_input_conn,), daemon=True)
+    server_reader_thread = Thread(target=server_reader, args=(logger,), daemon=True)
+    monitor_thread = Thread(target=process_monitor, args=(events["exit_event"],
+                                                          events["start_server_event"],
+                                                          controller_process,
+                                                          [input_thread, output_thread, server_reader_thread],
+                                                          [p2_input_conn, p2_output_conn, p1_input_conn, p1_output_conn],
+                                                          logger), daemon=True)
+    controller_process.start()
+    output_thread.start()
+    input_thread.start()
+    server_reader_thread.start()
+    monitor_thread.start()
+    return monitor_thread
+
+
+def main():
+    if not check_osx_accessibility():
+        return
+
+    config_dir = CONFIG_PATH
+    certfile = os.path.join(config_dir, SSL_CERTFILE_NAME)
+    keyfile = os.path.join(config_dir, SSL_KEYFILE_NAME)
+
+    initialize_configuration(config_dir, certfile, keyfile)
+
+    manager = setup_manager()
+    events = setup_events()
+    logger = QueueLogger(Queue())
+
+    gui_controller, p1_input_conn, p1_output_conn, p2_input_conn, p2_output_conn = setup_gui_controller(manager, config_dir, events, logger)
+    controller_process = Process(target=gui_controller.run, daemon=True)
+
+    monitor_thread = start_threads(controller_process, p1_output_conn, p1_input_conn, logger)
+
+    while not events["exit_event"].is_set():
+        while not (events["start_client_event"].is_set() or events["start_server_event"].is_set()):
+            if events["exit_event"].wait(timeout=0.1):
+                break
+
+        if events["exit_event"].is_set():
+            break
+
+        if events["start_server_event"].is_set():
+            events["start_server_event"].clear()
+            server_manager = ServerManager(server_config=server_config, logger=logger,
+                                           server_started_event=events["is_server_running"], server_stop_event=events["stop_server_event"])
+            server_monitor_thread = Thread(target=server_manager.monitor_server, daemon=True)
+            server_monitor_thread.start()
+            server_manager.start_server()
+            server_monitor_thread.join()
+
+        if events["start_client_event"].is_set():
+            events["start_client_event"].clear()
+            client_manager = ClientManager(client_config=client_config, logger=logger,
+                                           client_started_event=events["is_client_running"], client_stop_event=events["stop_client_event"])
+            client_monitor_thread = Thread(target=client_manager.monitor_client, daemon=True)
+            client_monitor_thread.start()
+            client_manager.start_client()
+            client_monitor_thread.join()
+
+    monitor_thread.join()
+    manager.shutdown()
+    return 0
+"""

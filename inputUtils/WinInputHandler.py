@@ -272,13 +272,13 @@ class ClientMouseListener:
 
     def handle_mouse(self, x, y):
         if x <= self.threshold:
-            self.send(None,format_command(f"return left {y / self.screen_height}"))
+            self.send(None, format_command(f"return left {y / self.screen_height}"))
         elif x >= self.screen_width - self.threshold:
             self.send(None, format_command(f"return right {y / self.screen_height}"))
         elif y <= self.threshold:
-            self.send(None,format_command(f"return up {x / self.screen_width}"))
+            self.send(None, format_command(f"return up {x / self.screen_width}"))
         elif y >= self.screen_height - self.threshold:
-            self.send(None,format_command(f"return down {x / self.screen_width}"))
+            self.send(None, format_command(f"return down {x / self.screen_width}"))
 
 
 class ClientKeyboardController:
@@ -383,7 +383,7 @@ class ClientMouseController:
         elif mouse_action == "right_click":
             self.mouse.click(Button.right)
         elif mouse_action == "scroll":
-            self.smooth_scroll(x, y)    # Fall back without threading
+            self.smooth_scroll(x, y)  # Fall back without threading
 
     def handle_click(self, button, is_pressed):
         current_time = time.time()

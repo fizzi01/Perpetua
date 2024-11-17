@@ -15,12 +15,12 @@ MAX_WORKERS = 10
 
 class ServerHandlerFactory:
     @staticmethod
-    def create_server_handler(connection: socket.socket, command_func: Callable):
+    def create_server_handler(connection, command_func: Callable):
         return ServerHandler(connection, command_func)
 
 
 class ServerHandler:
-    def __init__(self, connection: socket.socket, command_func: Callable):
+    def __init__(self, connection, command_func: Callable):
         self.processor_thread = None
         self.conn = connection
         self.process_command = command_func
@@ -48,9 +48,7 @@ class ServerHandler:
     def stop(self):
         self._running = False
         self.batch_ready_event.set()  # Wake up the processor thread
-        self.conn.close()
         self.executor.shutdown(wait=True)
-        #self.on_disconnect()
         self.log("Client disconnected.", 1)
 
     def _handle_server_commands(self):
@@ -84,6 +82,8 @@ class ServerHandler:
                         self.batch_ready_event.set()
 
                 sleep(0.001)
+            except socket.timeout:
+                continue
             except Exception as e:
                 self.log(f"Error receiving data: {e}", 2)
                 break

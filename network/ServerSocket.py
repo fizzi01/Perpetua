@@ -19,7 +19,7 @@ class SSLFactory:
 
 
 class ConnectionHandler(ABC):
-    INACTIVITY_TIMEOUT = 30
+    INACTIVITY_TIMEOUT = 3
 
     def __init__(self,command_processor: Callable[[str | tuple], None] = None):
         self.log = Logger.get_instance().log
@@ -54,26 +54,26 @@ class ConnectionHandler(ABC):
 
     def is_client_connected(self, address: tuple):
         for handler in self.client_handlers:
-            if handler.address == address:
+            if handler.address[0] == address[0]:    # Check only the IP address
                 return True
         return False
 
 
 class ConnectionHandlerFactory:
     @staticmethod
-    def create_handler(ssl_enabled: bool, ssl_factory: SSLFactory = None, certfile: str = None,
+    def create_handler(ssl_enabled: bool, certfile: str = None,
                        keyfile: str = None, command_processor: Callable[[str | tuple], None] = None) -> ConnectionHandler:
         if ssl_enabled:
-            return SSLConnectionHandler(ssl_factory=ssl_factory, certfile=certfile, keyfile=keyfile, command_processor=command_processor)
+            return SSLConnectionHandler( certfile=certfile, keyfile=keyfile, command_processor=command_processor)
         else:
             return NonSSLConnectionHandler(command_processor=command_processor)
 
 
 class SSLConnectionHandler(ConnectionHandler):
 
-    def __init__(self, ssl_factory: SSLFactory, certfile: str, keyfile: str, command_processor: Callable[[str | tuple], None] = None):
+    def __init__(self, certfile: str, keyfile: str, command_processor: Callable[[str | tuple], None] = None):
         super().__init__(command_processor=command_processor)
-        self.ssl_factory = ssl_factory
+        self.ssl_factory = SSLFactory()
         self.certfile = certfile
         self.keyfile = keyfile
         self.log = Logger.get_instance().log
@@ -96,6 +96,11 @@ class SSLConnectionHandler(ConnectionHandler):
         pass
 
     def add_client_connection(self, ssl_conn: ssl.SSLSocket, addr: tuple, clients: Clients):
+
+        if not clients.get_possible_positions():
+            ssl_conn.close()
+            self.log(f"Client {addr} rejected: Not allowed.", Logger.WARNING)
+
         for pos in clients.get_possible_positions():
             if clients.get_address(pos) == addr[0]:
                 clients.set_connection(pos, ssl_conn)
@@ -103,6 +108,10 @@ class SSLConnectionHandler(ConnectionHandler):
                 client_handler.start()
                 self.client_handlers.append(client_handler)
                 break
+
+            # If the client is not allowed, close the connection
+            ssl_conn.close()
+            self.log(f"Client {addr} rejected: Max clients reached.", Logger.WARNING)
 
 
 class NonSSLConnectionHandler(ConnectionHandler):
@@ -144,7 +153,7 @@ class ServerSocket:
         return cls._instance
 
     def _initialize_socket(self, host: str, port: int, wait: int):
-        self.socket = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+        self.socket = socket.socket()
         self.socket.settimeout(wait)
         self.host = host
         self.port = port

@@ -298,7 +298,7 @@ class ClientClipboardListener:
         while not self._stop_event.is_set():
             current_clipboard_content = pyperclip.paste()
             if current_clipboard_content != self.last_clipboard_content:
-                self.send(format_command("clipboard ") + current_clipboard_content)
+                self.send(None,format_command("clipboard ") + current_clipboard_content)
                 self.last_clipboard_content = current_clipboard_content
             time.sleep(0.5)
 
@@ -477,13 +477,13 @@ class ClientMouseListener:
 
     def handle_mouse(self, x, y):
         if x <= self.threshold:
-            self.send(format_command(f"return left {y / self.screen_height}"))
+            self.send(None, format_command(f"return left {y / self.screen_height}"))
         elif x >= self.screen_width - self.threshold:
-            self.send(format_command(f"return right {y / self.screen_height}"))
+            self.send(None, format_command(f"return right {y / self.screen_height}"))
         elif y <= self.threshold:
-            self.send(format_command(f"return up {x / self.screen_width}"))
+            self.send(None, format_command(f"return up {x / self.screen_width}"))
         elif y >= self.screen_height - self.threshold:
-            self.send(format_command(f"return down {x / self.screen_width}"))
+            self.send(None, format_command(f"return down {x / self.screen_width}"))
 
     def __str__(self):
         return "ClientMouseListener"

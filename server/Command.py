@@ -59,7 +59,8 @@ class DisconnectCommand(Command):
         for key in self.server.clients.get_possible_positions():
             if self.server.clients.get_connection(key) == self.conn:
                 self.server.clients.remove_connection(key)
-                self.server.change_screen()
+                if key == self.server.active_screen:
+                    self.server.change_screen()
                 return
 
 

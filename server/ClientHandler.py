@@ -77,7 +77,7 @@ class ClientHandler:
         while self._running:
             try:
                 data = self.conn.recv(CHUNK_SIZE)
-                if not data:
+                if not data or data == b'':
                     break
                 buffer.extend(data)
 
@@ -98,8 +98,12 @@ class ClientHandler:
                         # Add the chunk to the queue
                         self.message_queue.put(chunk.decode())
                         self.batch_ready_event.set()
-
+            except socket.timeout:
+                continue
+            except socket.error:
+                break
             except Exception as e:
+                # Controllo se il client ha chiuso la connessione
                 self.logger(f"Error receiving data: {e}", 2)
                 break
         self.stop()
@@ -145,6 +149,8 @@ class ClientCommandProcessor:
         self.logger = Logger.get_instance().log
 
     def process_client_command(self, command):
+        if not command:
+            return
         command_handler = CommandFactory.create_command(command, self.server)
         if command_handler:
             command_handler.execute()

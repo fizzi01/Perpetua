@@ -17,6 +17,9 @@ class ServerManager:
             wait=self.server_config.get_wait(),
             logging=self.server_config.get_logging(),
             screen_threshold=self.server_config.get_screen_threshold(),
+            use_ssl=self.server_config.get_use_ssl(),
+            certfile=self.server_config.get_certfile(),
+            keyfile=self.server_config.get_keyfile(),
             stdout=self.logger.write
         )
         self.server.start()

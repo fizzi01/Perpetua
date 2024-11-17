@@ -7,15 +7,14 @@ from inputUtils import InputHandler as inputHandler
 from network.ClientSocket import ClientSocket, ConnectionHandlerFactory
 from network.IOManager import ClientMessageQueueManager, QueueManager
 from utils.Logging import Logger
-from .ServerHandler import ServerCommandProcessor
+from client.ServerHandler import ServerCommandProcessor
 from utils import screen_size
 
 
 class Client:
     def __init__(self, server: str, port: int, threshold: int = 10,
                  wait: int = 5,
-                 logging: bool = False, stdout: Callable = print, root=None, certfile=None, use_ssl=False,
-                 keyfile=None):
+                 logging: bool = False, stdout: Callable = print, root=None, certfile=None, use_ssl=False):
 
         self._thread_pool = []
         self._started = False  # Main variable for client status, if False the client is stopped automatically
@@ -25,7 +24,7 @@ class Client:
         # Initialize logging
         self._initialize_logging(logging, stdout)
         # Initialize the client
-        self._initialize_client(server, port, threshold, wait, use_ssl, certfile, keyfile)
+        self._initialize_client(server, port, threshold, wait, use_ssl, certfile)
         # Initialize IO Managers
         self._initialize_io_managers()
 
@@ -35,10 +34,10 @@ class Client:
 
         # Initialize main thread
         self._initialize_main_thread()
-        # Initalize input controllers
-        self._initialize_input_controllers()
         # Initialize listeners
         self._initialize_listeners()
+        # Initalize input controllers
+        self._initialize_input_controllers()
 
         # Connection handler
         self._initialize_connection_handler()
@@ -68,7 +67,7 @@ class Client:
         self._thread_pool.append(self.messagesManager)
         self._thread_pool.append(self.listenersQueueManager)
 
-    def _initialize_client(self, server, port, threshold, wait, use_ssl, certfile, keyfile):
+    def _initialize_client(self, server, port, threshold, wait, use_ssl, certfile):
         self.server = server
         self.port = port
         self.threshold = threshold
@@ -77,12 +76,12 @@ class Client:
                                           port=port,
                                           wait=wait,
                                           use_ssl=use_ssl,
-                                          certfile=certfile,
-                                          keyfile=keyfile)
+                                          certfile=certfile)
 
     def _initialize_connection_handler(self):
         self.processor = ServerCommandProcessor(self)
-        self.connection_handler = ConnectionHandlerFactory.create_handler(self.client_socket, command_processor=self.processor.process_command)
+        self.connection_handler = ConnectionHandlerFactory.create_handler(self.client_socket,
+                                                                          command_processor=self.processor.process_command)
 
     def _initialize_screen_transition(self, root, threshold):
         pass
@@ -93,6 +92,7 @@ class Client:
         self._is_main_running_event = threading.Event()
 
     def _initialize_listeners(self):
+        self.screen_width, self.screen_height = screen_size()
         self.mouse_listener = inputHandler.ClientMouseListener(screen_width=self.screen_width,
                                                                screen_height=self.screen_height,
                                                                threshold=self.threshold)
@@ -101,7 +101,6 @@ class Client:
         self._listeners = [self.mouse_listener, self.clipboard_listener]
 
     def _initialize_input_controllers(self):
-        self.screen_width, self.screen_height = screen_size()
         self.keyboard_controller = inputHandler.ClientKeyboardController()
         self.mouse_controller = inputHandler.ClientMouseController(self.screen_width, self.screen_height)
 
@@ -114,6 +113,7 @@ class Client:
                 self._is_main_running_event.wait(timeout=1)
                 if not self._is_main_running_event.is_set():
                     return self.stop()
+                self._is_main_running_event.clear()
 
                 self._start_listeners()
 
@@ -142,10 +142,11 @@ class Client:
         while self._running:
             try:
                 if self._connected:
-                    time.sleep(self.wait)
+                    self._connected = self.connection_handler.check_server_connection()
                     continue
 
                 self._connected = self.connection_handler.handle_connection()
+                time.sleep(self.wait)
             except socket.timeout as e:
                 if self._running:
                     self.log("Connection timeout.", Logger.ERROR)
@@ -159,37 +160,35 @@ class Client:
                 self.log(f"Error connecting to the server: {e}", 2)
                 break
 
-            self._connected = self.connection_handler.check_server_connection()
-
         self._is_main_running_event.clear()
         self._is_main_running_event.set()
         self.log("Client listening stopped.", Logger.WARNING)
 
     def stop(self):
-        if self._running and self._is_main_running_event.is_set():
-            try:
+        try:
 
-                self.log("Stopping client...", Logger.WARNING)
-                self._running = False
+            if not self._running and not self._is_main_running_event.is_set():
+                return True
 
-                self.client_socket.close()
-                self.connection_handler.stop()
+            self.log("Stopping client...", Logger.WARNING)
+            self._running = False
 
-                for threads in self._thread_pool:
-                    if threads.is_alive():
-                        threads.join()
+            self.client_socket.close()
+            self.connection_handler.stop()
 
-                for listener in self._listeners:
-                    listener.stop()
+            for threads in self._thread_pool:
+                if threads.is_alive():
+                    threads.join()
 
-                if self._check_main_thread():
-                    self.log("Client stopped.", Logger.INFO)
-                    return True
-            except Exception as e:
-                self.log(f"{e}", 2)
-                return False
-        else:
-            return True
+            for listener in self._listeners:
+                listener.stop()
+
+            if self._check_main_thread():
+                self.log("Client stopped.", Logger.INFO)
+                return True
+        except Exception as e:
+            self.log(f"{e}", 2)
+            return False
 
     def on_disconnect(self):
         self._connected = False

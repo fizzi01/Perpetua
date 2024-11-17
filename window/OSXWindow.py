@@ -1,3 +1,4 @@
+import queue
 import threading
 import time
 from multiprocessing import Process, Pipe, Queue
@@ -33,6 +34,8 @@ class FullScreenTransparentWindow(NSObject):
 
     @python_method
     def create_window(self) -> AppKit.NSWindow:
+        self.is_window_created = False  # Inizilization flag
+
         if self.window is not None:
             self.window.close()
             self.window = None
@@ -65,6 +68,7 @@ class FullScreenTransparentWindow(NSObject):
         window.setAlphaValue_(1.0)
         window.setHidesOnDeactivate_(False)
         window.setLevel_(AppKit.NSScreenSaverWindowLevel + 10000)  # Imposta il livello della finestra
+
         return window
 
     def minimize(self):
@@ -98,6 +102,19 @@ class FullScreenTransparentWindow(NSObject):
         # Minimizzare invece di chiudere completamente la finestra
         self.minimize()
 
+    def is_minimized(self):
+        with objc.autorelease_pool():
+            if self.window:
+                return self.window.isMiniaturized()
+            return False
+
+    def is_window_running(self):
+        with objc.autorelease_pool():
+            return self.is_window_created
+
+    def set_window_running(self, value):
+        self.is_window_created = value
+
 
 class AppDelegate(NSObject):
     """Minimalist app delegate."""
@@ -110,6 +127,7 @@ class AppDelegate(NSObject):
         # Expose window instance for external control
         global transparent_window_instance
         transparent_window_instance = self.window
+        transparent_window_instance.set_window_running(True)
 
     def applicationShouldTerminateAfterLastWindowClosed_(self, sender):
         pass
@@ -144,21 +162,22 @@ transparent_window_instance = None
 
 class HiddenWindow:
     def __init__(self, root=None):
-        self.queue = Queue()
+        self.input_queue = Queue()
+        self.output_queue = Queue()
 
-        self.process = Process(target=self._start_window_app, args=(self.queue,), daemon=True)
+        self.process = Process(target=self._start_window_app, args=(self.input_queue,self.output_queue), daemon=True)
         self.process.start()
 
         self.log = Logger.get_instance().log
 
-    def _start_window_app(self, input_conn):
+    def _start_window_app(self, input_conn, output_conn):
         """Start the window application and handle external commands."""
-        window_controller_thread = threading.Thread(target=self._window_proc_controller, args=(input_conn,),
+        window_controller_thread = threading.Thread(target=self._window_proc_controller, args=(input_conn, output_conn),
                                                     daemon=True)
         window_controller_thread.start()
         TransparentWindowApp().run()
 
-    def _window_proc_controller(self, input_conn):
+    def _window_proc_controller(self, input_conn, output_conn):
         """Controller thread to receive commands from the main process and control the window."""
         global transparent_window_instance
         while True:
@@ -180,11 +199,15 @@ class HiddenWindow:
                 if transparent_window_instance:
                     transparent_window_instance.close()
                 break
+            elif command == "is_running":
+                if transparent_window_instance:
+                    is_running = transparent_window_instance.is_window_running()
+                    output_conn.put(is_running)
 
     def send_command(self, command):
         """Send a command to the transparent window."""
-        if command in ["minimize", "maximize", "close", "stop", "show"]:
-            self.queue.put(command)
+        if command in ["minimize", "maximize", "close", "stop", "show", "is_running"]:
+            self.input_queue.put(command)
 
     def close(self):
         """Close the window and terminate the process."""
@@ -208,3 +231,16 @@ class HiddenWindow:
 
     def maximize(self):
         self.send_command("maximize")
+
+    def wait(self, timeout=5):
+        timeout = time.time() + timeout
+        while time.time() < timeout:
+            self.send_command("is_running")
+            try:
+                if self.output_queue.get(timeout=0.5):
+                    self.log("[WINDOW] Window is running correctly")
+                    return True
+            except queue.Empty:
+                continue
+
+        return False

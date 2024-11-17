@@ -261,10 +261,9 @@ class ServerMessageQueueManager(BaseMessageQueueManager):
 
     def __init__(self, connected_clients, get_client, change_screen):
         super().__init__()
-        if not hasattr(self, 'initialized'):
-            self.get_connected_clients = connected_clients
-            self.get_client = get_client
-            self.change_screen = change_screen
+        self.get_connected_clients = connected_clients
+        self.get_client = get_client
+        self.change_screen = change_screen
 
     def _send_message(self, message):
         screen, data = message
@@ -303,7 +302,8 @@ class ClientMessageQueueManager(BaseMessageQueueManager):
     def __init__(self, conn):
         if not hasattr(self, 'initialized'):
             super().__init__()
-            self.conn = conn
+
+        self.conn = conn
 
     def _send_message(self, message):
         try:

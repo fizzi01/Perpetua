@@ -7,7 +7,6 @@ from pynput import mouse
 # Core utilities
 from inputUtils import InputHandler
 from network.IOManager import ServerMessageQueueManager, QueueManager
-from utils.netData import format_command
 from window import Window
 
 # Configuration
@@ -101,8 +100,10 @@ class Server:
 
     def _initialize_screen_transition(self, root, screen_threshold):
         self.window = Window()
-        time.sleep(0.5)
-        self.window.close()
+        if not self.window.wait(timeout=2):
+            self.log("Window not started.", Logger.ERROR)
+
+        self.window.minimize()
 
         # Screen transition variables
         self.changed = threading.Event()
@@ -217,6 +218,7 @@ class Server:
 
             except socket.timeout:
                 if self._started:
+                    self.connection_handler.check_client_connections()
                     self.log("Waiting for clients ...", Logger.DEBUG)
                     continue
                 else:
@@ -227,8 +229,6 @@ class Server:
                     continue
                 else:
                     break
-
-            self.connection_handler.check_client_connections()
 
         self._is_main_running_event.clear()
         self._is_main_running_event.set()  # Set the event to True to indicate the main thread is terminated
@@ -325,7 +325,7 @@ class Server:
         return self.active_screen
 
     def _get_status(self):
-        return self._is_transition
+        return self._is_transition if not self.block_transition.is_set() else False
 
     def _screen_toggle(self, screen):
         """

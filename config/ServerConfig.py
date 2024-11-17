@@ -109,7 +109,7 @@ class ServerConfig:
     """
 
     def __init__(self, server_ip: str, server_port: int, clients: Optional[Clients] = None, wait: int = 5,
-                 screen_threshold: int = 10, logging: bool = True, use_ssl: bool = False):
+                 screen_threshold: int = 10, logging: bool = True, use_ssl: bool = False, certfile: Optional[str] = None, keyfile: Optional[str] = None):
         self.server_ip = server_ip
         self.server_port = server_port
         self.clients = clients if clients is not None else Clients()
@@ -118,6 +118,21 @@ class ServerConfig:
         self.screen_threshold = screen_threshold
         self.logging = logging
         self.use_ssl = use_ssl
+
+        self.certfile = certfile
+        self.keyfile = keyfile
+
+    def get_certfile(self) -> Optional[str]:
+        return self.certfile
+
+    def get_keyfile(self) -> Optional[str]:
+        return self.keyfile
+
+    def set_certfile(self, certfile: Optional[str]):
+        self.certfile = certfile
+
+    def set_keyfile(self, keyfile: Optional[str]):
+        self.keyfile = keyfile
 
     def get_use_ssl(self) -> bool:
         return self.use_ssl
@@ -155,8 +170,8 @@ class ServerConfig:
     def set_clients(self, clients: Clients):
         self.clients = clients
 
-    def set_ip(self, ip: str):
+    def set_server_ip(self, ip: str):
         self.server_ip = ip
 
-    def set_port(self, port: int):
+    def set_server_port(self, port: int):
         self.server_port = port
