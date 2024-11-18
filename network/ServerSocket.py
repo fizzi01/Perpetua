@@ -153,7 +153,7 @@ class ServerSocket:
         return cls._instance
 
     def _initialize_socket(self, host: str, port: int, wait: int):
-        self.socket = socket.socket()
+        self.socket = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
         self.socket.settimeout(wait)
         self.host = host
         self.port = port

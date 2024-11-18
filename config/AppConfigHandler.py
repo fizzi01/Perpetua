@@ -148,7 +148,6 @@ class AppConfigHandler:
         certfile = os.path.join(self.get_config_dir(), self.ssl_dir, config.SSL_CERTFILE_NAME)
         keyfile = os.path.join(self.get_config_dir(), self.ssl_dir, config.SSL_KEYFILE_NAME)
         if (not os.path.exists(certfile) or not os.path.exists(keyfile)) or force:
-            print("SSL certificate files not found.")
             self.generate_ssl_certificate(self, server_ip=server_ip, force=force)
         print(f"SSL certificate loaded from {certfile} and {keyfile}")
         return certfile, keyfile

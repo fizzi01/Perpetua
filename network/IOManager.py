@@ -93,7 +93,7 @@ class QueueManager:
 
         while not self._stop_event.is_set():
             try:
-                message = self.mouse_queue.get(timeout=0.01)
+                message = self.mouse_queue.get(timeout=MOUSE_BATCH_INTERVAL)
                 self.mouse_batch_buffer.append(message)
 
                 # Control if it's time to send the batch
@@ -155,7 +155,7 @@ class QueueManager:
             return
 
         # Prepara i messaggi per l'invio come batch
-        batch_message = END_DELIMITER.join([format_data(data) for _, data in self.keyboard_batch_buffer])
+        batch_message = CHUNK_DELIMITER.join([format_data(data) for _, data in self.keyboard_batch_buffer])
         screen = self.keyboard_batch_buffer[0][0]  # Assume che tutti i messaggi del batch siano per lo stesso schermo
         self.MessageSender.send(self.KEYBOARD_PRIORITY, (screen, batch_message))
 
