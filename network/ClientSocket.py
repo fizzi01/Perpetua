@@ -28,8 +28,8 @@ class ClientSocket:
         self.wait = wait
         self.use_ssl = use_ssl
         self.certfile = certfile
-        self.socket = socket.socket()
-        #self.socket.settimeout(wait)
+        self.socket = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+        # self.socket.settimeout(wait)
 
     def connect(self):
         if self.use_ssl:
@@ -38,6 +38,7 @@ class ClientSocket:
             self.ssl_socket = context.wrap_socket(self.socket, server_hostname=self.host)
             self.ssl_socket.connect((self.host, self.port))
             self.ssl_socket.settimeout(self.wait)
+            self.socket = self.ssl_socket
         else:
             self.socket.settimeout(self.wait)
             self.socket.connect((self.host, self.port))
@@ -46,13 +47,10 @@ class ClientSocket:
         self.socket.close()
 
     def send(self, data: bytes):
-        if self.is_socket_open():
-            self.socket.send(data)
+        self.socket.send(data)
 
     def recv(self, buffer_size: int) -> bytes:
-        if self.is_socket_open():
-            return self.socket.recv(buffer_size)
-        return b''
+        return self.socket.recv(buffer_size)
 
     def is_socket_open(self):
         try:
@@ -100,7 +98,7 @@ class ConnectionHandler(ABC):
         current_time = time.time()
         if self.recent_activity or (
                 current_time - self.last_check_time) > self.INACTIVITY_TIMEOUT:  # Check every 60 seconds if no activity
-            if self.server_handler is not None and not self.server_handler.is_socket_open():
+            if self.server_handler is not None and not self.server_handler.conn.is_socket_open():
                 self.logger("Server connection closed.", Logger.WARNING)
                 self.server_handler.stop()
                 self.server_handler = None
@@ -149,14 +147,14 @@ class NonSSLConnectionHandler(ConnectionHandler):
             return False
 
     def add_server_connection(self):
-        self.server_handler = ServerHandlerFactory.create_server_handler(self.client_socket.socket,
+        self.server_handler = ServerHandlerFactory.create_server_handler(self.client_socket,
                                                                          self.command_processor)
         self.server_handler.start()
 
 
 class ConnectionHandlerFactory:
     @staticmethod
-    def create_handler(client_socket: ClientSocket, command_processor: Callable ) -> ConnectionHandler:
+    def create_handler(client_socket: ClientSocket, command_processor: Callable) -> ConnectionHandler:
         if client_socket.use_ssl:
             return SSLConnectionHandler(client_socket, command_processor)
         else:
