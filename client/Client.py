@@ -161,7 +161,7 @@ class Client:
                 continue
             except Exception as e:
                 self.log(f"Error connecting to the server: {e}", 2)
-                break
+                continue
 
         self._is_main_running_event.clear()
         self._is_main_running_event.set()

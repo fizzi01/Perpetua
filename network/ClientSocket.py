@@ -44,10 +44,16 @@ class ClientSocket:
             self.socket.connect((self.host, self.port))
 
     def close(self):
-        self.socket.close()
+        try:
+            self.socket.close()
+        except Exception as e:
+            pass
 
     def send(self, data: bytes):
-        self.socket.send(data)
+        try:
+            self.socket.send(data)
+        except EOFError:
+            pass
 
     def recv(self, buffer_size: int) -> bytes:
         return self.socket.recv(buffer_size)
@@ -61,7 +67,7 @@ class ClientSocket:
 
     def reset_socket(self):
         self.close()
-        self._initialize_socket(self.host, self.port, int(self.socket.gettimeout()), self.use_ssl, self.certfile)
+        self._initialize_socket(self.host, self.port, self.wait, self.use_ssl, self.certfile)
 
 
 class ConnectionHandler(ABC):
@@ -100,7 +106,7 @@ class ConnectionHandler(ABC):
                 current_time - self.last_check_time) > self.INACTIVITY_TIMEOUT:  # Check every 60 seconds if no activity
             if self.server_handler is not None and not self.server_handler.conn.is_socket_open():
                 self.logger("Server connection closed.", Logger.WARNING)
-                self.server_handler.stop()
+                #self.server_handler.stop()
                 self.server_handler = None
 
             self.recent_activity = False

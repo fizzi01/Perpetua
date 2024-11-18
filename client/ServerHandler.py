@@ -48,6 +48,7 @@ class ServerHandler:
         self._running = False
         self.executor.shutdown(wait=True)
         self.log("Client disconnected.", 1)
+        self.conn.close()
 
     def _handle_server_commands(self):
         """Handle commands continuously received from the server."""
