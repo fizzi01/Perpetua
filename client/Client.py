@@ -9,6 +9,7 @@ from network.IOManager import ClientMessageQueueManager, QueueManager
 from utils.Logging import Logger
 from client.ServerHandler import ServerCommandProcessor
 from utils import screen_size
+from window import Window
 
 
 class Client:
@@ -32,10 +33,10 @@ class Client:
         self._is_transition = False
         self._initialize_screen_transition(root, threshold)
 
-        # Initialize main thread
-        self._initialize_main_thread()
         # Initialize listeners
         self._initialize_listeners()
+        # Initialize main thread
+        self._initialize_main_thread()
         # Initalize input controllers
         self._initialize_input_controllers()
 
@@ -46,7 +47,7 @@ class Client:
         self._running = False
         self._connected = None
 
-        self.window = None  # TODO: Window(root) screen transition
+        self.window = Window()  # TODO
         self.stdout = stdout
 
         self.on_screen = False  # TODO
@@ -71,7 +72,7 @@ class Client:
         self.server = server
         self.port = port
         self.threshold = threshold
-        self.wait = wait
+        self.wait = wait if wait > 0 else 5
         self.client_socket = ClientSocket(host=server,
                                           port=port,
                                           wait=wait,
@@ -108,6 +109,11 @@ class Client:
         try:
             if not self._running:
                 self._running = True
+                # Start message processing thread
+                self._start_listeners()
+                self.messagesManager.start()
+                self.listenersQueueManager.start()
+
                 self._client_thread.start()
 
                 self._is_main_running_event.wait(timeout=1)
@@ -115,11 +121,7 @@ class Client:
                     return self.stop()
                 self._is_main_running_event.clear()
 
-                self._start_listeners()
-
-                # Start message processing thread
-                self.messagesManager.start()
-                self.listenersQueueManager.start()
+                self.log("Client started.", Logger.INFO)
             else:
                 raise Exception("Client already started.")
 
@@ -143,6 +145,7 @@ class Client:
             try:
                 if self._connected:
                     self._connected = self.connection_handler.check_server_connection()
+                    time.sleep(self.wait)
                     continue
 
                 self._connected = self.connection_handler.handle_connection()

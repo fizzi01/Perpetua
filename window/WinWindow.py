@@ -1,6 +1,8 @@
 import tkinter as tk
 from sys import platform
 
+from window.InterfaceWindow import AbstractHiddenWindow
+
 
 class TransparentFullscreenWindow(tk.Toplevel):
     def __init__(self, parent):
@@ -85,3 +87,23 @@ class TransparentFullscreenWindow(tk.Toplevel):
         if self.is_open:
             self.destroy()
             self.is_open = False
+
+
+class DebugWindow(AbstractHiddenWindow):
+    def close(self):
+        pass
+
+    def show(self):
+        pass
+
+    def stop(self):
+        pass
+
+    def minimize(self):
+        pass
+
+    def maximize(self):
+        pass
+
+    def wait(self, timeout=5):
+       return True

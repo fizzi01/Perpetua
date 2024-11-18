@@ -2,14 +2,13 @@ import socket
 import threading
 from collections.abc import Callable
 from concurrent.futures import ThreadPoolExecutor
-from time import sleep
-from queue import Queue
+from time import sleep, time
+from queue import Queue, Empty
 
 from utils.Logging import Logger
 from utils.netData import *
 
-BATCH_PROCESS_INTERVAL = 0.01
-MAX_BATCH_SIZE = 10
+BATCH_PROCESS_INTERVAL = 0.0001
 MAX_WORKERS = 10
 
 
@@ -20,68 +19,48 @@ class ServerHandlerFactory:
 
 
 class ServerHandler:
+    CHUNK_DELIMITER = CHUNK_DELIMITER.encode()
+    END_DELIMITER = END_DELIMITER.encode()
+
     def __init__(self, connection, command_func: Callable):
-        self.processor_thread = None
         self.conn = connection
         self.process_command = command_func
         self.on_disconnect = None
         self.log = Logger.get_instance().log
         self._running = False
-        self.thread = None
-        self.message_queue = Queue()
-        self.batch_ready_event = threading.Event()
+        self.main_thread = None
+        self.data_queue = Queue()
+
         self.executor = ThreadPoolExecutor(max_workers=MAX_WORKERS)
 
     def start(self):
         self._running = True
-        self.thread = threading.Thread(target=self._handle_server_commands, daemon=True)
+        self.main_thread = threading.Thread(target=self._handle_server_commands, daemon=True)
+        self.buffer_thread = threading.Thread(target=self._buffer_and_process_batches, daemon=True)
         try:
-            self.thread.start()
+            self.main_thread.start()
+            self.buffer_thread.start()
             self.log("Client in listening mode.")
         except Exception as e:
             self.log(f"Error starting client: {e}", 2)
 
-        # Start thread to process messages in the queue
-        self.processor_thread = threading.Thread(target=self._process_message_queue, daemon=True)
-        self.processor_thread.start()
-
     def stop(self):
         self._running = False
-        self.batch_ready_event.set()  # Wake up the processor thread
         self.executor.shutdown(wait=True)
         self.log("Client disconnected.", 1)
 
     def _handle_server_commands(self):
         """Handle commands continuously received from the server."""
-        buffer = bytearray()
         while self._running:
             try:
                 data = self.conn.recv(CHUNK_SIZE)
+
                 if not data:
                     break
-                buffer.extend(data)
+                if data == b'\x00':  # Heartbeat
+                    continue
 
-                while END_DELIMITER.encode() in buffer or CHUNK_DELIMITER.encode() in buffer:
-                    if END_DELIMITER.encode() in buffer:
-                        # Trova il primo delimitatore di fine batch
-                        pos = buffer.find(END_DELIMITER.encode())
-                        batch = buffer[:pos]
-                        buffer = buffer[pos + len(END_DELIMITER):]  # Rimuovi il batch dal buffer
-
-                        # Aggiungi il batch alla coda
-                        self.message_queue.put(batch.decode())
-                        self.batch_ready_event.set()
-                    elif CHUNK_DELIMITER.encode() in buffer:
-                        # Trova il primo delimitatore di chunk e rimuovilo dal buffer
-                        pos = buffer.find(CHUNK_DELIMITER.encode())
-                        chunk = buffer[:pos]
-                        buffer = buffer[pos + len(CHUNK_DELIMITER):]
-
-                        # I chunk fanno parte del batch, quindi li concateno al batch
-                        self.message_queue.put(chunk.decode())
-                        self.batch_ready_event.set()
-
-                sleep(0.001)
+                self.data_queue.put(data)
             except socket.timeout:
                 continue
             except Exception as e:
@@ -89,33 +68,40 @@ class ServerHandler:
                 break
         self.stop()
 
-    def _process_message_queue(self):
-        """Process messages from the queue in a batched manner."""
-        batch_buffer = []
-
+    def _buffer_and_process_batches(self):
+        """Buffer data and process batches in a separate thread."""
+        buffer = bytearray()
+        last_batch_time = 0
         while self._running:
             try:
-                # Attendi fino a quando ci sono nuovi messaggi o il tempo massimo è trascorso
-                self.batch_ready_event.wait(BATCH_PROCESS_INTERVAL)
+                data = self.data_queue.get(timeout=1)
+                buffer.extend(data)
 
-                # Raccogli i messaggi dalla coda fino a raggiungere la dimensione massima del batch
-                while not self.message_queue.empty() and len(batch_buffer) < MAX_BATCH_SIZE:
-                    batch_buffer.append(self.message_queue.get())
+                # Timer to process the batch (increase buffer size to avoid processing too many small batches)
+                if last_batch_time == 0:
+                    last_batch_time = time()
+                elif time() - last_batch_time > BATCH_PROCESS_INTERVAL:
+                    last_batch_time = 0
+                else:
+                    continue
 
-                # Se il batch è pronto per essere elaborato, processalo
-                if batch_buffer:
-                    self._process_batch(batch_buffer)
-                    batch_buffer.clear()
+                while self.END_DELIMITER in buffer:
+                    end_pos = buffer.find(self.END_DELIMITER)
+                    batch = buffer[:end_pos]
+                    buffer = buffer[end_pos + len(self.END_DELIMITER):]
 
-                # Reset l'evento dopo aver processato il batch
-                self.batch_ready_event.clear()
+                    # Remove CHUNK_DELIMITER from the batch
+                    batch = batch.replace(self.CHUNK_DELIMITER, b'')
 
+                    self._process_batch(batch.decode())
+
+            except Empty:
+                continue
             except Exception as e:
-                self.log(f"Error processing message queue: {e}", 2)
+                self.log(f"Error processing data: {e}", 2)
 
-    def _process_batch(self, batch_buffer):
-        for command in batch_buffer:
-            self.executor.submit(self.process_command, command)
+    def _process_batch(self, command):
+        self.executor.submit(self.process_command, command)
 
 
 class ServerCommandProcessor:
@@ -126,6 +112,8 @@ class ServerCommandProcessor:
         self.keyboard_controller = self.client.keyboard_controller
         self.clipboard = self.client.clipboard_listener
 
+        self.stop_event = threading.Event()
+
         self.keyboard_queue = Queue()  # Needed to process commands sequentially, preserving the order
         self.keyboard_thread = threading.Thread(target=self._process_keyboard_queue, daemon=True)
         self.keyboard_thread.start()
@@ -135,6 +123,12 @@ class ServerCommandProcessor:
         self.clipboard_thread.start()
 
         self.log = Logger.get_instance().log
+
+    def stop(self):
+        self.stop_event.set()
+        self.keyboard_thread.join()
+        self.clipboard_thread.join()
+        self.stop_event.clear()
 
     def process_command(self, command):
         parts = extract_command_parts(command)
@@ -159,10 +153,13 @@ class ServerCommandProcessor:
             self.log(f"Error processing mouse command: {e}", 2)
 
     def _process_keyboard_queue(self):
-        while True:
-            parts = self.keyboard_queue.get()
-            self._process_keyboard_command(parts)
-            self.keyboard_queue.task_done()
+        while not self.stop_event.is_set():
+            try:
+                parts = self.keyboard_queue.get(timeout=1)
+                self._process_keyboard_command(parts)
+                self.keyboard_queue.task_done()
+            except Empty:
+                continue
 
     def _process_keyboard_command(self, parts):
         try:
@@ -180,10 +177,13 @@ class ServerCommandProcessor:
             self.log(f"Error processing clipboard command: {e}", 2)
 
     def _process_clipboard_queue(self):
-        while True:
-            parts = self.clipboard_queue.get()
-            self._process_clipboard_command(parts)
-            self.clipboard_queue.task_done()
+        while not self.stop_event.is_set():
+            try:
+                parts = self.clipboard_queue.get(timeout=1)
+                self._process_clipboard_command(parts)
+                self.clipboard_queue.task_done()
+            except Empty:
+                continue
 
     def _process_screen_command(self, parts):
         try:

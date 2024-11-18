@@ -125,10 +125,10 @@ class ServerKeyboardListener:
     :param get_active_screen: Function to get the active screen
     """
 
-    def __init__(self, send_function: Callable, get_clients: Callable, get_active_screen: Callable):
+    def __init__(self, get_clients: Callable, get_active_screen: Callable):
         self.clients = get_clients
         self.active_screen = get_active_screen
-        self.send = send_function
+        self.send = QueueManager(None).send_keyboard
 
         self._listener = KeyboardListener(on_press=self.on_press, on_release=self.on_release,
                                           win32_event_filter=self.keyboard_suppress_filter)
@@ -182,9 +182,9 @@ class ServerKeyboardListener:
 
 
 class ServerClipboardListener:
-    def __init__(self, send_function: Callable, get_clients: Callable, get_active_screen: Callable):
+    def __init__(self, get_clients: Callable, get_active_screen: Callable):
 
-        self.send = send_function
+        self.send = QueueManager(None).send_clipboard
         self.active_clients = get_clients
         self.active_screen = get_active_screen
         self._thread = None
@@ -259,7 +259,7 @@ class ClientMouseListener:
         self.screen_height = screen_height
         self.threshold = threshold
         self.send = QueueManager(None).send_mouse
-        self._listener = MouseListener(on_move=self.handle_mouse)
+        self._listener = MouseListener(on_move=self.handle_mouse, on_scroll=self.on_scroll, on_click=self.on_click)
 
     def get_listener(self):
         return self._listener
@@ -270,6 +270,12 @@ class ClientMouseListener:
     def stop(self):
         self._listener.stop()
 
+    def on_scroll(self, x, y, dx, dy):
+        return True
+
+    def on_click(self, x, y, button, pressed):
+        return True
+
     def handle_mouse(self, x, y):
         if x <= self.threshold:
             self.send(None, format_command(f"return left {y / self.screen_height}"))
@@ -279,6 +285,8 @@ class ClientMouseListener:
             self.send(None, format_command(f"return up {x / self.screen_width}"))
         elif y >= self.screen_height - self.threshold:
             self.send(None, format_command(f"return down {x / self.screen_width}"))
+
+        return True
 
 
 class ClientKeyboardController:

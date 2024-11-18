@@ -1,7 +1,7 @@
 import platform as _platform
 
 if _platform.system() == 'Windows':
-    from .WinWindow import TransparentFullscreenWindow as Window
+    from .WinWindow import DebugWindow as Window
 elif _platform.system() == 'Darwin':
     from .OSXWindow import HiddenWindow as Window
 # elif _platform.system() == 'Linux':
