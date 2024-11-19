@@ -187,7 +187,7 @@ class BaseGUIController(ABC):
             server_ip = net.get_local_ip()
             force = True
 
-        certfile, keyfile = self.config_handler.load_ssl_certificate(server_ip=server_ip,force=force)
+        certfile, keyfile = self.config_handler.load_ssl_certificate(force=force)
 
         if certfile and keyfile:
             self.server_config.set_certfile(certfile)
@@ -292,43 +292,79 @@ class TerminalGUIController(BaseGUIController):
 
             # Display current configuration
             for param_name, methods in metadata["set_methods"].items():
-                if param_name == "set_clients":
-                    continue  # Skip client-related methods initially
-
                 display_name = methods["display_name"]
                 get_method_name = f"get_{param_name[4:]}"
                 get_method = getattr(self.server_config, get_method_name, None)
                 if callable(get_method):
                     current_value = get_method()
-                    self.messager.print(f"{display_name} ({param_name[4:]}): {current_value}")
+
+                    if param_name[4:] == "clients":
+                        self.messager.print(f"Clients {param_name[4:]}:")
+                        for position, client in self.server_config.get_clients().clients.items():
+                            self.messager.print(f"\t{position}: {client.get_address()}")
+                    else:
+                        self.messager.print(f"{display_name} ({param_name[4:]}): {current_value}")
 
             # Ask user which parameter to modify
             param_to_modify = self.messager.input("Enter the parameter name to modify (or 'exit' to finish): ")
             if param_to_modify.lower() == 'exit':
                 break
 
-            # Find the corresponding set method
-            set_method_name = f"set_{param_to_modify}"
-            set_method = getattr(self.server_config, set_method_name, None)
-            if callable(set_method):
-                current_value = getattr(self.server_config, f"get_{param_to_modify}")()
-                new_value = self.messager.input(
-                    f"Enter new value for {param_to_modify} (current value: {current_value}): ")
+            if param_to_modify == "clients":
+                # Display current clients
+                clients = self.server_config.get_clients().clients
+                self.messager.print("Current clients:")
+                for position, client in clients.items():
+                    self.messager.print(f"- {position}: {client.get_address()}")
+                while True:
+                    action = self.messager.input(
+                        "Do you want to modify (m) or add (a) a client? (or 'exit' to finish): ").lower()
+                    if action == 'exit':
+                        break
+                    elif action == 'm':
+                        position = self.messager.input(
+                            "Enter the client position to modify (e.g., 'left', 'right', 'up', 'down'): ")
+                        if position in clients:
+                            new_address = self.messager.input(
+                                f"Enter new address for {position} (current: {clients[position].get_address()}): ")
+                            clients[position] = Client(addr=new_address, key_map={})
+                        else:
+                            self.messager.print("Invalid position. Please try again.")
+                    elif action == 'a':
+                        position = self.messager.input("Enter client position (e.g., 'left', 'right', 'up', 'down'): ")
+                        if position in ["left", "right", "up", "down"]:
+                            address = self.messager.input("Enter client address (IP): ")
+                            clients[position] = Client(addr=address, key_map={})
+                        else:
+                            self.messager.print("Invalid position. Please try again.")
+                    else:
+                        self.messager.print("Invalid action. Please try again.")
 
-                # Convert input to the correct type
-                param_type = metadata["set_methods"][set_method_name]["parameters"][0]["type"]
-                if param_type.find("int") != -1:
-                    new_value = int(new_value)
-                elif param_type.find("bool") != -1:
-                    new_value = new_value.lower() in ['true', 'yes', '1']
-
-                # Set the new value
-                set_method(new_value)
-
-                # Save the configuration automatically
+                self.server_config.set_clients(Clients(clients))
                 self.save_server_configuration()
             else:
-                self.messager.print(f"Invalid parameter name: {param_to_modify}. Please try again.")
+                # Find the corresponding set method
+                set_method_name = f"set_{param_to_modify}"
+                set_method = getattr(self.server_config, set_method_name, None)
+                if callable(set_method):
+                    current_value = getattr(self.server_config, f"get_{param_to_modify}")()
+                    new_value = self.messager.input(
+                        f"Enter new value for {param_to_modify} (current value: {current_value}): ")
+
+                    # Convert input to the correct type
+                    param_type = metadata["set_methods"][set_method_name]["parameters"][0]["type"]
+                    if param_type.find("int") != -1:
+                        new_value = int(new_value)
+                    elif param_type.find("bool") != -1:
+                        new_value = new_value.lower() in ['true', 'yes', '1']
+
+                    # Set the new value
+                    set_method(new_value)
+
+                    # Save the configuration automatically
+                    self.save_server_configuration()
+                else:
+                    self.messager.print(f"Invalid parameter name: {param_to_modify}. Please try again.")
 
     def edit_client_configuration(self):
         while True:

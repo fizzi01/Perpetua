@@ -75,16 +75,8 @@ class ServerHandler:
         last_batch_time = 0
         while self._running:
             try:
-                data = self.data_queue.get(timeout=1)
-                buffer.extend(data)
-
-                # Timer to process the batch (increase buffer size to avoid processing too many small batches)
-                if last_batch_time == 0:
-                    last_batch_time = time()
-                elif time() - last_batch_time > BATCH_PROCESS_INTERVAL:
-                    last_batch_time = 0
-                else:
-                    continue
+                while not self.data_queue.empty() and time() - last_batch_time < BATCH_PROCESS_INTERVAL:
+                    buffer.extend(self.data_queue.get())
 
                 while self.END_DELIMITER in buffer:
                     end_pos = buffer.find(self.END_DELIMITER)

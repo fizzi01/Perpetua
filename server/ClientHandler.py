@@ -43,6 +43,8 @@ class ClientHandler:
         self.batch_ready_event = threading.Event()
         self.executor = ThreadPoolExecutor(max_workers=MAX_WORKERS)
 
+        self._thread_pool = []
+
     def start(self):
         self.thread = threading.Thread(target=self._handle, daemon=True)
         self._running = True
@@ -54,9 +56,11 @@ class ClientHandler:
 
         # Start thread to process messages in the queue
         self.processor_thread = threading.Thread(target=self._process_message_queue, daemon=True)
+        self._thread_pool.append(self.processor_thread)
         self.processor_thread.start()
 
         self.clipboard_thread = threading.Thread(target=self._process_clipboard_queue, daemon=True)
+        self._thread_pool.append(self.clipboard_thread)
         self.clipboard_thread.start()
 
     def stop(self):
@@ -69,8 +73,9 @@ class ClientHandler:
         self.clipboard_queue.put("")
         # Trigger the processor thread to process the last batch
         self.message_queue.put("")
-        self.processor_thread.join()
-        self.clipboard_thread.join()
+
+        for thread in self._thread_pool:
+            thread.join()
 
     def _handle(self):
         buffer = bytearray()

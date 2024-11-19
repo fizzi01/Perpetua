@@ -47,13 +47,7 @@ class Client:
         self._running = False
         self._connected = None
 
-        self.window = Window()  # TODO
-        self.stdout = stdout
 
-        self.on_screen = False  # TODO
-        self.changed = False  # TODO
-        self.transition_handler = None  # Thread che controlla on_screen, se False chiama self.window.show()
-        # Il server invierà un comando per avvertire il client che non è più on_screen
 
     def _initialize_logging(self, logging, stdout):
         self.logging = logging
@@ -85,7 +79,16 @@ class Client:
                                                                           command_processor=self.processor.process_command)
 
     def _initialize_screen_transition(self, root, threshold):
-        pass
+        self.window = Window()
+        if not self.window.wait(timeout=2):
+            self.log("Window not started.", Logger.ERROR)
+
+        self.window.minimize()
+
+        self.on_screen = False  # TODO
+        self.changed = False  # TODO
+        self.transition_handler = None  # Thread che controlla on_screen, se False chiama self.window.show()
+        # Il server invierà un comando per avvertire il client che non è più on_screen
 
     def _initialize_main_thread(self):
         self._client_thread = threading.Thread(target=self._run, daemon=True)

@@ -107,11 +107,11 @@ class SSLConnectionHandler(ConnectionHandler):
                 client_handler = ClientHandlerFactory.create_client_handler(ssl_conn, addr, self.command_processor)
                 client_handler.start()
                 self.client_handlers.append(client_handler)
-                break
+                return
 
-            # If the client is not allowed, close the connection
-            ssl_conn.close()
-            self.log(f"Client {addr} rejected: Max clients reached.", Logger.WARNING)
+        # If the client is not allowed, close the connection
+        ssl_conn.close()
+        self.log(f"Client {addr} rejected: Max clients reached.", Logger.WARNING)
 
 
 class NonSSLConnectionHandler(ConnectionHandler):
