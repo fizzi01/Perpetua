@@ -1,12 +1,17 @@
 import ssl
 import socket
 import time
+import uuid
 from abc import ABC, abstractmethod
 from typing import Callable
 
+from config import SERVICE_NAME
 from config.ServerConfig import Clients
 from server.ClientHandler import ClientHandlerFactory
 from utils.Logging import Logger
+
+from zeroconf import ServiceInfo, Zeroconf, ServiceStateChange, ServiceBrowser
+from utils import net
 
 
 class SSLFactory:
@@ -21,7 +26,7 @@ class SSLFactory:
 class ConnectionHandler(ABC):
     INACTIVITY_TIMEOUT = 3
 
-    def __init__(self,command_processor: Callable[[str | tuple], None] = None):
+    def __init__(self, command_processor: Callable[[str | tuple], None] = None):
         self.log = Logger.get_instance().log
         self.client_handlers = []
 
@@ -54,7 +59,7 @@ class ConnectionHandler(ABC):
 
     def is_client_connected(self, address: tuple):
         for handler in self.client_handlers:
-            if handler.address[0] == address[0]:    # Check only the IP address
+            if handler.address[0] == address[0]:  # Check only the IP address
                 return True
         return False
 
@@ -62,9 +67,10 @@ class ConnectionHandler(ABC):
 class ConnectionHandlerFactory:
     @staticmethod
     def create_handler(ssl_enabled: bool, certfile: str = None,
-                       keyfile: str = None, command_processor: Callable[[str | tuple], None] = None) -> ConnectionHandler:
+                       keyfile: str = None,
+                       command_processor: Callable[[str | tuple], None] = None) -> ConnectionHandler:
         if ssl_enabled:
-            return SSLConnectionHandler( certfile=certfile, keyfile=keyfile, command_processor=command_processor)
+            return SSLConnectionHandler(certfile=certfile, keyfile=keyfile, command_processor=command_processor)
         else:
             return NonSSLConnectionHandler(command_processor=command_processor)
 
@@ -152,11 +158,17 @@ class ServerSocket:
             cls._instance._initialize_socket(host, port, wait)
         return cls._instance
 
-    def _initialize_socket(self, host: str, port: int, wait: int):
+    def _initialize_socket(self, host: str = "", port: int = 5001, wait: int = 5):
         self.socket = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
         self.socket.settimeout(wait)
         self.host = host
         self.port = port
+
+        self.log = Logger.get_instance().log
+
+        self.zeroconf = Zeroconf()
+        self._resolve_port_conflict()
+        self._register_mdns_service()
 
     def bind_and_listen(self):
         self.socket.bind((self.host, self.port))
@@ -169,6 +181,7 @@ class ServerSocket:
         self.socket.detach()
 
     def close(self):
+        self._unregister_mdns_service()
         self.socket.close()
 
     def is_socket_open(self):
@@ -177,3 +190,45 @@ class ServerSocket:
             return True
         except socket.error:
             return False
+
+    def _resolve_port_conflict(self):
+        """Controlla se esiste un conflitto sulla porta con altri servizi mDNS."""
+        while self._is_port_in_use_by_mdns(self.port):
+            self.log(f"[mDNS] Port {self.port} is already in use. Trying next port...", Logger.WARNING)
+            self.port += 1
+
+    def _is_port_in_use_by_mdns(self, port):
+        """Cerca altri servizi mDNS con la stessa porta."""
+        conflict_found = False
+
+        def on_service_state_change(zeroconf, service_type, name, state_change):
+            nonlocal conflict_found
+            if state_change == ServiceStateChange.Added:
+                info = zeroconf.get_service_info(service_type, name)
+                if info:
+                    properties = {key.decode(): value.decode() for key, value in info.properties.items()}
+                    if properties.get("app_name") == SERVICE_NAME and info.port == port:
+                        conflict_found = True
+
+        browser = ServiceBrowser(self.zeroconf, f"_http._tcp.local.", handlers=[on_service_state_change])
+        time.sleep(1)  # Aspetta che i servizi vengano scoperti
+        browser.cancel()
+        return conflict_found
+
+    def _register_mdns_service(self):
+        self.host = net.get_local_ip()
+        service_info = ServiceInfo(
+            "_http._tcp.local.",  # Tipo del servizio
+            f"{SERVICE_NAME}-{uuid.uuid4().hex[:8]}._http._tcp.local.",
+            addresses=[socket.inet_aton(self.host)],
+            port=self.port,
+            properties={"app_name": SERVICE_NAME},
+            server=f"{SERVICE_NAME}.local.",
+        )
+        self.zeroconf.register_service(service_info)
+        self.log(f"[mDNS] Server {service_info.name} registered", Logger.DEBUG)
+
+    def _unregister_mdns_service(self):
+        self.zeroconf.unregister_all_services()
+        self.zeroconf.close()
+        self.log(f"[mDNS] Service {SERVICE_NAME} unregistered.", Logger.DEBUG)

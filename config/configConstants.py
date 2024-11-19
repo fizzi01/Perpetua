@@ -15,3 +15,5 @@ SERVER_KEY = "server"
 CLIENT_KEY = "client"
 
 APP_NAME = "PyContinuity"
+
+SERVICE_NAME = "PyContinuity"

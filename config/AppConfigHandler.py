@@ -129,11 +129,11 @@ class AppConfigHandler:
             {os.linesep.join(alt_names)}
             """)
 
-    def load_ssl_certificate(self, force: bool = False) -> Tuple[str, str]:
+    def load_ssl_certificate(self) -> Tuple[str, str]:
         """Carica il certificato SSL, rigenerandolo se necessario."""
         certfile = os.path.join(self.ssl_dir, self.ssl_cert)
         keyfile = os.path.join(self.ssl_dir, self.ssl_key)
-        if not os.path.exists(certfile) or not os.path.exists(keyfile) or force:
-            return self.generate_ssl_certificate(force=force)
+        if not os.path.exists(certfile) or not os.path.exists(keyfile):
+            return self.generate_ssl_certificate(force=True)
         print(f"SSL certificate loaded: {certfile}, {keyfile}")
         return certfile, keyfile

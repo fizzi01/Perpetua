@@ -352,7 +352,7 @@ class Server:
 
                 try:
                     screen_transition_state = ScreenTransitionFactory.get_transition_state(self.active_screen, self)
-                    screen_transition_state.handle_transition()
+                    #screen_transition_state.handle_transition()
                 except Exception as e:
                     self.log(f"Error in screen transition. {e}", Logger.ERROR)
 

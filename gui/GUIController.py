@@ -181,13 +181,7 @@ class BaseGUIController(ABC):
         """
         Load the server certificate from a file.
         """
-        server_ip = self.server_config.get_server_ip()
-        force = False
-        if server_ip != net.get_local_ip():
-            server_ip = net.get_local_ip()
-            force = True
-
-        certfile, keyfile = self.config_handler.load_ssl_certificate(force=force)
+        certfile, keyfile = self.config_handler.load_ssl_certificate()
 
         if certfile and keyfile:
             self.server_config.set_certfile(certfile)

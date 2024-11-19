@@ -307,6 +307,8 @@ class ClientMessageQueueManager(BaseMessageQueueManager):
 
     def _send_message(self, message):
         try:
+            if not self.conn.is_socket_open():
+                return
             if isinstance(message, tuple):
                 screen, data = message
                 formatted_data = format_data(data)

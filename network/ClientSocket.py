@@ -1,4 +1,3 @@
-import select
 import socket
 import ssl
 import time
@@ -7,7 +6,10 @@ from abc import ABC, abstractmethod
 from typing import Callable
 
 from client.ServerHandler import ServerHandlerFactory
+from config import SERVICE_NAME
 from utils.Logging import Logger
+
+from zeroconf import Zeroconf, ServiceBrowser, ServiceStateChange
 
 
 class ClientSocket:
@@ -31,7 +33,39 @@ class ClientSocket:
         self.socket = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
         # self.socket.settimeout(wait)
 
+        self.use_discovery = True if len(self.host) == 0 else False
+        self.log = Logger.get_instance().log
+
+    def _discover_server(self):
+        service_found = False
+
+        def on_service_state_change(zeroconf, service_type, name, state_change):
+            nonlocal service_found
+            if state_change == ServiceStateChange.Added and not service_found:
+                self.log(f"[mDNS] Discovered service: {name}", Logger.DEBUG)
+                info = zeroconf.get_service_info(service_type, name)
+                if info:
+                    properties = {key.decode(): value.decode() for key, value in info.properties.items()}
+                    if properties.get("app_name") == SERVICE_NAME and info.port == self.port:
+                        self.host = socket.inet_ntoa(info.addresses[0])
+                        self.port = info.port
+                        self.log(f"[mDNS] Resolved server to {self.host}:{self.port}")
+                        service_found = True
+
+        zeroconf = Zeroconf()
+        browser = ServiceBrowser(zeroconf, f"_http._tcp.local.", handlers=[on_service_state_change])
+        self.log("[mDNS] Searching for service ...", Logger.DEBUG)
+        time.sleep(2)  # Attendi per completare la scoperta
+        browser.cancel()
+        zeroconf.close()
+
+        if not self.host or not self.port:
+            raise Exception("No matching server found.")
+
     def connect(self):
+        if self.use_discovery:
+            self._discover_server()
+
         if self.use_ssl:
             context = ssl.create_default_context()
             context.load_verify_locations(cafile=self.certfile)
@@ -60,7 +94,7 @@ class ClientSocket:
 
     def is_socket_open(self):
         try:
-            self.socket.getsockname()
+            self.socket.getpeername()
             return True
         except socket.error:
             return False
@@ -128,6 +162,9 @@ class SSLConnectionHandler(ConnectionHandler):
             self.client_socket.connect()
             self.add_server_connection()
             self.logger("SSL connection established.")
+            self.logger(
+                f"Connected to server {self.client_socket.host}:{self.client_socket.port}, Secure: {self.client_socket.use_ssl}",
+                Logger.INFO)
             self.first_connection = False
             return True
         except Exception as e:

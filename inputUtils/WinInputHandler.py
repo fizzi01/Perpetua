@@ -378,14 +378,14 @@ class ClientMouseController:
         self.mouse.position = (end_x, end_y)
 
     def process_mouse_command(self, x, y, mouse_action, is_pressed):
-        if mouse_action == "move":
+        if mouse_action == "position":
             target_x = max(0, min(x * self.screen_width, self.screen_width))  # Ensure target_x is within screen bounds
             target_y = max(0,
                            min(y * self.screen_height, self.screen_height))  # Ensure target_y is within screen bounds
 
-            current_x, current_y = self.mouse.position
-            self.smooth_move(current_x, current_y, target_x, target_y)
-
+            self.mouse.position = (target_x, target_y)
+        elif mouse_action == "move":
+            self.mouse.move(x, y)
         elif mouse_action == "click":
             self.handle_click(Button.left, is_pressed)
         elif mouse_action == "right_click":

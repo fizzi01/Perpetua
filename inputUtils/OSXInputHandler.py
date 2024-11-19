@@ -87,36 +87,63 @@ class ServerMouseListener:
             return event
 
     def on_move(self, x, y):
-        # Filter minor mouse movements
+        # Calcola il movimento relativo
+        dx = 0
+        dy = 0
         if self.last_x is not None and self.last_y is not None:
-            if abs(x - self.last_x) < self.move_threshold and abs(y - self.last_y) < self.move_threshold:
-                return True
+            dx = x - self.last_x
+            dy = y - self.last_y
 
-        # Update last known mouse position
+        # Aggiorna l'ultima posizione conosciuta
         self.last_x = x
         self.last_y = y
 
-        if self.update_mouse_position:
-            self.update_mouse_position(x, y)
+        # Controlla se il cursore è al bordo
+        at_right_edge = x >= self.screen_width - 1
+        at_left_edge = x <= 0
+        at_bottom_edge = y >= self.screen_height - 1
+        at_top_edge = y <= 0
+
+        # Se siamo al bordo, forza un movimento relativo
+        if at_right_edge:
+            dx = max(dx, 1)  # Forza un movimento verso destra
+        elif at_left_edge:
+            dx = min(dx, -1)  # Forza un movimento verso sinistra
+
+        if at_bottom_edge:
+            dy = max(dy, 1)  # Forza un movimento verso il basso
+        elif at_top_edge:
+            dy = min(dy, -1)  # Forza un movimento verso l'alto
 
         screen = self.active_screen()
         clients = self.clients(screen)
         is_transmitting = self.get_trasmission_status()
 
-        normalized_x = x / self.screen_width
-        normalized_y = y / self.screen_height
-
         if screen and clients and is_transmitting:
-            self.send(screen, format_command(f"mouse move {normalized_x} {normalized_y}"))
+            # Invia i movimenti relativi al client
+            self.send(screen, format_command(f"mouse move {dx} {dy}"))
         else:
-            if x >= self.screen_width - self.screen_treshold:
+            # Quando si attraversa un bordo, invia una posizione assoluta normalizzata
+            if at_right_edge:
                 self.change_screen("right")
-            elif x <= self.screen_treshold:
+                normalized_x = 0.0  # Entra dal bordo sinistro del client
+                normalized_y = y / self.screen_height
+                self.send(screen, format_command(f"mouse position {normalized_x} {normalized_y}"))
+            elif at_left_edge:
                 self.change_screen("left")
-            elif y >= self.screen_height - self.screen_treshold:
+                normalized_x = 1.0  # Entra dal bordo destro del client
+                normalized_y = y / self.screen_height
+                self.send(screen, format_command(f"mouse position {normalized_x} {normalized_y}"))
+            elif at_bottom_edge:
                 self.change_screen("down")
-            elif y <= self.screen_treshold:
+                normalized_x = x / self.screen_width
+                normalized_y = 0.0  # Entra dal bordo superiore del client
+                self.send(screen, format_command(f"mouse position {normalized_x} {normalized_y}"))
+            elif at_top_edge:
                 self.change_screen("up")
+                normalized_x = x / self.screen_width
+                normalized_y = 1.0  # Entra dal bordo inferiore del client
+                self.send(screen, format_command(f"mouse position {normalized_x} {normalized_y}"))
 
         return True
 
@@ -414,20 +441,20 @@ class ClientMouseController:
         self.logger = Logger.get_instance().log
 
     def process_mouse_command(self, x, y, mouse_action, is_pressed):
-        if mouse_action == "move":
+        if mouse_action == "position":
             target_x = max(0, min(x * self.screen_width, self.screen_width))  # Ensure target_x is within screen bounds
             target_y = max(0,
                            min(y * self.screen_height, self.screen_height))  # Ensure target_y is within screen bounds
 
             self.mouse.position = (target_x, target_y)
-
+        elif mouse_action == "move":
+            self.mouse.move(x, y)
         elif mouse_action == "click":
             self.handle_click(Button.left, is_pressed)
         elif mouse_action == "right_click":
             self.mouse.click(Button.right)
         elif mouse_action == "scroll":
-            # High performance impact without threading
-            threading.Thread(target=self.smooth_scroll, args=(x, y)).start()
+            self.smooth_scroll(x, y)  # Fall back without threading
 
     def handle_click(self, button, is_pressed):
         current_time = time.time()
@@ -476,14 +503,16 @@ class ClientMouseListener:
         self._listener.stop()
 
     def handle_mouse(self, x, y):
-        if x <= self.threshold:
+        if abs(x) <= self.threshold:
             self.send(None, format_command(f"return left {y / self.screen_height}"))
-        elif x >= self.screen_width - self.threshold:
+        elif abs(x) >= self.screen_width - self.threshold:
             self.send(None, format_command(f"return right {y / self.screen_height}"))
-        elif y <= self.threshold:
+        elif abs(y) <= self.threshold:
             self.send(None, format_command(f"return up {x / self.screen_width}"))
-        elif y >= self.screen_height - self.threshold:
+        elif abs(y) >= self.screen_height - self.threshold:
             self.send(None, format_command(f"return down {x / self.screen_width}"))
+
+        return True
 
     def __str__(self):
         return "ClientMouseListener"
