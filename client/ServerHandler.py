@@ -8,8 +8,9 @@ from queue import Queue, Empty
 from utils.Logging import Logger
 from utils.netData import *
 
-BATCH_PROCESS_INTERVAL = 0.0001
-MAX_WORKERS = 10
+BATCH_PROCESS_INTERVAL = 0.001
+TIMEOUT = 0.001
+MAX_WORKERS = 20
 
 
 class ServerHandlerFactory:
@@ -63,6 +64,7 @@ class ServerHandler:
 
                 self.data_queue.put(data)
             except socket.timeout:
+                sleep(TIMEOUT)
                 continue
             except Exception as e:
                 self.log(f"Error receiving data: {e}", 2)
@@ -75,7 +77,7 @@ class ServerHandler:
         last_batch_time = 0
         while self._running:
             try:
-                while not self.data_queue.empty() and time() - last_batch_time < BATCH_PROCESS_INTERVAL:
+                while not self.data_queue.empty() or time() - last_batch_time < BATCH_PROCESS_INTERVAL:
                     buffer.extend(self.data_queue.get())
 
                 while self.END_DELIMITER in buffer:
@@ -87,8 +89,9 @@ class ServerHandler:
                     batch = batch.replace(self.CHUNK_DELIMITER, b'')
 
                     self._process_batch(batch.decode())
-
+                sleep(TIMEOUT)
             except Empty:
+                sleep(TIMEOUT)
                 continue
             except Exception as e:
                 self.log(f"Error processing data: {e}", 2)
