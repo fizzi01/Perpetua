@@ -291,7 +291,7 @@ class Server:
                                                                screen_width=self.screen_width,
                                                                screen_height=self.screen_height,
                                                                screen_threshold=self.screen_threshold,
-                                                               update_mouse_position=self.update_mouse_position)
+                                                               )
         self.mouse_listener.start()
         return self.mouse_listener
 

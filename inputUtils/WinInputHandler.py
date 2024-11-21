@@ -9,6 +9,7 @@ import keyboard
 from pynput.mouse import Button, Controller as MouseController, Listener as MouseListener
 
 from network.IOManager import QueueManager
+from utils.Logging import Logger
 from utils.netData import *
 
 
@@ -358,7 +359,9 @@ class ClientMouseController:
         self.last_press_time = -99
         self.doubleclick_counter = 0
 
-    def smooth_move(self, start_x, start_y, end_x, end_y, steps=80, sleep_time=0.00001):
+        self.log = Logger.get_instance().log
+
+    def smooth_position(self, start_x, start_y, end_x, end_y, steps=80, sleep_time=0.00001):
         # Calcola la differenza tra la posizione iniziale e finale
         dx = end_x - start_x
         dy = end_y - start_y
@@ -377,15 +380,29 @@ class ClientMouseController:
         # Assicurati che il mouse sia esattamente nella posizione finale
         self.mouse.position = (end_x, end_y)
 
+    def smooth_move(self, dx, dy, base_steps=0):
+        steps = int(max(abs(dx), abs(dy)) * base_steps)
+        if steps == 0:
+            self.mouse.move(dx, dy)
+            return
+        # Calculate the step for each dimension
+        x_step = dx / steps
+        y_step = dy / steps
+
+        # Move the mouse through the steps
+        for _ in range(steps):
+            self.mouse.move(x_step, y_step)
+
     def process_mouse_command(self, x, y, mouse_action, is_pressed):
         if mouse_action == "position":
+            self.log(f"Setting mouse to {x}, {y}")
             target_x = max(0, min(x * self.screen_width, self.screen_width))  # Ensure target_x is within screen bounds
             target_y = max(0,
                            min(y * self.screen_height, self.screen_height))  # Ensure target_y is within screen bounds
 
             self.mouse.position = (target_x, target_y)
         elif mouse_action == "move":
-            self.mouse.move(x, y)
+            self.smooth_move(x, y)
         elif mouse_action == "click":
             self.handle_click(Button.left, is_pressed)
         elif mouse_action == "right_click":
