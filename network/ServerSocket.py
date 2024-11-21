@@ -92,6 +92,9 @@ class SSLConnectionHandler(ConnectionHandler):
             # Exchange configuration info (this is a placeholder, implement your own logic)
             self.exchange_configuration(ssl_conn)
 
+            # Wrap socket with BaseSocket
+            ssl_conn = BaseSocket(ssl_conn)
+
             # Add the SSL connection to the clients manager
             self.add_client_connection(ssl_conn, addr, clients)
         except Exception as e:
@@ -101,7 +104,7 @@ class SSLConnectionHandler(ConnectionHandler):
         # Implement your configuration exchange logic here
         pass
 
-    def add_client_connection(self, ssl_conn: ssl.SSLSocket, addr: tuple, clients: Clients):
+    def add_client_connection(self, ssl_conn, addr: tuple, clients: Clients):
 
         if not clients.get_possible_positions():
             ssl_conn.close()
@@ -129,6 +132,8 @@ class NonSSLConnectionHandler(ConnectionHandler):
             # Exchange configuration info (this is a placeholder, implement your own logic)
             self.exchange_configuration(conn)
 
+            conn = BaseSocket(conn)
+
             # Add the connection to the clients manager
             self.add_client_connection(conn, addr, clients)
         except Exception as e:
@@ -138,7 +143,7 @@ class NonSSLConnectionHandler(ConnectionHandler):
         # Implement your configuration exchange logic here
         pass
 
-    def add_client_connection(self, conn: socket.socket, addr: tuple, clients: Clients):
+    def add_client_connection(self, conn, addr: tuple, clients: Clients):
         for pos in clients.get_possible_positions():
             if clients.get_address(pos) == addr[0]:
                 clients.set_connection(pos, conn)
@@ -232,3 +237,38 @@ class ServerSocket:
         self.zeroconf.unregister_all_services()
         self.zeroconf.close()
         self.log(f"[mDNS] Service {SERVICE_NAME} unregistered.", Logger.DEBUG)
+
+
+class BaseSocket:
+    # Maschera il socket di base per consentire l'accesso ai metodi di socket
+    def __getattr__(self, item):
+        return getattr(self.socket, item)
+
+    def __init__(self, socket: socket.socket):
+        self.socket = socket
+        self.log = Logger.get_instance().log
+
+    def send(self, data: str | bytes):
+        if isinstance(data, str):
+            data = data.encode()
+
+        try:
+            self.socket.send(data)
+        except EOFError:
+            pass
+
+    def recv(self, size: int) -> bytes:
+        return self.socket.recv(size)
+
+    def close(self):
+        try:
+            self.socket.close()
+        except Exception as e:
+            pass
+
+    def is_socket_open(self):
+        try:
+            self.socket.getpeername()
+            return True
+        except socket.error:
+            return False

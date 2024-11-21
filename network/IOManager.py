@@ -278,12 +278,18 @@ class ServerMessageQueueManager(BaseMessageQueueManager):
 
     def _send_to_client(self, client_key, data):
         try:
+            if not client_key or client_key=="None": # Skip sending data if the client key is None
+                return
+
             # Prepare data to send
             formatted_data = format_data(data)
 
             conn = self.get_client(client_key)
             if not conn:
-                raise KeyError(f"Client {client_key} not found")
+                return # Skip sending data if the client is not connected
+
+            if not conn.is_socket_open():
+                return # Skip sending data if the socket is closed
 
             # Send the data in chunks if needed
             self._send_in_chunks(conn, formatted_data)

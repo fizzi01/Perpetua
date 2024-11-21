@@ -1,3 +1,4 @@
+import math
 from collections.abc import Callable
 
 import pyperclip
@@ -39,12 +40,20 @@ class ServerMouseListener:
         self.logger = Logger.get_instance().log
         self.send = QueueManager(None).send_mouse
 
+        self.last_x = None
+        self.last_y = None
+        self.max_speed = 5  # Maximum speed of the cursor
+        self.min_threshold = 0.5
+        self.max_increment = 10  # Limite massimo per l'incremento simulato
+        self.min_increment = 1  # Incremento minimo garantito
+        self.simulated_dy = 0
+        self.simulated_dx = 0
+        self.last_time = time.time()
+
         self.update_mouse_position = update_mouse_position
         self._listener = MouseListener(on_move=self.on_move, on_scroll=self.on_scroll, on_click=self.on_click,
                                        darwin_intercept=self.mouse_suppress_filter)
 
-        self.last_x = None
-        self.last_y = None
         self.move_threshold = 2  # Minimum movement required to trigger on_move
 
     def get_listener(self):
@@ -90,13 +99,17 @@ class ServerMouseListener:
         # Calcola il movimento relativo
         dx = 0
         dy = 0
+        current_time = time.time()
+        time_delta = current_time - self.last_time if self.last_time else 0.01  # Assicura un delta minimo
+
         if self.last_x is not None and self.last_y is not None:
             dx = x - self.last_x
             dy = y - self.last_y
 
-        # Aggiorna l'ultima posizione conosciuta
+        # Aggiorna l'ultima posizione e tempo conosciuti
         self.last_x = x
         self.last_y = y
+        self.last_time = current_time
 
         # Controlla se il cursore è al bordo
         at_right_edge = x >= self.screen_width - 1
@@ -104,16 +117,52 @@ class ServerMouseListener:
         at_bottom_edge = y >= self.screen_height - 1
         at_top_edge = y <= 0
 
-        # Se siamo al bordo, forza un movimento relativo
-        if at_right_edge:
-            dx = max(dx, 1)  # Forza un movimento verso destra
-        elif at_left_edge:
-            dx = min(dx, -1)  # Forza un movimento verso sinistra
+        # Calcola la velocità complessiva
+        speed_factor_total = math.sqrt(dx ** 2 + dy ** 2) / max(time_delta, 0.01)
+        speed_factor_total = min(speed_factor_total, self.max_increment)
 
+        # Incremento progressivo dell'asse bloccato
+        if at_top_edge:
+            increment = max(self.min_increment, min(int(round(speed_factor_total)), self.max_increment))
+            self.simulated_dy -= increment  # Simula movimento verso l'alto
+            dy = int(round(self.simulated_dy))
+        elif at_bottom_edge:
+            increment = max(self.min_increment, min(int(round(speed_factor_total)), self.max_increment))
+            self.simulated_dy += increment  # Simula movimento verso il basso
+            dy = int(round(self.simulated_dy))
+        elif at_left_edge:
+            increment = max(self.min_increment, min(int(round(speed_factor_total)), self.max_increment))
+            self.simulated_dx -= increment  # Simula movimento verso sinistra
+            dx = int(round(self.simulated_dx))
+        elif at_right_edge:
+            increment = max(self.min_increment, min(int(round(speed_factor_total)), self.max_increment))
+            self.simulated_dx += increment  # Simula movimento verso destra
+            dx = int(round(self.simulated_dx))
+
+        # Smussa il rallentamento se il movimento rallenta
+        self.simulated_dy *= 0.9  # Rallenta progressivamente
+        self.simulated_dx *= 0.9
+
+        # Forza un movimento minimo
+        if at_top_edge:
+            dy = min(-1, dy)
         if at_bottom_edge:
-            dy = max(dy, 1)  # Forza un movimento verso il basso
-        elif at_top_edge:
-            dy = min(dy, -1)  # Forza un movimento verso l'alto
+            dy = max(1, dy)
+        if at_left_edge:
+            dx = min(-1, dx)
+        if at_right_edge:
+            dx = max(1, dx)
+
+        # Gestione dei movimenti normali
+        if abs(dx) < self.min_threshold:
+            dx = 0  # Ignora movimenti troppo piccoli
+        else:
+            dx = int(round(dx))
+
+        if abs(dy) < self.min_threshold:
+            dy = 0  # Ignora movimenti troppo piccoli
+        else:
+            dy = int(round(dy))
 
         screen = self.active_screen()
         clients = self.clients(screen)
@@ -126,24 +175,24 @@ class ServerMouseListener:
             # Quando si attraversa un bordo, invia una posizione assoluta normalizzata
             if at_right_edge:
                 self.change_screen("right")
-                normalized_x = 0.0  # Entra dal bordo sinistro del client
+                normalized_x = 0.05  # Entra dal bordo sinistro del client
                 normalized_y = y / self.screen_height
-                self.send(screen, format_command(f"mouse position {normalized_x} {normalized_y}"))
+                self.send("right", format_command(f"mouse position {normalized_x} {normalized_y}"))
             elif at_left_edge:
                 self.change_screen("left")
-                normalized_x = 1.0  # Entra dal bordo destro del client
+                normalized_x = 0.95  # Entra dal bordo destro del client
                 normalized_y = y / self.screen_height
-                self.send(screen, format_command(f"mouse position {normalized_x} {normalized_y}"))
+                self.send("left", format_command(f"mouse position {normalized_x} {normalized_y}"))
             elif at_bottom_edge:
                 self.change_screen("down")
                 normalized_x = x / self.screen_width
-                normalized_y = 0.0  # Entra dal bordo superiore del client
-                self.send(screen, format_command(f"mouse position {normalized_x} {normalized_y}"))
+                normalized_y = 0.05  # Entra dal bordo superiore del client
+                self.send("down", format_command(f"mouse position {normalized_x} {normalized_y}"))
             elif at_top_edge:
                 self.change_screen("up")
                 normalized_x = x / self.screen_width
-                normalized_y = 1.0  # Entra dal bordo inferiore del client
-                self.send(screen, format_command(f"mouse position {normalized_x} {normalized_y}"))
+                normalized_y = 0.95  # Entra dal bordo inferiore del client
+                self.send("up", format_command(f"mouse position {normalized_x} {normalized_y}"))
 
         return True
 
@@ -325,7 +374,7 @@ class ClientClipboardListener:
         while not self._stop_event.is_set():
             current_clipboard_content = pyperclip.paste()
             if current_clipboard_content != self.last_clipboard_content:
-                self.send(None,format_command("clipboard ") + current_clipboard_content)
+                self.send(None, format_command("clipboard ") + current_clipboard_content)
                 self.last_clipboard_content = current_clipboard_content
             time.sleep(0.5)
 

@@ -350,14 +350,6 @@ class Server:
 
                 self._screen_toggle(self.active_screen)
 
-                try:
-                    screen_transition_state = ScreenTransitionFactory.get_transition_state(self.active_screen, self)
-                    #screen_transition_state.handle_transition()
-                except Exception as e:
-                    self.log(f"Error in screen transition. {e}", Logger.ERROR)
-
-                time.sleep(0.2)  # Wait for the action to complete
-
                 self._is_transition = True
                 self.transition_completed.set()
                 self.log(f"[CHECKER] Screen transition to {self.active_screen} completed.")
