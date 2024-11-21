@@ -16,6 +16,13 @@ class Client:
         self.addr: str = addr
         self.port: int = port
         self.key_map = key_map if key_map is not None else {}
+        self.screen_size = (0, 0)
+
+    def get_screen_size(self) -> tuple:
+        return self.screen_size
+
+    def set_screen_size(self, size: tuple):
+        self.screen_size = size
 
     def get_connection(self) -> Optional[socket.socket]:
         return self.conn
@@ -71,6 +78,15 @@ class Clients:
         client = self.get_client(position)
         if client:
             client.set_connection(conn)
+
+    def set_screen_size(self, position: str, size: tuple):
+        client = self.get_client(position)
+        if client:
+            client.set_screen_size(size)
+
+    def get_screen_size(self, position: str) -> tuple:
+        client = self.get_client(position)
+        return client.get_screen_size() if client else (0, 0)
 
     def remove_connection(self, position: str):
         client = self.get_client(position)

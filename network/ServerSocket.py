@@ -11,7 +11,7 @@ from server.ClientHandler import ClientHandlerFactory
 from utils.Logging import Logger
 
 from zeroconf import ServiceInfo, Zeroconf, ServiceStateChange, ServiceBrowser
-from utils import net
+from utils import net, netConstants, SCREEN_CONFIG_EXCHANGE_COMMAND
 
 
 class SSLFactory:
@@ -63,6 +63,17 @@ class ConnectionHandler(ABC):
                 return True
         return False
 
+    def exchange_configuration(self, conn: socket.socket):
+        try:
+            # Implement your configuration exchange logic here
+            conn.send(SCREEN_CONFIG_EXCHANGE_COMMAND.encode())
+            screen_resolution = conn.recv(1024).decode()
+            self.log(f"Client screen resolution: {screen_resolution}")
+            return {"screen_resolution": screen_resolution}
+        except (socket.error, ssl.SSLError) as e:
+            self.log(f"Error during configuration exchange: {e}", Logger.ERROR)
+            return None
+
 
 class ConnectionHandlerFactory:
     @staticmethod
@@ -90,21 +101,21 @@ class SSLConnectionHandler(ConnectionHandler):
             self.log(f"SSL connection established with {addr}")
 
             # Exchange configuration info (this is a placeholder, implement your own logic)
-            self.exchange_configuration(ssl_conn)
+            client_config = self.exchange_configuration(ssl_conn)
+            if not client_config:
+                self.log(f"Configuration exchange failed with {addr}", Logger.ERROR)
+                conn.close()
+                return
 
             # Wrap socket with BaseSocket
             ssl_conn = BaseSocket(ssl_conn)
 
             # Add the SSL connection to the clients manager
-            self.add_client_connection(ssl_conn, addr, clients)
+            self.add_client_connection(ssl_conn, addr, clients, client_config)
         except Exception as e:
             self.log(f"Error handling connection from {addr}: {e}", Logger.ERROR)
 
-    def exchange_configuration(self, ssl_conn: ssl.SSLSocket):
-        # Implement your configuration exchange logic here
-        pass
-
-    def add_client_connection(self, ssl_conn, addr: tuple, clients: Clients):
+    def add_client_connection(self, ssl_conn, addr: tuple, clients: Clients, client_config: dict):
 
         if not clients.get_possible_positions():
             ssl_conn.close()
@@ -113,6 +124,7 @@ class SSLConnectionHandler(ConnectionHandler):
         for pos in clients.get_possible_positions():
             if clients.get_address(pos) == addr[0]:
                 clients.set_connection(pos, ssl_conn)
+                clients.set_screen_size(pos, client_config["screen_resolution"])
                 client_handler = ClientHandlerFactory.create_client_handler(ssl_conn, addr, self.command_processor)
                 client_handler.start()
                 self.client_handlers.append(client_handler)
@@ -130,23 +142,24 @@ class NonSSLConnectionHandler(ConnectionHandler):
             self.log(f"Non-SSL connection established with {addr}")
 
             # Exchange configuration info (this is a placeholder, implement your own logic)
-            self.exchange_configuration(conn)
+            client_config = self.exchange_configuration(conn)
+            if not client_config:
+                self.log(f"Configuration exchange failed with {addr}", Logger.ERROR)
+                conn.close()
+                return
 
             conn = BaseSocket(conn)
 
             # Add the connection to the clients manager
-            self.add_client_connection(conn, addr, clients)
+            self.add_client_connection(conn, addr, clients, client_config)
         except Exception as e:
             self.log(f"Error handling connection from {addr}: {e}", Logger.ERROR)
 
-    def exchange_configuration(self, conn: socket.socket):
-        # Implement your configuration exchange logic here
-        pass
-
-    def add_client_connection(self, conn, addr: tuple, clients: Clients):
+    def add_client_connection(self, conn, addr: tuple, clients: Clients, client_config: dict):
         for pos in clients.get_possible_positions():
             if clients.get_address(pos) == addr[0]:
                 clients.set_connection(pos, conn)
+                clients.set_screen_size(pos, client_config["screen_resolution"])
                 client_handler = ClientHandlerFactory.create_client_handler(conn, addr, self.command_processor)
                 client_handler.start()
                 self.client_handlers.append(client_handler)

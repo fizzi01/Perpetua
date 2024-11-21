@@ -7,6 +7,7 @@ from typing import Callable
 
 from client.ServerHandler import ServerHandlerFactory
 from config import SERVICE_NAME
+from utils import netConstants
 from utils.Logging import Logger
 
 from zeroconf import Zeroconf, ServiceBrowser, ServiceStateChange
@@ -107,7 +108,7 @@ class ClientSocket:
 class ConnectionHandler(ABC):
     INACTIVITY_TIMEOUT = 30
 
-    def __init__(self, client_socket: ClientSocket, command_processor: Callable):
+    def __init__(self, client_socket: ClientSocket, command_processor: Callable, client_info=None):
         self.client_socket = client_socket
         self.command_processor = command_processor
         self.server_handler = None
@@ -116,6 +117,8 @@ class ConnectionHandler(ABC):
         self.last_check_time = time.time()
 
         self.first_connection = True
+
+        self.client_info = client_info
 
         self.logger = Logger.get_instance().log
 
@@ -133,6 +136,21 @@ class ConnectionHandler(ABC):
             self.server_handler = None
         # Send disconnect command to the server
         self.client_socket.close()
+
+    def exchange_configurations(self):
+        try:
+            # Listen for server to ask for client configuration
+            data = self.client_socket.recv(1024)
+
+            # Client should receive SCREEN_CONFIG_EXCHANGE_COMMAND
+            if data.decode() == netConstants.SCREEN_CONFIG_EXCHANGE_COMMAND:
+                # Send screen size to server
+                screen_size = self.client_info["screen_size"]
+                self.client_socket.send(screen_size.encode())
+                return True
+        except (socket.error, ssl.SSLError) as e:
+            self.logger(f"Error during configuration exchange: {e}", Logger.ERROR)
+            return False
 
     def check_server_connection(self):
         current_time = time.time()
@@ -160,6 +178,8 @@ class SSLConnectionHandler(ConnectionHandler):
     def handle_connection(self):
         try:
             self.client_socket.connect()
+            if not self.exchange_configurations():
+                return False
             self.add_server_connection()
             self.logger("SSL connection established.")
             self.logger(
@@ -181,6 +201,8 @@ class NonSSLConnectionHandler(ConnectionHandler):
     def handle_connection(self):
         try:
             self.client_socket.connect()
+            if not self.exchange_configurations():
+                return False
             self.add_server_connection()
             self.logger("Non-SSL connection established.")
             return True
@@ -197,8 +219,8 @@ class NonSSLConnectionHandler(ConnectionHandler):
 
 class ConnectionHandlerFactory:
     @staticmethod
-    def create_handler(client_socket: ClientSocket, command_processor: Callable) -> ConnectionHandler:
+    def create_handler(client_socket: ClientSocket, command_processor: Callable, client_info: dict) -> ConnectionHandler:
         if client_socket.use_ssl:
-            return SSLConnectionHandler(client_socket, command_processor)
+            return SSLConnectionHandler(client_socket, command_processor, client_info)
         else:
-            return NonSSLConnectionHandler(client_socket, command_processor)
+            return NonSSLConnectionHandler(client_socket, command_processor , client_info)

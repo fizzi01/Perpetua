@@ -24,11 +24,15 @@ class ServerMouseController:
 
 
 class ServerMouseListener:
+    IGNORE_NEXT_MOVE_EVENT = 0.009
+    MAX_DXDY_THRESHOLD = 150
 
     def __init__(self, change_screen_function: Callable, get_active_screen: Callable,
                  get_status: Callable,
-                 get_clients: Callable, screen_width: int, screen_height: int, screen_threshold: int = 5,
-                 update_mouse_position: Callable = None):
+                 get_clients: Callable, screen_width: int, screen_height: int, screen_threshold: int = 5):
+
+        self.ignore_move_events_until = 0
+
         self.active_screen = get_active_screen
         self.change_screen = change_screen_function
         self.get_trasmission_status = get_status
@@ -42,15 +46,8 @@ class ServerMouseListener:
 
         self.last_x = None
         self.last_y = None
-        self.max_speed = 5  # Maximum speed of the cursor
-        self.min_threshold = 0.5
-        self.max_increment = 10  # Limite massimo per l'incremento simulato
-        self.min_increment = 1  # Incremento minimo garantito
-        self.simulated_dy = 0
-        self.simulated_dx = 0
-        self.last_time = time.time()
+        self.mouse_controller = MouseController()
 
-        self.update_mouse_position = update_mouse_position
         self._listener = MouseListener(on_move=self.on_move, on_scroll=self.on_scroll, on_click=self.on_click,
                                        darwin_intercept=self.mouse_suppress_filter)
 
@@ -95,21 +92,38 @@ class ServerMouseListener:
         else:
             return event
 
+    def warp_cursor_to_center(self):
+        self.ignore_move_events_until = time.time() + self.IGNORE_NEXT_MOVE_EVENT
+        center_x = self.screen_width // 2
+        center_y = self.screen_height // 2
+        self.mouse_controller.position = (center_x, center_y)
+        self.last_x, self.last_y = self.mouse_controller.position
+
     def on_move(self, x, y):
+        current_time = time.time()
+
+        if self.ignore_move_events_until > current_time:
+            self.last_x = x
+            self.last_y = y
+            return True
+
         # Calcola il movimento relativo
         dx = 0
         dy = 0
-        current_time = time.time()
-        time_delta = current_time - self.last_time if self.last_time else 0.01  # Assicura un delta minimo
 
         if self.last_x is not None and self.last_y is not None:
             dx = x - self.last_x
             dy = y - self.last_y
 
+        # Ignora movimenti anomali
+        if abs(dx) > self.MAX_DXDY_THRESHOLD or abs(dy) > self.MAX_DXDY_THRESHOLD:
+            self.last_x = x
+            self.last_y = y
+            return True
+
         # Aggiorna l'ultima posizione e tempo conosciuti
         self.last_x = x
         self.last_y = y
-        self.last_time = current_time
 
         # Controlla se il cursore è al bordo
         at_right_edge = x >= self.screen_width - 1
@@ -117,60 +131,18 @@ class ServerMouseListener:
         at_bottom_edge = y >= self.screen_height - 1
         at_top_edge = y <= 0
 
-        # Calcola la velocità complessiva
-        speed_factor_total = math.sqrt(dx ** 2 + dy ** 2) / max(time_delta, 0.01)
-        speed_factor_total = min(speed_factor_total, self.max_increment)
-
-        # Incremento progressivo dell'asse bloccato
-        if at_top_edge:
-            increment = max(self.min_increment, min(int(round(speed_factor_total)), self.max_increment))
-            self.simulated_dy -= increment  # Simula movimento verso l'alto
-            dy = int(round(self.simulated_dy))
-        elif at_bottom_edge:
-            increment = max(self.min_increment, min(int(round(speed_factor_total)), self.max_increment))
-            self.simulated_dy += increment  # Simula movimento verso il basso
-            dy = int(round(self.simulated_dy))
-        elif at_left_edge:
-            increment = max(self.min_increment, min(int(round(speed_factor_total)), self.max_increment))
-            self.simulated_dx -= increment  # Simula movimento verso sinistra
-            dx = int(round(self.simulated_dx))
-        elif at_right_edge:
-            increment = max(self.min_increment, min(int(round(speed_factor_total)), self.max_increment))
-            self.simulated_dx += increment  # Simula movimento verso destra
-            dx = int(round(self.simulated_dx))
-
-        # Smussa il rallentamento se il movimento rallenta
-        self.simulated_dy *= 0.9  # Rallenta progressivamente
-        self.simulated_dx *= 0.9
-
-        # Forza un movimento minimo
-        if at_top_edge:
-            dy = min(-1, dy)
-        if at_bottom_edge:
-            dy = max(1, dy)
-        if at_left_edge:
-            dx = min(-1, dx)
-        if at_right_edge:
-            dx = max(1, dx)
-
-        # Gestione dei movimenti normali
-        if abs(dx) < self.min_threshold:
-            dx = 0  # Ignora movimenti troppo piccoli
-        else:
-            dx = int(round(dx))
-
-        if abs(dy) < self.min_threshold:
-            dy = 0  # Ignora movimenti troppo piccoli
-        else:
-            dy = int(round(dy))
-
         screen = self.active_screen()
         clients = self.clients(screen)
         is_transmitting = self.get_trasmission_status()
 
         if screen and clients and is_transmitting:
-            # Invia i movimenti relativi al client
+            scale_x = 1920 / self.screen_width
+            scale_y = 1080 / self.screen_height
+            dx *= scale_x
+            dy *= scale_y
+            self.logger(f"Mouse moved: {dx}, {dy}", Logger.WARNING)
             self.send(screen, format_command(f"mouse move {dx} {dy}"))
+            self.warp_cursor_to_center()
         else:
             # Quando si attraversa un bordo, invia una posizione assoluta normalizzata
             if at_right_edge:

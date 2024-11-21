@@ -21,6 +21,8 @@ class Client:
         self._started = False  # Main variable for client status, if False the client is stopped automatically
         self.lock = threading.RLock()
 
+        self.client_info = {"screen_size": screen_size()}
+
         # Logging and IO Managers are shared resources (should be initialized first)
         # Initialize logging
         self._initialize_logging(logging, stdout)
@@ -46,8 +48,6 @@ class Client:
         self.lock = threading.Lock()
         self._running = False
         self._connected = None
-
-
 
     def _initialize_logging(self, logging, stdout):
         self.logging = logging
@@ -76,7 +76,8 @@ class Client:
     def _initialize_connection_handler(self):
         self.processor = ServerCommandProcessor(self)
         self.connection_handler = ConnectionHandlerFactory.create_handler(self.client_socket,
-                                                                          command_processor=self.processor.process_command)
+                                                                          command_processor=self.processor.process_command,
+                                                                          client_info=self.client_info)
 
     def _initialize_screen_transition(self, root, threshold):
         self.window = Window()
@@ -96,7 +97,7 @@ class Client:
         self._is_main_running_event = threading.Event()
 
     def _initialize_listeners(self):
-        self.screen_width, self.screen_height = screen_size()
+        self.screen_width, self.screen_height = self.client_info["screen_size"]
         self.mouse_listener = inputHandler.ClientMouseListener(screen_width=self.screen_width,
                                                                screen_height=self.screen_height,
                                                                threshold=self.threshold)
