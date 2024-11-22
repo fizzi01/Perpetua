@@ -8,6 +8,7 @@ from pynput.keyboard import Key, KeyCode, Listener as KeyboardListener, Controll
 import keyboard
 from pynput.mouse import Button, Controller as MouseController, Listener as MouseListener
 
+from config.ServerConfig import Clients
 from network.IOManager import QueueManager
 from utils.Logging import Logger
 from utils.netData import *
@@ -26,12 +27,14 @@ class ServerMouseListener:
 
     def __init__(self, change_screen_function: Callable, get_active_screen: Callable,
                  get_status: Callable,
-                 get_clients: Callable, screen_width: int, screen_height: int, screen_threshold: int = 5):
+                 screen_width: int, screen_height: int, screen_threshold: int = 5,
+                 clients: Clients = None):
+
         self.send = QueueManager(None).send_mouse
         self.active_screen = get_active_screen
         self.change_screen = change_screen_function
         self.get_trasmission_status = get_status
-        self.clients = get_clients
+        self.clients = clients
         self.screen_width = screen_width
         self.screen_height = screen_height
         self.screen_treshold = screen_threshold
@@ -73,7 +76,7 @@ class ServerMouseListener:
     def on_move(self, x, y):
 
         screen = self.active_screen()
-        clients = self.clients(screen)
+        clients = self.clients.get_connection(screen)
         is_transmitting = self.get_trasmission_status()
 
         normalized_x = x / self.screen_width
@@ -96,7 +99,7 @@ class ServerMouseListener:
 
     def on_click(self, x, y, button, pressed):
         screen = self.active_screen()
-        clients = self.clients(screen)
+        clients = self.clients.get_connection(screen)
 
         if button == mouse.Button.left:
             if screen and clients and pressed:
@@ -113,7 +116,7 @@ class ServerMouseListener:
 
     def on_scroll(self, x, y, dx, dy):
         screen = self.active_screen()
-        clients = self.clients(screen)
+        clients = self.clients.get_connection(screen)
         if screen and clients:
             self.send(screen, format_command(f"mouse scroll {dx} {dy}"))
         return True

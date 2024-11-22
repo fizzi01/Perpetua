@@ -11,8 +11,7 @@ from server.ClientHandler import ClientHandlerFactory
 from utils.Logging import Logger
 
 from zeroconf import ServiceInfo, Zeroconf, ServiceStateChange, ServiceBrowser
-from utils import net, netConstants, SCREEN_CONFIG_EXCHANGE_COMMAND
-
+from utils import net, netConstants, screen_size
 
 class SSLFactory:
     @staticmethod
@@ -26,9 +25,11 @@ class SSLFactory:
 class ConnectionHandler(ABC):
     INACTIVITY_TIMEOUT = 3
 
-    def __init__(self, command_processor: Callable[[str | tuple], None] = None):
+    def __init__(self, command_processor: Callable[[str | tuple], None] = None, server_info: dict = None):
         self.log = Logger.get_instance().log
         self.client_handlers = []
+
+        self.server_info = None
 
         self.recent_activity = False
         self.last_check_time = time.time()
@@ -66,11 +67,18 @@ class ConnectionHandler(ABC):
     def exchange_configuration(self, conn: socket.socket):
         try:
             # Implement your configuration exchange logic here
-            conn.send(SCREEN_CONFIG_EXCHANGE_COMMAND.encode())
+            conn.send(netConstants.SCREEN_CONFIG_EXCHANGE_COMMAND.encode())
             screen_resolution = conn.recv(1024).decode()
             self.log(f"Client screen resolution: {screen_resolution}")
+            # Extract the screen resolution from the client
+            screen_width, screen_height = screen_resolution.split("x")
+            screen_resolution = (int(screen_width), int(screen_height))
+
+            # Invia al client la risoluzione dello schermo del server
+            conn.send(f"{screen_size()[0]}x{screen_size()[1]}".encode())
+
             return {"screen_resolution": screen_resolution}
-        except (socket.error, ssl.SSLError) as e:
+        except Exception as e:
             self.log(f"Error during configuration exchange: {e}", Logger.ERROR)
             return None
 

@@ -1,7 +1,9 @@
 import socket
 import threading
 import time
-from typing import Union
+from socket import socket
+
+from socket import timeout
 from pynput import mouse
 
 # Core utilities
@@ -216,7 +218,7 @@ class Server:
 
                 self.connection_handler.handle_connection(conn, addr, self.clients)
 
-            except socket.timeout:
+            except timeout:
                 if self._started:
                     self.connection_handler.check_client_connections()
                     self.log("Waiting for clients ...", Logger.DEBUG)
@@ -243,7 +245,7 @@ class Server:
                 self.change_screen()
                 return
 
-    def get_client(self, screen) -> Union[socket.socket, None]:
+    def get_client(self, screen) -> socket:
         return self.clients.get_connection(screen)
 
     def get_connected_clients(self):
@@ -287,11 +289,10 @@ class Server:
         self.mouse_listener = InputHandler.ServerMouseListener(change_screen_function=self.change_screen,
                                                                get_active_screen=self._get_active_screen,
                                                                get_status=self._get_status,
-                                                               get_clients=self.get_client,
                                                                screen_width=self.screen_width,
                                                                screen_height=self.screen_height,
                                                                screen_threshold=self.screen_threshold,
-                                                               )
+                                                               clients=self.clients)
         self.mouse_listener.start()
         return self.mouse_listener
 
@@ -385,10 +386,10 @@ class Server:
     def force_mouse_position(self, x, y):
         desired_position = (x, y)
         attempt = 0
-        max_attempts = 5
+        max_attempts = 10
 
         # Condizione per ridurre la frequenza degli aggiornamenti della posizione
-        update_interval = 0.01  # intervallo tra gli aggiornamenti
+        update_interval = 0.001  # intervallo tra gli aggiornamenti
         last_update_time = time.time()
 
         while not self._is_mouse_position_reached(desired_position) and attempt < max_attempts:
@@ -398,9 +399,7 @@ class Server:
                 attempt += 1
                 last_update_time = current_time
 
-            time.sleep(0.001)
-
-    def _is_mouse_position_reached(self, desired_position, margin=600):
+    def _is_mouse_position_reached(self, desired_position, margin=100):
         """
         Check if the mouse position is reached, with a margin of error
         """

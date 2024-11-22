@@ -29,25 +29,25 @@ class ReturnCommand(Command):
                 self.server.active_screen = None
                 self.server._is_transition = False
                 self.server.changed.set()
-                self.server.reset_mouse("left", self.server.current_mouse_position[1])
+                self.server.reset_mouse("left", self.server.mouse_listener.get_position()[1])
         elif self.server.active_screen == "right" and self.direction == "left":
             with self.server.lock:
                 self.server.active_screen = None
                 self.server._is_transition = False
                 self.server.changed.set()
-                self.server.reset_mouse("right", self.server.current_mouse_position[1])
+                self.server.reset_mouse("right", self.server.mouse_listener.get_position()[1])
         elif self.server.active_screen == "up" and self.direction == "down":
             with self.server.lock:
                 self.server.active_screen = None
                 self.server._is_transition = False
                 self.server.changed.set()
-                self.server.reset_mouse("up", self.server.current_mouse_position[0])
+                self.server.reset_mouse("up", self.server.mouse_listener.get_position()[0])
         elif self.server.active_screen == "down" and self.direction == "up":
             with self.server.lock:
                 self.server.active_screen = None
                 self.server._is_transition = False
                 self.server.changed.set()
-                self.server.reset_mouse("down", self.server.current_mouse_position[0])
+                self.server.reset_mouse("down", self.server.mouse_listener.get_position()[0])
 
 
 class DisconnectCommand(Command):
