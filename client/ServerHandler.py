@@ -8,8 +8,8 @@ from queue import Queue, Empty
 from utils.Logging import Logger
 from utils.netData import *
 
-BATCH_PROCESS_INTERVAL = 0.001
-TIMEOUT = 0.001
+BATCH_PROCESS_INTERVAL = 0.0001
+TIMEOUT = 0.00001
 MAX_WORKERS = 20
 
 
@@ -105,6 +105,7 @@ class ServerCommandProcessor:
         self.client = client
         self.on_screen = self.client.on_screen
         self.mouse_controller = self.client.mouse_controller
+
         self.keyboard_controller = self.client.keyboard_controller
         self.clipboard = self.client.clipboard_listener
 

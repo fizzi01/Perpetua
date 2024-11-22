@@ -452,16 +452,26 @@ class ClientKeyboardController:
 
 
 class ClientMouseController:
-    def __init__(self, screen_width, screen_height):
+    def __init__(self, screen_width, screen_height, client_info: dict):
         self.mouse = MouseController()
         self.screen_width = screen_width
         self.screen_height = screen_height
+        self.client_info = client_info
+        self.server_screen_width = 0
+        self.server_screen_height = 0
         self.pressed = False
         self.last_press_time = -99
         self.doubleclick_counter = 0
-        self.logger = Logger.get_instance().log
+
+        self.log = Logger.get_instance().log
+
+    def get_server_screen_size(self):
+        if "screen_size" in self.client_info:
+            if not self.server_screen_width or not self.server_screen_height:
+                self.server_screen_width, self.server_screen_height = self.client_info["screen_size"]
 
     def process_mouse_command(self, x, y, mouse_action, is_pressed):
+        self.get_server_screen_size()
         if mouse_action == "position":
             target_x = max(0, min(x * self.screen_width, self.screen_width))  # Ensure target_x is within screen bounds
             target_y = max(0,

@@ -13,7 +13,7 @@ from window import Window
 
 
 class Client:
-    def __init__(self, server: str, port: int, threshold: int = 10,
+    def __init__(self, server: str, port: int, threshold: int = 1,
                  wait: int = 5,
                  logging: bool = False, stdout: Callable = print, root=None, certfile=None, use_ssl=False):
 
@@ -107,7 +107,9 @@ class Client:
 
     def _initialize_input_controllers(self):
         self.keyboard_controller = inputHandler.ClientKeyboardController()
-        self.mouse_controller = inputHandler.ClientMouseController(self.screen_width, self.screen_height)
+        self.mouse_controller = inputHandler.ClientMouseController(self.screen_width,
+                                                                   self.screen_height,
+                                                                   self.client_info)
 
     def start(self):
         try:
@@ -196,6 +198,9 @@ class Client:
         except Exception as e:
             self.log(f"{e}", 2)
             return False
+
+    def get_server_screen_size(self):
+        return self.client_info["server_screen_size"]
 
     def on_disconnect(self):
         self._connected = False

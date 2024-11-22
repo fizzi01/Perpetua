@@ -106,7 +106,7 @@ class ClientSocket:
 
 
 class ConnectionHandler(ABC):
-    INACTIVITY_TIMEOUT = 30
+    INACTIVITY_TIMEOUT = 5
 
     def __init__(self, client_socket: ClientSocket, command_processor: Callable, client_info=None):
         self.client_socket = client_socket
@@ -146,7 +146,12 @@ class ConnectionHandler(ABC):
             if data.decode() == netConstants.SCREEN_CONFIG_EXCHANGE_COMMAND:
                 # Send screen size to server
                 screen_size = self.client_info["screen_size"]
-                self.client_socket.send(screen_size.encode())
+                self.client_socket.send(f"{screen_size[0]}x{screen_size[1]}".encode())
+
+                # Receive server screen size
+                data = self.client_socket.recv(1024)
+                server_screen_size = data.decode().split("x")
+                self.client_info["server_screen_size"] = (int(server_screen_size[0]), int(server_screen_size[1]))
                 return True
         except (socket.error, ssl.SSLError) as e:
             self.logger(f"Error during configuration exchange: {e}", Logger.ERROR)
@@ -193,6 +198,7 @@ class SSLConnectionHandler(ConnectionHandler):
             return False
 
     def add_server_connection(self):
+        # Adding server screen size to client info
         self.server_handler = ServerHandlerFactory.create_server_handler(self.client_socket, self.command_processor)
         self.server_handler.start()
 

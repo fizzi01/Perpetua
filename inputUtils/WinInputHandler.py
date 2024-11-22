@@ -351,17 +351,25 @@ class ClientKeyboardController:
 
 
 class ClientMouseController:
-    def __init__(self, screen_width, screen_height):
+    def __init__(self, screen_width, screen_height, client_info: dict):
         self.mouse = MouseController()
         self.screen_width = screen_width
         self.screen_height = screen_height
+        self.client_info = client_info
+        self.server_screen_width = 0
+        self.server_screen_height = 0
         self.pressed = False
         self.last_press_time = -99
         self.doubleclick_counter = 0
 
         self.log = Logger.get_instance().log
 
-    def smooth_position(self, start_x, start_y, end_x, end_y, steps=80, sleep_time=0.00001):
+    def get_server_screen_size(self):
+        if "server_screen_size" in self.client_info:
+            if not self.server_screen_width or not self.server_screen_height:
+                self.server_screen_width, self.server_screen_height = self.client_info["server_screen_size"]
+
+    def smooth_position(self, start_x, start_y, end_x, end_y, steps=50, sleep_time=0.00001):
         # Calcola la differenza tra la posizione iniziale e finale
         dx = end_x - start_x
         dy = end_y - start_y
@@ -380,29 +388,34 @@ class ClientMouseController:
         # Assicurati che il mouse sia esattamente nella posizione finale
         self.mouse.position = (end_x, end_y)
 
-    def smooth_move(self, dx, dy, base_steps=0):
-        steps = int(max(abs(dx), abs(dy)) * base_steps)
-        if steps == 0:
-            self.mouse.move(dx, dy)
-            return
-        # Calculate the step for each dimension
-        x_step = dx / steps
-        y_step = dy / steps
+    def smooth_move(self, dx, dy):
+        current_x, current_y = self.mouse.position
+        # Calcola la differenza tra la posizione iniziale e finale
+        # Aumento dx e dy di un fattore di scala dove al numeratore vi è lo schermo più grande
+        # e al denominatore il più piccolo
 
-        # Move the mouse through the steps
-        for _ in range(steps):
-            self.mouse.move(x_step, y_step)
+
+        # Arrotonda all intero successivo
+        dx = int(dx)
+        dy = int(dy)
+
+        self.smooth_position(current_x, current_y, current_x + dx, current_y + dy, steps=10)
 
     def process_mouse_command(self, x, y, mouse_action, is_pressed):
+        self.get_server_screen_size()
         if mouse_action == "position":
-            self.log(f"Setting mouse to {x}, {y}")
             target_x = max(0, min(x * self.screen_width, self.screen_width))  # Ensure target_x is within screen bounds
             target_y = max(0,
                            min(y * self.screen_height, self.screen_height))  # Ensure target_y is within screen bounds
 
-            self.mouse.position = (target_x, target_y)
+            self.smooth_position(self.mouse.position[0], self.mouse.position[1], target_x, target_y)
         elif mouse_action == "move":
-            self.smooth_move(x, y)
+            # Denormalize the x and y values
+            scale_x = self.server_screen_width / self.screen_width
+            scale_y = self.server_screen_height / self.screen_height
+            dx = x * scale_x
+            dy = y * scale_y
+            self.smooth_move(dx, dy)
         elif mouse_action == "click":
             self.handle_click(Button.left, is_pressed)
         elif mouse_action == "right_click":
