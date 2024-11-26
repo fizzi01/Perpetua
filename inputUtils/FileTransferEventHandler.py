@@ -1,6 +1,7 @@
 import os
 import threading
 from queue import Queue, Empty
+import urllib.parse
 
 from network.IOManager import QueueManager
 from utils.Logging import Logger
@@ -63,16 +64,17 @@ class FileTransferEventHandler:
 
     def save_file_info(self, owner: str = "", file_path: str = "", file_size: int = 0, file_hash: str = None,
                        file_type: str = "", file_name: str = "", file_extension: str = ""):
-        with self.lock:
-            self.current_file_info = {
-                'owner': owner,
-                'path': file_path,
-                'size': file_size,
-                'hash': file_hash,
-                'type': file_type,
-                'name': file_name,
-                'extension': file_extension
-            }
+        self.log(f"Invoke save_file_info: {owner}, {file_path}, {file_size}, {file_hash}, {file_type}, {file_name}, {file_extension}")
+
+        self.current_file_info = {
+            'owner': owner,
+            'file_path': file_path,
+            'file_size': file_size,
+            'file_hash': file_hash,
+            'file_type': file_type,
+            'file_name': file_name,
+            'file_extension': file_extension
+        }
 
     def start_download(self, file_path):
         if not self.current_file_info:
@@ -158,9 +160,13 @@ class FileTransferEventHandler:
             if ownership != self.LOCAL_SERVER_OWNERSHIP:  # If i'm not the server, i need to forward the file info
                 self.io_manager.send_file_copy(None, format_command(
                     f"file_copied {file_info['file_name']} {file_info['file_size']} {file_info['file_path']}"))
+                self.log(f"File copy forwarded from {ownership} to Server: {file_info['file_path']}")
+
+            self.log(f"File copied registered from {ownership}: {file_info['file_path']}")
 
     def handle_file_request(self, requester):
         with self.lock:
+            self.log(f"File request received from {requester}")
             file_info = self.current_file_info
 
             if not file_info:
@@ -168,7 +174,7 @@ class FileTransferEventHandler:
                 return
 
             owner = file_info['owner']  # Owner screen name
-            file_path = file_info['file_path']
+            file_path = urllib.parse.unquote(file_info['file_path'])
 
             if requester == owner:  # Block if requester is the owner
                 return
@@ -194,23 +200,29 @@ class FileTransferEventHandler:
 
     def handle_file_start(self, file_info):
         with self.lock:
+            self.log(f"File transfer started: {file_info['file_name']}")
             self.is_being_processed.set()  # Set the flag to start processing the file data
+
+            encoded_file_name = urllib.parse.quote(file_info['name'])
+            encoded_file_path = urllib.parse.quote(file_info['path'])
 
             if self.to_forward.is_set():  # Case where i'm the server, and i need to forward the file info
                 self.io_manager.forward_file_data(self.requester, format_command(
-                    f"file_start {file_info['name']} {file_info['size']} {file_info['path']}"))
+                    f"file_start {encoded_file_name} {file_info['file_size']} {encoded_file_path}"))
             else:  # Case where i'm the requester, and i received the file info
                 self.save_file_info(
-                    file_path=file_info['path'],
-                    file_size=file_info['size'],
-                    file_name=file_info['name'],
+                    file_path=encoded_file_path,
+                    file_size=file_info['file_size'],
+                    file_name=encoded_file_name,
                 )
-            try:
-                self.save_path = os.path.join(self.save_path, file_info['name'])
-                self.file = open(self.save_path, 'wb')
-            except Exception as e:
-                self.log(f"Error opening file: {e}", Logger.ERROR)
-                self.is_being_processed.clear()
+
+                try:
+                    self.save_path = os.path.join(self.save_path, encoded_file_name)
+                    self.file = open(self.save_path, 'wb')
+                    self.log(f"File transfer started: {self.save_path}")
+                except Exception as e:
+                    self.log(f"Error opening file: {e}", Logger.ERROR)
+                    self.is_being_processed.clear()
 
     def handle_file_chunk(self, chunk_data):
         with self.lock:
@@ -221,7 +233,8 @@ class FileTransferEventHandler:
                 self.forward_file_data(chunk_data)
             else:  # Case where i'm the requester, and i received the file data
                 try:
-                    self.file.write(chunk_data)
+                    self.file.write(bytes.fromhex(chunk_data))
+                    self.log(f"File chunk written: {len(chunk_data)} bytes")
                 except Exception as e:
                     self.log(f"Error writing file chunk: {e}", Logger.ERROR)
                     self.file.close()

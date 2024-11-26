@@ -102,7 +102,11 @@ class FileRequestCommand(Command):
 
     def execute(self):
         try:
-            file_path = self.parts[1]
+            if len(self.parts) == 1:
+                file_path = self.parts[0]
+            else:
+                file_path = self.parts[1]
+
             self.file_event_handler.handle_file_request(self.requester)
             self.logger(f"File request received from {self.requester}: {file_path}")
         except Exception as e:
@@ -119,12 +123,12 @@ class FileStartCommand(Command):
     def execute(self):
         try:
             file_info = {
-                'name': self.parts[0],
-                'size': int(self.parts[1]),
-                'path': self.parts[2]
+                'file_name': self.parts[0],
+                'file_size': int(self.parts[1]),
+                'file_path': self.parts[2]
             }
             self.file_event_handler.handle_file_start(file_info)
-            self.logger(f"File start received from {self.requester}: {file_info['path']}")
+            self.logger(f"File start received from {self.requester}: {file_info['file_path']}")
         except Exception as e:
             self.logger(f"Error handling file_start: {e}", Logger.ERROR)
 

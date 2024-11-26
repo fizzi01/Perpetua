@@ -2,6 +2,7 @@ import os
 import socket
 import threading
 import time
+import urllib.parse
 from queue import Queue, Empty, PriorityQueue
 
 from utils.Logging import Logger
@@ -191,19 +192,26 @@ class QueueManager:
             with open(file_path, 'rb') as file:
                 self.log(f"Inizio invio file: {file_path}")
                 # Invia file_start con i metadati del file
-                file_name = os.path.basename(file_path)
+                file_name = urllib.parse.quote(os.path.basename(file_path))
                 file_size = os.path.getsize(file_path)
-                start_message = format_command(f"file_start {file_name} {file_size} {file_path}")
+                encoded_file_path = urllib.parse.quote(file_path)
+                start_message = format_command(f"file_start {file_name} {file_size}")
                 self.MessageSender.send(self.FILE_PRIORITY, (screen, start_message))
+                self.log(f"Invio file_start: {file_name} ({file_size} byte)")
 
                 # Invia il file in chunk
+                chunk_size_with_delimiter = CHUNK_SIZE - len(CHUNK_DELIMITER.encode())
+                chunk_size_with_end_delimiter = CHUNK_SIZE - len(END_DELIMITER.encode())
+                real_chunk_size = min(chunk_size_with_delimiter, chunk_size_with_end_delimiter)
+
                 while True:
-                    chunk = file.read(FILE_MAX_BATCH_SIZE)
+                    chunk = file.read(real_chunk_size)
                     if not chunk:
                         break
-                    encoded_chunk = chunk.decode('latin1')  # Usa 'latin1' per inviare byte come stringa
+                    encoded_chunk = chunk.hex()
                     chunck_message = format_command(f"file_chunk {encoded_chunk}")
                     self.MessageSender.send(self.FILE_PRIORITY, (screen, chunck_message))
+                    self.log(f"Invio chunk di {len(chunk)} byte")
 
                 # Invia file_end
                 end_message = format_command(f"file_end {file_name}")
