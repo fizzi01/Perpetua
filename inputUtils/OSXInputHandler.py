@@ -298,6 +298,7 @@ class ServerKeyboardListener:
         self.active_screen = get_active_screen
         self.send = QueueManager(None).send_keyboard
         self.logger = Logger.get_instance().log
+
         self.file_transfer_handler = FileTransferEventHandler()
         self.command_pressed = False
 

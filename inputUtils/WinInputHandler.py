@@ -3,6 +3,13 @@ import threading
 import time
 from collections.abc import Callable
 import pyperclip
+import win32clipboard
+import win32con
+import win32com.client
+import win32gui
+import win32process
+import psutil
+import os
 
 from pynput import mouse, keyboard
 from pynput.keyboard import Key, KeyCode, Listener as KeyboardListener, Controller as KeyboardController
@@ -278,6 +285,9 @@ class ServerKeyboardListener:
         self.active_screen = get_active_screen
         self.send = QueueManager(None).send_keyboard
 
+        self.file_transfer_handler = FileTransferEventHandler()
+        self.command_pressed = False
+
         self._listener = KeyboardListener(on_press=self.on_press, on_release=self.on_release,
                                           win32_event_filter=self.keyboard_suppress_filter)
 
@@ -294,6 +304,41 @@ class ServerKeyboardListener:
     def is_alive(self):
         return self._listener.is_alive()
 
+    @staticmethod
+    def get_current_clicked_directory():
+        # Ottieni l'handle della finestra attiva
+        hwnd = win32gui.GetForegroundWindow()
+
+        # Ottieni il processo associato
+        _, pid = win32process.GetWindowThreadProcessId(hwnd)
+        process = psutil.Process(pid)
+
+        # Verifica se il processo è Esplora Risorse
+        if "explorer.exe" in process.name().lower():
+            # Verifica se la finestra attiva è il Desktop
+            # Desktop ha tipicamente titolo vuoto o nullo
+            window_text = win32gui.GetWindowText(hwnd).strip()
+            if window_text == 'Program Manager':
+                # Restituisce il percorso del Desktop
+                desktop_path = os.path.join(os.environ["USERPROFILE"], "Desktop")
+                return desktop_path
+
+            shell = win32com.client.Dispatch("Shell.Application")
+            windows = shell.Windows()
+
+            for window in windows:
+                # Confronta l'handle della finestra attiva
+                if int(hwnd) == int(window.HWND):
+                    # Ottieni il percorso della directory attiva
+                    directory = window.LocationURL
+                    if directory.startswith("file:///"):
+                        # Converte il formato URL in percorso Windows
+                        directory = directory[8:].replace("/", "\\")
+                    return directory
+
+        # Se il processo non è Esplora Risorse
+        return None
+
     def keyboard_suppress_filter(self, msg, data):
         screen = self.active_screen()
         listener = self._listener
@@ -309,9 +354,15 @@ class ServerKeyboardListener:
 
         if isinstance(key, Key):
             data = key.name
-
         else:
             data = key.char
+
+        if key in [Key.cmd, Key.cmd_l]:
+            self.command_pressed = True
+        elif data == "v" and self.command_pressed:
+            current_dir = self.get_current_clicked_directory()
+            if current_dir:
+                self.file_transfer_handler.handle_file_paste(current_dir, self.file_transfer_handler.SERVER_REQUEST)
 
         if screen and clients:
             self.send(screen, format_command(f"keyboard press {data}"))
@@ -336,7 +387,13 @@ class ServerClipboardListener:
         self.active_clients = get_clients
         self.active_screen = get_active_screen
         self._thread = None
+
+        self.logger = Logger.get_instance().log
+
         self.last_clipboard_content = pyperclip.paste()  # Inizializza con il contenuto attuale della clipboard
+        self.last_clipboard_files = None
+        self.file_transfer_handler = FileTransferEventHandler()
+
         self._stop_event = threading.Event()
 
     def start(self):
@@ -357,13 +414,55 @@ class ServerClipboardListener:
     def get_clipboard(self):
         return self.last_clipboard_content
 
+    @staticmethod
+    def get_clipboard_files():
+        win32clipboard.OpenClipboard()
+        try:
+            # Controlla se il contenuto è di tipo CF_H ROP (file)
+            if win32clipboard.IsClipboardFormatAvailable(win32con.CF_HDROP):
+                # Ottieni i percorsi dei file copiati
+                file_paths = win32clipboard.GetClipboardData(win32con.CF_HDROP)
+                # Filter out directories and return only the last copied file
+                files = [path for path in file_paths if os.path.isfile(path)]
+                return files
+            else:
+                return None
+        finally:
+            # Chiudi la clipboard
+            win32clipboard.CloseClipboard()
+
+    @staticmethod
+    def get_file_info(file_path):
+        if os.path.isfile(file_path):
+            return {
+                'file_name': os.path.basename(file_path),
+                'file_size': os.path.getsize(file_path),
+                'file_path': file_path
+            }
+        return None
+
     def _run(self):
         while not self._stop_event.is_set():
-            current_clipboard_content = pyperclip.paste()
-            if current_clipboard_content != self.last_clipboard_content:
-                self.send("all", format_command("clipboard ") + current_clipboard_content)
-                self.last_clipboard_content = current_clipboard_content
-            time.sleep(0.5)
+            try:
+                current_clipboard_content = pyperclip.paste()
+                current_clipboard_files = self.get_clipboard_files()
+
+                if current_clipboard_files and current_clipboard_files != self.last_clipboard_files:
+                    # Takes the last file in the list
+                    file_info = self.get_file_info(current_clipboard_files[-1])
+                    if file_info:
+                        self.file_transfer_handler.handle_file_copy(file_info,
+                                                                    self.file_transfer_handler.LOCAL_SERVER_OWNERSHIP)
+                        self.last_clipboard_files = current_clipboard_files
+
+                elif current_clipboard_content != self.last_clipboard_content:
+                    # Invia il contenuto della clipboard a tutti i client
+                    self.send("all", format_command("clipboard ") + current_clipboard_content)
+                    self.last_clipboard_content = current_clipboard_content
+
+                time.sleep(0.5)
+            except Exception as e:
+                self.logger(f"[CLIPBOARD] {e}", Logger.ERROR)
 
 
 class ClientClipboardListener:
@@ -371,7 +470,12 @@ class ClientClipboardListener:
 
         self.send = QueueManager(None).send_clipboard
         self._thread = None
+        self.logger = Logger.get_instance().log
+
         self.last_clipboard_content = pyperclip.paste()  # Inizializza con il contenuto attuale della clipboard
+        self.last_clipboard_files = None
+        self.file_transfer_handler = FileTransferEventHandler()
+
         self._stop_event = threading.Event()
 
     def start(self):
@@ -392,13 +496,55 @@ class ClientClipboardListener:
     def get_clipboard(self):
         return self.last_clipboard_content
 
+    @staticmethod
+    def get_clipboard_files():
+        win32clipboard.OpenClipboard()
+        try:
+            # Controlla se il contenuto è di tipo CF_H ROP (file)
+            if win32clipboard.IsClipboardFormatAvailable(win32con.CF_HDROP):
+                # Ottieni i percorsi dei file copiati
+                file_paths = win32clipboard.GetClipboardData(win32con.CF_HDROP)
+                # Filter out directories and return only the last copied file
+                files = [path for path in file_paths if os.path.isfile(path)]
+                return files
+            else:
+                return None
+        finally:
+            # Chiudi la clipboard
+            win32clipboard.CloseClipboard()
+
+    @staticmethod
+    def get_file_info(file_path):
+        if os.path.isfile(file_path):
+            return {
+                'file_name': os.path.basename(file_path),
+                'file_size': os.path.getsize(file_path),
+                'file_path': file_path
+            }
+        return None
+
     def _run(self):
         while not self._stop_event.is_set():
-            current_clipboard_content = pyperclip.paste()
-            if current_clipboard_content != self.last_clipboard_content:
-                self.send(None, format_command("clipboard ") + current_clipboard_content)
-                self.last_clipboard_content = current_clipboard_content
-            time.sleep(0.5)
+            try:
+                current_clipboard_content = pyperclip.paste()
+                current_clipboard_files = self.get_clipboard_files()
+
+                if current_clipboard_files and current_clipboard_files != self.last_clipboard_files:
+                    # Takes the last file in the list
+                    file_info = self.get_file_info(current_clipboard_files[-1])
+                    if file_info:
+                        self.file_transfer_handler.handle_file_copy(file_info,
+                                                                    self.file_transfer_handler.LOCAL_OWNERSHIP)
+                        self.last_clipboard_files = current_clipboard_files
+
+                elif current_clipboard_content != self.last_clipboard_content:
+                    # Invia il contenuto della clipboard a tutti i client
+                    self.send("all", format_command("clipboard ") + current_clipboard_content)
+                    self.last_clipboard_content = current_clipboard_content
+
+                time.sleep(0.5)
+            except Exception as e:
+                self.logger(f"[CLIPBOARD] {e}", Logger.ERROR)
 
 
 class ClientMouseListener:
@@ -541,7 +687,6 @@ class ClientMouseController:
         # Aumento dx e dy di un fattore di scala dove al numeratore vi è lo schermo più grande
         # e al denominatore il più piccolo
 
-
         # Arrotonda all intero successivo
         dx = int(dx)
         dy = int(dy)
@@ -622,7 +767,38 @@ class ClientKeyboardListener:
 
     @staticmethod
     def get_current_clicked_directory():
-        pass
+        # Ottieni l'handle della finestra attiva
+        hwnd = win32gui.GetForegroundWindow()
+
+        # Ottieni il processo associato
+        _, pid = win32process.GetWindowThreadProcessId(hwnd)
+        process = psutil.Process(pid)
+
+        # Verifica se il processo è Esplora Risorse
+        if "explorer.exe" in process.name().lower():
+            # Verifica se la finestra attiva è il Desktop
+            # Desktop ha tipicamente titolo vuoto o nullo
+            window_text = win32gui.GetWindowText(hwnd).strip()
+            if window_text == 'Program Manager':
+                # Restituisce il percorso del Desktop
+                desktop_path = os.path.join(os.environ["USERPROFILE"], "Desktop")
+                return desktop_path
+
+            shell = win32com.client.Dispatch("Shell.Application")
+            windows = shell.Windows()
+
+            for window in windows:
+                # Confronta l'handle della finestra attiva
+                if int(hwnd) == int(window.HWND):
+                    # Ottieni il percorso della directory attiva
+                    directory = window.LocationURL
+                    if directory.startswith("file:///"):
+                        # Converte il formato URL in percorso Windows
+                        directory = directory[8:].replace("/", "\\")
+                    return directory
+
+        # Se il processo non è Esplora Risorse
+        return None
 
     def on_press(self, key: Key | KeyCode | None):
 
@@ -632,10 +808,10 @@ class ClientKeyboardListener:
             data = key.char
 
         # Check if command + v is pressed
-        if key == Key.cmd:
+        if key in [Key.cmd, Key.cmd_l]:
             self.command_pressed = True
         elif data == "v" and self.command_pressed:
-            current_dir = None  # TODO
+            current_dir = self.get_current_clicked_directory()
             if current_dir:
                 self.file_transfer_handler.handle_file_paste(current_dir, self.file_transfer_handler.CLIENT_REQUEST)
 

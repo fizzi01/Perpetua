@@ -103,7 +103,9 @@ class Client:
                                                                threshold=self.threshold)
 
         self.clipboard_listener = inputHandler.ClientClipboardListener()
-        self._listeners = [self.mouse_listener, self.clipboard_listener]
+        self.keyboard_listener = inputHandler.ClientKeyboardListener()
+
+        self._listeners = [self.keyboard_listener, self.mouse_listener, self.clipboard_listener]
 
     def _initialize_input_controllers(self):
         self.keyboard_controller = inputHandler.ClientKeyboardController()
@@ -141,6 +143,7 @@ class Client:
         try:
             for listener in self._listeners:
                 listener.start()
+                time.sleep(0.2)
         except Exception as e:
             self.log(f"Error starting mouse listener: {e}")
             self.stop()
