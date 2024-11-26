@@ -1,9 +1,12 @@
 import math
+import subprocess
 from collections.abc import Callable
 
 import pyperclip
 from pynput import mouse
 import Quartz
+from AppKit import NSPasteboard, NSFilenamesPboardType
+import os
 
 import threading
 import time
@@ -14,6 +17,7 @@ from pynput.mouse import Listener as MouseListener
 from pynput.keyboard import Listener as KeyboardListener, Key, KeyCode, Controller as KeyboardController
 
 from config.ServerConfig import Clients
+from inputUtils.FileTransferEventHandler import FileTransferEventHandler
 from utils.Logging import Logger
 from utils.netData import *
 
@@ -33,8 +37,6 @@ class ServerMouseListener:
                  get_status: Callable,
                  screen_width: int, screen_height: int, screen_threshold: int = 5,
                  clients: Clients = None):
-
-        self.ignore_move_events_until = 0
 
         self.active_screen = get_active_screen
         self.change_screen = change_screen_function
@@ -56,6 +58,7 @@ class ServerMouseListener:
         self.stop_emulation = False
         self.screen_change_in_progress = False
         self.screen_change_timeout = 0
+        self.ignore_move_events_until = 0
 
         self._listener = MouseListener(on_move=self.on_move, on_scroll=self.on_scroll, on_click=self.on_click,
                                        darwin_intercept=self.mouse_suppress_filter)
@@ -184,7 +187,8 @@ class ServerMouseListener:
                 self.x_print = max(0, min(self.x_print, self.screen_width))
                 self.y_print = max(0, min(self.y_print, self.screen_height))
 
-                self.send(screen, format_command(f"mouse position {self.x_print / self.screen_width} {self.y_print / self.screen_height}"))
+                self.send(screen, format_command(
+                    f"mouse position {self.x_print / self.screen_width} {self.y_print / self.screen_height}"))
 
                 self.warp_cursor_to_center()
             elif self.stop_emulation or self.buttons_pressed:
@@ -253,10 +257,10 @@ class ServerMouseListener:
                 self.mouse_controller.position = (self.x_print, self.y_print)
 
             # Save the current position of the cursor
-            self.x_print, self.y_print = x, y
             self.stop_emulation = True
         else:
             self.buttons_pressed.discard(button)
+            self.stop_emulation = False
 
         if button == mouse.Button.left:
             if screen and client and pressed:
@@ -294,6 +298,8 @@ class ServerKeyboardListener:
         self.active_screen = get_active_screen
         self.send = QueueManager(None).send_keyboard
         self.logger = Logger.get_instance().log
+        self.file_transfer_handler = FileTransferEventHandler()
+        self.command_pressed = False
 
         self._listener = KeyboardListener(on_press=self.on_press, on_release=self.on_release,
                                           darwin_intercept=self.keyboard_suppress_filter)
@@ -313,6 +319,50 @@ class ServerKeyboardListener:
 
     def is_alive(self):
         return self._listener.is_alive()
+
+    @staticmethod
+    def get_current_clicked_directory():
+        try:
+            # Execute AppleScript to get the active window directory
+            script = """
+            tell application "System Events"
+                set frontApp to name of first application process whose frontmost is true
+            end tell
+            if frontApp is "Finder" then
+                tell application "Finder"
+                    try
+                        -- Se c'è una cartella selezionata, usa quella
+                        set selectedItems to selection
+                        if (count of selectedItems) > 0 then
+                            set selectedItem to item 1 of selectedItems
+                            if (class of selectedItem) is folder then
+                                return POSIX path of (selectedItem as alias)
+                            end if
+                        end if
+
+                        -- Altrimenti, usa la finestra attiva
+                        if (count of Finder windows) > 0 then
+                            set currentFolder to (target of Finder window 1 as alias)
+                            return POSIX path of currentFolder
+                        else
+                            -- Se nessuna finestra è attiva, ritorna la Scrivania
+                            return POSIX path of (path to desktop folder)
+                        end if
+                    on error
+                        -- Fallback al Desktop in caso di errore
+                        return POSIX path of (path to desktop folder)
+                    end try
+                end tell
+            else
+                return ""
+            end if
+            """
+
+            result = subprocess.check_output(["osascript", "-e", script]).decode().strip()
+            return result if result else None
+        except Exception as e:
+            print(f"Errore: {e}")
+            return None
 
     def keyboard_suppress_filter(self, event_type, event):
         screen = self.active_screen()
@@ -340,6 +390,14 @@ class ServerKeyboardListener:
         else:
             data = key.char
 
+        # Check if command + v is pressed
+        if key == Key.cmd:
+            self.command_pressed = True
+        elif data == "v" and self.command_pressed:
+            current_dir = self.get_current_clicked_directory()
+            if current_dir:
+                self.file_transfer_handler.handle_file_paste(current_dir, self.file_transfer_handler.SERVER_REQUEST)
+
         if screen and clients:
             self.send(screen, format_command(f"keyboard press {data}"))
 
@@ -351,6 +409,10 @@ class ServerKeyboardListener:
             data = key.name
         else:
             data = key.char
+
+        # Check if command is released
+        if key == Key.cmd:
+            self.command_pressed = False
 
         if screen and clients:
             self.send(screen, format_command(f"keyboard release {data}"))
@@ -367,9 +429,13 @@ class ServerClipboardListener:
         self.clients = get_clients
         self.active_screen = get_active_screen
         self._thread = None
+
         self.last_clipboard_content = pyperclip.paste()  # Inizializza con il contenuto attuale della clipboard
+        self.last_clipboard_files = None
+
         self._stop_event = threading.Event()
         self.logger = Logger.get_instance().log
+        self.file_transfer_handler = FileTransferEventHandler()
 
     def start(self):
         self._stop_event.clear()
@@ -382,20 +448,65 @@ class ServerClipboardListener:
     def is_alive(self):
         return self._thread.is_alive()
 
-    def set_clipboard(self, content):
+    @staticmethod
+    def set_clipboard(content):
         pyperclip.copy(content)
-        self.last_clipboard_content = content
 
     def get_clipboard(self):
         return self.last_clipboard_content
 
+    @staticmethod
+    def get_clipboard_files():
+        pb = NSPasteboard.generalPasteboard()
+        types = pb.types()
+
+        # Controlla se ci sono file o directory nella clipboard
+        if NSFilenamesPboardType in types:
+            file_paths = pb.propertyListForType_(NSFilenamesPboardType)
+            results = []
+            for path in file_paths:
+                if os.path.isdir(path):
+                    results.append((path, "directory"))
+                elif os.path.isfile(path):
+                    results.append((path, "file"))
+                else:
+                    results.append((path, "unknown"))
+            return results
+        return None
+
+    @staticmethod
+    def get_file_info(file_path):
+        if os.path.isfile(file_path):
+            return {
+                'file_name': os.path.basename(file_path),
+                'file_size': os.path.getsize(file_path),
+                'file_path': file_path
+            }
+        return None
+
     def _run(self):
         while not self._stop_event.is_set():
-            current_clipboard_content = pyperclip.paste()
-            if current_clipboard_content != self.last_clipboard_content:
-                self.send("all", format_command("clipboard ") + current_clipboard_content)
-                self.last_clipboard_content = current_clipboard_content
-            time.sleep(0.5)
+            try:
+                current_clipboard_content = pyperclip.paste()
+                current_clipboard_files = self.get_clipboard_files()
+
+                if current_clipboard_files and current_clipboard_files != self.last_clipboard_files:
+                    # Takes the last file in the list only if it's a file
+                    if current_clipboard_files[-1][1] == "file":
+                        file_info = self.get_file_info(current_clipboard_files[-1][0])
+                        if file_info:
+                            self.file_transfer_handler.handle_file_copy(file_info,
+                                                                        self.file_transfer_handler.LOCAL_SERVER_OWNERSHIP)
+                            self.last_clipboard_files = current_clipboard_files
+
+                elif current_clipboard_content != self.last_clipboard_content:
+                    # Invia il contenuto della clipboard a tutti i client
+                    self.send("all", format_command("clipboard ") + current_clipboard_content)
+                    self.last_clipboard_content = current_clipboard_content
+
+                time.sleep(0.5)
+            except Exception as e:
+                self.logger(f"[CLIPBOARD] {e}", Logger.ERROR)
 
     def __str__(self):
         return "ServerClipboardListener"
@@ -407,8 +518,10 @@ class ClientClipboardListener:
         self.send = QueueManager(None).send_clipboard
         self._thread = None
         self.last_clipboard_content = pyperclip.paste()  # Inizializza con il contenuto attuale della clipboard
+        self.last_clipboard_files = None
         self._stop_event = threading.Event()
         self.logger = Logger.get_instance().log
+        self.file_transfer_handler = FileTransferEventHandler()
 
     def start(self):
         self._stop_event.clear()
@@ -428,13 +541,56 @@ class ClientClipboardListener:
     def get_clipboard(self):
         return self.last_clipboard_content
 
+    @staticmethod
+    def get_clipboard_files():
+        pb = NSPasteboard.generalPasteboard()
+        types = pb.types()
+
+        # Controlla se ci sono file o directory nella clipboard
+        if NSFilenamesPboardType in types:
+            file_paths = pb.propertyListForType_(NSFilenamesPboardType)
+            results = []
+            for path in file_paths:
+                if os.path.isdir(path):
+                    results.append((path, "directory"))
+                elif os.path.isfile(path):
+                    results.append((path, "file"))
+                else:
+                    results.append((path, "unknown"))
+            return results
+        return None
+
+    @staticmethod
+    def get_file_info(file_path):
+        if os.path.isfile(file_path):
+            return {
+                'file_name': os.path.basename(file_path),
+                'file_size': os.path.getsize(file_path),
+                'file_path': file_path
+            }
+        return None
+
     def _run(self):
         while not self._stop_event.is_set():
-            current_clipboard_content = pyperclip.paste()
-            if current_clipboard_content != self.last_clipboard_content:
-                self.send(None, format_command("clipboard ") + current_clipboard_content)
-                self.last_clipboard_content = current_clipboard_content
-            time.sleep(0.5)
+            try:
+                current_clipboard_content = pyperclip.paste()
+                current_clipboard_files = self.get_clipboard_files()
+
+                if current_clipboard_files and current_clipboard_files != self.last_clipboard_files:
+                    # Takes the last file in the list only if it's a file
+                    if current_clipboard_files[-1][1] == "file":
+                        file_info = self.get_file_info(current_clipboard_files[-1][0])
+                        if file_info:
+                            self.file_transfer_handler.handle_file_copy(file_info,
+                                                                        self.file_transfer_handler.LOCAL_OWNERSHIP)
+                            self.last_clipboard_files = current_clipboard_files
+
+                elif current_clipboard_content != self.last_clipboard_content:
+                    self.send(None, format_command("clipboard ") + current_clipboard_content)
+                    self.last_clipboard_content = current_clipboard_content
+                time.sleep(0.5)
+            except Exception as e:
+                self.logger(f"[CLIPBOARD] {e}", Logger.ERROR)
 
     def __str__(self):
         return "ClientClipboardListener"
@@ -565,7 +721,11 @@ class ClientMouseController:
 
             self.mouse.position = (target_x, target_y)
         elif mouse_action == "move":
-            self.mouse.move(x, y)
+            scale_x = self.server_screen_width / self.screen_width
+            scale_y = self.server_screen_height / self.screen_height
+            dx = int(x * scale_x)
+            dy = int(y * scale_y)
+            self.mouse.position = (self.mouse.position[0] + dx, self.mouse.position[1] + dy)
         elif mouse_action == "click":
             self.handle_click(Button.left, is_pressed)
         elif mouse_action == "right_click":
@@ -633,3 +793,95 @@ class ClientMouseListener:
 
     def __str__(self):
         return "ClientMouseListener"
+
+
+class ClientKeyboardListener:
+    def __init__(self):
+        self.keyboard = KeyboardController()
+        self.send = QueueManager(None).send_keyboard
+        self.logger = Logger.get_instance().log
+
+        self.file_transfer_handler = FileTransferEventHandler()
+        self.command_pressed = False
+
+        self._listener = KeyboardListener(on_press=self.on_press, on_release=self.on_release)
+
+    def get_listener(self):
+        return self._listener
+
+    def start(self):
+        self.logger("Starting keyboard listener")
+        self._listener.start()
+
+    def stop(self):
+        if self.is_alive():
+            self._listener.stop()
+
+    def is_alive(self):
+        return self._listener.is_alive()
+
+    @staticmethod
+    def get_current_clicked_directory():
+        try:
+            # Execute AppleScript to get the active window directory
+            script = """
+                    tell application "System Events"
+                        set frontApp to name of first application process whose frontmost is true
+                    end tell
+                    if frontApp is "Finder" then
+                        tell application "Finder"
+                            try
+                                -- Se c'è una cartella selezionata, usa quella
+                                set selectedItems to selection
+                                if (count of selectedItems) > 0 then
+                                    set selectedItem to item 1 of selectedItems
+                                    if (class of selectedItem) is folder then
+                                        return POSIX path of (selectedItem as alias)
+                                    end if
+                                end if
+    
+                                -- Altrimenti, usa la finestra attiva
+                                if (count of Finder windows) > 0 then
+                                    set currentFolder to (target of Finder window 1 as alias)
+                                    return POSIX path of currentFolder
+                                else
+                                    -- Se nessuna finestra è attiva, ritorna la Scrivania
+                                    return POSIX path of (path to desktop folder)
+                                end if
+                            on error
+                                -- Fallback al Desktop in caso di errore
+                                return POSIX path of (path to desktop folder)
+                            end try
+                        end tell
+                    else
+                        return ""
+                    end if
+                    """
+
+            result = subprocess.check_output(["osascript", "-e", script]).decode().strip()
+            return result if result else None
+        except Exception as e:
+            print(f"Errore: {e}")
+            return None
+
+    def on_press(self, key: Key | KeyCode | None):
+
+        if isinstance(key, Key):
+            data = key.name
+        else:
+            data = key.char
+
+        # Check if command + v is pressed
+        if key == Key.cmd:
+            self.command_pressed = True
+        elif data == "v" and self.command_pressed:
+            current_dir = self.get_current_clicked_directory()
+            if current_dir:
+                self.file_transfer_handler.handle_file_paste(current_dir, self.file_transfer_handler.CLIENT_REQUEST)
+
+    def on_release(self, key: Key | KeyCode | None):
+
+        # Check if command is released
+        if key == Key.cmd:
+            self.command_pressed = False
+

@@ -7,6 +7,7 @@ from queue import Queue
 from server.Command import CommandFactory
 from utils.Logging import Logger
 from utils.netData import *
+from inputUtils.FileTransferEventHandler import FileTransferEventHandler
 
 BATCH_PROCESS_INTERVAL = 0.01
 MAX_BATCH_SIZE = 10
@@ -16,8 +17,8 @@ MAX_WORKERS = 10
 # Factory Pattern per la creazione dei ClientHandler
 class ClientHandlerFactory:
     @staticmethod
-    def create_client_handler(conn, addr, command_processor):
-        return ClientHandler(conn, addr, command_processor)
+    def create_client_handler(conn, addr, screen, command_processor):
+        return ClientHandler(conn, addr, screen, command_processor)
 
 
 class ClientHandler:
@@ -29,14 +30,18 @@ class ClientHandler:
     :param on_disconnect: Funzione da chiamare alla disconnessione del client
     """
 
-    def __init__(self, conn, address, command_processor):
+    def __init__(self, conn, address, screen,  command_processor):
         self.conn = conn
         self.address = address
+        self.screen = screen
+
         self.logger = Logger.get_instance().log
         self._running = False
         self.thread = None
 
         self.process = command_processor
+
+        self.file_event_handler = FileTransferEventHandler()
 
         self.message_queue = Queue()
         self.clipboard_queue = Queue()
@@ -145,7 +150,7 @@ class ClientHandler:
                 self.executor.submit(self._process, command)
 
     def _process(self, command):
-        self.process(command)
+        self.process(command, self.screen)
 
 
 class ClientCommandProcessor:
@@ -153,10 +158,10 @@ class ClientCommandProcessor:
         self.server = server
         self.logger = Logger.get_instance().log
 
-    def process_client_command(self, command):
+    def process_client_command(self, command, screen = None):
         if not command:
             return
-        command_handler = CommandFactory.create_command(command, self.server)
+        command_handler = CommandFactory.create_command(command, self.server, screen)
         if command_handler:
             command_handler.execute()
         else:

@@ -1,3 +1,4 @@
+import os
 import socket
 import threading
 import time
@@ -11,6 +12,8 @@ MOUSE_MAX_BATCH_SIZE = 10  # Massimo numero di messaggi nel batch prima di invia
 
 KEYBOARD_BATCH_INTERVAL = 0.01  # 20 ms, intervallo per inviare il batch dei messaggi della tastiera
 KEYBOARD_MAX_BATCH_SIZE = 7  # Massimo numero di messaggi nel batch prima di inviare
+
+FILE_MAX_BATCH_SIZE = CHUNK_SIZE - END_DELIMITER.encode().__len__()  # Massimo numero di byte nel batch prima di inviare
 
 
 class QueueManager:
@@ -26,6 +29,7 @@ class QueueManager:
     MOUSE_PRIORITY = 4
     KEYBOARD_PRIORITY = 3
     CLIPBOARD_PRIORITY = 2
+    FILE_PRIORITY = 5
 
     def __new__(cls, *args, **kwargs):
         if not cls._instance:
@@ -34,24 +38,31 @@ class QueueManager:
                     cls._instance = super(QueueManager, cls).__new__(cls)
         return cls._instance
 
-    def __init__(self, MessageSender, mouse=True, keyboard=True, clipboard=True):
+    def __init__(self, MessageSender, mouse=True, keyboard=True, clipboard=True, file=True):
         if not hasattr(self, 'initialized'):
             self.mouse_queue = Queue()
             self.keyboard_queue = Queue()
             self.clipboard_queue = Queue()
+            self.file_queue = Queue()
+            self.forward_file_queue = Queue()
+
             self.MessageSender = MessageSender
             self._thread_pool = []
             self._threads_started = False
             self.initialized = True
 
-            # Buffer for mouse events
+            # Buffer for events
             self.mouse_batch_buffer = []
             self.keyboard_batch_buffer = []
+            self.file_batch_buffer = []
 
             # Flags to manage specific queues
             self.manage_mouse = mouse
             self.manage_keyboard = keyboard
             self.manage_clipboard = clipboard
+            self.manage_files = file
+
+            self.log = Logger.get_instance().log
 
     def send(self, queue_type, message):
         if queue_type == self.MOUSE:
@@ -76,6 +87,21 @@ class QueueManager:
     def send_screen_notification(self, screen, message):
         self.MessageSender.send(self.SCREEN_NOTIFICATION_PRIORITY, (screen, message))
 
+    def send_file_request(self, screen, message):
+        # Invia una richiesta per il file al server
+        self.MessageSender.send(self.FILE_PRIORITY, (screen, message))
+
+    def send_file_copy(self, screen, message):
+        # Notify the server that the file has been copied
+        self.MessageSender.send(self.FILE_PRIORITY, (screen, message))
+
+    def send_file(self, file_path, screen=None):
+        if self.manage_files:
+            self.file_queue.put((file_path, screen))
+
+    def forward_file_data(self, screen, data):
+        self.MessageSender.send(self.FILE_PRIORITY, (screen, data))
+
     def start(self):
         if not self._threads_started:
             if self.manage_mouse:
@@ -84,6 +110,8 @@ class QueueManager:
                 self._thread_pool.append(threading.Thread(target=self._process_keyboard_queue, daemon=True))
             if self.manage_clipboard:
                 self._thread_pool.append(threading.Thread(target=self._process_clipboard_queue, daemon=True))
+            if self.manage_files:
+                self._thread_pool.append(threading.Thread(target=self._process_file_queue, daemon=True))
             for thread in self._thread_pool:
                 thread.start()
             self._threads_started = True
@@ -149,6 +177,48 @@ class QueueManager:
                         self._send_keyboard_batch()
                         last_send_time = current_time
                 continue
+
+    def _process_file_queue(self):
+        while not self._stop_event.is_set():
+            try:
+                file_path, screen = self.file_queue.get()
+                self._send_file(file_path, screen)
+            except Empty:
+                continue
+
+    def _send_file(self, file_path, screen=None):
+        try:
+            with open(file_path, 'rb') as file:
+                self.log(f"Inizio invio file: {file_path}")
+                # Invia file_start con i metadati del file
+                file_name = os.path.basename(file_path)
+                file_size = os.path.getsize(file_path)
+                start_message = format_command(f"file_start {file_name} {file_size} {file_path}")
+                self.MessageSender.send(self.FILE_PRIORITY, (screen, start_message))
+
+                # Invia il file in chunk
+                while True:
+                    chunk = file.read(FILE_MAX_BATCH_SIZE)
+                    if not chunk:
+                        break
+                    encoded_chunk = chunk.decode('latin1')  # Usa 'latin1' per inviare byte come stringa
+                    chunck_message = format_command(f"file_chunk {encoded_chunk}")
+                    self.MessageSender.send(self.FILE_PRIORITY, (screen, chunck_message))
+
+                # Invia file_end
+                end_message = format_command(f"file_end {file_name}")
+                self.MessageSender.send(self.FILE_PRIORITY, (screen, end_message))
+                self.log(f"File inviato con successo: {file_path}")
+        except Exception as e:
+            self.log(f"Errore durante l'invio del file {file_path}: {e}", Logger.ERROR)
+
+    def _send_file_batch(self):
+        if not self.file_batch_buffer:
+            return
+
+        batch_message = END_DELIMITER.join([chunk.decode('latin1') for chunk in self.file_batch_buffer])
+        self.MessageSender.send(self.FILE_PRIORITY, batch_message)
+        self.file_batch_buffer.clear()
 
     def _send_keyboard_batch(self):
         if not self.keyboard_batch_buffer:
@@ -243,8 +313,12 @@ class BaseMessageQueueManager:
         data_bytes = data.encode()
         data_length = len(data_bytes)
 
-        if data_length > CHUNK_SIZE:
-            chunks = [data_bytes[i:i + CHUNK_SIZE] for i in range(0, data_length, CHUNK_SIZE)]
+        chunk_size_with_delimiter = CHUNK_SIZE - len(CHUNK_DELIMITER.encode())
+        chunk_size_with_end_delimiter = CHUNK_SIZE - len(END_DELIMITER.encode())
+        real_chunk_size = min(chunk_size_with_delimiter, chunk_size_with_end_delimiter)
+
+        if data_length > real_chunk_size:
+            chunks = [data_bytes[i:i + real_chunk_size] for i in range(0, data_length, real_chunk_size)]
             for i, chunk in enumerate(chunks):
                 if i == len(chunks) - 1:
                     # Last chunk - add the END_DELIMITER
@@ -278,7 +352,7 @@ class ServerMessageQueueManager(BaseMessageQueueManager):
 
     def _send_to_client(self, client_key, data):
         try:
-            if not client_key or client_key=="None": # Skip sending data if the client key is None
+            if not client_key or client_key == "None":  # Skip sending data if the client key is None
                 return
 
             # Prepare data to send
@@ -286,10 +360,10 @@ class ServerMessageQueueManager(BaseMessageQueueManager):
 
             conn = self.get_client(client_key)
             if not conn:
-                return # Skip sending data if the client is not connected
+                return  # Skip sending data if the client is not connected
 
             if not conn.is_socket_open():
-                return # Skip sending data if the socket is closed
+                return  # Skip sending data if the socket is closed
 
             # Send the data in chunks if needed
             self._send_in_chunks(conn, formatted_data)

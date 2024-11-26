@@ -1,3 +1,6 @@
+from inputUtils.FileTransferEventHandler import FileTransferEventHandler
+from network.IOManager import QueueManager
+from utils.Logging import Logger
 from utils.netData import extract_text, extract_command_parts
 
 
@@ -11,6 +14,7 @@ class ClipboardCommand(Command):
     def __init__(self, server, data):
         self.server = server
         self.data = data
+        self.clipboard_sender = QueueManager(None).send_clipboard
 
     def execute(self):
         text = extract_text(self.data)
@@ -64,13 +68,103 @@ class DisconnectCommand(Command):
                 return
 
 
+class FileCopiedCommand(Command):
+    def __init__(self, screen, payload):
+        self.client = screen
+        self.parts = payload
+        self.file_event_handler = FileTransferEventHandler()
+        self.logger = Logger.get_instance().log
+
+    def execute(self):
+        try:
+            file_name = self.parts[1]
+            file_path = self.parts[3]
+            file_size = int(self.parts[2])
+
+            self.file_event_handler.save_file_info(
+                owner=self.client,
+                file_size=file_size,
+                file_name=file_name,
+                file_path=file_path
+            )
+
+            self.logger(f"File copied registered from {self.client}: {file_path}")
+        except Exception as e:
+            self.logger(f"Error handling file_copied: {e}", Logger.ERROR)
+
+
+class FileRequestCommand(Command):
+    def __init__(self, requester, payload):
+        self.requester = requester
+        self.parts = payload
+        self.file_event_handler = FileTransferEventHandler()
+        self.logger = Logger.get_instance().log
+
+    def execute(self):
+        try:
+            file_path = self.parts[1]
+            self.file_event_handler.handle_file_request(self.requester)
+            self.logger(f"File request received from {self.requester}: {file_path}")
+        except Exception as e:
+            self.logger(f"Error handling file_request: {e}", Logger.ERROR)
+
+
+class FileStartCommand(Command):
+    def __init__(self, requester, payload):
+        self.requester = requester
+        self.parts = payload
+        self.file_event_handler = FileTransferEventHandler()
+        self.logger = Logger.get_instance().log
+
+    def execute(self):
+        try:
+            file_info = {
+                'name': self.parts[0],
+                'size': int(self.parts[1]),
+                'path': self.parts[2]
+            }
+            self.file_event_handler.handle_file_start(file_info)
+            self.logger(f"File start received from {self.requester}: {file_info['path']}")
+        except Exception as e:
+            self.logger(f"Error handling file_start: {e}", Logger.ERROR)
+
+
+class FileChunkCommand(Command):
+    def __init__(self, requester, payload):
+        self.requester = requester
+        self.data = payload
+        self.file_event_handler = FileTransferEventHandler()
+        self.logger = Logger.get_instance().log
+
+    def execute(self):
+        try:
+            self.file_event_handler.handle_file_chunk(self.data)
+            self.logger(f"File chunk received from {self.requester}")
+        except Exception as e:
+            self.logger(f"Error handling file_chunk: {e}", Logger.ERROR)
+
+
+class FileEndCommand(Command):
+    def __init__(self, requester):
+        self.requester = requester
+        self.file_event_handler = FileTransferEventHandler()
+        self.logger = Logger.get_instance().log
+
+    def execute(self):
+        try:
+            self.file_event_handler.handle_file_end()
+            self.logger(f"File end received from {self.requester}")
+        except Exception as e:
+            self.logger(f"Error handling file_end: {e}", Logger.ERROR)
+
+
 class CommandFactory:
     @staticmethod
-    def create_command(command: [tuple | str], server):
+    def create_command(command: [tuple | str], server, screen=None):
         # Check if command is a tuple
         if not isinstance(command, tuple):  # Commands received from clients
             parts = extract_command_parts(command)
-        else:   # Case in which command is already a tuple (internal use)
+        else:  # Case in which command is already a tuple (internal use)
             parts = command
 
         if parts[0] == 'clipboard':
@@ -79,4 +173,14 @@ class CommandFactory:
             return ReturnCommand(server, parts[1])
         elif parts[0] == 'disconnect':
             return DisconnectCommand(server, parts[1])
+        elif parts[0] == "file_copied":
+            return FileCopiedCommand(screen, parts[1:])
+        elif parts[0] == "file_request":
+            return FileRequestCommand(screen, parts[1:])
+        elif parts[0] == "file_start":
+            return FileStartCommand(screen, parts[1:])
+        elif parts[0] == "file_chunk":
+            return FileChunkCommand(screen, parts[1:])
+        elif parts[0] == "file_end":
+            return FileEndCommand(screen)
         return None

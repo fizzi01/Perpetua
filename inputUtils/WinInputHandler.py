@@ -1,3 +1,4 @@
+import math
 import threading
 import time
 from collections.abc import Callable
@@ -9,12 +10,17 @@ import keyboard
 from pynput.mouse import Button, Controller as MouseController, Listener as MouseListener
 
 from config.ServerConfig import Clients
+from inputUtils.FileTransferEventHandler import FileTransferEventHandler
 from network.IOManager import QueueManager
 from utils.Logging import Logger
 from utils.netData import *
 
 
 class ServerMouseListener:
+    IGNORE_NEXT_MOVE_EVENT = 0.01
+    MAX_DXDY_THRESHOLD = 150
+    SCREEN_CHANGE_DELAY = 0.3
+
     """
     :param send_function: Function to send data to the clients
     :param change_screen_function: Function to change the active screen
@@ -38,6 +44,17 @@ class ServerMouseListener:
         self.screen_width = screen_width
         self.screen_height = screen_height
         self.screen_treshold = screen_threshold
+
+        self.last_x = None
+        self.last_y = None
+        self.x_print = 0
+        self.y_print = 0
+        self.mouse_controller = MouseController()
+        self.buttons_pressed = set()
+        self.stop_emulation = False
+        self.screen_change_in_progress = False
+        self.screen_change_timeout = 0
+        self.ignore_move_events_until = 0
 
         self._listener = MouseListener(on_move=self.on_move, on_scroll=self.on_scroll, on_click=self.on_click,
                                        win32_event_filter=self.mouse_suppress_filter)
@@ -73,44 +90,171 @@ class ServerMouseListener:
 
         return True
 
+    def warp_cursor_to_center(self):
+        current_time = time.time()
+        # Check if the screen change is in progress, if yes don't warp the cursor
+        if self.screen_change_in_progress and current_time > self.screen_change_timeout:
+            return
+
+        self.ignore_move_events_until = time.time() + self.IGNORE_NEXT_MOVE_EVENT
+        center_x = self.screen_width // 2
+        center_y = self.screen_height // 2
+        self.mouse_controller.position = (center_x, center_y)
+        self.last_x, self.last_y = self.mouse_controller.position
+
     def on_move(self, x, y):
 
+        current_time = time.time()
+        if not self.stop_emulation and self.ignore_move_events_until > current_time:
+            self.last_x = x
+            self.last_y = y
+            return True
+
+        # Check if the screen change is in progress and if the timeout has expired
+        if self.screen_change_in_progress and current_time + 0.299 > self.screen_change_timeout:
+            self.screen_change_in_progress = False
+
+        # Calcola il movimento relativo
+        dx = 0
+        dy = 0
+
+        if self.last_x is not None and self.last_y is not None:
+            dx = x - self.last_x
+            dy = y - self.last_y
+
+        # Ignora movimenti anomali e troppo grandi (quando cursore bloccato possono esserci movimenti anomali)
+        if abs(dx) > self.MAX_DXDY_THRESHOLD or abs(dy) > self.MAX_DXDY_THRESHOLD:
+            self.last_x = x
+            self.last_y = y
+            return True
+
+        # Aggiorna l'ultima posizione e tempo conosciuti
+        self.last_x = x
+        self.last_y = y
+
+        # Controlla se il cursore è al bordo
+        at_right_edge = x >= self.screen_width - 1
+        at_left_edge = x <= 0
+        at_bottom_edge = y >= self.screen_height - 1
+        at_top_edge = y <= 0
+
         screen = self.active_screen()
-        clients = self.clients.get_connection(screen)
+        client = self.clients.get_connection(screen)
+        client_screen = self.clients.get_screen_size(screen)
         is_transmitting = self.get_trasmission_status()
 
-        normalized_x = x / self.screen_width
-        normalized_y = y / self.screen_height
+        if screen and client and is_transmitting:
 
-        if screen and clients and is_transmitting:
-            command = format_command(f"mouse move {normalized_x} {normalized_y}")
-            self.send(screen, command)
-        else:
-            if x >= self.screen_width - self.screen_treshold:  # Soglia per passare al monitor a destra
+            if not self.buttons_pressed and not self.stop_emulation:
+                scale_x = client_screen[0] / self.screen_width
+                scale_y = client_screen[1] / self.screen_height
+                dx *= scale_x * 1.5
+                dy *= scale_y * 1.5
+
+                # Arrotondo a un intero dx e dy che deve essere minimo 1 in valore assoluto (ma preserva segno)
+                # Se sotto 0.01 arrotonda a 0
+                if abs(dx) < 0.5:
+                    dx = 0
+                else:
+                    dx = math.copysign(max(1, abs(round(dx))), dx)
+
+                if abs(dy) < 0.5:
+                    dy = 0
+                else:
+                    dy = math.copysign(max(1, abs(round(dy))), dy)
+
+                self.x_print += dx
+                self.y_print += dy
+
+                # Clip the cursor position to the screen bounds
+                self.x_print = max(0, min(self.x_print, self.screen_width))
+                self.y_print = max(0, min(self.y_print, self.screen_height))
+
+                self.send(screen, format_command(
+                    f"mouse position {self.x_print / self.screen_width} {self.y_print / self.screen_height}"))
+
+                self.warp_cursor_to_center()
+            elif self.stop_emulation or self.buttons_pressed:
+                normalized_x = x / self.screen_width
+                normalized_y = y / self.screen_height
+                self.send(screen, format_command(f"mouse position {normalized_x} {normalized_y}"))
+
+        elif not self.buttons_pressed and not self.screen_change_in_progress:
+            # Quando si attraversa un bordo, invia una posizione assoluta normalizzata
+            if at_right_edge:
+                self.stop_emulation = False
                 self.change_screen("right")
-            elif x <= self.screen_treshold:  # Soglia per passare al monitor a sinistra
+                normalized_x = 0.05  # Entra dal bordo sinistro del client
+                normalized_y = y / self.screen_height
+                self.send("right", format_command(f"mouse position {normalized_x} {normalized_y}"))
+                self.x_print = normalized_x * self.screen_width
+                self.y_print = normalized_y * self.screen_height
+            elif at_left_edge:
+                self.stop_emulation = False
                 self.change_screen("left")
-            elif y >= self.screen_height - self.screen_treshold:  # Soglia per passare al monitor sopra
+                normalized_x = 0.95  # Entra dal bordo destro del client
+                normalized_y = y / self.screen_height
+                self.send("left", format_command(f"mouse position {normalized_x} {normalized_y}"))
+                self.x_print = normalized_x * self.screen_width
+                self.y_print = normalized_y * self.screen_height
+            elif at_bottom_edge:
+                self.stop_emulation = False
                 self.change_screen("down")
-            elif y <= self.screen_treshold:  # Soglia per passare al monitor sotto
+                normalized_x = x / self.screen_width
+                normalized_y = 0.05  # Entra dal bordo superiore del client
+                self.send("down", format_command(f"mouse position {normalized_x} {normalized_y}"))
+                self.x_print = normalized_x * self.screen_width
+                self.y_print = normalized_y * self.screen_height
+            elif at_top_edge:
+                self.stop_emulation = False
+                self.screen_change_in_progress = True
+                self.screen_change_timeout = time.time() + self.SCREEN_CHANGE_DELAY
                 self.change_screen("up")
+                normalized_x = x / self.screen_width
+                normalized_y = 0.95  # Entra dal bordo inferiore del client
+                self.send("up", format_command(f"mouse position {normalized_x} {normalized_y}"))
+                self.x_print = normalized_x * self.screen_width
+                self.y_print = normalized_y * self.screen_height
+
+        if self.stop_emulation:
+            self.x_print, self.y_print = x, y
 
         return True
 
     def on_click(self, x, y, button, pressed):
+
         screen = self.active_screen()
-        clients = self.clients.get_connection(screen)
+        client = self.clients.get_connection(screen)
+
+        # Gestisce il passaggio da stima della posizione con cursore bloccato,
+        # a posizione assoluta con cursore libero. La stima della posizione è
+        # necessaria per evitare che il cursore vada sui bordi ad inizio transizione
+        # Stima e posizione reale sono equivalenti allo stato attuale. Solo che la stima
+        # blocca il cursore al centro, e siccome un click evita il blocco del cursore si
+        # fa fallback alla posizione assoluta reale (Sono intercambiabili, ma la stima è necessaria per la transizione)
+        if pressed and screen:
+            self.buttons_pressed.add(button)
+
+            # Move cursor to the x_y saved in the last move event
+            if not self.stop_emulation:
+                self.mouse_controller.position = (self.x_print, self.y_print)
+
+            # Save the current position of the cursor
+            self.stop_emulation = True
+        else:
+            self.buttons_pressed.discard(button)
+            self.stop_emulation = False
 
         if button == mouse.Button.left:
-            if screen and clients and pressed:
+            if screen and client and pressed:
                 self.send(screen, format_command(f"mouse click {x} {y} true"))
-            elif screen and clients and not pressed:
+            elif screen and client and not pressed:
                 self.send(screen, format_command(f"mouse click {x} {y} false"))
         elif button == mouse.Button.right:
-            if screen and clients and pressed:
+            if screen and client and pressed:
                 self.send(screen, format_command(f"mouse right_click {x} {y}"))
         elif button == mouse.Button.middle:
-            if screen and clients and pressed:
+            if screen and client and pressed:
                 self.send(screen, format_command(f"mouse middle_click {x} {y}"))
         return True
 
@@ -449,3 +593,54 @@ class ClientMouseController:
         for _ in range(steps):
             self.mouse.scroll(dx, dy)
             time.sleep(delay)
+
+
+class ClientKeyboardListener:
+    def __init__(self):
+        self.keyboard = KeyboardController()
+        self.send = QueueManager(None).send_keyboard
+        self.logger = Logger.get_instance().log
+
+        self.file_transfer_handler = FileTransferEventHandler()
+        self.command_pressed = False
+
+        self._listener = KeyboardListener(on_press=self.on_press, on_release=self.on_release)
+
+    def get_listener(self):
+        return self._listener
+
+    def start(self):
+        self.logger("Starting keyboard listener")
+        self._listener.start()
+
+    def stop(self):
+        if self.is_alive():
+            self._listener.stop()
+
+    def is_alive(self):
+        return self._listener.is_alive()
+
+    @staticmethod
+    def get_current_clicked_directory():
+        pass
+
+    def on_press(self, key: Key | KeyCode | None):
+
+        if isinstance(key, Key):
+            data = key.name
+        else:
+            data = key.char
+
+        # Check if command + v is pressed
+        if key == Key.cmd:
+            self.command_pressed = True
+        elif data == "v" and self.command_pressed:
+            current_dir = None  # TODO
+            if current_dir:
+                self.file_transfer_handler.handle_file_paste(current_dir, self.file_transfer_handler.CLIENT_REQUEST)
+
+    def on_release(self, key: Key | KeyCode | None):
+
+        # Check if command is released
+        if key == Key.cmd:
+            self.command_pressed = False

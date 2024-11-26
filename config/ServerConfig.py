@@ -100,6 +100,11 @@ class Clients:
         client = self.get_client(position)
         return client.get_address() if client else ""
 
+    def get_position_by_address(self, addr: str) -> Optional[str]:
+        for position, client in self.clients.items():
+            if client.get_address() == addr:
+                return position
+
     def set_address(self, position: str, addr: str):
         client = self.get_client(position)
         if client:

@@ -133,7 +133,7 @@ class SSLConnectionHandler(ConnectionHandler):
             if clients.get_address(pos) == addr[0]:
                 clients.set_connection(pos, ssl_conn)
                 clients.set_screen_size(pos, client_config["screen_resolution"])
-                client_handler = ClientHandlerFactory.create_client_handler(ssl_conn, addr, self.command_processor)
+                client_handler = ClientHandlerFactory.create_client_handler(ssl_conn, addr, pos, self.command_processor)
                 client_handler.start()
                 self.client_handlers.append(client_handler)
                 return
@@ -168,7 +168,7 @@ class NonSSLConnectionHandler(ConnectionHandler):
             if clients.get_address(pos) == addr[0]:
                 clients.set_connection(pos, conn)
                 clients.set_screen_size(pos, client_config["screen_resolution"])
-                client_handler = ClientHandlerFactory.create_client_handler(conn, addr, self.command_processor)
+                client_handler = ClientHandlerFactory.create_client_handler(conn, addr, pos, self.command_processor)
                 client_handler.start()
                 self.client_handlers.append(client_handler)
                 break

@@ -5,6 +5,7 @@ from concurrent.futures import ThreadPoolExecutor
 from time import sleep, time
 from queue import Queue, Empty
 
+from inputUtils.FileTransferEventHandler import FileTransferEventHandler
 from utils.Logging import Logger
 from utils.netData import *
 
@@ -119,6 +120,8 @@ class ServerCommandProcessor:
         self.clipboard_thread = threading.Thread(target=self._process_clipboard_queue, daemon=True)
         self.clipboard_thread.start()
 
+        self.fileTransferHandler = FileTransferEventHandler()
+
         self.log = Logger.get_instance().log
 
     def stop(self):
@@ -131,7 +134,15 @@ class ServerCommandProcessor:
         parts = extract_command_parts(command)
         command_type = parts[0]
 
-        if command_type == "mouse":
+        if command_type == "file_request":
+            self.fileTransferHandler.handle_file_request(None)
+        elif command_type == "file_start":
+            self.fileTransferHandler.handle_file_start(parts[1:])
+        elif command_type == "file_chunk":
+            self.fileTransferHandler.handle_file_chunk(parts[1])
+        elif command_type == "file_end":
+            self.fileTransferHandler.handle_file_end()
+        elif command_type == "mouse":
             self._process_mouse_command(parts)
         elif command_type == "keyboard":
             self._process_keyboard_command(parts)
