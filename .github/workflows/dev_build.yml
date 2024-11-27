@@ -66,15 +66,12 @@ jobs:
           brew install ccache
           export PATH="/usr/local/opt/ccache/libexec:$PATH"
       - name: Build app
-        env:
-          DYLD_LIBRARY_PATH: /opt/homebrew/opt/glib/lib:/opt/homebrew/opt/gobject-introspection/lib:/opt/homebrew/opt/gettext/lib:/opt/homebrew/opt/pcre2/lib
         run: |
           nuitka --standalone \
           --macos-app-icon=logo/logo.icns \
           --follow-imports --output-dir=dist \
           --macos-create-app-bundle \
           --disable-console \
-          --include-sys-dlls=all \
           --output-filename=PyContinuity \
           --product-name="PyContinuity" \
           -o PyContinuity start.py
