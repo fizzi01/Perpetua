@@ -83,6 +83,26 @@ jobs:
           --include-package-data=pynput \
           --include-module=Quartz \
           --include-package=Quartz \
+          --include-package=AppKit \
+          --include-module=AppKit \
+          --include-package=Quartz.CoreGraphics \
+          --include-module=Quartz.CoreGraphics \
+          --include-package=Quartz.ImageIO \
+          --include-module=Quartz.ImageIO \
+          --include-package=Quartz.ImageKit \
+          --include-module=Quartz.ImageKit \
+          --include-package=Quartz.CoreVideo \
+          --include-module=Quartz.CoreVideo \
+          --include-package=Quartz.QuartzCore \
+          --include-module=Quartz.QuartzCore \
+          --include-package=Quartz.PDFKit \
+          --include-module=Quartz.PDFKit \
+          --include-package=Quartz.QuartzFilters \
+          --include-module=Quartz.QuartzFilters \
+          --include-package=Quartz.QuickLookUI \
+          --include-module=Quartz.QuickLookUI \
+          --include-package=Quartz.QuartzComposer \
+          --include-module=Quartz.QuartzComposer \
           --output-filename=PyContinuity \
           --product-name="PyContinuity" \
           -o PyContinuity start.py
