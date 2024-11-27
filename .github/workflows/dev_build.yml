@@ -60,7 +60,7 @@ jobs:
         run: |
           pip install -r requirements/Osx/requirements.txt
           pip install nuitka==2.5.4
-          pip install pyobjc-framework-Quartz Quartz
+          pip install pyobjc-framework-Quartz
       - name: Install ccache
         run: |
           brew install ccache
