@@ -62,7 +62,7 @@ jobs:
           export PATH="/usr/local/opt/ccache/libexec:$PATH"
       - name: Build app
         run: |
-          nuitka --standalone --macos-app-icon=logo/logo.icns --follow-imports --output-dir=dist --macos-create-app-bundle --disable-console --include-package=AppKit --output-filename=PyContinuity --product-name="PyContinuity" -o PyContinuity start.py
+          nuitka --standalone --macos-app-icon=logo/logo.icns --follow-imports --output-dir=dist --macos-create-app-bundle --disable-console --output-filename=PyContinuity --product-name="PyContinuity" -o PyContinuity start.py
           mv dist/start.app dist/PyContinuity.app
 
       - name: Decode and import certificate
