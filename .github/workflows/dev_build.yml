@@ -71,7 +71,6 @@ jobs:
           --follow-imports --output-dir=dist \
           --macos-create-app-bundle \
           --disable-console \
-          --include-package=pyobjc \
           --include-package=pynput \
           --output-filename=PyContinuity \
           --product-name="PyContinuity" \
