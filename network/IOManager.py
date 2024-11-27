@@ -227,7 +227,7 @@ class QueueManager:
     def _process_file_queue(self):
         while not self._stop_event.is_set():
             try:
-                file_path, screen = self.file_queue.get()
+                file_path, screen = self.file_queue.get(timeout=0.2)
                 self._send_file(file_path, screen)
             except Empty:
                 continue
@@ -300,6 +300,7 @@ class QueueManager:
         for thread in self._thread_pool:
             thread.join()
         self._threads_started = False
+        self._thread_pool.clear()
         self._stop_event.clear()
 
     def is_alive(self):
@@ -340,7 +341,9 @@ class BaseMessageQueueManager:
 
     def start(self):
         if not self._threads_started:
-            self._sending_thread.start()
+            if not self._sending_thread.is_alive():
+                self._sending_thread = threading.Thread(target=self._process_send_queue, daemon=True)
+                self._sending_thread.start()
             self._threads_started = True
 
     def send(self, priority, message):

@@ -55,7 +55,6 @@ class FileTransferEventHandler:
         self.chunk_dict = {}
         self.next_chunk_index = 0
         self.writer_thread = threading.Thread(target=self._write_chunks, daemon=True)
-        self.writer_thread.start()
 
     def set_actors(self, owner, requester):
         with self.lock:
@@ -247,16 +246,20 @@ class FileTransferEventHandler:
                     else:
                         self.save_path = os.path.join(self.save_path, encoded_file_name)
 
+                    if not self.writer_thread.is_alive():
+                        self.writer_thread.start()
+                        self.stop_writer = False
+
                     self.log(f"File transfer started: {self.save_path}")
                 except Exception as e:
                     self.log(f"Error opening file: {e}", Logger.ERROR)
                     self.is_being_processed.clear()
 
     def _write_chunks(self):
-        max_iterations = 40  # Maximum number of iterations to wait for the file to reach the expected size
+        max_iterations = 20  # Maximum number of iterations to wait for the file to reach the expected size
         iteration_count = 0
 
-        while True:
+        while not self.stop_writer:
             try:
                 chunk_index, chunk_data = self.chunk_queue.get(timeout=1)
                 self.chunk_dict[chunk_index] = chunk_data
