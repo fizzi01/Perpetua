@@ -8,7 +8,7 @@ on:
         required: true
         default: 'warning'
       tags:
-        description: 'Forced build' 
+        description: 'Forced build'
   push:
     branches:
       - dev
@@ -17,7 +17,7 @@ on:
 
 jobs:
   build-windows:
-    name: Win64 Build
+    name: Windows Build
     runs-on: windows-latest
     steps:
       - name: Checkout
@@ -25,20 +25,28 @@ jobs:
       - name: Install Python
         uses: actions/setup-python@v5
         with:
-          python-version: '3.10'
-          architecture: 'x64'
+          python-version: '3.11'
       - name: Install requirements
+        run: pip install -r requirements/Windows/requirements.txt
+      - name: Install builder
+        run: pip install nuitka
+      - name: Build app
         run: |
-          pip install -r requirements/Win/requirements.txt
-      - name: Run PyInstaller
-        run: |
-          pip install pyinstaller
-          PyInstaller --windowed --onefile -n PyContinuity --icon="logo/logo.ico"  gui.py
-
+          nuitka --onefile \
+            --windows-icon=logo/logo.ico \
+            --follow-imports \
+            --output-dir=dist \
+            --windows-uac-uiaccess \
+            --output-filename=PyContinuity \
+            --windows-product-name="PyContinuity" \
+            -o PyContinuity \
+            start.py
+      - name: Create zip of the app
+        run: 7z a -tzip PyContinuity_windows.zip dist/PyContinuity.exe
       - uses: actions/upload-artifact@v4
         with:
-          name: PyContinuity_win64
-          path: dist/PyContinuity.exe
+          name: PyContinuity_windows
+          path: PyContinuity_windows.zip
 
   build-mac:
     name: MacOSX (silicon) Build
@@ -48,10 +56,6 @@ jobs:
         uses: actions/checkout@v4
       - name: Install gobject-introspection
         run: brew install gobject-introspection
-      - name: Install Dependencies
-        run: |
-          brew install glib gettext pcre2
-
       - name: Install Python
         uses: actions/setup-python@v5
         with:
@@ -59,55 +63,26 @@ jobs:
       - name: Install requirements
         run: |
           pip install -r requirements/Osx/requirements.txt
-          pip install nuitka==2.5.4
+          pip install nuitka
       - name: Install ccache
         run: |
           brew install ccache
-          export PATH="/usr/local/opt/ccache/libexec:$PATH"
-      - name: Setup ccache
-        uses: actions/cache@v3
-        with:
-          path: ~/.ccache
-          key: ${{ runner.os }}-ccache-${{ hashFiles('**/*.c') }}
-          restore-keys: |
-            ${{ runner.os }}-ccache
       - name: Build app
         run: |
           nuitka --standalone \
-          --macos-app-icon=logo/logo.icns \
-          --follow-imports --output-dir=dist \
-          --macos-create-app-bundle \
-          --disable-console \
-          --include-package=pynput \
-          --include-module=pynput \
-          --include-package-data=pynput \
-          --include-module=Quartz \
-          --include-package=Quartz \
-          --include-package=AppKit \
-          --include-module=AppKit \
-          --include-package=Quartz.CoreGraphics \
-          --include-module=Quartz.CoreGraphics \
-          --include-package=Quartz.ImageIO \
-          --include-module=Quartz.ImageIO \
-          --include-package=Quartz.ImageKit \
-          --include-module=Quartz.ImageKit \
-          --include-package=Quartz.CoreVideo \
-          --include-module=Quartz.CoreVideo \
-          --include-package=Quartz.QuartzCore \
-          --include-module=Quartz.QuartzCore \
-          --include-package=Quartz.PDFKit \
-          --include-module=Quartz.PDFKit \
-          --include-package=Quartz.QuartzFilters \
-          --include-module=Quartz.QuartzFilters \
-          --include-package=Quartz.QuickLookUI \
-          --include-module=Quartz.QuickLookUI \
-          --include-package=Quartz.QuartzComposer \
-          --include-module=Quartz.QuartzComposer \
-          --output-filename=PyContinuity \
-          --product-name="PyContinuity" \
-          -o PyContinuity start.py
+            --macos-app-icon=logo/logo.icns \
+            --follow-imports \
+            --output-dir=dist \
+            --macos-create-app-bundle \
+            --disable-console \
+            --output-filename=PyContinuity \
+            --macos-app-protected-resource="NSInputMonitoringUsageDescription:Questa applicazione richiede l'accesso all'input della tastiera per monitorare le tue digitazioni." \
+            --macos-app-protected-resource="NSAccessibilityUsageDescription:Questa applicazione necessita dell'accesso alle funzionalità di accessibilità per interagire con altre applicazioni." \
+            --product-name="PyContinuity" \
+            -o PyContinuity \
+            start.py
           
-          mv dist/start.app dist/PyContinuity.app
+            mv dist/start.app dist/PyContinuity.app
 
       - name: Decode and import certificate
         env:
@@ -134,50 +109,3 @@ jobs:
         with:
           name: PyContinuity_macos(silicon)
           path: PyContinuity_macos(silicon).tar.gz
-
-#  build-mac-intel:
-#    name: MacOSX (x86_64) Build
-#    runs-on: macos-13
-#    steps:
-#      - name: Checkout
-#        uses: actions/checkout@v4
-#      - name: Install Python
-#        uses: actions/setup-python@v5
-#        with:
-#          python-version: '3.11'
-#      - name: Install requirements
-#        run: |
-#          pip install -r requirements_mac.txt
-#      - name: Build app
-#        run: |
-#          nuitka3 --standalone --macos-app-icon=logo/logo.icns --enable-plugin=tk-inter --follow-imports --output-dir=dist --macos-create-app-bundle --disable-console --include-package=Quartz --include-package=pynput --output-filename=PyContinuity --product-name="PyContinuity" -o PyContinuity gui.py
-#          mv dist/gui.app dist/PyContinuity.app
-#
-#
-#      - name: Decode and import certificate
-#        env:
-#          MAC_CERTIFICATE: ${{ secrets.CERTIFICATE }}
-#          MAC_CERTIFICATE_PASSWORD: ${{ secrets.CERTIFICATE_PASSWORD }}
-#        run: |
-#          echo "$MAC_CERTIFICATE" | base64 --decode > certificate.p12
-#          security create-keychain -p "action" build.keychain
-#          security import certificate.p12 -k build.keychain -P "$MAC_CERTIFICATE_PASSWORD" -T /usr/bin/codesign
-#          security list-keychains -s build.keychain
-#          security unlock-keychain -p "action" build.keychain
-#          security set-key-partition-list -S apple-tool:,apple:,codesign: -s -k "action" build.keychain
-#
-#      - name: Change permissions
-#        run: chmod +x dist/PyContinuity.app/Contents/MacOS/PyContinuity
-#
-#      - name: Sign the app
-#        run: |
-#          codesign --deep --force --verify --verbose --sign "PyContinuity" dist/PyContinuity.app
-#
-#
-#      - name: Create tarball of the app
-#        run: tar -czvf "PyContinuity_macos(x86_64).tar.gz" -C dist PyContinuity.app
-#
-#      - uses: actions/upload-artifact@v4
-#        with:
-#          name: PyContinuity_macos(x86_64)
-#          path: PyContinuity_macos(x86_64).tar.gz

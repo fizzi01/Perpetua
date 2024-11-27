@@ -53,6 +53,7 @@ class FileTransferEventHandler:
         self.chunk_queue = Queue()
         self.chunk_dict = {}
         self.next_chunk_index = 0
+        self.stop_writer = False
         self.writer_thread = threading.Thread(target=self._write_chunks, daemon=True)
 
     def set_actors(self, owner, requester):

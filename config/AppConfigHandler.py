@@ -65,8 +65,17 @@ class AppConfigHandler:
 
     def generate_ssl_certificate(self, force: bool = False):
         """Genera un certificato SSL con rilevamento automatico della subnet."""
-        if not shutil.which("openssl"):
-            raise EnvironmentError("OpenSSL is not installed. Please install it to generate SSL certificates.")
+        openssl_cmd = shutil.which("openssl")
+        if not openssl_cmd:
+            # Cerca una versione predefinita di OpenSSL su Windows
+            if platform.system() == 'Windows':
+                openssl_cmd = r"C:\Program Files\OpenSSL-Win64\bin\openssl.exe"  # Percorso standard
+                if not os.path.exists(openssl_cmd):
+                    raise EnvironmentError(
+                        "OpenSSL is not installed. Please install it from https://slproweb.com/products/Win32OpenSSL.html"
+                    )
+            else:
+                raise EnvironmentError("OpenSSL is not installed. Please install it to generate SSL certificates.")
 
         os.makedirs(self.ssl_dir, exist_ok=True)
         cert_path = os.path.join(self.ssl_dir, self.ssl_cert)

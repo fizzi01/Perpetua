@@ -1,13 +1,20 @@
 ## TODO
-- [X] Keyboard listener logic
-- [X] Multi OS Support Test and Business logic
-- [X] Mouse listener logic
-- [X] Clipboard sharing
-- [ ] Better UI
-  - OSX: Utilize rumps to handle Cocoa window and GUI (So that screen transition is smooth)
+- [X] **Multi OS** Support
+  - [X] Windows
+  - [X] OSX
+  - [ ] Android
+  - [ ] iOS
+- [ ] UI
+  - OSX: Utilize rumps to handle Cocoa window and GUI
   - Windows: Utilize PyQT6
 - [X] Better Connection Logic
-- [X] Fix caps lock issue on OSX
-- [ ] Improve OSX server key binding
-- [ ] Shared Drag and Drop
-- [X] Better Connection Security
+- [X] **Seamless Clipboard Sharing across devices**
+- [X] **Seamless File Sharing across devices**
+  - [ ] Efficient File Transfer of large files
+- [X] Better Mouse Control
+  - [ ] Improve mouse transition
+- [X] Better Keyboard Control
+  - [X] Fix caps lock issue on OSX
+  - [ ] Implement custom key binding
+- [X] Better **Connection Security** (TLS/SSL)
+- [X] Clients-Server **auto discovery**
