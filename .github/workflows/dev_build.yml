@@ -60,7 +60,6 @@ jobs:
         run: |
           pip install -r requirements/Osx/requirements.txt
           pip install nuitka==2.5.4
-          pip install pyobjc-framework-Quartz
       - name: Install ccache
         run: |
           brew install ccache
@@ -72,7 +71,7 @@ jobs:
           --follow-imports --output-dir=dist \
           --macos-create-app-bundle \
           --disable-console \
-          --include-package=Quartz \
+          --include-package=pyobjc \
           --include-package=pynput \
           --output-filename=PyContinuity \
           --product-name="PyContinuity" \
