@@ -79,6 +79,7 @@ jobs:
           --macos-create-app-bundle \
           --disable-console \
           --include-package=pynput \
+          --include-module=pynput \
           --include-package-data=pynput \
           --include-module=Quartz \
           --include-package=Quartz \
