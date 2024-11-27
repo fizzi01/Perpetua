@@ -55,6 +55,7 @@ jobs:
       - name: Install requirements
         run: |
           pip install -r requirements/Osx/requirements.txt
+          pip install nuitka==2.5.4
       - name: Install ccache
         run: |
           brew install ccache
