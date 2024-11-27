@@ -79,6 +79,8 @@ jobs:
           --macos-create-app-bundle \
           --disable-console \
           --include-package=pynput \
+          --include-plugin-directory=pynput \
+          --include-package-data=pynput \
           --output-filename=PyContinuity \
           --product-name="PyContinuity" \
           -o PyContinuity start.py
