@@ -158,16 +158,19 @@ class FileTransferEventHandler:
 
     def handle_file_copy(self, file_info, ownership):
         with self.lock:
+            file_path = urllib.parse.quote(file_info['file_path'])
+            file_name = urllib.parse.quote(file_info['file_name'])
+
             self.save_file_info(
                 owner=ownership,
-                file_path=file_info['file_path'],
+                file_path=file_path,
                 file_size=file_info['file_size'],
-                file_name=file_info['file_name'],
+                file_name=file_name
             )
 
             if ownership != self.LOCAL_SERVER_OWNERSHIP:  # If i'm not the server, i need to forward the file info
                 self.io_manager.send_file_copy(None, format_command(
-                    f"file_copied {file_info['file_name']} {file_info['file_size']} {file_info['file_path']}"))
+                    f"file_copied {file_name} {file_info['file_size']} {file_path}"))
                 self.log(f"File copy forwarded from {ownership} to Server: {file_info['file_path']}")
 
             self.log(f"File copied registered from {ownership}: {file_info['file_path']}")
@@ -250,7 +253,7 @@ class FileTransferEventHandler:
                     self.is_being_processed.clear()
 
     def _write_chunks(self):
-        max_iterations = 10  # Maximum number of iterations to wait for the file to reach the expected size
+        max_iterations = 40  # Maximum number of iterations to wait for the file to reach the expected size
         iteration_count = 0
 
         while True:
