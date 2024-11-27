@@ -46,11 +46,10 @@ class FileTransferEventHandler:
         self.to_forward = threading.Event()
         self.is_being_processed = threading.Event()
 
-        self.file_data = bytearray()
-        self.file = None
-
         self.io_manager = QueueManager(None)
         self.log = Logger.get_instance().log
+
+        self.is_end = False
 
         self.chunk_queue = Queue()
         self.chunk_dict = {}
@@ -182,9 +181,12 @@ class FileTransferEventHandler:
                 self.log("No file info available", Logger.WARNING)
                 return
 
-            if not requester in [self.CLIENT_REQUEST, self.SERVER_REQUEST]:
-                owner = file_info['owner']  # Owner screen name
-                file_path = urllib.parse.unquote(file_info['file_path'])
+            if not requester in [self.CLIENT_REQUEST]:
+                if "owner" in file_info and "path" in file_info:
+                    owner = file_info['owner']  # Owner screen name
+                    file_path = urllib.parse.unquote(file_info['path'])
+                else:
+                    return
             else:
                 owner = None
                 file_path = "client_request"
@@ -212,11 +214,13 @@ class FileTransferEventHandler:
     def end_file_transfer(self):
         self.is_being_processed.clear()
         self.to_forward.clear()
+        self.is_end = True
 
     def handle_file_start(self, file_info):
         with self.lock:
             self.log(f"File transfer started: {file_info['file_name']}")
             self.is_being_processed.set()  # Set the flag to start processing the file data
+            self.is_end = False
 
             encoded_file_name = urllib.parse.unquote(file_info['file_name'])
 
@@ -246,6 +250,9 @@ class FileTransferEventHandler:
                     self.is_being_processed.clear()
 
     def _write_chunks(self):
+        max_iterations = 10  # Maximum number of iterations to wait for the file to reach the expected size
+        iteration_count = 0
+
         while True:
             try:
                 chunk_index, chunk_data = self.chunk_queue.get(timeout=1)
@@ -262,8 +269,19 @@ class FileTransferEventHandler:
                         self.is_being_processed.clear()
                         self.chunk_dict.clear()
                         self.next_chunk_index = 0
+                        iteration_count = 0  # Reset iteration count
 
             except Empty:
+                if not self.is_being_processed.is_set() and self.is_end:
+                    iteration_count += 1
+                    if iteration_count >= max_iterations:
+                        self.log(f"[FILE TRANSFER] File size did not reach expected size",
+                                 Logger.ERROR)
+                        os.remove(self.save_path)
+                        self.is_being_processed.clear()
+                        self.chunk_dict.clear()
+                        self.next_chunk_index = 0
+                        iteration_count = 0  # Reset iteration count
                 continue
             except Exception as e:
                 self.log(f"Error writing file chunk: {e}", Logger.ERROR)
@@ -302,12 +320,7 @@ class FileTransferEventHandler:
                 self.to_forward.clear()
             else:
                 # Complete the file transfer
-                try:
-                    # Check if the file is completely downloaded
-                    pass
-                except Exception as e:
-                    self.log(f"[FILE TRANSFER] {e}", Logger.ERROR)
-                    #os.remove(self.save_path)
+                self.end_file_transfer()
 
             self.is_being_processed.clear()
 

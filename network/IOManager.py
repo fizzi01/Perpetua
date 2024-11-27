@@ -1,9 +1,11 @@
+import base64
 import os
 import socket
 import threading
 import time
 import urllib.parse
 from queue import Queue, Empty, PriorityQueue
+import heapq
 
 from utils.Logging import Logger
 from utils.netData import *
@@ -15,6 +17,49 @@ KEYBOARD_BATCH_INTERVAL = 0.01  # 20 ms, intervallo per inviare il batch dei mes
 KEYBOARD_MAX_BATCH_SIZE = 7  # Massimo numero di messaggi nel batch prima di inviare
 
 FILE_MAX_BATCH_SIZE = CHUNK_SIZE - END_DELIMITER.encode().__len__()  # Massimo numero di byte nel batch prima di inviare
+
+
+class StablePriorityQueue:
+    def __init__(self):
+        self._queue = []  # La heap
+        self._counter = 0  # Contatore crescente per preservare l'ordine
+        self._condition = threading.Condition()  # Sincronizzazione per il timeout
+
+    def put(self, priority, item):
+        with self._condition:
+            # Inserisce nella heap una tupla con: (priorità, contatore, elemento)
+            heapq.heappush(self._queue, (priority, self._counter, item))
+            self._counter += 1
+            # Notifica i thread in attesa che un elemento è stato aggiunto
+            self._condition.notify()
+
+    def get(self, timeout=None):
+        with self._condition:
+            # Attendi finché non ci sono elementi disponibili o il timeout scade
+            end_time = time.time() + timeout if timeout is not None else None
+            while not self._queue:
+                remaining = end_time - time.time() if end_time is not None else None
+                if remaining is not None and remaining <= 0:
+                    raise Empty
+                self._condition.wait(remaining)
+
+            # Estrai l'elemento con priorità più alta (o ordine corretto a parità di priorità)
+            return None, heapq.heappop(self._queue)[2]
+
+    def peek(self):
+        # Visualizza il prossimo elemento senza rimuoverlo
+        with self._condition:
+            if not self._queue:
+                raise IndexError("peek from an empty priority queue")
+            return self._queue[0][2]
+
+    def is_empty(self):
+        with self._condition:
+            return len(self._queue) == 0
+
+    def size(self):
+        with self._condition:
+            return len(self._queue)
 
 
 class QueueManager:
@@ -194,7 +239,7 @@ class QueueManager:
                 # Invia file_start con i metadati del file
                 file_name = urllib.parse.quote(os.path.basename(file_path))
                 file_size = os.path.getsize(file_path)
-                encoded_file_path = urllib.parse.quote(file_path)
+
                 start_message = format_command(f"file_start {file_name} {file_size}")
                 self.MessageSender.send(self.FILE_PRIORITY, (screen, start_message))
                 self.log(f"Invio file_start: {file_name} ({file_size} byte)")
@@ -202,16 +247,18 @@ class QueueManager:
                 # Invia il file in chunk
                 chunk_size_with_delimiter = CHUNK_SIZE - len(CHUNK_DELIMITER.encode())
                 chunk_size_with_end_delimiter = CHUNK_SIZE - len(END_DELIMITER.encode())
-                real_chunk_size = min(chunk_size_with_delimiter, chunk_size_with_end_delimiter)
+                real_chunk_size = int(min(chunk_size_with_delimiter, chunk_size_with_end_delimiter) * 0.65)
+
+                chunk_index = 0
 
                 while True:
                     chunk = file.read(real_chunk_size)
                     if not chunk:
                         break
-                    encoded_chunk = chunk.hex()
-                    chunck_message = format_command(f"file_chunk {encoded_chunk}")
+                    encoded_chunk = base64.b64encode(chunk).decode()
+                    chunck_message = format_command(f"file_chunk {encoded_chunk} {chunk_index}")
+                    chunk_index += 1
                     self.MessageSender.send(self.FILE_PRIORITY, (screen, chunck_message))
-                    self.log(f"Invio chunk di {len(chunk)} byte")
 
                 # Invia file_end
                 end_message = format_command(f"file_end {file_name}")
@@ -273,7 +320,7 @@ class BaseMessageQueueManager:
 
     def __init__(self):
         if not hasattr(self, 'initialized'):
-            self.send_queue = PriorityQueue()
+            self.send_queue = StablePriorityQueue()
 
             self._sending_thread = threading.Thread(target=self._process_send_queue, daemon=True)
             self._threads_started = False
@@ -297,7 +344,7 @@ class BaseMessageQueueManager:
             self._threads_started = True
 
     def send(self, priority, message):
-        self.send_queue.put((priority, message))
+        self.send_queue.put(priority, message)
 
     def _process_send_queue(self):
         while not self._stop_event.is_set():
@@ -318,7 +365,9 @@ class BaseMessageQueueManager:
     @staticmethod
     def _send_in_chunks(conn, data):
         # Send data in chunks to ensure it fits within the buffer limit
+        # Se data inizia con file_chunk, deve codificare il comando ma non il contenuto ovvero "file_chunk::content" codifica solo "file_chunk::"
         data_bytes = data.encode()
+
         data_length = len(data_bytes)
 
         chunk_size_with_delimiter = CHUNK_SIZE - len(CHUNK_DELIMITER.encode())
