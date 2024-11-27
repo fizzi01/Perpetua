@@ -81,7 +81,7 @@ jobs:
           --include-package=pynput \
           --include-package-data=pynput \
           --include-module=Quartz \
-          --include-moduele=NSSystemDefined \
+          --include-package=Quartz \
           --output-filename=PyContinuity \
           --product-name="PyContinuity" \
           -o PyContinuity start.py
