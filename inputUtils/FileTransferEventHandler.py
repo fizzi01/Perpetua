@@ -1,5 +1,8 @@
+import ast
+import base64
 import os
 import threading
+from datetime import datetime
 from queue import Queue, Empty
 import urllib.parse
 
@@ -49,6 +52,12 @@ class FileTransferEventHandler:
         self.io_manager = QueueManager(None)
         self.log = Logger.get_instance().log
 
+        self.chunk_queue = Queue()
+        self.chunk_dict = {}
+        self.next_chunk_index = 0
+        self.writer_thread = threading.Thread(target=self._write_chunks, daemon=True)
+        self.writer_thread.start()
+
     def set_actors(self, owner, requester):
         with self.lock:
             self.owner = owner
@@ -64,16 +73,15 @@ class FileTransferEventHandler:
 
     def save_file_info(self, owner: str = "", file_path: str = "", file_size: int = 0, file_hash: str = None,
                        file_type: str = "", file_name: str = "", file_extension: str = ""):
-        self.log(f"Invoke save_file_info: {owner}, {file_path}, {file_size}, {file_hash}, {file_type}, {file_name}, {file_extension}")
 
         self.current_file_info = {
             'owner': owner,
-            'file_path': file_path,
-            'file_size': file_size,
-            'file_hash': file_hash,
-            'file_type': file_type,
-            'file_name': file_name,
-            'file_extension': file_extension
+            'path': file_path,
+            'size': file_size,
+            'hash': file_hash,
+            'type': file_type,
+            'name': file_name,
+            'extension': file_extension
         }
 
     def start_download(self, file_path):
@@ -143,6 +151,7 @@ class FileTransferEventHandler:
             return None
 
     def handle_file_paste(self, save_path, ownership):
+        self.log(f"File paste request from {ownership}: {save_path}")
         self.set_save_path(save_path)
 
         # Send file request to server
@@ -169,12 +178,16 @@ class FileTransferEventHandler:
             self.log(f"File request received from {requester}")
             file_info = self.current_file_info
 
-            if not file_info:
+            if not file_info and not requester in [self.LOCAL_OWNERSHIP, self.LOCAL_SERVER_OWNERSHIP]:
                 self.log("No file info available", Logger.WARNING)
                 return
 
-            owner = file_info['owner']  # Owner screen name
-            file_path = urllib.parse.unquote(file_info['file_path'])
+            if not requester in [self.CLIENT_REQUEST, self.SERVER_REQUEST]:
+                owner = file_info['owner']  # Owner screen name
+                file_path = urllib.parse.unquote(file_info['file_path'])
+            else:
+                owner = None
+                file_path = "client_request"
 
             if requester == owner:  # Block if requester is the owner
                 return
@@ -189,10 +202,12 @@ class FileTransferEventHandler:
                 self.is_being_processed.set()
                 self.to_forward.set() if not requester in [self.LOCAL_OWNERSHIP,
                                                            self.LOCAL_SERVER_OWNERSHIP] else self.to_forward.clear()
+                self.log(f"File request forwarded to {owner}: {file_path}")
 
-    def forward_file_data(self, data):
+    def forward_file_data(self, data, command):
         if self.is_being_processed.is_set() and self.to_forward.is_set():
-            self.io_manager.forward_file_data(self.requester, data)
+            command = format_command(f"{command} {data}")
+            self.io_manager.forward_file_data(self.requester, command)
 
     def end_file_transfer(self):
         self.is_being_processed.clear()
@@ -203,41 +218,77 @@ class FileTransferEventHandler:
             self.log(f"File transfer started: {file_info['file_name']}")
             self.is_being_processed.set()  # Set the flag to start processing the file data
 
-            encoded_file_name = urllib.parse.quote(file_info['name'])
-            encoded_file_path = urllib.parse.quote(file_info['path'])
+            encoded_file_name = urllib.parse.unquote(file_info['file_name'])
 
             if self.to_forward.is_set():  # Case where i'm the server, and i need to forward the file info
                 self.io_manager.forward_file_data(self.requester, format_command(
-                    f"file_start {encoded_file_name} {file_info['file_size']} {encoded_file_path}"))
+                    f"file_start {encoded_file_name} {file_info['file_size']}"))
             else:  # Case where i'm the requester, and i received the file info
                 self.save_file_info(
-                    file_path=encoded_file_path,
                     file_size=file_info['file_size'],
                     file_name=encoded_file_name,
                 )
 
                 try:
-                    self.save_path = os.path.join(self.save_path, encoded_file_name)
-                    self.file = open(self.save_path, 'wb')
+                    # Check if the file already exists, if so change the name
+                    if os.path.exists(os.path.join(self.save_path, encoded_file_name)):
+                        # Takes the file name and adds a number to it, to avoid overwriting
+                        file_name, file_extension = os.path.splitext(encoded_file_name)
+                        current_date = datetime.now().strftime("%Y-%m-%d_%H-%M-%S")
+                        file_name = file_name + current_date + file_extension
+                        self.save_path = os.path.join(self.save_path, file_name)
+                    else:
+                        self.save_path = os.path.join(self.save_path, encoded_file_name)
+
                     self.log(f"File transfer started: {self.save_path}")
                 except Exception as e:
                     self.log(f"Error opening file: {e}", Logger.ERROR)
                     self.is_being_processed.clear()
 
-    def handle_file_chunk(self, chunk_data):
+    def _write_chunks(self):
+        while True:
+            try:
+                chunk_index, chunk_data = self.chunk_queue.get(timeout=1)
+                self.chunk_dict[chunk_index] = chunk_data
+
+                while self.next_chunk_index in self.chunk_dict:
+                    with open(self.save_path, 'ab') as file:
+                        file.write(self.chunk_dict.pop(self.next_chunk_index))
+                    self.next_chunk_index += 1
+
+                    # Check if the file is completely downloaded
+                    if os.path.getsize(self.save_path) == self.current_file_info['size']:
+                        self.log(f"File transfer completed: {self.save_path}")
+                        self.is_being_processed.clear()
+                        self.chunk_dict.clear()
+                        self.next_chunk_index = 0
+
+            except Empty:
+                continue
+            except Exception as e:
+                self.log(f"Error writing file chunk: {e}", Logger.ERROR)
+                os.remove(self.save_path)
+                self.is_being_processed.clear()
+
+    def handle_file_chunk(self, chunk_data, command=None):
         with self.lock:
             if not self.is_being_processed.is_set():
                 return
 
             if self.to_forward.is_set():  # Case where i'm the server, and i need to forward the file data
-                self.forward_file_data(chunk_data)
+                self.forward_file_data(chunk_data, command)
             else:  # Case where i'm the requester, and i received the file data
                 try:
-                    self.file.write(bytes.fromhex(chunk_data))
-                    self.log(f"File chunk written: {len(chunk_data)} bytes")
+                    # Extract chunk index and data
+                    chunk_data, chunk_index = chunk_data
+                    # Trait string "b'...'" as a byte string
+                    chunk_data = chunk_data.replace("b'", "").replace("'", "")
+                    chunk_data = base64.b64decode(chunk_data)
+                    self.log(f"Received chunk {chunk_index}")
+                    self.chunk_queue.put((int(chunk_index), chunk_data))
+
                 except Exception as e:
                     self.log(f"Error writing file chunk: {e}", Logger.ERROR)
-                    self.file.close()
                     os.remove(self.save_path)
                     self.is_being_processed.clear()
 
@@ -253,15 +304,10 @@ class FileTransferEventHandler:
                 # Complete the file transfer
                 try:
                     # Check if the file is completely downloaded
-                    if os.path.getsize(self.save_path) == self.current_file_info['size']:
-                        self.log(f"File transfer completed: {self.save_path}")
-                    else:
-                        raise Exception("File transfer incomplete, file size mismatch")
-
-                    self.file.close()
+                    pass
                 except Exception as e:
                     self.log(f"[FILE TRANSFER] {e}", Logger.ERROR)
-                    os.remove(self.save_path)
+                    #os.remove(self.save_path)
 
             self.is_being_processed.clear()
 

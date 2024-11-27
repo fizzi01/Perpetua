@@ -137,9 +137,13 @@ class ServerCommandProcessor:
         if command_type == "file_request":
             self.fileTransferHandler.handle_file_request(None)
         elif command_type == "file_start":
-            self.fileTransferHandler.handle_file_start(parts[1:])
+            file_info = {
+                "file_name": parts[1],
+                "file_size": int(parts[2]),
+            }
+            self.fileTransferHandler.handle_file_start(file_info)
         elif command_type == "file_chunk":
-            self.fileTransferHandler.handle_file_chunk(parts[1])
+            self.fileTransferHandler.handle_file_chunk(parts[1:])
         elif command_type == "file_end":
             self.fileTransferHandler.handle_file_end()
         elif command_type == "mouse":

@@ -782,6 +782,7 @@ class ClientKeyboardListener:
             if window_text == 'Program Manager':
                 # Restituisce il percorso del Desktop
                 desktop_path = os.path.join(os.environ["USERPROFILE"], "Desktop")
+                # Clean the path
                 return desktop_path
 
             shell = win32com.client.Dispatch("Shell.Application")
@@ -808,9 +809,9 @@ class ClientKeyboardListener:
             data = key.char
 
         # Check if command + v is pressed
-        if key in [Key.cmd, Key.cmd_l]:
+        if key in [Key.ctrl_l, Key.ctrl]:
             self.command_pressed = True
-        elif data == "v" and self.command_pressed:
+        elif data == "\x16" and self.command_pressed:
             current_dir = self.get_current_clicked_directory()
             if current_dir:
                 self.file_transfer_handler.handle_file_paste(current_dir, self.file_transfer_handler.CLIENT_REQUEST)
@@ -818,5 +819,5 @@ class ClientKeyboardListener:
     def on_release(self, key: Key | KeyCode | None):
 
         # Check if command is released
-        if key == Key.cmd:
+        if key in [Key.ctrl_l, Key.ctrl]:
             self.command_pressed = False
