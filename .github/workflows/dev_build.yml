@@ -72,6 +72,8 @@ jobs:
           --follow-imports --output-dir=dist \
           --macos-create-app-bundle \
           --disable-console \
+          --include-package=Quartz \
+          --include-package=pynput \
           --output-filename=PyContinuity \
           --product-name="PyContinuity" \
           -o PyContinuity start.py
