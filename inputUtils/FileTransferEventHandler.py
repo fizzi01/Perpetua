@@ -1,4 +1,3 @@
-import ast
 import base64
 import os
 import threading
@@ -179,11 +178,11 @@ class FileTransferEventHandler:
             self.log(f"File request received from {requester}")
             file_info = self.current_file_info
 
-            if not file_info and not requester in [self.LOCAL_OWNERSHIP, self.LOCAL_SERVER_OWNERSHIP]:
+            if not file_info and requester not in [self.LOCAL_OWNERSHIP, self.LOCAL_SERVER_OWNERSHIP]:
                 self.log("No file info available", Logger.WARNING)
                 return
 
-            if not requester in [self.CLIENT_REQUEST]:
+            if requester not in [self.CLIENT_REQUEST]:
                 if "owner" in file_info and "path" in file_info:
                     owner = file_info['owner']  # Owner screen name
                     file_path = urllib.parse.unquote(file_info['path'])
@@ -204,7 +203,7 @@ class FileTransferEventHandler:
                 self.requester = requester
                 self.io_manager.send_file_request(owner, format_command(f"file_request {file_path}"))
                 self.is_being_processed.set()
-                self.to_forward.set() if not requester in [self.LOCAL_OWNERSHIP,
+                self.to_forward.set() if requester not in [self.LOCAL_OWNERSHIP,
                                                            self.LOCAL_SERVER_OWNERSHIP] else self.to_forward.clear()
                 self.log(f"File request forwarded to {owner}: {file_path}")
 
