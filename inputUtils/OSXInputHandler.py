@@ -458,32 +458,38 @@ class ServerClipboardListener:
 
     @staticmethod
     def get_clipboard_files():
-        pb = NSPasteboard.generalPasteboard()
-        types = pb.types()
+        try:
+            pb = NSPasteboard.generalPasteboard()
+            types = pb.types()
 
-        # Controlla se ci sono file o directory nella clipboard
-        if NSFilenamesPboardType in types:
-            file_paths = pb.propertyListForType_(NSFilenamesPboardType)
-            results = []
-            for path in file_paths:
-                if os.path.isdir(path):
-                    results.append((path, "directory"))
-                elif os.path.isfile(path):
-                    results.append((path, "file"))
-                else:
-                    results.append((path, "unknown"))
-            return results
-        return None
+            # Controlla se ci sono file o directory nella clipboard
+            if NSFilenamesPboardType in types:
+                file_paths = pb.propertyListForType_(NSFilenamesPboardType)
+                results = []
+                for path in file_paths:
+                    if os.path.isdir(path):
+                        results.append((path, "directory"))
+                    elif os.path.isfile(path):
+                        results.append((path, "file"))
+                    else:
+                        results.append((path, "unknown"))
+                return results
+            return None
+        except Exception as e:
+            return None
 
     @staticmethod
     def get_file_info(file_path):
-        if os.path.isfile(file_path):
-            return {
-                'file_name': os.path.basename(file_path),
-                'file_size': os.path.getsize(file_path),
-                'file_path': file_path
-            }
-        return None
+        try:
+            if os.path.isfile(file_path):
+                return {
+                    'file_name': os.path.basename(file_path),
+                    'file_size': os.path.getsize(file_path),
+                    'file_path': file_path
+                }
+            return None
+        except Exception as e:
+            return None
 
     def _run(self):
         while not self._stop_event.is_set():

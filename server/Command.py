@@ -77,9 +77,9 @@ class FileCopiedCommand(Command):
 
     def execute(self):
         try:
-            file_name = self.parts[1]
-            file_path = self.parts[3]
-            file_size = int(self.parts[2])
+            file_name = self.parts[0]
+            file_path = self.parts[2]
+            file_size = int(self.parts[1])
 
             self.file_event_handler.save_file_info(
                 owner=self.client,
@@ -124,11 +124,10 @@ class FileStartCommand(Command):
         try:
             file_info = {
                 'file_name': self.parts[0],
-                'file_size': int(self.parts[1]),
-                'file_path': self.parts[2]
+                'file_size': int(self.parts[1])
             }
             self.file_event_handler.handle_file_start(file_info)
-            self.logger(f"File start received from {self.requester}: {file_info['file_path']}")
+            self.logger(f"File start received from {self.requester}")
         except Exception as e:
             self.logger(f"Error handling file_start: {e}", Logger.ERROR)
 
@@ -142,7 +141,7 @@ class FileChunkCommand(Command):
 
     def execute(self):
         try:
-            self.file_event_handler.handle_file_chunk(self.data)
+            self.file_event_handler.handle_file_chunk(self.data[1:], self.data[0])
             self.logger(f"File chunk received from {self.requester}")
         except Exception as e:
             self.logger(f"Error handling file_chunk: {e}", Logger.ERROR)
@@ -184,7 +183,7 @@ class CommandFactory:
         elif parts[0] == "file_start":
             return FileStartCommand(screen, parts[1:])
         elif parts[0] == "file_chunk":
-            return FileChunkCommand(screen, parts[1:])
+            return FileChunkCommand(screen, parts)
         elif parts[0] == "file_end":
             return FileEndCommand(screen)
         return None
