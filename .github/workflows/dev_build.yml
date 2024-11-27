@@ -80,6 +80,7 @@ jobs:
           --disable-console \
           --include-package=pynput \
           --include-package-data=pynput \
+          --include-module=Quartz \
           --output-filename=PyContinuity \
           --product-name="PyContinuity" \
           -o PyContinuity start.py
