@@ -3,6 +3,7 @@ import threading
 import time
 from multiprocessing import Process, Pipe, Queue
 from utils.Logging import Logger
+from window.InterfaceWindow import AbstractHiddenWindow
 
 import AppKit
 import objc
@@ -160,7 +161,7 @@ class TransparentWindowApp:
 transparent_window_instance = None
 
 
-class HiddenWindow:
+class HiddenWindow(AbstractHiddenWindow):
     def __init__(self, root=None):
         self.input_queue = Queue()
         self.output_queue = Queue()
