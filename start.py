@@ -133,15 +133,6 @@ def check_osx_accessibility():
             print(
                 "\033[91mA problem occurred while checking app permissions. Please make sure the app has the required permissions.\033[0m")
 
-            from AppKit import NSAlert, NSApp
-
-            alert = NSAlert.alloc().init()
-            alert.setMessageText_("A problem occurred while checking app permissions.")
-            alert.setInformativeText_("Please make sure the app has the required permissions.")
-            alert.addButtonWithTitle_("OK")
-            NSApp.activateIgnoringOtherApps_(True)
-            alert.runModal()
-
             return False
         else:
             print("\033[92mApp permissions OK!\033[0m")

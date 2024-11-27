@@ -135,6 +135,7 @@ def check_osx_permissions():
         print("[CHECK] Loading IOT")
         ioset = load_iot()
         is_input_monitor_required = is_should_check_input()
+        is_keyboard_ok = False
 
         if is_input_monitor_required:
             print("[CHECK] Input monitoring is required")
@@ -144,24 +145,24 @@ def check_osx_permissions():
 
             if not is_keyboard_ok:
                 on_input_monitor_click(ioset)
-                """thread = Thread(target=on_input_monitor_click, args=(
-                    ioset,
-                ))
-                thread.start()"""
+                is_keyboard_ok = is_keyboard_verified(ioset)
+                if not is_keyboard_ok:
+                    print("[CHECK] Input monitoring permission not granted")
+                    return False
+        else:
+            is_keyboard_ok = True
 
-            else:
-                print("[CHECK] Is keyboard trusted: {}".format(is_keyboard_ok))
+        is_accessibility_ok = is_accessibility_verified()
+        print("[CHECK] Is accessibility trusted: {}".format(is_accessibility_ok))
 
-                is_accessibility_ok = is_accessibility_verified()
-                print("[CHECK] Is accessibility trusted: {}".format(is_accessibility_ok))
+        if not is_accessibility_ok:
+            is_accessibility_ok = on_accessibility_click()
+            if not is_accessibility_ok:
+                print("[CHECK] Accessibility permission not granted")
+                return False
 
-                if not is_accessibility_ok:
-                    is_accessibility_ok = on_accessibility_click()
-
-                # if not is_accessibility_ok:
-                #     open_accessibility_settings()
-
-                return is_accessibility_ok
+        return is_keyboard_ok and is_accessibility_ok
 
     except Exception as e:
         print(e)
+        return False
