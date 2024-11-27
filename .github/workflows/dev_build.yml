@@ -60,10 +60,19 @@ jobs:
         run: |
           pip install -r requirements/Osx/requirements.txt
           pip install nuitka==2.5.4
+      - name: Install clang
+        run: brew install clang-16
       - name: Install ccache
         run: |
           brew install ccache
           export PATH="/usr/local/opt/ccache/libexec:$PATH"
+      - name: Setup ccache
+        uses: actions/cache@v3
+        with:
+          path: ~/.ccache
+          key: ${{ runner.os }}-ccache-${{ hashFiles('**/*.c') }}
+          restore-keys: |
+            ${{ runner.os }}-ccache
       - name: Build app
         run: |
           nuitka --standalone \
