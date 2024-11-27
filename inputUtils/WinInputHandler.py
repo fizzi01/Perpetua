@@ -3,6 +3,7 @@ import threading
 import time
 from collections.abc import Callable
 import pyperclip
+import pythoncom
 import win32clipboard
 import win32con
 import win32com.client
@@ -691,7 +692,7 @@ class ClientMouseController:
         dx = int(dx)
         dy = int(dy)
 
-        self.smooth_position(current_x, current_y, current_x + dx, current_y + dy, steps=10)
+        self.smooth_position(current_x, current_y, current_x + dx, current_y + dy, steps=1)
 
     def process_mouse_command(self, x, y, mouse_action, is_pressed):
         self.get_server_screen_size()
@@ -767,39 +768,44 @@ class ClientKeyboardListener:
 
     @staticmethod
     def get_current_clicked_directory():
-        # Ottieni l'handle della finestra attiva
-        hwnd = win32gui.GetForegroundWindow()
+        pythoncom.CoInitialize()
+        try:
+            # Ottieni l'handle della finestra attiva
+            hwnd = win32gui.GetForegroundWindow()
 
-        # Ottieni il processo associato
-        _, pid = win32process.GetWindowThreadProcessId(hwnd)
-        process = psutil.Process(pid)
+            # Ottieni il processo associato
+            _, pid = win32process.GetWindowThreadProcessId(hwnd)
+            process = psutil.Process(pid)
 
-        # Verifica se il processo è Esplora Risorse
-        if "explorer.exe" in process.name().lower():
-            # Verifica se la finestra attiva è il Desktop
-            # Desktop ha tipicamente titolo vuoto o nullo
-            window_text = win32gui.GetWindowText(hwnd).strip()
-            if window_text == 'Program Manager':
-                # Restituisce il percorso del Desktop
-                desktop_path = os.path.join(os.environ["USERPROFILE"], "Desktop")
-                # Clean the path
-                return desktop_path
+            # Verifica se il processo è Esplora Risorse
+            if "explorer.exe" in process.name().lower():
+                # Verifica se la finestra attiva è il Desktop
+                # Desktop ha tipicamente titolo vuoto o nullo
+                window_text = win32gui.GetWindowText(hwnd).strip()
+                if window_text == 'Program Manager':
+                    # Restituisce il percorso del Desktop
+                    desktop_path = os.path.join(os.environ["USERPROFILE"], "Desktop")
+                    # Clean the path
+                    return desktop_path
 
-            shell = win32com.client.Dispatch("Shell.Application")
-            windows = shell.Windows()
+                shell = win32com.client.Dispatch("Shell.Application")
+                windows = shell.Windows()
 
-            for window in windows:
-                # Confronta l'handle della finestra attiva
-                if int(hwnd) == int(window.HWND):
-                    # Ottieni il percorso della directory attiva
-                    directory = window.LocationURL
-                    if directory.startswith("file:///"):
-                        # Converte il formato URL in percorso Windows
-                        directory = directory[8:].replace("/", "\\")
-                    return directory
+                for window in windows:
+                    # Confronta l'handle della finestra attiva
+                    if int(hwnd) == int(window.HWND):
+                        # Ottieni il percorso della directory attiva
+                        directory = window.LocationURL
+                        if directory.startswith("file:///"):
+                            # Converte il formato URL in percorso Windows
+                            directory = directory[8:].replace("/", "\\")
+                        return directory
 
-        # Se il processo non è Esplora Risorse
-        return None
+            # Se il processo non è Esplora Risorse
+            return None
+        finally:
+            # Libera le risorse COM
+            pythoncom.CoUninitialize()
 
     def on_press(self, key: Key | KeyCode | None):
 

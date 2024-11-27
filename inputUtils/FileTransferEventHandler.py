@@ -282,7 +282,12 @@ class FileTransferEventHandler:
                     if iteration_count >= max_iterations:
                         self.log(f"[FILE TRANSFER] File size did not reach expected size",
                                  Logger.ERROR)
-                        os.remove(self.save_path)
+
+                        try:
+                            os.remove(self.save_path)
+                        except Exception as e:
+                            pass
+
                         self.is_being_processed.clear()
                         self.chunk_dict.clear()
                         self.next_chunk_index = 0

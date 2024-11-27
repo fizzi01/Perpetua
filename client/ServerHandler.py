@@ -11,7 +11,7 @@ from utils.netData import *
 
 BATCH_PROCESS_INTERVAL = 0.0001
 TIMEOUT = 0.00001
-MAX_WORKERS = 20
+MAX_WORKERS = 30
 
 
 class ServerHandlerFactory:
