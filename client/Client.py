@@ -3,6 +3,7 @@ import threading
 import time
 from collections.abc import Callable
 
+from client.ClientState import ClientState
 from inputUtils import InputHandler as inputHandler
 from network.ClientSocket import ClientSocket, ConnectionHandlerFactory
 from network.IOManager import ClientMessageQueueManager, QueueManager
@@ -20,8 +21,6 @@ class Client:
         self._thread_pool = []
         self._started = False  # Main variable for client status, if False the client is stopped automatically
         self.lock = threading.RLock()
-
-        self.client_info = {"screen_size": screen_size()}
 
         # Logging and IO Managers are shared resources (should be initialized first)
         # Initialize logging
@@ -63,6 +62,10 @@ class Client:
         self._thread_pool.append(self.listenersQueueManager)
 
     def _initialize_client(self, server, port, threshold, wait, use_ssl, certfile):
+        self.state = ClientState()
+
+        self.client_info = {"screen_size": screen_size()}
+
         self.server = server
         self.port = port
         self.threshold = threshold

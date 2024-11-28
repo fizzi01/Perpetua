@@ -17,6 +17,7 @@ from pynput.keyboard import Key, KeyCode, Listener as KeyboardListener, Controll
 import keyboard
 from pynput.mouse import Button, Controller as MouseController, Listener as MouseListener
 
+from client.ClientState import ClientState, HiddleState
 from config.ServerConfig import Clients
 from inputUtils.FileTransferEventHandler import FileTransferEventHandler
 from network.IOManager import QueueManager
@@ -554,6 +555,8 @@ class ClientMouseListener:
         self.screen_height = screen_height
         self.threshold = threshold
         self.send = QueueManager(None).send_mouse
+        self.client_status = ClientState()
+        self.log = Logger.get_instance().log
         self._listener = MouseListener(on_move=self.handle_mouse, on_scroll=self.on_scroll, on_click=self.on_click)
 
     def get_listener(self):
@@ -572,14 +575,20 @@ class ClientMouseListener:
         return True
 
     def handle_mouse(self, x, y):
-        if x <= self.threshold:
-            self.send(None, format_command(f"return left {y / self.screen_height}"))
-        elif x >= self.screen_width - self.threshold:
-            self.send(None, format_command(f"return right {y / self.screen_height}"))
-        elif y <= self.threshold:
-            self.send(None, format_command(f"return up {x / self.screen_width}"))
-        elif y >= self.screen_height - self.threshold:
-            self.send(None, format_command(f"return down {x / self.screen_width}"))
+
+        if self.client_status.get_state():  # Return True if the client is in Controlled state
+            if x <= self.threshold:
+                self.send(None, format_command(f"return left {y / self.screen_height}"))
+                self.client_status.set_state(HiddleState())
+            elif x >= self.screen_width - self.threshold:
+                self.send(None, format_command(f"return right {y / self.screen_height}"))
+                self.client_status.set_state(HiddleState())
+            elif y <= self.threshold:
+                self.send(None, format_command(f"return up {x / self.screen_width}"))
+                self.client_status.set_state(HiddleState())
+            elif y >= self.screen_height - self.threshold:
+                self.send(None, format_command(f"return down {x / self.screen_width}"))
+                self.client_status.set_state(HiddleState())
 
         return True
 

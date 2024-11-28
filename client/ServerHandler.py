@@ -5,6 +5,7 @@ from concurrent.futures import ThreadPoolExecutor
 from time import sleep, time
 from queue import Queue, Empty
 
+from client.ClientState import ClientState, ControlledState
 from inputUtils.FileTransferEventHandler import FileTransferEventHandler
 from utils.Logging import Logger
 from utils.netData import *
@@ -104,6 +105,7 @@ class ServerHandler:
 class ServerCommandProcessor:
     def __init__(self, client):
         self.client = client
+        self.client_state = ClientState()
         self.on_screen = self.client.on_screen
         self.mouse_controller = self.client.mouse_controller
 
@@ -147,6 +149,11 @@ class ServerCommandProcessor:
         elif command_type == "file_end":
             self.fileTransferHandler.handle_file_end()
         elif command_type == "mouse":
+
+            # If client_state is Hiddle, set it to Controlled
+            if not self.client_state.is_controlled():
+                self.client_state.set_state(ControlledState())
+
             self._process_mouse_command(parts)
         elif command_type == "keyboard":
             self._process_keyboard_command(parts)
