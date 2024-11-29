@@ -31,7 +31,8 @@ class ServerMouseController:
 class ServerMouseListener:
     IGNORE_NEXT_MOVE_EVENT = 0.01
     MAX_DXDY_THRESHOLD = 150
-    SCREEN_CHANGE_DELAY = 0.3
+    SCREEN_CHANGE_DELAY = 0.001
+    EMULATION_STOP_DELAY = 0.5
 
     def __init__(self, change_screen_function: Callable, get_active_screen: Callable,
                  get_status: Callable,
@@ -56,6 +57,7 @@ class ServerMouseListener:
         self.mouse_controller = MouseController()
         self.buttons_pressed = set()
         self.stop_emulation = False
+        self.stop_emulation_timeout = 0
         self.screen_change_in_progress = False
         self.screen_change_timeout = 0
         self.ignore_move_events_until = 0
@@ -109,8 +111,12 @@ class ServerMouseListener:
 
     def warp_cursor_to_center(self):
         current_time = time.time()
+
+        if self.stop_emulation and current_time <= self.stop_emulation_timeout:
+            return
+
         # Check if the screen change is in progress, if yes don't warp the cursor
-        if self.screen_change_in_progress and current_time > self.screen_change_timeout:
+        if self.screen_change_in_progress and current_time <= self.screen_change_timeout:
             return
 
         self.ignore_move_events_until = time.time() + self.IGNORE_NEXT_MOVE_EVENT
@@ -128,7 +134,7 @@ class ServerMouseListener:
             return True
 
         # Check if the screen change is in progress and if the timeout has expired
-        if self.screen_change_in_progress and current_time + 0.299 > self.screen_change_timeout:
+        if self.screen_change_in_progress and current_time > self.screen_change_timeout:
             self.screen_change_in_progress = False
 
         # Calcola il movimento relativo
@@ -145,7 +151,7 @@ class ServerMouseListener:
             self.last_y = y
             return True
 
-        # Aggiorna l'ultima posizione e tempo conosciuti
+        # Aggiorna l'ultima posizione
         self.last_x = x
         self.last_y = y
 
@@ -200,25 +206,31 @@ class ServerMouseListener:
             # Quando si attraversa un bordo, invia una posizione assoluta normalizzata
             if at_right_edge:
                 self.stop_emulation = False
+                self.screen_change_in_progress = True
+                self.screen_change_timeout = time.time() + self.SCREEN_CHANGE_DELAY
                 self.change_screen("right")
-                normalized_x = 0.05  # Entra dal bordo sinistro del client
+                normalized_x = 0  # Entra dal bordo sinistro del client
                 normalized_y = y / self.screen_height
                 self.send("right", format_command(f"mouse position {normalized_x} {normalized_y}"))
                 self.x_print = normalized_x * self.screen_width
                 self.y_print = normalized_y * self.screen_height
             elif at_left_edge:
                 self.stop_emulation = False
+                self.screen_change_in_progress = True
+                self.screen_change_timeout = time.time() + self.SCREEN_CHANGE_DELAY
                 self.change_screen("left")
-                normalized_x = 0.95  # Entra dal bordo destro del client
+                normalized_x = 1  # Entra dal bordo destro del client
                 normalized_y = y / self.screen_height
                 self.send("left", format_command(f"mouse position {normalized_x} {normalized_y}"))
                 self.x_print = normalized_x * self.screen_width
                 self.y_print = normalized_y * self.screen_height
             elif at_bottom_edge:
                 self.stop_emulation = False
+                self.screen_change_in_progress = True
+                self.screen_change_timeout = time.time() + self.SCREEN_CHANGE_DELAY
                 self.change_screen("down")
                 normalized_x = x / self.screen_width
-                normalized_y = 0.05  # Entra dal bordo superiore del client
+                normalized_y = 0  # Entra dal bordo superiore del client
                 self.send("down", format_command(f"mouse position {normalized_x} {normalized_y}"))
                 self.x_print = normalized_x * self.screen_width
                 self.y_print = normalized_y * self.screen_height
@@ -228,7 +240,7 @@ class ServerMouseListener:
                 self.screen_change_timeout = time.time() + self.SCREEN_CHANGE_DELAY
                 self.change_screen("up")
                 normalized_x = x / self.screen_width
-                normalized_y = 0.95  # Entra dal bordo inferiore del client
+                normalized_y = 1  # Entra dal bordo inferiore del client
                 self.send("up", format_command(f"mouse position {normalized_x} {normalized_y}"))
                 self.x_print = normalized_x * self.screen_width
                 self.y_print = normalized_y * self.screen_height
@@ -243,6 +255,7 @@ class ServerMouseListener:
         screen = self.active_screen()
         client = self.clients.get_connection(screen)
 
+        # TODO: Alcune volte col click il mouse mi torna al centro anche sul client
         # Gestisce il passaggio da stima della posizione con cursore bloccato,
         # a posizione assoluta con cursore libero. La stima della posizione è
         # necessaria per evitare che il cursore vada sui bordi ad inizio transizione
@@ -256,11 +269,13 @@ class ServerMouseListener:
             if not self.stop_emulation:
                 self.mouse_controller.position = (self.x_print, self.y_print)
 
-            # Save the current position of the cursor
             self.stop_emulation = True
+            self.stop_emulation_timeout = time.time() + self.EMULATION_STOP_DELAY
         else:
             self.buttons_pressed.discard(button)
-            self.stop_emulation = False
+            current_time = time.time()
+            if self.stop_emulation and current_time > self.stop_emulation_timeout:
+                self.stop_emulation = False
 
         if button == mouse.Button.left:
             if screen and client and pressed:
@@ -371,11 +386,16 @@ class ServerKeyboardListener:
         flags = Quartz.CGEventGetFlags(event)
         caps_lock = flags & Quartz.kCGEventFlagMaskAlphaShift
 
+        # Ottieni il codice del tasto dall'evento
+        media_volume_event = 14
+
         if screen:
             if caps_lock != 0:
                 self.logger("Caps Lock is pressed")
                 return event
-            elif event_type == Quartz.kCGEventKeyDown:  # Key press event
+            elif event_type == Quartz.kCGEventKeyDown:  # Key press event 
+                pass
+            elif event_type == media_volume_event:
                 pass
             else:
                 return event
@@ -475,7 +495,7 @@ class ServerClipboardListener:
                         results.append((path, "unknown"))
                 return results
             return None
-        except Exception as e:
+        except Exception:
             return None
 
     @staticmethod
@@ -488,7 +508,7 @@ class ServerClipboardListener:
                     'file_path': file_path
                 }
             return None
-        except Exception as e:
+        except Exception:
             return None
 
     def _run(self):
@@ -513,6 +533,8 @@ class ServerClipboardListener:
 
                 time.sleep(0.5)
             except Exception as e:
+                # Reset the clipboard content if an error occurs
+                self.last_clipboard_content = pyperclip.paste()
                 self.logger(f"[CLIPBOARD] {e}", Logger.ERROR)
 
     def __str__(self):
@@ -891,4 +913,3 @@ class ClientKeyboardListener:
         # Check if command is released
         if key == Key.cmd:
             self.command_pressed = False
-

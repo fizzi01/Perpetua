@@ -1,8 +1,25 @@
+# OSXWindow.py
+# Purpose:  This file contains the implementation of a transparent overlay for macOS.
+#         - The overlay is created using wxPython and is used to stay on top of all other windows.
+#         - It handles the fullscreen state of the application and the fullscreen state of the windows.
+#         - It restores the fullscreen state of the windows when the overlay is hidden.
+#         - It restores the previous application when the overlay is hidden.
+#         - The overlay is created in a separate process to avoid blocking the main process.
+#
+# Author: Federico Izzi
+
+# Standard Libraries
 import multiprocessing
 import threading
 import time
 
+# UI Library
 import wx
+
+# Object-c Library
+import objc
+
+# AppKit API
 from AppKit import (
     NSCursor,
     NSApplication,
@@ -10,17 +27,34 @@ from AppKit import (
     NSScreenSaverWindowLevel,
     NSApplicationActivationPolicyAccessory,
     NSWorkspace,
-    NSApplicationActivateIgnoringOtherApps
+    NSApplicationActivateIgnoringOtherApps,
+    NSApplicationPresentationAutoHideDock,
+    NSApplicationPresentationAutoHideMenuBar
 )
-import objc
 
+# Accessibility API
+from ApplicationServices import (
+    AXUIElementCreateApplication,
+    AXUIElementCopyAttributeValue,
+    AXUIElementSetAttributeValue,
+    kAXWindowsAttribute
+)
+
+# Internal Libraries
 from window.InterfaceWindow import AbstractHiddenWindow
 from utils.Logging import Logger
+
+# Accessibility API costants
+kAXFullScreenAttribute = "AXFullScreen"
+
 
 def overlay_process(conn):
     class OverlayFrame(wx.Frame):
         def __init__(self):
             self.previous_app = NSWorkspace.sharedWorkspace().frontmostApplication()
+            self.previous_app_pid = self.previous_app.processIdentifier()
+            self.fullscreen_windows = []
+
             # Ottieni la geometria dello schermo principale
             display = wx.Display(0)
             geometry = display.GetGeometry()
@@ -65,39 +99,60 @@ def overlay_process(conn):
             self.pipe_thread.daemon = True
             self.pipe_thread.start()
 
-        def listen_for_commands(self, conn):
+        def listen_for_commands(self, channel):
             while self.running:
-                if conn.poll(0.1):  # Timeout per controllare self.running
+                if channel.poll(0.1):  # Timeout per controllare self.running
                     try:
-                        command = conn.recv()
+                        command = channel.recv()
                         if command == 'minimize':
                             wx.CallAfter(self.HideOverlay)
                         elif command == 'maximize':
                             wx.CallAfter(self.ShowOverlay)
                         elif command == 'stop':
                             wx.CallAfter(self.Close)
-                            conn.close()
+                            channel.close()
                         elif command == 'is_running':
-                            conn.send(True)
+                            channel.send(True)
                     except EOFError:
                         break
 
         def HideOverlay(self):
             self.Hide()
             NSCursor.unhide()
-            if self.previous_app:
-                self.previous_app.activateWithOptions_(NSApplicationActivateIgnoringOtherApps)
+
+            self.RestoreFullscreenApps()
+
+            self.RestorePreviousApp()
 
         def ShowOverlay(self):
-            self.previous_app = NSWorkspace.sharedWorkspace().frontmostApplication()
+            self.HandleFullscreen()
+
             self.Show()
             NSCursor.hide()
             self.ForceOverlay()
             self.SetFocus()
 
+        def HandleFullscreen(self):
+            self.previous_app = NSWorkspace.sharedWorkspace().frontmostApplication()
+            self.previous_app_pid = self.previous_app.processIdentifier()
+
+            # Ottieni le finestre dell'applicazione
+            app_windows = self.get_application_windows(self.previous_app_pid)
+            # Verifica se qualche finestra è in fullscreen
+            for window in app_windows:
+                is_fullscreen = self.is_window_fullscreen(window)
+                if is_fullscreen:
+                    # Esci dal fullscreen per questa finestra
+                    self.set_window_fullscreen(window, False)
+                    # Tieni traccia della finestra per ripristinare il fullscreen dopo
+                    self.fullscreen_windows.append(window)
+
         def ForceOverlay(self):
-            # Attiva l'applicazione e la porta in primo piano
+            # Ottieni l'istanza di NSApplication
             NSApp = NSApplication.sharedApplication()
+            # Imposta le opzioni di presentazione per nascondere il Dock e la barra dei menu
+            NSApp.setPresentationOptions_(NSApplicationPresentationAutoHideDock | NSApplicationPresentationAutoHideMenuBar)
+            # Attiva l'applicazione ignorando le altre
             NSApp.activateIgnoringOtherApps_(True)
 
             # Ottieni l'NSWindow associata alla finestra wxPython
@@ -116,6 +171,40 @@ def overlay_process(conn):
             # Rende la finestra la finestra chiave e la porta in primo piano
             ns_window.makeKeyAndOrderFront_(None)
 
+        def RestorePreviousApp(self):
+            if self.previous_app:
+                self.previous_app.activateWithOptions_(NSApplicationActivateIgnoringOtherApps)
+            self.previous_app = None
+            self.previous_app_pid = None
+
+        def RestoreFullscreenApps(self):
+            for window in self.fullscreen_windows:
+                self.set_window_fullscreen(window, True)
+            self.fullscreen_windows = []
+
+        @staticmethod
+        def get_application_windows(pid):
+            app_element = AXUIElementCreateApplication(pid)
+            error, result = AXUIElementCopyAttributeValue(app_element, kAXWindowsAttribute, None)
+            if error != 0:
+                print("Errore nell'ottenere le finestre dell'applicazione.")
+                return []
+            return result
+
+        @staticmethod
+        def is_window_fullscreen(window):
+            error, fullscreen_value = AXUIElementCopyAttributeValue(window, kAXFullScreenAttribute, None)
+            if error == 0:
+                return bool(fullscreen_value)
+            return False
+
+        @staticmethod
+        def set_window_fullscreen(window, fullscreen):
+            error = AXUIElementSetAttributeValue(window, kAXFullScreenAttribute, fullscreen)
+            if error != 0:
+                print("Errore nell'impostare lo stato di fullscreen della finestra.")
+
+
     app = wx.App()
     OverlayFrame()
     app.MainLoop()
@@ -123,7 +212,7 @@ def overlay_process(conn):
 
 
 class HiddenWindow(AbstractHiddenWindow):
-    def __init__(self, root=None):
+    def __init__(self):
         self.parent_conn, self.child_conn = multiprocessing.Pipe()
 
         self.process = None
