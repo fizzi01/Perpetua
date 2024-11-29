@@ -32,12 +32,7 @@ jobs:
         run: pip install nuitka
       - name: Build app
         run: |
-          nuitka --follow-imports \
-          --output-filename=PyContinuity \
-          --windows-icon-from-ico=logo/logo.ico \
-          --output-dir=dist \
-          --windows-uac-uiaccess \
-          --standalone start.py
+          nuitka --follow-imports --output-filename=PyContinuity --windows-icon-from-ico=logo/logo.ico --output-dir=dist --windows-uac-uiaccess --standalone start.py
       - name: Create zip of the app
         run: 7z a -tzip PyContinuity_windows.zip dist/start.build/*
       - uses: actions/upload-artifact@v4
