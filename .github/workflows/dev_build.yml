@@ -17,7 +17,7 @@ on:
 
 jobs:
   build-windows:
-    if: contains(github.event.head_commit.message, '#build') || contains(github.event.head_commit.message, '#win')
+    if: contains(github.event.head_commit.message, '#build') || contains(github.event.head_commit.message, '#win') || github.event_name == 'workflow_dispatch'
     name: Windows Build
     runs-on: windows-latest
     steps:
@@ -48,7 +48,7 @@ jobs:
           path: PyContinuity_windows.zip
 
   build-mac:
-    if: contains(github.event.head_commit.message, '#build') || contains(github.event.head_commit.message, '#osx')
+    if: contains(github.event.head_commit.message, '#build') || contains(github.event.head_commit.message, '#osx') || github.event_name == 'workflow_dispatch'
     name: MacOSX (silicon) Build
     runs-on: macos-latest
     steps:
