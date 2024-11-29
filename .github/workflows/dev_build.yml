@@ -27,22 +27,19 @@ jobs:
         with:
           python-version: '3.11'
       - name: Install requirements
-        run: pip install -r requirements/Windows/requirements.txt
+        run: pip install -r requirements/Win/requirements.txt
       - name: Install builder
         run: pip install nuitka
       - name: Build app
         run: |
-          nuitka --onefile \
-            --windows-icon=logo/logo.ico \
-            --follow-imports \
-            --output-dir=dist \
-            --windows-uac-uiaccess \
-            --output-filename=PyContinuity \
-            --windows-product-name="PyContinuity" \
-            -o PyContinuity \
-            start.py
+          nuitka --follow-imports \
+          --output-filename=PyContinuity \
+          --windows-icon-from-ico=logo/logo.ico \
+          --output-dir=dist \
+          --windows-uac-uiaccess \
+          --standalone start.py
       - name: Create zip of the app
-        run: 7z a -tzip PyContinuity_windows.zip dist/PyContinuity.exe
+        run: 7z a -tzip PyContinuity_windows.zip dist/start.build/*
       - uses: actions/upload-artifact@v4
         with:
           name: PyContinuity_windows

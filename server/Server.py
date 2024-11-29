@@ -7,7 +7,7 @@ from socket import timeout
 from pynput import mouse
 
 # Core utilities
-from inputUtils import InputHandler
+import inputUtils as InputHandler
 from network.IOManager import ServerMessageQueueManager, QueueManager
 from window import Window
 

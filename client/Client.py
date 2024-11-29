@@ -4,7 +4,7 @@ import time
 from collections.abc import Callable
 
 from client.ClientState import ClientState
-from inputUtils import InputHandler as inputHandler
+import inputUtils as inputHandler
 from network.ClientSocket import ClientSocket, ConnectionHandlerFactory
 from network.IOManager import ClientMessageQueueManager, QueueManager
 from utils.Logging import Logger
