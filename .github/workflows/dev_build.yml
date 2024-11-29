@@ -17,6 +17,7 @@ on:
 
 jobs:
   build-windows:
+    if: contains(github.event.head_commit.message, '#build') || contains(github.event.head_commit.message, '#win')
     name: Windows Build
     runs-on: windows-latest
     steps:
@@ -41,6 +42,7 @@ jobs:
           path: PyContinuity_windows.zip
 
   build-mac:
+    if: contains(github.event.head_commit.message, '#build') || contains(github.event.head_commit.message, '#osx')
     name: MacOSX (silicon) Build
     runs-on: macos-latest
     steps:
@@ -68,8 +70,8 @@ jobs:
             --macos-create-app-bundle \
             --disable-console \
             --output-filename=PyContinuity \
-            --macos-app-protected-resource="NSInputMonitoringUsageDescription:Questa applicazione richiede l'accesso all'input della tastiera per monitorare le tue digitazioni." \
-            --macos-app-protected-resource="NSAccessibilityUsageDescription:Questa applicazione necessita dell'accesso alle funzionalità di accessibilità per interagire con altre applicazioni." \
+            --macos-app-protected-resource="NSInputMonitoringUsageDescription:This application needs access to input monitoring to interact with other applications." \
+            --macos-app-protected-resource="NSAccessibilityUsageDescription:This application needs access to accessibility to interact with other applications." \
             --product-name="PyContinuity" \
             -o PyContinuity \
             start.py

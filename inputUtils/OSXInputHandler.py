@@ -255,7 +255,6 @@ class ServerMouseListener:
         screen = self.active_screen()
         client = self.clients.get_connection(screen)
 
-        # TODO: Alcune volte col click il mouse mi torna al centro anche sul client
         # Gestisce il passaggio da stima della posizione con cursore bloccato,
         # a posizione assoluta con cursore libero. La stima della posizione è
         # necessaria per evitare che il cursore vada sui bordi ad inizio transizione
