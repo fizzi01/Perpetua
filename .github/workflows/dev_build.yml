@@ -3,12 +3,23 @@ name: Dev Build
 on:
   workflow_dispatch:
     inputs:
-      logLevel:
-        description: 'Log level'     
-        required: true
-        default: 'warning'
       tags:
         description: 'Forced build'
+      all_build:
+        description: 'Complete build'
+        required: true
+        default: 'false'
+        type: boolean
+      run_windows_build:
+        description: 'Windows Build'
+        required: true
+        default: 'false'
+        type: boolean
+      run_mac_build:
+        description: 'OSX Build'
+        required: true
+        default: 'false'
+        type: boolean
   push:
     branches:
       - dev
@@ -17,7 +28,7 @@ on:
 
 jobs:
   build-windows:
-    if: contains(github.event.head_commit.message, '#build') || contains(github.event.head_commit.message, '#win') || github.event_name == 'workflow_dispatch'
+    if: contains(github.event.head_commit.message, '#build') || contains(github.event.head_commit.message, '#win') || github.event.inputs.run_windows_build == 'true' || github.event.inputs.all_build == 'true'
     name: Windows Build
     runs-on: windows-latest
     steps:
@@ -48,7 +59,7 @@ jobs:
           path: PyContinuity_windows.zip
 
   build-mac:
-    if: contains(github.event.head_commit.message, '#build') || contains(github.event.head_commit.message, '#osx') || github.event_name == 'workflow_dispatch'
+    if: contains(github.event.head_commit.message, '#build') || contains(github.event.head_commit.message, '#osx') || github.event.inputs.run_mac_build == 'true' || github.event.inputs.all_build == 'true'
     name: MacOSX (silicon) Build
     runs-on: macos-latest
     steps:
