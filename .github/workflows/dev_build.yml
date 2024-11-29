@@ -27,13 +27,19 @@ jobs:
         uses: actions/setup-python@v5
         with:
           python-version: '3.11'
+          cache: 'pip'
+          cache-dependency-path: requirements/Win/requirements.txt
       - name: Install requirements
         run: pip install -r requirements/Win/requirements.txt
-      - name: Install builder
-        run: pip install nuitka
-      - name: Build app
-        run: |
-          nuitka --follow-imports --output-filename=PyContinuity --windows-icon-from-ico=logo/logo.ico --output-dir=dist --windows-uac-uiaccess --standalone start.py
+      - name: Build with Nuitka
+        uses: Nuitka/Nuitka-Action@main
+        with:
+          script-name: start.py
+          mode: standalone
+          output-filename: PyContinuity
+          output-dir: dist
+          windows-icon-from-ico: logo/logo.ico
+          windows-uac-uiaccess: true
       - name: Create zip of the app
         run: 7z a -tzip PyContinuity_windows.zip dist/start.build/*
       - uses: actions/upload-artifact@v4
@@ -54,6 +60,8 @@ jobs:
         uses: actions/setup-python@v5
         with:
           python-version: '3.11'
+          cache: 'pip'
+          cache-dependency-path: requirements/Osx/requirements.txt
       - name: Install requirements
         run: |
           pip install -r requirements/Osx/requirements.txt
