@@ -142,7 +142,6 @@ class FileChunkCommand(Command):
     def execute(self):
         try:
             self.file_event_handler.handle_file_chunk(self.data[1:], self.data[0])
-            self.logger(f"File chunk received from {self.requester}")
         except Exception as e:
             self.logger(f"Error handling file_chunk: {e}", Logger.ERROR)
 

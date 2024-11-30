@@ -247,6 +247,7 @@ class FileTransferEventHandler:
                         self.save_path = os.path.join(self.save_path, encoded_file_name)
 
                     if not self.writer_thread.is_alive():
+                        self.writer_thread = threading.Thread(target=self._write_chunks, daemon=True)
                         self.writer_thread.start()
                         self.stop_writer = False
 
@@ -276,9 +277,10 @@ class FileTransferEventHandler:
                         self.chunk_dict.clear()
                         self.next_chunk_index = 0
                         iteration_count = 0  # Reset iteration count
+                        return # Exit the thread
 
             except Empty:
-                if not self.is_being_processed.is_set() and self.is_end:
+                if (not self.is_being_processed.is_set()) and self.is_end:
                     iteration_count += 1
                     if iteration_count >= max_iterations:
                         self.log(f"[FILE TRANSFER] File size did not reach expected size",
@@ -313,7 +315,6 @@ class FileTransferEventHandler:
                     # Trait string "b'...'" as a byte string
                     chunk_data = chunk_data.replace("b'", "").replace("'", "")
                     chunk_data = base64.b64decode(chunk_data)
-                    self.log(f"Received chunk {chunk_index}")
                     self.chunk_queue.put((int(chunk_index), chunk_data))
 
                 except Exception as e:

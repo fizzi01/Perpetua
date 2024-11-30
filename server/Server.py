@@ -221,7 +221,6 @@ class Server:
             except timeout:
                 if self._started:
                     self.connection_handler.check_client_connections()
-                    self.log("Waiting for clients ...", Logger.DEBUG)
                     continue
                 else:
                     break
