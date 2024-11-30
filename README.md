@@ -1,20 +1,24 @@
-## TODO
+# PyContinuity - Dev board
+## Current status
 - [X] **Multi OS** Support
   - [X] Windows
   - [X] OSX
   - [ ] Android
-  - [ ] iOS
-- [ ] UI
-  - OSX: Utilize rumps to handle Cocoa window and GUI
+- [ ] UI [In Progress]
+  - OSX: Utilize rumps (maybe) and PyQT6
   - Windows: Utilize PyQT6
 - [X] Better Connection Logic
 - [X] **Seamless Clipboard Sharing across devices**
+  - [ ] Handle in-memory file copy (like screenshots copy in osx) [In Progress]
 - [X] **Seamless File Sharing across devices**
   - [ ] Efficient File Transfer of large files
 - [X] Better Mouse Control
-  - [ ] Improve mouse transition
+  - [X] Improve mouse transition
 - [X] Better Keyboard Control
   - [X] Fix caps lock issue on OSX
   - [ ] Implement custom key binding
 - [X] Better **Connection Security** (TLS/SSL)
+  - [ ] Add data encryption through SHA256
+  - [ ] Certificate and Encryption key fast sharing (QRCode and Mobile)
 - [X] Clients-Server **auto discovery**
+  - [ ] Better server configuration of clients screen position (Currently using an ip)
