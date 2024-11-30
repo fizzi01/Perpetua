@@ -294,7 +294,7 @@ class FileTransferEventHandler:
                         self.is_being_processed.clear()
                         self.chunk_dict.clear()
                         self.next_chunk_index = 0
-                        iteration_count = 0  # Reset iteration count
+                        return
                 continue
             except Exception as e:
                 self.log(f"Error writing file chunk: {e}", Logger.ERROR)
