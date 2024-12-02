@@ -84,7 +84,6 @@ jobs:
         uses: Nuitka/Nuitka-Action@main
         with:
           script-name: start.py
-          mode: standalone
           output-filename: PyContinuity
           output-dir: dist
           macos-app-icon: logo/logo.icns
