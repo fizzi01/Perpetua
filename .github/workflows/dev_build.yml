@@ -20,12 +20,13 @@ on:
         required: true
         default: 'false'
         type: boolean
-    run-name: {{ inputs.tags }}
   push:
     branches:
       - dev
     paths-ignore:
       - '.github/**'
+
+run-name: ${{ github.event.inputs.tags }}
 
 jobs:
   build-windows:
