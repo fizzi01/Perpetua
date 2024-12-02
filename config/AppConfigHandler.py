@@ -3,12 +3,12 @@ import json
 import platform
 import shutil
 import subprocess
-import socket
 import ipaddress
 from typing import Tuple
 
 import config
 from utils import net
+
 
 class ConfigFactory:
     @staticmethod
@@ -83,7 +83,7 @@ class AppConfigHandler:
         cnf_path = os.path.join(self.ssl_dir, 'openssl.cnf')
 
         if os.path.exists(cert_path) and os.path.exists(key_path) and not force:
-            print("SSL certificate already exists.")
+            print("SSL certificate found.")
             return cert_path, key_path
 
         subnet_ips = self._get_local_ips_in_subnet()
@@ -106,7 +106,8 @@ class AppConfigHandler:
             subnet = ipaddress.IPv4Network(f"{local_ip}/24", strict=False)
             local_ips = [str(ip) for ip in subnet]
             # Filtra gli IP riservati (es: .0, .1, .255)
-            local_ips = [ip for ip in local_ips if not ip.endswith(".0") and not ip.endswith(".1") and not ip.endswith(".255")]
+            local_ips = [ip for ip in local_ips if
+                         not ip.endswith(".0") and not ip.endswith(".1") and not ip.endswith(".255")]
         except Exception as e:
             print(f"Error detecting subnet: {e}")
             local_ips = ["127.0.0.1", "::1"]
