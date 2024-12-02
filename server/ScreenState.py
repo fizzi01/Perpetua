@@ -1,4 +1,3 @@
-
 # State Pattern per la gestione delle transizioni di schermo
 class ScreenState:
     def handle(self):

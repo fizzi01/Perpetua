@@ -79,7 +79,7 @@ class TransparentFullscreenWindow(tk.Toplevel):
     def run(self):
         # Start the Tkinter mainloop
         self.is_open = True
-        #TransparentFullscreenWindow(self.root)
+        # TransparentFullscreenWindow(self.root)
         self.is_open = False
 
     def close(self):
@@ -106,4 +106,4 @@ class DebugWindow(AbstractHiddenWindow):
         pass
 
     def wait(self, timeout=5):
-       return True
+        return True

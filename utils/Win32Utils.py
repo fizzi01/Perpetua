@@ -1,8 +1,7 @@
-
 def dispatch(app_name: str):
+    from win32com import client
     try:
-        from win32com import client
-        app = client.gencache.EnsureDispatch(app_name)
+        app = client.Dispatch(app_name)
     except AttributeError:
         # Corner case dependencies.
         import os
@@ -15,6 +14,5 @@ def dispatch(app_name: str):
             if re.match(r'win32com\.gen_py\..+', module):
                 del sys.modules[module]
         from win32com import client
-        shutil.rmtree(client.gencache.GetGeneratePath())
-        app = client.gencache.EnsureDispatch(app_name)
+        app = client.Dispatch(app_name)
     return app

@@ -13,6 +13,7 @@ from utils.Logging import Logger
 from zeroconf import ServiceInfo, Zeroconf, ServiceStateChange, ServiceBrowser
 from utils import net, netConstants, screen_size
 
+
 class SSLFactory:
     @staticmethod
     def create_ssl_socket(sock: socket.socket, certfile: str, keyfile: str) -> ssl.SSLSocket:
@@ -236,7 +237,7 @@ class ServerSocket:
                     if properties.get("app_name") == SERVICE_NAME and info.port == port:
                         conflict_found = True
 
-        browser = ServiceBrowser(self.zeroconf, f"_http._tcp.local.", handlers=[on_service_state_change])
+        browser = ServiceBrowser(self.zeroconf, "_http._tcp.local.", handlers=[on_service_state_change])
         time.sleep(1)  # Aspetta che i servizi vengano scoperti
         browser.cancel()
         return conflict_found

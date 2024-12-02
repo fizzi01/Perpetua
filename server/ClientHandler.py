@@ -30,7 +30,7 @@ class ClientHandler:
     :param on_disconnect: Funzione da chiamare alla disconnessione del client
     """
 
-    def __init__(self, conn, address, screen,  command_processor):
+    def __init__(self, conn, address, screen, command_processor):
         self.conn = conn
         self.address = address
         self.screen = screen
@@ -158,7 +158,7 @@ class ClientCommandProcessor:
         self.server = server
         self.logger = Logger.get_instance().log
 
-    def process_client_command(self, command, screen = None):
+    def process_client_command(self, command, screen=None):
         if not command:
             return
         command_handler = CommandFactory.create_command(command, self.server, screen)

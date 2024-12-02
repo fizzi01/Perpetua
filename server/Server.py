@@ -1,4 +1,3 @@
-import socket
 import threading
 import time
 from socket import socket
@@ -158,7 +157,7 @@ class Server:
             self.messagesManager.start()
             self.listenersQueueManager.start()
 
-            self.log(f"Server started.", Logger.INFO)
+            self.log("Server started.", Logger.INFO)
 
         except Exception as e:
             self.log(f"Server not started: {e}", Logger.ERROR)
@@ -170,7 +169,7 @@ class Server:
         if not self._started and not self._is_main_running_event.is_set():
             return True
 
-        self.log(f"Server stopping ...", Logger.WARNING)
+        self.log("Server stopping ...", Logger.WARNING)
         self._started = False
 
         self.server_socket.close()
@@ -197,7 +196,7 @@ class Server:
 
             # Main thread checking
             if self._check_main_thread():
-                self.log(f"Server stopped.", Logger.WARNING)
+                self.log("Server stopped.", Logger.WARNING)
                 return True
         except Exception as e:
             self.log(f"{e}", Logger.ERROR)
@@ -344,7 +343,7 @@ class Server:
         while self._started:
             # Trigger the transition
             self.changed.wait()
-            self.log(f"[CHECKER] Checking screen transition...", )
+            self.log("[CHECKER] Checking screen transition...", )
             if self.changed.is_set():
                 self.log(f"Changing screen to {self.active_screen}", Logger.INFO)
 
@@ -361,22 +360,22 @@ class Server:
         :return:
         """
         while self._started:
-            self.log(f"[SECURER] Waiting for screen transition to complete...", Logger.DEBUG)
+            self.log("[SECURER] Waiting for screen transition to complete...", Logger.DEBUG)
             # Trigger the transition
             self.changed.wait()
 
             # Set an event to block other ScreenState transitions invoked by _change_screen
             self.block_transition.set()
-            self.log(f"[SECURER] Blocking screen transition.", Logger.DEBUG)
-            self.log(f"[SECURER] Waiting for transition to complete...", Logger.DEBUG)
+            self.log("[SECURER] Blocking screen transition.", Logger.DEBUG)
+            self.log("[SECURER] Waiting for transition to complete...", Logger.DEBUG)
             # Wait for the transition to complete (max 5 seconds)
             self.transition_completed.wait(timeout=5)
-            self.log(f"[SECURER] Transition completed.", Logger.DEBUG)
+            self.log("[SECURER] Transition completed.", Logger.DEBUG)
 
             self.transition_completed.clear()
             self.block_transition.clear()
             self.changed.clear()
-            self.log(f"[SECURER] Securer completed.", Logger.DEBUG)
+            self.log("[SECURER] Securer completed.", Logger.DEBUG)
 
     def reset_mouse(self, param, y: float):
         screen_reset_strategy = ScreenResetStrategyFactory.get_reset_strategy(param, self)

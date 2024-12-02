@@ -358,7 +358,7 @@ class ServerKeyboardListener:
                     directory = window.LocationURL
                     if directory.startswith("file:///"):
                         # Convert to a readable path
-                        directory =  urllib.parse.unquote(directory[8:].replace("/", "\\"))
+                        directory = urllib.parse.unquote(directory[8:].replace("/", "\\"))
                     return directory
 
         # Se il processo non è Esplora Risorse
@@ -814,7 +814,7 @@ class ClientKeyboardListener:
                 # Verifica se la finestra attiva è il Desktop
                 # Desktop ha tipicamente titolo vuoto o nullo
                 window_text = win32gui.GetWindowText(hwnd).strip()
-                if window_text == 'Program Manager' or  window_text == '':
+                if window_text == 'Program Manager' or window_text == '':
                     # Restituisce il percorso del Desktop
                     desktop_path = os.path.join(os.environ["USERPROFILE"], "Desktop")
                     # Clean the path

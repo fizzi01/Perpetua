@@ -54,7 +54,7 @@ class ClientSocket:
                         service_found = True
 
         zeroconf = Zeroconf()
-        browser = ServiceBrowser(zeroconf, f"_http._tcp.local.", handlers=[on_service_state_change])
+        browser = ServiceBrowser(zeroconf, "_http._tcp.local.", handlers=[on_service_state_change])
         self.log("[mDNS] Searching for service ...", Logger.DEBUG)
         time.sleep(2)  # Attendi per completare la scoperta
         browser.cancel()
@@ -163,7 +163,7 @@ class ConnectionHandler(ABC):
                 current_time - self.last_check_time) > self.INACTIVITY_TIMEOUT:  # Check every 60 seconds if no activity
             if self.server_handler is not None and not self.server_handler.conn.is_socket_open():
                 self.logger("Server connection closed.", Logger.WARNING)
-                #self.server_handler.stop()
+                # self.server_handler.stop()
                 self.server_handler = None
 
             self.recent_activity = False
@@ -225,8 +225,9 @@ class NonSSLConnectionHandler(ConnectionHandler):
 
 class ConnectionHandlerFactory:
     @staticmethod
-    def create_handler(client_socket: ClientSocket, command_processor: Callable, client_info: dict) -> ConnectionHandler:
+    def create_handler(client_socket: ClientSocket, command_processor: Callable,
+                       client_info: dict) -> ConnectionHandler:
         if client_socket.use_ssl:
             return SSLConnectionHandler(client_socket, command_processor, client_info)
         else:
-            return NonSSLConnectionHandler(client_socket, command_processor , client_info)
+            return NonSSLConnectionHandler(client_socket, command_processor, client_info)

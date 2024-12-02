@@ -3,12 +3,6 @@ from .netConstants import *
 
 # Description: This file contains the functions that are used to format the data that is sent over the network.
 def format_data(data: str):
-    # if '\n' in data:
-    #     data = data.replace('\n', NEWLINE)
-    #if '\t' in data:
-    #    data = data.replace('\t', TAB)
-    #if ' ' in data:
-    #    data = data.replace(' ', SPACE)
     return data
 
 

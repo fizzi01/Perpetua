@@ -291,13 +291,13 @@ class FileTransferEventHandler:
                         self.chunk_dict.clear()
                         self.next_chunk_index = 0
                         iteration_count = 0  # Reset iteration count
-                        return # Exit the thread
+                        return  # Exit the thread
 
             except Empty:
                 if (not self.is_being_processed.is_set()) and self.is_end:
                     iteration_count += 1
                     if iteration_count >= max_iterations:
-                        self.log(f"[FILE TRANSFER] File size did not reach expected size",
+                        self.log("[FILE TRANSFER] File size did not reach expected size",
                                  Logger.ERROR)
 
                         try:
