@@ -133,3 +133,5 @@ dmypy.json
 *.iml
 README.md
 entitlements.plist
+
+dist/*

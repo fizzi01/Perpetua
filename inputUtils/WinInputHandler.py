@@ -1,28 +1,37 @@
 import math
 import threading
 import time
+import urllib
 from collections.abc import Callable
-import pyperclip
+
+# System libraries
 import pythoncom
 import win32clipboard
 import win32con
-import win32com.client
 import win32gui
 import win32process
+from comtypes import client
+from comtypes import stream
 import psutil
 import os
 
-from pynput import mouse, keyboard
+# Input handling libraries
+import pyperclip
+from pynput import mouse
 from pynput.keyboard import Key, KeyCode, Listener as KeyboardListener, Controller as KeyboardController
 from pynput.mouse import Button, Controller as MouseController, Listener as MouseListener
+from inputUtils.FileTransferEventHandler import FileTransferEventHandler
 
+# Network libraries
+from network.IOManager import QueueManager
+
+# Other libraries
 from client.ClientState import ClientState, HiddleState
 from config.ServerConfig import Clients
-from inputUtils.FileTransferEventHandler import FileTransferEventHandler
-from network.IOManager import QueueManager
+
+# Logging
 from utils.Logging import Logger
 from utils.netData import *
-from utils.Win32Utils import dispatch
 
 
 class ServerMouseListener:
@@ -339,7 +348,7 @@ class ServerKeyboardListener:
                 desktop_path = os.path.join(os.environ["USERPROFILE"], "Desktop")
                 return desktop_path
 
-            shell = dispatch("Shell.Application")
+            shell = client.CreateObject("Shell.Application")
             windows = shell.Windows()
 
             for window in windows:
@@ -348,8 +357,8 @@ class ServerKeyboardListener:
                     # Ottieni il percorso della directory attiva
                     directory = window.LocationURL
                     if directory.startswith("file:///"):
-                        # Converte il formato URL in percorso Windows
-                        directory = directory[8:].replace("/", "\\")
+                        # Convert to a readable path
+                        directory =  urllib.parse.unquote(directory[8:].replace("/", "\\"))
                     return directory
 
         # Se il processo non è Esplora Risorse
@@ -811,17 +820,17 @@ class ClientKeyboardListener:
                     # Clean the path
                     return desktop_path
 
-                shell = dispatch("Shell.Application")
+                shell = client.CreateObject("Shell.Application")
                 windows = shell.Windows()
 
                 for window in windows:
-                    # Confronta l'handle della finestra attiva
+                    # Compare the handle of the active window
                     if int(hwnd) == int(window.HWND):
-                        # Ottieni il percorso della directory attiva
+                        # Get the path of the active directory
                         directory = window.LocationURL
                         if directory.startswith("file:///"):
-                            # Converte il formato URL in percorso Windows
-                            directory = directory[8:].replace("/", "\\")
+                            # Convert URL format to Windows path
+                            directory = urllib.parse.unquote(directory[8:].replace("/", "\\"))
                         return directory
 
             # Se il processo non è Esplora Risorse
