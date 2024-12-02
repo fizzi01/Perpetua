@@ -87,7 +87,6 @@ jobs:
           output-filename: PyContinuity
           output-dir: dist
           macos-app-icon: logo/logo.icns
-          macos-create-app-bundle: true
           macos-app-protected-resource: |
             NSInputMonitoringUsageDescription:This application needs access to input monitoring to interact with other applications.
             NSAccessibilityUsageDescription:This application needs access to accessibility to interact with other applications.
