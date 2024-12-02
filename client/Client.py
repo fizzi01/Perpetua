@@ -107,8 +107,9 @@ class Client:
 
         self.clipboard_listener = inputHandler.ClientClipboardListener()
         self.keyboard_listener = inputHandler.ClientKeyboardListener()
+        self.file_transfer_handler = inputHandler.FileTransferEventHandler()
 
-        self._listeners = [self.keyboard_listener, self.mouse_listener, self.clipboard_listener]
+        self._listeners = [self.keyboard_listener, self.mouse_listener, self.clipboard_listener, self.file_transfer_handler]
 
     def _initialize_input_controllers(self):
         self.keyboard_controller = inputHandler.ClientKeyboardController()

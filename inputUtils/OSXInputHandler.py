@@ -17,18 +17,24 @@ from pynput.mouse import Listener as MouseListener
 from pynput.keyboard import Listener as KeyboardListener, Key, KeyCode, Controller as KeyboardController
 
 from config.ServerConfig import Clients
+from inputUtils import HandlerInterface
 from inputUtils.FileTransferEventHandler import FileTransferEventHandler
+
 from utils.Logging import Logger
 from utils.netData import *
 
 from network.IOManager import QueueManager
 
 
-class ServerMouseController:
-    pass
+class ServerMouseController(HandlerInterface):
+    def start(self):
+        pass
+
+    def stop(self):
+        pass
 
 
-class ServerMouseListener:
+class ServerMouseListener(HandlerInterface):
     IGNORE_NEXT_MOVE_EVENT = 0.01
     MAX_DXDY_THRESHOLD = 150
     SCREEN_CHANGE_DELAY = 0.001
@@ -300,9 +306,8 @@ class ServerMouseListener:
         return "ServerMouseListener"
 
 
-class ServerKeyboardListener:
+class ServerKeyboardListener(HandlerInterface):
     """
-    :param send_function: Function to send data to the clients
     :param get_clients: Function to get the clients of the current screen
     :param get_active_screen: Function to get the active screen
     """
@@ -441,7 +446,7 @@ class ServerKeyboardListener:
         return "ServerKeyboardListener"
 
 
-class ServerClipboardListener:
+class ServerClipboardListener(HandlerInterface):
     def __init__(self, get_clients: Callable, get_active_screen: Callable):
 
         self.send = QueueManager(None).send_clipboard
@@ -540,7 +545,7 @@ class ServerClipboardListener:
         return "ServerClipboardListener"
 
 
-class ClientClipboardListener:
+class ClientClipboardListener(HandlerInterface):
     def __init__(self):
 
         self.send = QueueManager(None).send_clipboard
@@ -624,7 +629,8 @@ class ClientClipboardListener:
         return "ClientClipboardListener"
 
 
-class ClientKeyboardController:
+class ClientKeyboardController(HandlerInterface):
+
     def __init__(self):
         self.pressed_keys = set()
         # self.key_filter = {  # Darwin specific key codes
@@ -661,6 +667,12 @@ class ClientKeyboardController:
         self.keyboard = KeyboardController()
         self.hotkey = hotkey_controller
         self.logger = Logger.get_instance().log
+
+    def start(self):
+        pass
+
+    def stop(self):
+        pass
 
     def data_filter(self, key_data):
         if key_data in self.key_filter:
@@ -721,7 +733,7 @@ class ClientKeyboardController:
         return "ClientKeyboardController"
 
 
-class ClientMouseController:
+class ClientMouseController(HandlerInterface):
     def __init__(self, screen_width, screen_height, client_info: dict):
         self.mouse = MouseController()
         self.screen_width = screen_width
@@ -734,6 +746,12 @@ class ClientMouseController:
         self.doubleclick_counter = 0
 
         self.log = Logger.get_instance().log
+
+    def start(self):
+        pass
+
+    def stop(self):
+        pass
 
     def get_server_screen_size(self):
         if "screen_size" in self.client_info:
@@ -789,7 +807,7 @@ class ClientMouseController:
         return "ClientMouseController"
 
 
-class ClientMouseListener:
+class ClientMouseListener(HandlerInterface):
     def __init__(self, screen_width, screen_height, threshold):
         self.screen_width = screen_width
         self.screen_height = screen_height
@@ -823,7 +841,7 @@ class ClientMouseListener:
         return "ClientMouseListener"
 
 
-class ClientKeyboardListener:
+class ClientKeyboardListener(HandlerInterface):
     def __init__(self):
         self.keyboard = KeyboardController()
         self.send = QueueManager(None).send_keyboard

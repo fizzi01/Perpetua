@@ -7,6 +7,7 @@ from typing import Callable
 
 from client.ServerHandler import ServerHandlerFactory
 from config import SERVICE_NAME
+from network.exceptions import ServerNotFoundException
 from utils import netConstants
 from utils.Logging import Logger
 
@@ -43,7 +44,6 @@ class ClientSocket:
         def on_service_state_change(zeroconf, service_type, name, state_change):
             nonlocal service_found
             if state_change == ServiceStateChange.Added and not service_found:
-                self.log(f"[mDNS] Discovered service: {name}", Logger.DEBUG)
                 info = zeroconf.get_service_info(service_type, name)
                 if info:
                     properties = {key.decode(): value.decode() for key, value in info.properties.items()}
@@ -61,7 +61,7 @@ class ClientSocket:
         zeroconf.close()
 
         if not self.host or not self.port:
-            raise Exception("No matching server found.")
+            raise ServerNotFoundException("No matching server found.")
 
     def connect(self):
         if self.use_discovery:
@@ -192,6 +192,10 @@ class SSLConnectionHandler(ConnectionHandler):
                 Logger.INFO)
             self.first_connection = False
             return True
+        except ServerNotFoundException as e:
+            # Silently ignore this exception
+            self.logger(e, Logger.DEBUG)
+            return False
         except Exception as e:
             self.logger(f"Error establishing SSL connection: {e}", Logger.ERROR)
             self.client_socket.reset_socket()
@@ -212,6 +216,9 @@ class NonSSLConnectionHandler(ConnectionHandler):
             self.add_server_connection()
             self.logger("Non-SSL connection established.")
             return True
+        except ServerNotFoundException as e:
+            self.logger(e, Logger.DEBUG)
+            return False
         except Exception as e:
             self.logger(f"Error establishing non-SSL connection: {e}", Logger.ERROR)
             self.client_socket.reset_socket()

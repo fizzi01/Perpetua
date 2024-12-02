@@ -5,12 +5,14 @@ from datetime import datetime
 from queue import Queue, Empty
 import urllib.parse
 
+from inputUtils import HandlerInterface
 from network.IOManager import QueueManager
+
 from utils.Logging import Logger
 from utils.netData import format_command
 
 
-class FileTransferEventHandler:
+class FileTransferEventHandler(HandlerInterface):
     _instance = None
     _lock = threading.Lock()
 
@@ -55,6 +57,30 @@ class FileTransferEventHandler:
         self.next_chunk_index = 0
         self.stop_writer = False
         self.writer_thread = threading.Thread(target=self._write_chunks, daemon=True)
+
+    def start(self):
+        pass
+
+    def stop(self):
+        with self.lock:
+            self.is_being_processed.clear()
+            self.to_forward.clear()
+            self.is_end = True
+            self.stop_writer = True
+
+            # Clear the event queue
+            while not self.event_queue.empty():
+                self.event_queue.get()
+
+            # Clear the chunk queue
+            while not self.chunk_queue.empty():
+                self.chunk_queue.get()
+
+            self.chunk_dict.clear()
+            self.next_chunk_index = 0
+
+            if self.writer_thread.is_alive():
+                self.writer_thread.join()
 
     def set_actors(self, owner, requester):
         with self.lock:

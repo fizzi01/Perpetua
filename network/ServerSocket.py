@@ -253,12 +253,12 @@ class ServerSocket:
             server=f"{SERVICE_NAME}.local.",
         )
         self.zeroconf.register_service(service_info)
-        self.log(f"[mDNS] Server {service_info.name} registered", Logger.DEBUG)
+        self.log(f"[mDNS] Server service {service_info.name} registered", Logger.DEBUG)
 
     def _unregister_mdns_service(self):
         self.zeroconf.unregister_all_services()
         self.zeroconf.close()
-        self.log(f"[mDNS] Service {SERVICE_NAME} unregistered.", Logger.DEBUG)
+        self.log(f"[mDNS] Server service {SERVICE_NAME} unregistered.", Logger.DEBUG)
 
 
 class BaseSocket:

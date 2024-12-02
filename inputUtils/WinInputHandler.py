@@ -20,7 +20,9 @@ import pyperclip
 from pynput import mouse
 from pynput.keyboard import Key, KeyCode, Listener as KeyboardListener, Controller as KeyboardController
 from pynput.mouse import Button, Controller as MouseController, Listener as MouseListener
-from inputUtils.FileTransferEventHandler import FileTransferEventHandler
+
+from inputUtils import HandlerInterface
+from inputUtils import FileTransferEventHandler
 
 # Network libraries
 from network.IOManager import QueueManager
@@ -34,7 +36,7 @@ from utils.Logging import Logger
 from utils.netData import *
 
 
-class ServerMouseListener:
+class ServerMouseListener(HandlerInterface):
     IGNORE_NEXT_MOVE_EVENT = 0.01
     MAX_DXDY_THRESHOLD = 150
     SCREEN_CHANGE_DELAY = 0.001
@@ -298,9 +300,8 @@ class ServerMouseListener:
         return True
 
 
-class ServerKeyboardListener:
+class ServerKeyboardListener(HandlerInterface):
     """
-    :param send_function: Function to send data to the clients
     :param get_clients: Function to get the clients of the current screen
     :param get_active_screen: Function to get the active screen
     """
@@ -405,7 +406,7 @@ class ServerKeyboardListener:
             self.send(screen, format_command(f"keyboard release {data}"))
 
 
-class ServerClipboardListener:
+class ServerClipboardListener(HandlerInterface):
     def __init__(self, get_clients: Callable, get_active_screen: Callable):
 
         self.send = QueueManager(None).send_clipboard
@@ -490,7 +491,7 @@ class ServerClipboardListener:
                 self.logger(f"[CLIPBOARD] {e}", Logger.ERROR)
 
 
-class ClientClipboardListener:
+class ClientClipboardListener(HandlerInterface):
     def __init__(self):
 
         self.send = QueueManager(None).send_clipboard
@@ -572,7 +573,7 @@ class ClientClipboardListener:
                 self.logger(f"[CLIPBOARD] {e}", Logger.ERROR)
 
 
-class ClientMouseListener:
+class ClientMouseListener(HandlerInterface):
     def __init__(self, screen_width, screen_height, threshold):
         self.screen_width = screen_width
         self.screen_height = screen_height
@@ -616,7 +617,8 @@ class ClientMouseListener:
         return True
 
 
-class ClientKeyboardController:
+class ClientKeyboardController(HandlerInterface):
+
     def __init__(self):
         self.pressed_keys = set()
         self.key_filter = {
@@ -628,6 +630,12 @@ class ClientKeyboardController:
                              "¨", "‹", "÷", "≠", "¡", "ˆ", "¥"]
         self.controller = KeyboardController()
         self.caps_lock_state = False
+
+    def start(self):
+        pass
+
+    def stop(self):
+        pass
 
     def data_filter(self, key_data):
         return self.key_filter.get(key_data, key_data)
@@ -676,7 +684,8 @@ class ClientKeyboardController:
                 self.pressed_keys.discard(key)
 
 
-class ClientMouseController:
+class ClientMouseController(HandlerInterface):
+
     def __init__(self, screen_width, screen_height, client_info: dict):
         self.mouse = MouseController()
         self.screen_width = screen_width
@@ -689,6 +698,12 @@ class ClientMouseController:
         self.doubleclick_counter = 0
 
         self.log = Logger.get_instance().log
+
+    def stop(self):
+        pass
+
+    def start(self):
+        pass
 
     def get_server_screen_size(self):
         if "server_screen_size" in self.client_info:
@@ -773,7 +788,7 @@ class ClientMouseController:
             time.sleep(delay)
 
 
-class ClientKeyboardListener:
+class ClientKeyboardListener(HandlerInterface):
     def __init__(self):
         self.keyboard = KeyboardController()
         self.send = QueueManager(None).send_keyboard
