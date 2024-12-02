@@ -235,14 +235,13 @@ class QueueManager:
     def _send_file(self, file_path, screen=None):
         try:
             with open(file_path, 'rb') as file:
-                self.log(f"Inizio invio file: {file_path}")
                 # Invia file_start con i metadati del file
                 file_name = urllib.parse.quote(os.path.basename(file_path))
                 file_size = os.path.getsize(file_path)
 
                 start_message = format_command(f"file_start {file_name} {file_size}")
                 self.MessageSender.send(self.FILE_PRIORITY, (screen, start_message))
-                self.log(f"Invio file_start: {file_name} ({file_size} byte)")
+                self.log(f"Starting file sharing: {file_name} ({file_size} byte)")
 
                 # Invia il file in chunk
                 chunk_size_with_delimiter = CHUNK_SIZE - len(CHUNK_DELIMITER.encode())
@@ -263,17 +262,9 @@ class QueueManager:
                 # Invia file_end
                 end_message = format_command(f"file_end {file_name}")
                 self.MessageSender.send(self.FILE_PRIORITY, (screen, end_message))
-                self.log(f"File inviato con successo: {file_path}")
+                self.log(f"File shared succesfully: {file_path}")
         except Exception as e:
-            self.log(f"Errore durante l'invio del file {file_path}: {e}", Logger.ERROR)
-
-    def _send_file_batch(self):
-        if not self.file_batch_buffer:
-            return
-
-        batch_message = END_DELIMITER.join([chunk.decode('latin1') for chunk in self.file_batch_buffer])
-        self.MessageSender.send(self.FILE_PRIORITY, batch_message)
-        self.file_batch_buffer.clear()
+            self.log(f"Error during file sharing {file_path}: {e}", Logger.ERROR)
 
     def _send_keyboard_batch(self):
         if not self.keyboard_batch_buffer:

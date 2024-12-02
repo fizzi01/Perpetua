@@ -99,6 +99,10 @@ def overlay_process(conn):
             self.pipe_thread.daemon = True
             self.pipe_thread.start()
 
+            # Flag per il thread di monitoraggio
+            self.overlay_active = False
+            self.monitor_thread = None
+
         def listen_for_commands(self, channel):
             while self.running:
                 if channel.poll(0.1):  # Timeout per controllare self.running
@@ -111,12 +115,17 @@ def overlay_process(conn):
                         elif command == 'stop':
                             wx.CallAfter(self.Close)
                             channel.close()
+                            self.running = False
                         elif command == 'is_running':
                             channel.send(True)
                     except EOFError:
                         break
 
         def HideOverlay(self):
+            self.overlay_active = False  # Ferma il thread di monitoraggio
+            if self.monitor_thread and self.monitor_thread.is_alive():
+                self.monitor_thread.join()
+
             self.Hide()
             NSCursor.unhide()
 
@@ -131,6 +140,24 @@ def overlay_process(conn):
             NSCursor.hide()
             self.ForceOverlay()
             self.SetFocus()
+
+            # Inizia il thread di monitoraggio
+            self.overlay_active = True
+            self.monitor_thread = threading.Thread(target=self.monitor_overlay)
+            self.monitor_thread.daemon = True
+            self.monitor_thread.start()
+
+        def monitor_overlay(self):
+            window_ptr = self.GetHandle()
+            ns_view = objc.objc_object(c_void_p=window_ptr)
+            ns_window = ns_view.window()
+
+            while self.overlay_active:
+                # Controlla se la finestra è la finestra chiave
+                if not ns_window.isKeyWindow():
+                    # Porta la finestra in primo piano e rendila la finestra chiave
+                    wx.CallAfter(self.ForceOverlay)
+                time.sleep(0.1)  # Attendi 100 ms prima di controllare di nuovo
 
         def HandleFullscreen(self):
             self.previous_app = NSWorkspace.sharedWorkspace().frontmostApplication()
@@ -151,7 +178,8 @@ def overlay_process(conn):
             # Ottieni l'istanza di NSApplication
             NSApp = NSApplication.sharedApplication()
             # Imposta le opzioni di presentazione per nascondere il Dock e la barra dei menu
-            NSApp.setPresentationOptions_(NSApplicationPresentationAutoHideDock | NSApplicationPresentationAutoHideMenuBar)
+            NSApp.setPresentationOptions_(
+                NSApplicationPresentationAutoHideDock | NSApplicationPresentationAutoHideMenuBar)
             # Attiva l'applicazione ignorando le altre
             NSApp.activateIgnoringOtherApps_(True)
 
@@ -203,7 +231,6 @@ def overlay_process(conn):
             error = AXUIElementSetAttributeValue(window, kAXFullScreenAttribute, fullscreen)
             if error != 0:
                 print("Errore nell'impostare lo stato di fullscreen della finestra.")
-
 
     app = wx.App()
     OverlayFrame()

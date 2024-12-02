@@ -170,17 +170,17 @@ class FileTransferEventHandler:
             if ownership != self.LOCAL_SERVER_OWNERSHIP:  # If i'm not the server, i need to forward the file info
                 self.io_manager.send_file_copy(None, format_command(
                     f"file_copied {file_name} {file_info['file_size']} {file_path}"))
-                self.log(f"File copy forwarded from {ownership} to Server: {file_info['file_path']}")
+                self.log(f"[FILE TRANSFER] File copy forwarded from {ownership} to Server: {file_info['file_path']}")
 
-            self.log(f"File copied registered from {ownership}: {file_info['file_path']}")
+            self.log(f"[FILE TRANSFER] File copied registered from {ownership}: {file_info['file_path']}")
 
     def handle_file_request(self, requester):
         with self.lock:
-            self.log(f"File request received from {requester}")
+            self.log(f"[FILE TRANSFER] File request received from {requester}")
             file_info = self.current_file_info
 
             if not file_info and requester not in [self.LOCAL_OWNERSHIP, self.LOCAL_SERVER_OWNERSHIP]:
-                self.log("No file info available", Logger.WARNING)
+                self.log("[FILE TRANSFER] No file info available", Logger.WARNING)
                 return
 
             if requester not in [self.CLIENT_REQUEST]:
@@ -206,7 +206,7 @@ class FileTransferEventHandler:
                 self.is_being_processed.set()
                 self.to_forward.set() if requester not in [self.LOCAL_OWNERSHIP,
                                                            self.LOCAL_SERVER_OWNERSHIP] else self.to_forward.clear()
-                self.log(f"File request forwarded to {owner}: {file_path}")
+                self.log(f"[FILE TRANSFER] File request forwarded to {owner}: {file_path}")
 
     def forward_file_data(self, data, command):
         if self.is_being_processed.is_set() and self.to_forward.is_set():
@@ -220,7 +220,7 @@ class FileTransferEventHandler:
 
     def handle_file_start(self, file_info):
         with self.lock:
-            self.log(f"File transfer started: {file_info['file_name']}")
+            self.log(f"[FILE TRANSFER] File transfer started: {file_info['file_name']}")
             self.is_being_processed.set()  # Set the flag to start processing the file data
             self.is_end = False
 
@@ -251,9 +251,9 @@ class FileTransferEventHandler:
                         self.writer_thread.start()
                         self.stop_writer = False
 
-                    self.log(f"File transfer started: {self.save_path}")
+                    self.log(f"[FILE TRANSFER] File transfer started: {self.save_path}")
                 except Exception as e:
-                    self.log(f"Error opening file: {e}", Logger.ERROR)
+                    self.log(f"[FILE TRANSFER] Error opening file: {e}", Logger.ERROR)
                     self.is_being_processed.clear()
 
     def _write_chunks(self):
@@ -286,7 +286,7 @@ class FileTransferEventHandler:
 
                     # Check if the file is completely downloaded
                     if os.path.getsize(self.save_path) == self.current_file_info['size']:
-                        self.log(f"File transfer completed: {self.save_path}")
+                        self.log(f"[FILE TRANSFER] File transfer completed: {self.save_path}")
                         self.is_being_processed.clear()
                         self.chunk_dict.clear()
                         self.next_chunk_index = 0
@@ -311,7 +311,7 @@ class FileTransferEventHandler:
                         return
                 continue
             except Exception as e:
-                self.log(f"Error writing file chunk: {e}", Logger.ERROR)
+                self.log(f"[FILE TRANSFER] Error writing file chunk: {e}", Logger.ERROR)
                 self.is_being_processed.clear()
 
     def handle_file_chunk(self, chunk_data, command=None):
@@ -331,7 +331,7 @@ class FileTransferEventHandler:
                     self.chunk_queue.put((int(chunk_index), chunk_data))
 
                 except Exception as e:
-                    self.log(f"Error writing file chunk: {e}", Logger.ERROR)
+                    self.log(f"[FILE TRANSFER] Error writing file chunk: {e}", Logger.ERROR)
                     os.remove(self.save_path)
                     self.is_being_processed.clear()
 
