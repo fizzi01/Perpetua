@@ -4,7 +4,7 @@ on:
   workflow_dispatch:
     inputs:
       tags:
-        description: 'Forced build'
+        description: 'Build name'
       all_build:
         description: 'Complete build'
         required: true
@@ -20,6 +20,7 @@ on:
         required: true
         default: 'false'
         type: boolean
+    run-name: {{ inputs.tags }}
   push:
     branches:
       - dev
