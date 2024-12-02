@@ -49,7 +49,7 @@ jobs:
         with:
           script-name: start.py
           mode: standalone
-          output-filename: PyContinuity
+          output-file: PyContinuity
           output-dir: dist
           windows-icon-from-ico: logo/logo.ico
       - name: Create zip of the app
@@ -86,7 +86,7 @@ jobs:
         uses: Nuitka/Nuitka-Action@main
         with:
           script-name: start.py
-          output-filename: PyContinuity
+          output-file: PyContinuity
           output-dir: dist
           mode: app
           macos-app-icon: logo/logo.icns
