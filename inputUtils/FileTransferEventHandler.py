@@ -266,9 +266,23 @@ class FileTransferEventHandler:
                 self.chunk_dict[chunk_index] = chunk_data
 
                 while self.next_chunk_index in self.chunk_dict:
-                    with open(self.save_path, 'ab') as file:
-                        file.write(self.chunk_dict.pop(self.next_chunk_index))
-                    self.next_chunk_index += 1
+                    try:
+                        with open(self.save_path, 'ab') as file:
+                            file.write(self.chunk_dict.pop(self.next_chunk_index))
+                        self.next_chunk_index += 1
+                    except Exception as e:
+                        self.log(f"{e}", Logger.ERROR)
+
+                        try:
+                            os.remove(self.save_path)
+                        except Exception as e:
+                            pass
+
+                        self.is_being_processed.clear()
+                        self.chunk_dict.clear()
+                        self.next_chunk_index = 0
+                        self.stop_writer = True
+                        return
 
                     # Check if the file is completely downloaded
                     if os.path.getsize(self.save_path) == self.current_file_info['size']:
@@ -298,7 +312,6 @@ class FileTransferEventHandler:
                 continue
             except Exception as e:
                 self.log(f"Error writing file chunk: {e}", Logger.ERROR)
-                os.remove(self.save_path)
                 self.is_being_processed.clear()
 
     def handle_file_chunk(self, chunk_data, command=None):

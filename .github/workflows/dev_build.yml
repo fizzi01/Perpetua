@@ -52,7 +52,7 @@ jobs:
           windows-icon-from-ico: logo/logo.ico
           windows-uac-uiaccess: true
       - name: Create zip of the app
-        run: 7z a -tzip PyContinuity_windows.zip dist/start.build/*
+        run: 7z a -tzip PyContinuity_windows.zip dist/start.dist/*
       - uses: actions/upload-artifact@v4
         with:
           name: PyContinuity_windows

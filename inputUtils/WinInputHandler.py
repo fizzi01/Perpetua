@@ -22,6 +22,7 @@ from inputUtils.FileTransferEventHandler import FileTransferEventHandler
 from network.IOManager import QueueManager
 from utils.Logging import Logger
 from utils.netData import *
+from utils.Win32Utils import dispatch
 
 
 class ServerMouseListener:
@@ -338,7 +339,7 @@ class ServerKeyboardListener:
                 desktop_path = os.path.join(os.environ["USERPROFILE"], "Desktop")
                 return desktop_path
 
-            shell = win32com.client.Dispatch("Shell.Application")
+            shell = dispatch("Shell.Application")
             windows = shell.Windows()
 
             for window in windows:
@@ -804,13 +805,13 @@ class ClientKeyboardListener:
                 # Verifica se la finestra attiva è il Desktop
                 # Desktop ha tipicamente titolo vuoto o nullo
                 window_text = win32gui.GetWindowText(hwnd).strip()
-                if window_text == 'Program Manager':
+                if window_text == 'Program Manager' or  window_text == '':
                     # Restituisce il percorso del Desktop
                     desktop_path = os.path.join(os.environ["USERPROFILE"], "Desktop")
                     # Clean the path
                     return desktop_path
 
-                shell = win32com.client.Dispatch("Shell.Application")
+                shell = dispatch("Shell.Application")
                 windows = shell.Windows()
 
                 for window in windows:
