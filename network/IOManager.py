@@ -5,6 +5,7 @@ import ssl
 import threading
 import time
 import urllib.parse
+import zlib
 from queue import Queue, Empty, PriorityQueue
 import heapq
 
@@ -255,7 +256,9 @@ class QueueManager:
                     chunk = file.read(real_chunk_size)
                     if not chunk:
                         break
-                    encoded_chunk = base64.b64encode(chunk).decode()
+                    # Comprimi il chunk
+                    compressed_chunk = zlib.compress(chunk)
+                    encoded_chunk = base64.b64encode(compressed_chunk).decode()
                     chunck_message = format_command(f"file_chunk {encoded_chunk} {chunk_index}")
                     chunk_index += 1
                     self.MessageSender.send(self.FILE_PRIORITY, (screen, chunck_message))

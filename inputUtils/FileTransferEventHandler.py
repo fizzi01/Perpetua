@@ -1,6 +1,7 @@
 import base64
 import os
 import threading
+import zlib
 from datetime import datetime
 from queue import Queue, Empty
 import urllib.parse
@@ -354,7 +355,11 @@ class FileTransferEventHandler(HandlerInterface):
                     # Trait string "b'...'" as a byte string
                     chunk_data = chunk_data.replace("b'", "").replace("'", "")
                     chunk_data = base64.b64decode(chunk_data)
-                    self.chunk_queue.put((int(chunk_index), chunk_data))
+
+                    decompressed_chunk = zlib.decompress(chunk_data)  # Decomprime il chunk
+
+                    # Inserisce il chunk nella coda con l'indice
+                    self.chunk_queue.put((int(chunk_index), decompressed_chunk))
 
                 except Exception as e:
                     self.log(f"[FILE TRANSFER] Error writing file chunk: {e}", Logger.ERROR)
