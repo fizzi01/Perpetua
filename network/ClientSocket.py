@@ -95,7 +95,7 @@ class ClientSocket:
 
     def is_socket_open(self):
         try:
-            self.socket.getpeername()
+            self.socket.getsockname()
             return True
         except socket.error:
             return False
@@ -195,6 +195,9 @@ class SSLConnectionHandler(ConnectionHandler):
         except ServerNotFoundException as e:
             # Silently ignore this exception
             self.logger(e, Logger.DEBUG)
+            return False
+        except ConnectionRefusedError as e:
+            self.client_socket.reset_socket()
             return False
         except Exception as e:
             self.logger(f"Error establishing SSL connection: {e}", Logger.ERROR)

@@ -3,12 +3,12 @@ import threading
 import time
 from collections.abc import Callable
 
-from client.ClientState import ClientState
+from client import ClientState
 import inputUtils as inputHandler
 from network.ClientSocket import ClientSocket, ConnectionHandlerFactory
 from network.IOManager import ClientMessageQueueManager, QueueManager
 from utils.Logging import Logger
-from client.ServerHandler import ServerCommandProcessor
+from client import ServerCommandProcessor
 from utils import screen_size
 from window import Window
 

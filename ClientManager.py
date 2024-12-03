@@ -1,4 +1,4 @@
-from client import Client
+from client.Client import Client
 from config.ClientConfig import ClientConfig
 
 
