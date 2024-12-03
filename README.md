@@ -11,7 +11,7 @@
 - [X] **Seamless Clipboard Sharing across devices**
   - [ ] Handle in-memory file copy (like screenshots copy in osx) [In Progress]
 - [X] **Seamless File Sharing across devices**
-  - [ ] Efficient File Transfer of large files
+  - [X] Efficient File Transfer of large files &nbsp;&nbsp;&nbsp;&nbsp;&nbsp; (done in [`830a064`](https://github.com/fizzi01/pyContinuity/commit/830a064abdc482c2a75e6e388e35ecc3cdcd6d9c))
 - [X] Better Mouse Control
   - [X] Improve mouse transition
 - [X] Better Keyboard Control

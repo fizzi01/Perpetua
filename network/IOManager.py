@@ -256,11 +256,14 @@ class QueueManager:
                     chunk = file.read(real_chunk_size)
                     if not chunk:
                         break
-                    # Comprimi il chunk
+
                     compressed_chunk = zlib.compress(chunk)
+
                     encoded_chunk = base64.b64encode(compressed_chunk).decode()
                     chunck_message = format_command(f"file_chunk {encoded_chunk} {chunk_index}")
+                    
                     chunk_index += 1
+
                     self.MessageSender.send(self.FILE_PRIORITY, (screen, chunck_message))
 
                 # Invia file_end
