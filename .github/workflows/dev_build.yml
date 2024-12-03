@@ -25,6 +25,8 @@ on:
       - dev
     paths-ignore:
       - '.github/**'
+      - 'dist/**'
+      - 'README.md'
 
 run-name: ${{ github.event.inputs.tags }}
 
