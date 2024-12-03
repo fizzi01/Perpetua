@@ -5,7 +5,13 @@ from collections.abc import Callable
 import pyperclip
 from pynput import mouse
 import Quartz
-from AppKit import NSPasteboard, NSFilenamesPboardType
+from AppKit import (NSPasteboard,
+                    NSFilenamesPboardType,
+                    NSEventTypeGesture,
+                    NSEventTypeBeginGesture,
+                    NSEventTypeEndGesture,
+                    NSEventTypeSwipe, NSEventTypeRotate,
+                    NSEventTypeMagnify)
 import os
 
 import threading
@@ -94,6 +100,24 @@ class ServerMouseListener:
         screen = self.active_screen()
 
         if screen:
+            gesture_events = []
+            # Tenta di aggiungere le costanti degli eventi gestuali
+            try:
+                gesture_events.extend([
+                    NSEventTypeGesture,
+                    NSEventTypeMagnify,
+                    NSEventTypeSwipe,
+                    NSEventTypeRotate,
+                    NSEventTypeBeginGesture,
+                ])
+            except AttributeError:
+                pass
+
+            # Aggiungi i valori numerici per le costanti mancanti
+            gesture_events.extend([
+                29,  # kCGEventGesture
+            ])
+
             if event_type in [
                 Quartz.kCGEventLeftMouseDown,
                 Quartz.kCGEventRightMouseDown,
@@ -101,8 +125,9 @@ class ServerMouseListener:
                 Quartz.kCGEventLeftMouseDragged,
                 Quartz.kCGEventRightMouseDragged,
                 Quartz.kCGEventOtherMouseDragged,
-                Quartz.kCGEventScrollWheel
-            ]:
+                Quartz.kCGEventScrollWheel,
+
+            ] + gesture_events:
                 pass
             else:
                 return event

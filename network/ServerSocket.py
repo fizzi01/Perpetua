@@ -50,7 +50,8 @@ class ConnectionHandler(ABC):
                 current_time - self.last_check_time) > self.INACTIVITY_TIMEOUT:  # Check every 60 seconds if no activity
             for handler in self.client_handlers:
                 try:
-                    handler.conn.send(b'\x00')
+                    if not handler.conn.is_socket_open():
+                        raise ConnectionResetError
                 except (socket.error, ConnectionResetError):
                     self.log(f"Client {handler.address} disconnected.", Logger.WARNING)
                     handler.stop()
@@ -66,7 +67,6 @@ class ConnectionHandler(ABC):
 
     def exchange_configuration(self, conn: socket.socket):
         try:
-            # Implement your configuration exchange logic here
             conn.send(netConstants.SCREEN_CONFIG_EXCHANGE_COMMAND.encode())
             screen_resolution = conn.recv(1024).decode()
             self.log(f"Client screen resolution: {screen_resolution}")
@@ -243,6 +243,8 @@ class ServerSocket:
 
     def _register_mdns_service(self):
         self.host = net.get_local_ip()
+        if not self.host:
+            raise Exception("No connection.")
         service_info = ServiceInfo(
             "_http._tcp.local.",  # Tipo del servizio
             f"{SERVICE_NAME}-{uuid.uuid4().hex[:8]}._http._tcp.local.",
@@ -274,7 +276,7 @@ class BaseSocket:
             data = data.encode()
 
         try:
-            self.socket.send(data)
+            self.socket.sendall(data)
         except EOFError:
             pass
 
