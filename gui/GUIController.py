@@ -9,10 +9,6 @@ from abc import ABC, abstractmethod
 
 from utils.metadataExtractor import extract_metadata
 
-import qrcode_terminal
-
-from utils import net
-
 
 class BaseGUIController(ABC):
 
@@ -233,7 +229,7 @@ class TerminalGUIController(BaseGUIController):
             self.messager.print("6. Stop client")
             self.messager.print("7. Edit server configuration")
             self.messager.print("8. Edit client configuration")
-            self.messager.print("9. Generate server certificate QR code")
+            self.messager.print("9. Force load configuration")
             self.messager.print("10. Exit")
             self.messager.print("\n")
             choice = self.messager.input("Choose an option:")
@@ -258,26 +254,11 @@ class TerminalGUIController(BaseGUIController):
                 self.edit_client_configuration()
             elif choice == "9":
                 self.load_server_certificate()
-                self.generate_server_cert_qr_code()
             elif choice == "10":
                 self.exit()
                 break
             else:
                 self.messager.print("Invalid choice. Please try again.")
-
-    def generate_server_cert_qr_code(self):
-        certfile = self.server_config.get_certfile()
-        if not certfile:
-            self.messager.print("Server certificate file not found.")
-            return
-
-        with open(certfile, 'r') as file:
-            cert_data = file.read()
-
-        qr = qrcode_terminal.qr_terminal_str(cert_data)
-
-        self.messager.print(qr)
-        self.messager.print("Server certificate QR code displayed in terminal.")
 
     def edit_server_configuration(self):
         while True:
