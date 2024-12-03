@@ -34,23 +34,19 @@ class ScreenResetStrategy:
 class LeftScreenResetStrategy(ScreenResetStrategy):
     def reset(self, y: float):
         self.server.force_mouse_position(self.server.screen_threshold + self.secure_threshold, y)
-        self.server.log(f"Moving mouse to x: {self.server.screen_threshold + self.secure_threshold}, y:{y}")
 
 
 class RightScreenResetStrategy(ScreenResetStrategy):
     def reset(self, y: float):
         self.server.force_mouse_position(self.server.screen_width - self.server.screen_threshold - self.secure_threshold, y)
-        self.server.log(f"Moving mouse to x: {self.server.screen_width - self.server.screen_threshold - self.secure_threshold}, y:{y}")
 
 
 class UpScreenResetStrategy(ScreenResetStrategy):
     def reset(self, y: float):
         self.server.force_mouse_position(y, self.server.screen_threshold + self.secure_threshold)
-        self.server.log(f"Moving mouse to x: {y}, y:{self.server.screen_threshold + self.secure_threshold}")
 
 
 class DownScreenResetStrategy(ScreenResetStrategy):
     def reset(self, y: float):
         # Then move to the desired position
         self.server.force_mouse_position(y, self.server.screen_height - self.server.screen_threshold - self.secure_threshold)
-        self.server.log(f"Moving mouse to x: {y}, y:{self.server.screen_height - self.server.screen_threshold - self.secure_threshold}")

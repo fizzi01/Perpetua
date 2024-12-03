@@ -156,7 +156,11 @@ def overlay_process(conn):
                 # Controlla se la finestra è la finestra chiave
                 if not ns_window.isKeyWindow():
                     # Porta la finestra in primo piano e rendila la finestra chiave
+                    wx.CallAfter(self.HandleFullscreen)
+                    wx.CallAfter(self.Show)
+                    wx.CallAfter(NSCursor.hide)
                     wx.CallAfter(self.ForceOverlay)
+                    wx.CallAfter(self.SetFocus)
                 time.sleep(0.1)  # Attendi 100 ms prima di controllare di nuovo
 
         def HandleFullscreen(self):

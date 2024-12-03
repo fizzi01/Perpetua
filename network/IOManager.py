@@ -1,6 +1,7 @@
 import base64
 import os
 import socket
+import ssl
 import threading
 import time
 import urllib.parse
@@ -358,28 +359,33 @@ class BaseMessageQueueManager:
 
     @staticmethod
     def _send_in_chunks(conn, data):
-        # Send data in chunks to ensure it fits within the buffer limit
-        # Se data inizia con file_chunk, deve codificare il comando ma non il contenuto ovvero "file_chunk::content" codifica solo "file_chunk::"
-        data_bytes = data.encode()
+        try:
+            # Send data in chunks to ensure it fits within the buffer limit
+            # Se data inizia con file_chunk, deve codificare il comando ma non il contenuto ovvero "file_chunk::content" codifica solo "file_chunk::"
+            data_bytes = data.encode()
 
-        data_length = len(data_bytes)
+            data_length = len(data_bytes)
 
-        chunk_size_with_delimiter = CHUNK_SIZE - len(CHUNK_DELIMITER.encode())
-        chunk_size_with_end_delimiter = CHUNK_SIZE - len(END_DELIMITER.encode())
-        real_chunk_size = min(chunk_size_with_delimiter, chunk_size_with_end_delimiter)
+            chunk_size_with_delimiter = CHUNK_SIZE - len(CHUNK_DELIMITER.encode())
+            chunk_size_with_end_delimiter = CHUNK_SIZE - len(END_DELIMITER.encode())
+            real_chunk_size = min(chunk_size_with_delimiter, chunk_size_with_end_delimiter)
 
-        if data_length > real_chunk_size:
-            chunks = [data_bytes[i:i + real_chunk_size] for i in range(0, data_length, real_chunk_size)]
-            for i, chunk in enumerate(chunks):
-                if i == len(chunks) - 1:
-                    # Last chunk - add the END_DELIMITER
-                    conn.send(chunk + END_DELIMITER.encode())
-                else:
-                    # Intermediate chunk - add the CHUNK_DELIMITER
-                    conn.send(chunk + CHUNK_DELIMITER.encode())
-        else:
-            # Data fits in a single chunk - add END_DELIMITER
-            conn.send(data_bytes + END_DELIMITER.encode())
+            if data_length > real_chunk_size:
+                chunks = [data_bytes[i:i + real_chunk_size] for i in range(0, data_length, real_chunk_size)]
+                for i, chunk in enumerate(chunks):
+                    if i == len(chunks) - 1:
+                        # Last chunk - add the END_DELIMITER
+                        conn.send(chunk + END_DELIMITER.encode())
+                    else:
+                        # Intermediate chunk - add the CHUNK_DELIMITER
+                        conn.send(chunk + CHUNK_DELIMITER.encode())
+            else:
+                # Data fits in a single chunk - add END_DELIMITER
+                conn.send(data_bytes + END_DELIMITER.encode())
+        except ssl.SSLEOFError as e:
+            raise e
+        except Exception as e:
+            raise e
 
 
 class ServerMessageQueueManager(BaseMessageQueueManager):
@@ -401,7 +407,8 @@ class ServerMessageQueueManager(BaseMessageQueueManager):
             # Send data to the specified client
             self._send_to_client(screen, data)
 
-    def _send_to_client(self, client_key, data):
+    def _send_to_client(self, client_key, data, max_retries=20, retry_delay=0.5):
+        retries = 0
         try:
             if not client_key or client_key == "None":  # Skip sending data if the client key is None
                 return
@@ -421,6 +428,21 @@ class ServerMessageQueueManager(BaseMessageQueueManager):
 
         except KeyError as e:
             self.log(f"Error sending data to client {client_key}: {e}", Logger.ERROR)
+        except ssl.SSLEOFError:
+            while retries < max_retries:
+                retries += 1
+                self.log(f"Retrying to send data to client {client_key} (attempt {retries}/{max_retries})")
+                conn = self.get_client(client_key)
+
+                # Check socket status
+                if conn and conn.is_socket_open():
+                    formatted_data = format_data(data)
+                    self._send_in_chunks(conn, formatted_data)
+                    return  # Exit the loop if the data is sent successfully
+
+                time.sleep(retry_delay)  # Attendi prima del retry
+            self.log(f"Can't communicate with client {client_key}", Logger.ERROR)
+            self.change_screen()
         except socket.error as e:
             self.log(f"Can't communicate with client {client_key}: {e}", Logger.ERROR)
             self.change_screen()
