@@ -384,7 +384,7 @@ class Server:
     def force_mouse_position(self, x, y):
         desired_position = (x, y)
         attempt = 0
-        max_attempts = 10
+        max_attempts = 60
 
         # Condizione per ridurre la frequenza degli aggiornamenti della posizione
         update_interval = 0.001  # intervallo tra gli aggiornamenti

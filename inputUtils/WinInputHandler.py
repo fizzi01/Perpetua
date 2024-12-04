@@ -38,7 +38,7 @@ from utils.netData import *
 
 class ServerMouseListener(HandlerInterface):
     IGNORE_NEXT_MOVE_EVENT = 0.01
-    MAX_DXDY_THRESHOLD = 150
+    MAX_DXDY_THRESHOLD = 100
     SCREEN_CHANGE_DELAY = 0.001
     EMULATION_STOP_DELAY = 0.5
 
@@ -78,18 +78,29 @@ class ServerMouseListener(HandlerInterface):
         self.screen_change_timeout = 0
         self.ignore_move_events_until = 0
 
+        self.to_warp = threading.Event()
+        self.stop_warp = threading.Event()
+
         self._listener = MouseListener(on_move=self.on_move, on_scroll=self.on_scroll, on_click=self.on_click,
                                        win32_event_filter=self.mouse_suppress_filter)
+
+    def get_position(self):
+        return self.x_print, self.y_print
 
     def get_listener(self):
         return self._listener
 
     def start(self):
         self._listener.start()
+        threading.Thread(target=self.warp_cursor_to_center, daemon=True).start()
+        self.stop_warp.clear()
+        self.to_warp.clear()
 
     def stop(self):
         if self.is_alive():
             self._listener.stop()
+        self.stop_warp.set()
+        self.to_warp.set()
 
     def is_alive(self):
         return self._listener.is_alive()
@@ -113,20 +124,28 @@ class ServerMouseListener(HandlerInterface):
         return True
 
     def warp_cursor_to_center(self):
-        current_time = time.time()
+        while not self.stop_warp.is_set():
+            if self.to_warp.is_set():
+                current_time = time.time()
 
-        if self.stop_emulation and current_time <= self.stop_emulation_timeout:
-            return
+                if self.stop_emulation and current_time <= self.stop_emulation_timeout:
+                    return
 
-        # Check if the screen change is in progress, if yes don't warp the cursor
-        if self.screen_change_in_progress and current_time <= self.screen_change_timeout:
-            return
+                # Check if the screen change is in progress, if yes don't warp the cursor
+                if self.screen_change_in_progress and current_time <= self.screen_change_timeout:
+                    return
 
-        self.ignore_move_events_until = time.time() + self.IGNORE_NEXT_MOVE_EVENT
-        center_x = self.screen_width // 2
-        center_y = self.screen_height // 2
-        self.mouse_controller.position = (center_x, center_y)
-        self.last_x, self.last_y = self.mouse_controller.position
+                self.ignore_move_events_until = time.time() + self.IGNORE_NEXT_MOVE_EVENT
+                center_x = self.screen_width // 2
+                center_y = self.screen_height // 2
+
+                # Last check before moving the cursor
+                if not self.stop_emulation or not self.to_warp.is_set():
+                    self.mouse_controller.position = (center_x, center_y)
+                    self.last_x, self.last_y = self.mouse_controller.position
+                    self.to_warp.clear()
+
+            time.sleep(0.01)
 
     def on_move(self, x, y):
 
@@ -170,7 +189,6 @@ class ServerMouseListener(HandlerInterface):
         is_transmitting = self.get_trasmission_status()
 
         if screen and client and is_transmitting:
-
             if not self.buttons_pressed and not self.stop_emulation:
                 scale_x = client_screen[0] / self.screen_width
                 scale_y = client_screen[1] / self.screen_height
@@ -198,14 +216,14 @@ class ServerMouseListener(HandlerInterface):
 
                 self.send(screen, format_command(
                     f"mouse position {self.x_print / self.screen_width} {self.y_print / self.screen_height}"))
-
-                self.warp_cursor_to_center()
+                self.to_warp.set()  # trigger the warp cursor thread
             elif self.stop_emulation or self.buttons_pressed:
                 normalized_x = x / self.screen_width
                 normalized_y = y / self.screen_height
                 self.send(screen, format_command(f"mouse position {normalized_x} {normalized_y}"))
 
         elif not self.buttons_pressed and not self.screen_change_in_progress:
+            self.to_warp.clear()
             # Quando si attraversa un bordo, invia una posizione assoluta normalizzata
             if at_right_edge:
                 self.stop_emulation = False
@@ -233,7 +251,7 @@ class ServerMouseListener(HandlerInterface):
                 self.screen_change_timeout = time.time() + self.SCREEN_CHANGE_DELAY
                 self.change_screen("down")
                 normalized_x = x / self.screen_width
-                normalized_y = 0  # Entra dal bordo superiore del client
+                normalized_y = 0 # Entra dal bordo superiore del client
                 self.send("down", format_command(f"mouse position {normalized_x} {normalized_y}"))
                 self.x_print = normalized_x * self.screen_width
                 self.y_print = normalized_y * self.screen_height
@@ -298,6 +316,9 @@ class ServerMouseListener(HandlerInterface):
         if screen and clients:
             self.send(screen, format_command(f"mouse scroll {dx} {dy}"))
         return True
+
+    def __str__(self):
+        return f"ServerMouseListener: screen_width={self.screen_width}, screen_height={self.screen_height}, screen_threshold={self.screen_treshold}"
 
 
 class ServerKeyboardListener(HandlerInterface):
