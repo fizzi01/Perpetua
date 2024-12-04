@@ -21,7 +21,7 @@ from pynput import mouse
 from pynput.keyboard import Key, KeyCode, Listener as KeyboardListener, Controller as KeyboardController
 from pynput.mouse import Button, Controller as MouseController, Listener as MouseListener
 
-from inputUtils import HandlerInterface
+from inputUtils import HandlerInterface, MouseListenerHandler
 from inputUtils import FileTransferEventHandler
 
 # Network libraries
@@ -36,7 +36,7 @@ from utils.Logging import Logger
 from utils.netData import *
 
 
-class ServerMouseListener(HandlerInterface):
+class ServerMouseListener(MouseListenerHandler):
     IGNORE_NEXT_MOVE_EVENT = 0.01
     MAX_DXDY_THRESHOLD = 100
     SCREEN_CHANGE_DELAY = 0.001

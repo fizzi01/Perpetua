@@ -249,9 +249,9 @@ class HiddenWindow(AbstractHiddenWindow):
         self.process = None
         self.log = Logger.get_instance().log
 
-        self._start_window_app(self.parent_conn, self.child_conn)
+        self._start_window_app()
 
-    def _start_window_app(self, input_conn, output_conn):
+    def _start_window_app(self):
         """Start the window application and handle external commands."""
         self.process = multiprocessing.Process(target=overlay_process, args=(self.child_conn,))
         self.process.start()

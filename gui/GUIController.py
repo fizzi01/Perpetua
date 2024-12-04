@@ -232,7 +232,8 @@ class TerminalGUIController(BaseGUIController):
             self.messager.print("9. Force load configuration")
             self.messager.print("10. Exit")
             self.messager.print("\n")
-            choice = self.messager.input("Choose an option:")
+            self.messager.print("Enter your choice: ")
+            choice = self.messager.input("\n")
 
             if choice == "1":
                 self.configure_server()

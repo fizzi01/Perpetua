@@ -3,7 +3,7 @@ from abc import ABC, abstractmethod
 
 class AbstractHiddenWindow(ABC):
 
-    def _start_window_app(self, input_conn, output_conn):
+    def _start_window_app(self):
         pass
 
     def _window_proc_controller(self, input_conn, output_conn):

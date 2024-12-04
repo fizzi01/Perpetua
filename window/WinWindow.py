@@ -1,109 +1,155 @@
-import tkinter as tk
-from sys import platform
+import multiprocessing
+import threading
+import time
+import wx
+import atexit
+from queue import Queue
 
+from utils.Logging import Logger
 from window.InterfaceWindow import AbstractHiddenWindow
 
 
-class TransparentFullscreenWindow(tk.Toplevel):
-    def __init__(self, parent):
-        super().__init__(parent)
+class TransparentFullscreenWindow(wx.Frame):
+    def __init__(self, parent, conn):
+        atexit.register(wx.DisableAsserts)  # Disable asserts to avoid errors when closing the window
 
-        self.root = self
-        self.configure_window()
-
-        # State of the window
-        self.is_open = False
+        super().__init__(parent, style=wx.STAY_ON_TOP | wx.FRAME_NO_TASKBAR | wx.NO_BORDER)
+        self.conn = conn
+        self.is_open = True
         self.is_fullscreen = False
+
+        self.configure_window()
+        self.Bind(wx.EVT_CLOSE, self.on_close)
+        self.command_thread = threading.Thread(target=self.listen_for_commands, daemon=True)
+        self.command_thread.start()
 
     def configure_window(self):
-        """Configure the window based on the operating system."""
-        # Make the window fullscreen
-        # self.root.attributes('-fullscreen', True)
-        # Start minimized
-        self.root.iconify()
-        self.root.overrideredirect(True)  # Remove window decorations
+        self.SetSize(wx.GetDisplaySize())
+        self.SetTransparent(1)  # Set full transparency
+        self.ShowFullScreen(True, style=wx.FULLSCREEN_ALL)
+        self.HideCursor()
 
-        if platform.startswith('linux'):
-            self.root.wait_visibility(self.root)
-            self.root.wm_attributes('-alpha', 0.01)  # Set the transparency level
+    def HideCursor(self):
+        cursor = wx.Cursor(wx.CURSOR_BLANK)
+        self.SetCursor(cursor)
 
-        elif platform == 'darwin':
-            self.root.wm_attributes('-topmost', True)  # Make the root window always on top
-            self.root.wm_attributes('-transparent', True)  # Enable transparency
-            self.root.config(bg='systemTransparent')  # Set the window background to transparent
-
-        elif platform == 'win32':
-            # Make the window transparent
-            self.root.attributes('-alpha', 0.01)  # Set the transparency level. 0.0 is fully transparent, 1.0 is opaque
-            # Bind the escape key to the close method
-            # self.root.bind('<Escape>', self.handle_close)
-
-        # Hide the mouse cursor
-        self.root.config(cursor='none')
+    def listen_for_commands(self):
+        while self.is_open:
+            command = self.conn.get()
+            if command == 'close':
+                wx.CallAfter(self.handle_close)
+                return
+            elif command == 'show':
+                wx.CallAfter(self.maximize)
+            elif command == 'stop':
+                wx.CallAfter(self.handle_close)
+                return
+            elif command == 'minimize':
+                wx.CallAfter(self.minimize)
+            elif command == 'maximize':
+                wx.CallAfter(self.maximize)
+            elif command == 'toggle':
+                wx.CallAfter(self.toggle)
 
     def handle_close(self, event=None):
-        # Close the window
-        self.root.destroy()
+        self.Destroy()
 
     def minimize(self):
-        self.root.overrideredirect(False)
-        self.root.iconify()
-        self.root.overrideredirect(True)
+        self.Iconize(True)
         self.is_fullscreen = False
+        self.Show(False)
+        self.SetCursor(wx.NullCursor)  # Reset the cursor to the default state
 
     def maximize(self):
-        self.root.deiconify()
-        self.root.overrideredirect(False)
-        self.root.attributes('-fullscreen', True)
-        self.root.lift()
-        self.root.attributes('-topmost', True)
-        self.root.overrideredirect(True)
+        self.Iconize(False)
+        self.Show(True)  # Show the window
+        self.Raise()  # Bring the window to the front
+        self.HideCursor()
+        self.ShowFullScreen(True, style=wx.FULLSCREEN_ALL)
+        self.is_fullscreen = True
 
     def toggle(self):
-        # Toggle window state between minimized and fullscreen
         if self.is_fullscreen:
-            print("Minimizing window")
-            self.root.overrideredirect(False)
-            self.root.iconify()
-            self.root.overrideredirect(True)
-            self.is_fullscreen = False
+            self.minimize()
         else:
-            print("Expanding window")
-            self.root.deiconify()
-            self.root.overrideredirect(False)
-            self.root.attributes('-fullscreen', True)
-            self.root.overrideredirect(True)
-            self.root.lift()  # Bring window to the top of the window stack
-            self.is_fullscreen = True
+            self.maximize()
 
-    def run(self):
-        # Start the Tkinter mainloop
-        self.is_open = True
-        # TransparentFullscreenWindow(self.root)
+    def on_close(self, event):
         self.is_open = False
+        self.Destroy()
+
+
+class MsgChannel:
+    def __init__(self, conn):
+        self.conn = conn
+
+    def put(self, msg):
+        if isinstance(self.conn, Queue):
+            self.conn.put(msg)
+        elif isinstance(self.conn, multiprocessing.Pipe):
+            self.conn.send(msg)
+
+    def get(self):
+        if isinstance(self.conn, Queue):
+            return self.conn.get()
+        elif isinstance(self.conn, multiprocessing.Pipe):
+            return self.conn.recv()
+
+
+class HiddenWindow(AbstractHiddenWindow):
+    def __init__(self):
+        self.child_conn = Queue()
+        self.process = None
+        self.log = Logger.get_instance().log
+
+        self._start_window_app()
+
+    def _start_window_app(self):
+        """Start the window application and handle external commands."""
+        self.process = threading.Thread(target=self.overlay_process, args=(self.child_conn,), daemon=True)
+        self.process.start()
+
+    @staticmethod
+    def overlay_process(conn):
+        app = wx.App(False)
+        TransparentFullscreenWindow(None, conn)
+        app.MainLoop()
+
+    def send_command(self, command):
+        """Send a command to the window process."""
+        try:
+            self.child_conn.put(command)
+            return True
+        # Catch if the pipe is closed
+        except BrokenPipeError:
+            return False
+        except EOFError:
+            return False
 
     def close(self):
-        # Close the window
-        if self.is_open:
-            self.destroy()
-            self.is_open = False
-
-
-class DebugWindow(AbstractHiddenWindow):
-    def close(self):
-        pass
+        """Close the window and terminate the process."""
+        self.send_command("stop")
+        # #self.process.terminate()
+        # #self.process.join()
+        self.log("[WINDOW] Window closed correctly")
+        return True
 
     def show(self):
-        pass
+        self.send_command("maximize")
 
     def stop(self):
-        pass
+        self.send_command("stop")
+        self.process.join()
+        self.log("[WINDOW] Window stopped correctly")
 
     def minimize(self):
-        pass
+        self.send_command("minimize")
 
     def maximize(self):
-        pass
+        self.send_command("maximize")
 
     def wait(self, timeout=5):
-        return True
+        timeout += time.time()
+        while time.time() < timeout:
+            return self.send_command("is_running")
+        return False
