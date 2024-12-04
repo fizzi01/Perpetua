@@ -5,7 +5,6 @@ import urllib
 from collections.abc import Callable
 
 # System libraries
-import pythoncom
 import win32clipboard
 import win32con
 import win32gui
@@ -40,7 +39,7 @@ class ServerMouseListener(MouseListenerHandler):
     IGNORE_NEXT_MOVE_EVENT = 0.01
     MAX_DXDY_THRESHOLD = 100
     SCREEN_CHANGE_DELAY = 0.001
-    EMULATION_STOP_DELAY = 0.5
+    EMULATION_STOP_DELAY = 0.1
 
     """
     :param send_function: Function to send data to the clients
@@ -125,7 +124,7 @@ class ServerMouseListener(MouseListenerHandler):
 
     def warp_cursor_to_center(self):
         while not self.stop_warp.is_set():
-            if self.to_warp.is_set():
+            if self.to_warp.is_set() and self.get_trasmission_status():
                 current_time = time.time()
 
                 if self.stop_emulation and current_time <= self.stop_emulation_timeout:
@@ -140,7 +139,7 @@ class ServerMouseListener(MouseListenerHandler):
                 center_y = self.screen_height // 2
 
                 # Last check before moving the cursor
-                if not self.stop_emulation or not self.to_warp.is_set():
+                if not self.stop_emulation and self.to_warp.is_set():
                     self.mouse_controller.position = (center_x, center_y)
                     self.last_x, self.last_y = self.mouse_controller.position
                     self.to_warp.clear()
@@ -148,8 +147,12 @@ class ServerMouseListener(MouseListenerHandler):
             time.sleep(0.01)
 
     def on_move(self, x, y):
-
+        self.to_warp.clear()
         current_time = time.time()
+
+        if self.stop_emulation and current_time > self.stop_emulation_timeout and len(self.buttons_pressed) == 0:
+            self.stop_emulation = False
+
         if not self.stop_emulation and self.ignore_move_events_until > current_time:
             self.last_x = x
             self.last_y = y
@@ -192,8 +195,8 @@ class ServerMouseListener(MouseListenerHandler):
             if not self.buttons_pressed and not self.stop_emulation:
                 scale_x = client_screen[0] / self.screen_width
                 scale_y = client_screen[1] / self.screen_height
-                dx *= scale_x * 1.5
-                dy *= scale_y * 1.5
+                dx *= scale_x * 2
+                dy *= scale_y * 2
 
                 # Arrotondo a un intero dx e dy che deve essere minimo 1 in valore assoluto (ma preserva segno)
                 # Se sotto 0.01 arrotonda a 0
@@ -216,6 +219,7 @@ class ServerMouseListener(MouseListenerHandler):
 
                 self.send(screen, format_command(
                     f"mouse position {self.x_print / self.screen_width} {self.y_print / self.screen_height}"))
+
                 self.to_warp.set()  # trigger the warp cursor thread
             elif self.stop_emulation or self.buttons_pressed:
                 normalized_x = x / self.screen_width
@@ -223,7 +227,6 @@ class ServerMouseListener(MouseListenerHandler):
                 self.send(screen, format_command(f"mouse position {normalized_x} {normalized_y}"))
 
         elif not self.buttons_pressed and not self.screen_change_in_progress:
-            self.to_warp.clear()
             # Quando si attraversa un bordo, invia una posizione assoluta normalizzata
             if at_right_edge:
                 self.stop_emulation = False
@@ -275,6 +278,7 @@ class ServerMouseListener(MouseListenerHandler):
 
         screen = self.active_screen()
         client = self.clients.get_connection(screen)
+        is_transmitting = self.get_trasmission_status()
 
         # Gestisce il passaggio da stima della posizione con cursore bloccato,
         # a posizione assoluta con cursore libero. La stima della posizione è
@@ -282,7 +286,7 @@ class ServerMouseListener(MouseListenerHandler):
         # Stima e posizione reale sono equivalenti allo stato attuale. Solo che la stima
         # blocca il cursore al centro, e siccome un click evita il blocco del cursore si
         # fa fallback alla posizione assoluta reale (Sono intercambiabili, ma la stima è necessaria per la transizione)
-        if pressed and screen:
+        if button == mouse.Button.left and pressed and screen and client and is_transmitting:
             self.buttons_pressed.add(button)
 
             # Move cursor to the x_y saved in the last move event
