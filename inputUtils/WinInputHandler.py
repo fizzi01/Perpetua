@@ -353,38 +353,41 @@ class ServerKeyboardListener(HandlerInterface):
 
     @staticmethod
     def get_current_clicked_directory():
-        # Ottieni l'handle della finestra attiva
-        hwnd = win32gui.GetForegroundWindow()
+        try:
+            # Ottieni l'handle della finestra attiva
+            hwnd = win32gui.GetForegroundWindow()
 
-        # Ottieni il processo associato
-        _, pid = win32process.GetWindowThreadProcessId(hwnd)
-        process = psutil.Process(pid)
+            # Ottieni il processo associato
+            _, pid = win32process.GetWindowThreadProcessId(hwnd)
+            process = psutil.Process(pid)
 
-        # Verifica se il processo è Esplora Risorse
-        if "explorer.exe" in process.name().lower():
-            # Verifica se la finestra attiva è il Desktop
-            # Desktop ha tipicamente titolo vuoto o nullo
-            window_text = win32gui.GetWindowText(hwnd).strip()
-            if window_text == 'Program Manager':
-                # Restituisce il percorso del Desktop
-                desktop_path = os.path.join(os.environ["USERPROFILE"], "Desktop")
-                return desktop_path
+            # Verifica se il processo è Esplora Risorse
+            if "explorer.exe" in process.name().lower():
+                # Verifica se la finestra attiva è il Desktop
+                # Desktop ha tipicamente titolo vuoto o nullo
+                window_text = win32gui.GetWindowText(hwnd).strip()
+                if window_text == 'Program Manager':
+                    # Restituisce il percorso del Desktop
+                    desktop_path = os.path.join(os.environ["USERPROFILE"], "Desktop")
+                    return desktop_path
 
-            shell = client.CreateObject("Shell.Application")
-            windows = shell.Windows()
+                shell = client.CreateObject("Shell.Application")
+                windows = shell.Windows()
 
-            for window in windows:
-                # Confronta l'handle della finestra attiva
-                if int(hwnd) == int(window.HWND):
-                    # Ottieni il percorso della directory attiva
-                    directory = window.LocationURL
-                    if directory.startswith("file:///"):
-                        # Convert to a readable path
-                        directory = urllib.parse.unquote(directory[8:].replace("/", "\\"))
-                    return directory
+                for window in windows:
+                    # Confronta l'handle della finestra attiva
+                    if int(hwnd) == int(window.HWND):
+                        # Ottieni il percorso della directory attiva
+                        directory = window.LocationURL
+                        if directory.startswith("file:///"):
+                            # Convert to a readable path
+                            directory = urllib.parse.unquote(directory[8:].replace("/", "\\"))
+                        return directory
 
-        # Se il processo non è Esplora Risorse
-        return None
+            # Se il processo non è Esplora Risorse
+            return None
+        except Exception as e:
+            return None
 
     def keyboard_suppress_filter(self, msg, data):
         screen = self.active_screen()
@@ -404,10 +407,11 @@ class ServerKeyboardListener(HandlerInterface):
         else:
             data = key.char
 
-        if key in [Key.cmd, Key.cmd_l]:
+        if key in [Key.ctrl, Key.ctrl_l]:
             self.command_pressed = True
-        elif data == "v" and self.command_pressed:
+        elif data == "\x16" and self.command_pressed:
             current_dir = self.get_current_clicked_directory()
+            print(current_dir)
             if current_dir:
                 self.file_transfer_handler.handle_file_paste(current_dir, self.file_transfer_handler.SERVER_REQUEST)
 
@@ -422,6 +426,9 @@ class ServerKeyboardListener(HandlerInterface):
             data = key.name
         else:
             data = key.char
+
+        if key in [Key.ctrl, Key.ctrl_l]:
+            self.command_pressed = False
 
         if screen and clients:
             self.send(screen, format_command(f"keyboard release {data}"))
@@ -839,7 +846,6 @@ class ClientKeyboardListener(HandlerInterface):
 
     @staticmethod
     def get_current_clicked_directory():
-        pythoncom.CoInitialize()
         try:
             # Ottieni l'handle della finestra attiva
             hwnd = win32gui.GetForegroundWindow()
@@ -874,9 +880,8 @@ class ClientKeyboardListener(HandlerInterface):
 
             # Se il processo non è Esplora Risorse
             return None
-        finally:
-            # Libera le risorse COM
-            pythoncom.CoUninitialize()
+        except Exception as e:
+            return None
 
     def on_press(self, key: Key | KeyCode | None):
 
