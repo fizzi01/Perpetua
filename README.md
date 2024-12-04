@@ -13,7 +13,9 @@
 - [X] **Seamless File Sharing across devices**
   - [X] Efficient File Transfer of large files &nbsp;&nbsp;&nbsp;&nbsp;&nbsp; (done in [`830a064`](https://github.com/fizzi01/pyContinuity/commit/830a064abdc482c2a75e6e388e35ecc3cdcd6d9c))
 - [X] Better Mouse Control
-  - [X] Improve mouse transition
+  - [X] Improve mouse transition (Osx)
+  - [X] Improve mouse transition (Windows)  &nbsp;&nbsp;&nbsp;&nbsp;&nbsp; (done in [`514de036`](https://github.com/fizzi01/pyContinuity/commit/514de036cacea28429cac577ab062d74bdfc2542))
+  - [ ] Improve movement smoothness
 - [X] Better Keyboard Control
   - [X] Fix caps lock issue on OSX
   - [ ] Implement custom key binding
