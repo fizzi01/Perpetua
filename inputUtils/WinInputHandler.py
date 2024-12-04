@@ -637,6 +637,9 @@ class ClientMouseListener(HandlerInterface):
 
         return True
 
+    def __str__(self):
+        return "ClientMouseListener"
+
 
 class ClientKeyboardController(HandlerInterface):
 
