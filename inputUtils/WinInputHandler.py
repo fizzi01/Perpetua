@@ -37,7 +37,7 @@ from utils.netData import *
 
 
 class ServerMouseListener(MouseListenerHandler):
-    IGNORE_NEXT_MOVE_EVENT = 0.01
+    IGNORE_NEXT_MOVE_EVENT = 0.001
     MAX_DXDY_THRESHOLD = 100
     SCREEN_CHANGE_DELAY = 0.001
     EMULATION_STOP_DELAY = 0.1
@@ -125,25 +125,28 @@ class ServerMouseListener(MouseListenerHandler):
 
     def warp_cursor_to_center(self):
         while not self.stop_warp.is_set():
-            if self.to_warp.is_set() and self.get_trasmission_status():
-                current_time = time.time()
+            try:
+                if self.to_warp.is_set() and self.get_trasmission_status():
+                    current_time = time.time()
 
-                if self.stop_emulation and current_time <= self.stop_emulation_timeout:
-                    return
+                    if self.stop_emulation and current_time <= self.stop_emulation_timeout:
+                        return
 
-                # Check if the screen change is in progress, if yes don't warp the cursor
-                if self.screen_change_in_progress and current_time <= self.screen_change_timeout:
-                    return
+                    # Check if the screen change is in progress, if yes don't warp the cursor
+                    if self.screen_change_in_progress and current_time <= self.screen_change_timeout:
+                        return
 
-                self.ignore_move_events_until = time.time() + self.IGNORE_NEXT_MOVE_EVENT
-                center_x = self.screen_width // 2
-                center_y = self.screen_height // 2
+                    self.ignore_move_events_until = time.time() + self.IGNORE_NEXT_MOVE_EVENT
+                    center_x = self.screen_width // 2
+                    center_y = self.screen_height // 2
 
-                # Last check before moving the cursor
-                if not self.stop_emulation and self.to_warp.is_set():
-                    self.mouse_controller.position = (center_x, center_y)
-                    self.last_x, self.last_y = self.mouse_controller.position
-                    self.to_warp.clear()
+                    # Last check before moving the cursor
+                    if not self.stop_emulation and self.to_warp.is_set():
+                        self.mouse_controller.position = (center_x, center_y)
+                        self.last_x, self.last_y = self.mouse_controller.position
+                        self.to_warp.clear()
+            except Exception:
+                pass
 
             time.sleep(0.01)
 
@@ -194,22 +197,10 @@ class ServerMouseListener(MouseListenerHandler):
 
         if screen and client and is_transmitting:
             if not self.buttons_pressed and not self.stop_emulation:
-                scale_x = client_screen[0] / self.screen_width
-                scale_y = client_screen[1] / self.screen_height
-                dx *= scale_x * 2
-                dy *= scale_y * 2
-
-                # Arrotondo a un intero dx e dy che deve essere minimo 1 in valore assoluto (ma preserva segno)
-                # Se sotto 0.01 arrotonda a 0
-                if abs(dx) < 0.5:
-                    dx = 0
-                else:
-                    dx = math.copysign(max(1, abs(round(dx))), dx)
-
-                if abs(dy) < 0.5:
-                    dy = 0
-                else:
-                    dy = math.copysign(max(1, abs(round(dy))), dy)
+                # scale_x = client_screen[0] / self.screen_width
+                # scale_y = client_screen[1] / self.screen_height
+                # dx *= 1
+                # dy *= 1
 
                 self.x_print += dx
                 self.y_print += dy
@@ -255,7 +246,7 @@ class ServerMouseListener(MouseListenerHandler):
                 self.screen_change_timeout = time.time() + self.SCREEN_CHANGE_DELAY
                 self.change_screen("down")
                 normalized_x = x / self.screen_width
-                normalized_y = 0 # Entra dal bordo superiore del client
+                normalized_y = 0  # Entra dal bordo superiore del client
                 self.send("down", format_command(f"mouse position {normalized_x} {normalized_y}"))
                 self.x_print = normalized_x * self.screen_width
                 self.y_print = normalized_y * self.screen_height
@@ -733,68 +724,98 @@ class ClientMouseController(HandlerInterface):
         self.last_press_time = -99
         self.doubleclick_counter = 0
 
+        self.client_status = ClientState()
+
         # Mouse scrool thread pool
         self.scroll_thread = ThreadPoolExecutor(max_workers=5)
+
+        self.target_x = None
+        self.target_y = None
+        self.stop_event = threading.Event()
+
+        # Avvia il thread di smoothing
+        self.smoothing_thread = threading.Thread(target=self.smoothing_loop, daemon=True)
+        self.smoothing_thread.start()
 
         self.log = Logger.get_instance().log
 
     def stop(self):
-        pass
+        self.stop_event.set()
+        self.smoothing_thread.join()
 
     def start(self):
         pass
+
+    def restart(self):
+        self.stop_event.clear()
+        self.smoothing_thread = threading.Thread(target=self.smoothing_loop, daemon=True)
+        self.smoothing_thread.start()
 
     def get_server_screen_size(self):
         if "server_screen_size" in self.client_info:
             if not self.server_screen_width or not self.server_screen_height:
                 self.server_screen_width, self.server_screen_height = self.client_info["server_screen_size"]
 
-    def smooth_position(self, start_x, start_y, end_x, end_y, steps=50, sleep_time=0.00001):
-        # Calcola la differenza tra la posizione iniziale e finale
-        dx = end_x - start_x
-        dy = end_y - start_y
+    def set_target_position(self, x, y):
+        self.target_x = x
+        self.target_y = y
+        if not self.client_status.get_state():
+            self.smooth_logic(0, 0, 0.5)
 
-        # Calcola il passo per ogni dimensione
-        x_step = dx / steps
-        y_step = dy / steps
-
-        # Muovi il mouse attraverso i passaggi
-        for i in range(steps):
-            new_x = start_x + i * x_step
-            new_y = start_y + i * y_step
-            self.mouse.position = (new_x, new_y)
-            time.sleep(sleep_time)
-
-        # Assicurati che il mouse sia esattamente nella posizione finale
-        self.mouse.position = (end_x, end_y)
-
-    def smooth_move(self, dx, dy):
+    def smooth_logic(self, last_x, last_y, speed_factor=0.1):
         current_x, current_y = self.mouse.position
-        # Calcola la differenza tra la posizione iniziale e finale
-        # Aumento dx e dy di un fattore di scala dove al numeratore vi è lo schermo più grande
-        # e al denominatore il più piccolo
+        dx = self.target_x - current_x
+        dy = self.target_y - current_y
 
-        # Arrotonda all intero successivo
-        dx = int(dx)
-        dy = int(dy)
+        move_x = current_x + dx * speed_factor
+        move_y = current_y + dy * speed_factor
 
-        self.smooth_position(current_x, current_y, current_x + dx, current_y + dy, steps=1)
+        # Se la distanza è molto piccola, vai direttamente sul target
+        dist = math.sqrt(dx * dx + dy * dy)
+        if dist < 0.1 or ((last_x == move_x or last_y == move_y) and dist < 10):
+            self.mouse.position = (self.target_x, self.target_y)
+            return None, None
+        else:
+            # Muovi il cursore di una frazione della distanza rimanente
+            self.mouse.position = (move_x, move_y)
+            return move_x, move_y
+
+    def smoothing_loop(self, refresh_rate=0.001, speed_factor=0.1):
+        """
+        Loop eseguito in un thread separato.
+        Muove gradualmente il cursore verso la posizione target.
+        refresh_rate: tempo di sleep tra un frame e l'altro (in secondi).
+        speed_factor: quanto velocemente il cursore si muove verso il target.
+        """
+        last_move_x = 0
+        last_move_y = 0
+        while not self.stop_event.is_set():
+            if self.client_status.get_state() and self.target_x is not None and self.target_y is not None:
+                x, y = self.smooth_logic(last_move_x, last_move_y, speed_factor)
+                if x is not None and y is not None:
+                    last_move_x = x
+                    last_move_y = y
+
+            time.sleep(refresh_rate)
 
     def process_mouse_command(self, x, y, mouse_action, is_pressed):
         self.get_server_screen_size()
         if mouse_action == "position":
-            target_x = max(0, min(x * self.screen_width, self.screen_width))  # Ensure target_x is within screen bounds
-            target_y = max(0,
+            target_x = max(0.0,
+                           min(x * self.screen_width, self.screen_width))  # Ensure target_x is within screen bounds
+            target_y = max(0.0,
                            min(y * self.screen_height, self.screen_height))  # Ensure target_y is within screen bounds
 
-            self.smooth_position(self.mouse.position[0], self.mouse.position[1], target_x, target_y)
+            self.set_target_position(target_x, target_y)
         elif mouse_action == "move":
             # Denormalize the x and y values
             scale_x = self.server_screen_width / self.screen_width
             scale_y = self.server_screen_height / self.screen_height
             dx = x * scale_x
             dy = y * scale_y
-            self.smooth_move(dx, dy)
+            current_x, current_y = self.mouse.position
+            # Imposta il target come posizione attuale + dx, dy
+            self.set_target_position(current_x + dx, current_y + dy)
         elif mouse_action == "click":
             self.handle_click(Button.left, is_pressed)
         elif mouse_action == "right_click":

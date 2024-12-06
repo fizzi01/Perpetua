@@ -377,27 +377,32 @@ class Server:
             self.changed.clear()
             self.log("[SECURER] Securer completed.", Logger.DEBUG)
 
+    # TODO: Move to Command
     def reset_mouse(self, param, y: float):
         screen_reset_strategy = ScreenResetStrategyFactory.get_reset_strategy(param, self)
         screen_reset_strategy.reset(y)
 
+    # TODO: Move to Command and use global mouse_controller
     def force_mouse_position(self, x, y):
+
         desired_position = (x, y)
         attempt = 0
-        max_attempts = 60
+        max_attempts = 600
 
         # Condizione per ridurre la frequenza degli aggiornamenti della posizione
-        update_interval = 0.001  # intervallo tra gli aggiornamenti
+        update_interval = 0.05  # intervallo tra gli aggiornamenti
         last_update_time = time.time()
 
         while not self._is_mouse_position_reached(desired_position) and attempt < max_attempts:
+            time.sleep(0.01)
             current_time = time.time()
             if current_time - last_update_time >= update_interval:
                 self.mouse_controller.position = desired_position
                 attempt += 1
                 last_update_time = current_time
 
-    def _is_mouse_position_reached(self, desired_position, margin=100):
+    # TODO: Move to Command
+    def _is_mouse_position_reached(self, desired_position, margin=50):
         """
         Check if the mouse position is reached, with a margin of error
         """

@@ -47,7 +47,9 @@ class ServerHandler:
 
     def stop_threads(self):
         self._running = False
-        self.main_thread.join()
+        # check if main_thread is current thread
+        if threading.current_thread() != self.main_thread:
+            self.main_thread.join()
         self.buffer_thread.join()
 
     def start(self):
