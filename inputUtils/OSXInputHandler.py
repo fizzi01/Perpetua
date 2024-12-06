@@ -1,6 +1,7 @@
 import math
 import subprocess
 from collections.abc import Callable
+from concurrent.futures import ThreadPoolExecutor
 
 import pyperclip
 from pynput import mouse
@@ -723,21 +724,16 @@ class ClientKeyboardController(HandlerInterface):
         return key_data == "alt_gr" or key_data == "alt_r"
 
     @staticmethod
-    def is_shift(key_data):
-        return key_data == "shift"
-
-    @staticmethod
-    def is_alt(key_data):
-        return key_data == "alt_l"
+    def is_special_key(key_data):
+        return key_data in ["shift", "alt_l", "cmd"]
 
     def process_key_command(self, key_data, key_action):
         key_data = self.data_filter(key_data)
 
         if key_action == "press":
-
             if self.is_alt_gr(key_data):
                 self.keyboard.release(Key.ctrl_r)
-            if self.is_shift(key_data) or self.is_alt(key_data):
+            if self.is_special_key(key_data):
                 self.pressed_keys.add(key_data)
                 self.keyboard.press(self.get_key(key_data))
             else:
@@ -751,7 +747,7 @@ class ClientKeyboardController(HandlerInterface):
                 else:
                     self.keyboard.press(self.get_key(key_data))
         elif key_action == "release":
-            if self.is_shift(key_data) or self.is_alt(key_data) and len(self.pressed_keys) > 0:
+            if self.is_special_key(key_data) and len(self.pressed_keys) > 0:
                 self.pressed_keys.remove(key_data)
             self.keyboard.release(self.get_key(key_data))
 
@@ -770,6 +766,9 @@ class ClientMouseController(HandlerInterface):
         self.pressed = False
         self.last_press_time = -99
         self.doubleclick_counter = 0
+
+        # Mouse scrool thread pool
+        self.scroll_thread = ThreadPoolExecutor(max_workers=5)
 
         self.log = Logger.get_instance().log
 
@@ -803,7 +802,7 @@ class ClientMouseController(HandlerInterface):
         elif mouse_action == "right_click":
             self.mouse.click(Button.right)
         elif mouse_action == "scroll":
-            self.smooth_scroll(x, y)  # Fall back without threading
+            self.scroll_thread.submit(self.smooth_scroll, x, y)
 
     def handle_click(self, button, is_pressed):
         current_time = time.time()

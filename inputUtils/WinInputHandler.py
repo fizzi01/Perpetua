@@ -3,6 +3,7 @@ import threading
 import time
 import urllib
 from collections.abc import Callable
+from concurrent.futures import ThreadPoolExecutor
 
 # System libraries
 import win32clipboard
@@ -732,6 +733,9 @@ class ClientMouseController(HandlerInterface):
         self.last_press_time = -99
         self.doubleclick_counter = 0
 
+        # Mouse scrool thread pool
+        self.scroll_thread = ThreadPoolExecutor(max_workers=5)
+
         self.log = Logger.get_instance().log
 
     def stop(self):
@@ -796,7 +800,7 @@ class ClientMouseController(HandlerInterface):
         elif mouse_action == "right_click":
             self.mouse.click(Button.right)
         elif mouse_action == "scroll":
-            self.smooth_scroll(x, y)  # Fall back without threading
+            self.scroll_thread.submit(self.smooth_scroll, x, y)
 
     def handle_click(self, button, is_pressed):
         current_time = time.time()

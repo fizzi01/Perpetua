@@ -1,7 +1,6 @@
 import socket
 import threading
 from collections.abc import Callable
-from concurrent.futures import ThreadPoolExecutor
 from time import sleep, time
 from queue import Queue, Empty
 
@@ -31,25 +30,36 @@ class ServerHandler:
         self.on_disconnect = None
         self.log = Logger.get_instance().log
         self._running = False
+
         self.main_thread = None
+        self.buffer_thread = None
+        self.init_threads()
+
         self.data_queue = Queue()
 
-        self.executor = ThreadPoolExecutor(max_workers=MAX_WORKERS)
+    def init_threads(self):
+        self.main_thread = threading.Thread(target=self._handle_server_commands, daemon=True)
+        self.buffer_thread = threading.Thread(target=self._buffer_and_process_batches, daemon=True)
+
+    def start_threads(self):
+        self.main_thread.start()
+        self.buffer_thread.start()
+
+    def stop_threads(self):
+        self._running = False
+        self.main_thread.join()
+        self.buffer_thread.join()
 
     def start(self):
         self._running = True
-        self.main_thread = threading.Thread(target=self._handle_server_commands, daemon=True)
-        self.buffer_thread = threading.Thread(target=self._buffer_and_process_batches, daemon=True)
         try:
-            self.main_thread.start()
-            self.buffer_thread.start()
+            self.start_threads()
             self.log("Client in listening mode.")
         except Exception as e:
             self.log(f"Error starting client: {e}", 2)
 
     def stop(self):
-        self._running = False
-        self.executor.shutdown(wait=True)
+        self.stop_threads()
         self.log("Client disconnected.", 1)
         self.conn.close()
 
@@ -99,9 +109,10 @@ class ServerHandler:
                 self.log(f"Error processing data: {e}", 2)
 
     def _process_batch(self, command):
-        self.executor.submit(self.process_command, command)
+        self.process_command(command)
 
 
+# TODO: Apply command pattern to the command processing (#CodeCleanup)
 class ServerCommandProcessor:
     def __init__(self, client):
         self.client = client
@@ -122,6 +133,14 @@ class ServerCommandProcessor:
         self.clipboard_thread = threading.Thread(target=self._process_clipboard_queue, daemon=True)
         self.clipboard_thread.start()
 
+        self.mouse_queue = Queue()  # Needed to process commands sequentially, preserving the order
+        self.mouse_thread = threading.Thread(target=self._process_mouse_queue, daemon=True)
+        self.mouse_thread.start()
+
+        self.file_queue = Queue()
+        self.file_thread = threading.Thread(target=self._process_file_queue, daemon=True)
+        self.file_thread.start()
+
         self.fileTransferHandler = FileTransferEventHandler()
 
         self.log = Logger.get_instance().log
@@ -130,6 +149,8 @@ class ServerCommandProcessor:
         self.stop_event.set()
         self.keyboard_thread.join()
         self.clipboard_thread.join()
+        self.mouse_thread.join()
+        self.file_thread.join()
         self.stop_event.clear()
 
     def process_command(self, command):
@@ -137,30 +158,61 @@ class ServerCommandProcessor:
         command_type = parts[0]
 
         if command_type == "file_request":
-            self.fileTransferHandler.handle_file_request(None)
+            self.file_queue.put(parts)
         elif command_type == "file_start":
-            file_info = {
-                "file_name": parts[1],
-                "file_size": int(parts[2]),
-            }
-            self.fileTransferHandler.handle_file_start(file_info)
+            self.file_queue.put(parts)
         elif command_type == "file_chunk":
-            self.fileTransferHandler.handle_file_chunk(parts[1:])
+            self.file_queue.put(parts)
         elif command_type == "file_end":
-            self.fileTransferHandler.handle_file_end()
+            self.file_queue.put(parts)
         elif command_type == "mouse":
-
-            # If client_state is Hiddle, set it to Controlled
-            if not self.client_state.is_controlled():
-                self.client_state.set_state(ControlledState())
-
-            self._process_mouse_command(parts)
+            self.mouse_queue.put(parts)
         elif command_type == "keyboard":
             self._process_keyboard_command(parts)
         elif command_type == "clipboard":
             self._process_clipboard_command(parts)
         elif command_type == "screen":
             self._process_screen_command(parts)
+
+    def _process_file_queue(self):
+        while not self.stop_event.is_set():
+            try:
+                parts = self.file_queue.get(timeout=1)
+                self._process_file_command(parts)
+                self.file_queue.task_done()
+            except Empty:
+                continue
+
+    def _process_file_command(self, parts):
+        try:
+            command_type = parts[0]
+            if command_type == "file_request":
+                self.fileTransferHandler.handle_file_request(None)
+            elif command_type == "file_start":
+                file_info = {
+                    "file_name": parts[1],
+                    "file_size": int(parts[2]),
+                }
+                self.fileTransferHandler.handle_file_start(file_info)
+            elif command_type == "file_chunk":
+                self.fileTransferHandler.handle_file_chunk(parts[1:])
+            elif command_type == "file_end":
+                self.fileTransferHandler.handle_file_end()
+        except Exception as e:
+            self.log(f"Error processing file command: {e}", 2)
+
+    def _process_mouse_queue(self):
+        while not self.stop_event.is_set():
+            try:
+                parts = self.mouse_queue.get(timeout=1)
+                # If client_state is Hiddle, set it to Controlled
+                if not self.client_state.is_controlled():
+                    self.client_state.set_state(ControlledState())
+
+                self._process_mouse_command(parts)
+                self.mouse_queue.task_done()
+            except Empty:
+                continue
 
     def _process_mouse_command(self, parts):
         try:
