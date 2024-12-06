@@ -99,6 +99,10 @@ def overlay_process(conn):
             self.pipe_thread.daemon = True
             self.pipe_thread.start()
 
+            # Initialize wx.Timer
+            self.monitor_timer = wx.Timer(self)
+            self.Bind(wx.EVT_TIMER, self.monitor_overlay, self.monitor_timer)
+
             # Flag per il thread di monitoraggio
             self.overlay_active = False
             self.monitor_thread = None
@@ -122,9 +126,7 @@ def overlay_process(conn):
                         break
 
         def HideOverlay(self):
-            self.overlay_active = False  # Ferma il thread di monitoraggio
-            if self.monitor_thread and self.monitor_thread.is_alive():
-                self.monitor_thread.join()
+            self.monitor_timer.Stop()
 
             self.Hide()
             NSCursor.unhide()
@@ -141,27 +143,19 @@ def overlay_process(conn):
             self.ForceOverlay()
             self.SetFocus()
 
-            # Inizia il thread di monitoraggio
-            self.overlay_active = True
-            self.monitor_thread = threading.Thread(target=self.monitor_overlay)
-            self.monitor_thread.daemon = True
-            self.monitor_thread.start()
+            self.monitor_timer.Start(10)
 
-        def monitor_overlay(self):
+        def monitor_overlay(self, event):
             window_ptr = self.GetHandle()
             ns_view = objc.objc_object(c_void_p=window_ptr)
             ns_window = ns_view.window()
-
-            while self.overlay_active:
-                # Controlla se la finestra è la finestra chiave
-                if not ns_window.isKeyWindow():
-                    # Porta la finestra in primo piano e rendila la finestra chiave
-                    wx.CallAfter(self.HandleFullscreen)
-                    wx.CallAfter(self.Show)
-                    wx.CallAfter(NSCursor.hide)
-                    wx.CallAfter(self.ForceOverlay)
-                    wx.CallAfter(self.SetFocus)
-                time.sleep(0.1)  # Attendi 100 ms prima di controllare di nuovo
+            wx.CallAfter(NSCursor.hide)
+            if not ns_window.isKeyWindow():
+                # Porta la finestra in primo piano e rendila la finestra chiave
+                wx.CallAfter(self.HandleFullscreen)
+                wx.CallAfter(self.Show)
+                wx.CallAfter(self.ForceOverlay)
+                wx.CallAfter(self.SetFocus)
 
         def HandleFullscreen(self):
             self.previous_app = NSWorkspace.sharedWorkspace().frontmostApplication()
