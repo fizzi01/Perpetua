@@ -129,6 +129,9 @@ class FileTransferService(IFileTransferService):
                 # Broadcast a tutti i client: file_copied <file_name> <file_size> <file_path>
                 cmd = format_command(f"file_copied {file_name} {file_size} {file_path}")
                 self.io_manager.send_file_copy("all", cmd)  # Tutti i client memorizzeranno con EXTERNAL_OWNERSHIP
+            else:   # Client ha copiato un file, manda al server per memorizzare
+                cmd = format_command(f"file_copied {file_name} {file_size} {file_path}")
+                self.io_manager.send_file_copy(None, cmd)
 
             # Salva internamente
             self.current_file_info = {
@@ -248,6 +251,7 @@ class FileTransferService(IFileTransferService):
 
             # Avoiding auto-request
             if requester_screen == self.CLIENT_REQUEST and owner == self.LOCAL_OWNERSHIP:
+                self.log("[FileTransferService] Client: Avoiding auto-request", Logger.DEBUG)
                 return
 
             if owner == self.LOCAL_OWNERSHIP:
