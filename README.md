@@ -152,7 +152,7 @@ If you encounter any issues or have feature requests, please open an issue.
 
 ## License
 
-This project is licensed under the MIT License. See the [LICENSE](#) file for details.
+This project is licensed under License. See the [LICENSE](https://github.com/fizzi01/pyContinuity/blob/master/LICENSE) file for details.
 ___
 
 ### Simplify your multi-device management with PyContinuity.
