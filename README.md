@@ -80,7 +80,7 @@ ___
 ## Getting Started
 
 1. **Download PyContinuity**:
-   - [Download for macOS](#)
+   - [Download for macOS (arm64)](#)
    - [Download for Windows](#)
 2. **Install**:
    - Follow the instructions in the provided [installation guide](#).
