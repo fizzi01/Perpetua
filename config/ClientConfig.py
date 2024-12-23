@@ -1,3 +1,6 @@
+from utils.Interfaces import IClientInfoObj
+
+
 class ClientConfig:
     def __init__(self, server_ip, server_port, use_ssl=False, certfile=None, logging=False, wait=0):
         self.server_ip = server_ip
@@ -44,3 +47,5 @@ class ClientConfig:
         self.wait = wait
 
 
+class ClientInfo(IClientInfoObj):
+    pass

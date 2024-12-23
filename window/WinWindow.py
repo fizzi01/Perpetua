@@ -102,6 +102,7 @@ class HiddenWindow(AbstractHiddenWindow):
         self.process = None
         self.log = Logger.get_instance().log
 
+    def start(self):
         self._start_window_app()
 
     def _start_window_app(self):
@@ -111,7 +112,7 @@ class HiddenWindow(AbstractHiddenWindow):
 
     @staticmethod
     def overlay_process(conn):
-        app = wx.App(False)
+        app = wx.App()
         TransparentFullscreenWindow(None, conn)
         app.MainLoop()
 

@@ -151,7 +151,6 @@ def overlay_process(conn):
             ns_window = ns_view.window()
             wx.CallAfter(NSCursor.hide)
             if not ns_window.isKeyWindow():
-                # Porta la finestra in primo piano e rendila la finestra chiave
                 wx.CallAfter(self.HandleFullscreen)
                 wx.CallAfter(self.Show)
                 wx.CallAfter(self.ForceOverlay)
@@ -213,7 +212,7 @@ def overlay_process(conn):
             app_element = AXUIElementCreateApplication(pid)
             error, result = AXUIElementCopyAttributeValue(app_element, kAXWindowsAttribute, None)
             if error != 0:
-                print("Errore nell'ottenere le finestre dell'applicazione.")
+                print("Error getting windows for application.")
                 return []
             return result
 
@@ -228,7 +227,7 @@ def overlay_process(conn):
         def set_window_fullscreen(window, fullscreen):
             error = AXUIElementSetAttributeValue(window, kAXFullScreenAttribute, fullscreen)
             if error != 0:
-                print("Errore nell'impostare lo stato di fullscreen della finestra.")
+                print("Error setting fullscreen attribute.")
 
     app = wx.App()
     OverlayFrame()
@@ -240,9 +239,10 @@ class HiddenWindow(AbstractHiddenWindow):
     def __init__(self):
         self.parent_conn, self.child_conn = multiprocessing.Pipe()
 
-        self.process = None
+        self.process: multiprocessing.Process | None = None
         self.log = Logger.get_instance().log
 
+    def start(self):
         self._start_window_app()
 
     def _start_window_app(self):

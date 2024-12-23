@@ -7,7 +7,7 @@ from config.configConstants import *
 
 from abc import ABC, abstractmethod
 
-from utils.metadataExtractor import extract_metadata
+from utils.misc.metadataExtractor import extract_metadata
 
 
 class BaseGUIController(ABC):
@@ -233,7 +233,7 @@ class TerminalGUIController(BaseGUIController):
             self.messager.print("10. Exit")
             self.messager.print("\n")
             self.messager.print("Enter your choice: ")
-            choice = self.messager.input("\n")
+            choice = self.messager.input()
 
             if choice == "1":
                 self.configure_server()

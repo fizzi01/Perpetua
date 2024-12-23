@@ -1,2 +1,2 @@
-from client.ClientState import ClientState
-from client.ServerHandler import *
+from client.state.ClientState import ClientState
+from client.connections.ServerHandler import *

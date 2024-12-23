@@ -6,11 +6,12 @@ import threading
 import time
 import urllib.parse
 import zlib
-from queue import Queue, Empty, PriorityQueue
+from queue import Queue, Empty
 import heapq
 
+from utils.Interfaces import IServerContext, IMessageService, IMessageQueueManager, IClientContext
 from utils.Logging import Logger
-from utils.netData import *
+from utils.net.netData import *
 
 MOUSE_BATCH_INTERVAL = 0.02  # 20 ms, intervallo per inviare il batch dei messaggi del mouse
 MOUSE_MAX_BATCH_SIZE = 10  # Massimo numero di messaggi nel batch prima di inviare
@@ -64,8 +65,7 @@ class StablePriorityQueue:
             return len(self._queue)
 
 
-class QueueManager:
-    _instance = None
+class MessageService(IMessageService):
     _lock = threading.Lock()
     _stop_event = threading.Event()
 
@@ -79,38 +79,32 @@ class QueueManager:
     CLIPBOARD_PRIORITY = 2
     FILE_PRIORITY = 5
 
-    def __new__(cls, *args, **kwargs):
-        if not cls._instance:
-            with cls._lock:
-                if not cls._instance:
-                    cls._instance = super(QueueManager, cls).__new__(cls)
-        return cls._instance
+    def __init__(self, message_sender: IMessageQueueManager, mouse=True, keyboard=True, clipboard=True, file=True):
+        super().__init__()
 
-    def __init__(self, MessageSender, mouse=True, keyboard=True, clipboard=True, file=True):
-        if not hasattr(self, 'initialized'):
-            self.mouse_queue = Queue()
-            self.keyboard_queue = Queue()
-            self.clipboard_queue = Queue()
-            self.file_queue = Queue()
-            self.forward_file_queue = Queue()
+        self.mouse_queue = Queue()
+        self.keyboard_queue = Queue()
+        self.clipboard_queue = Queue()
+        self.file_queue = Queue()
+        self.forward_file_queue = Queue()
 
-            self.MessageSender = MessageSender
-            self._thread_pool = []
-            self._threads_started = False
-            self.initialized = True
+        self.MessageSender = message_sender
+        self._thread_pool = []
+        self._threads_started = False
+        self.initialized = True
 
-            # Buffer for events
-            self.mouse_batch_buffer = []
-            self.keyboard_batch_buffer = []
-            self.file_batch_buffer = []
+        # Buffer for events
+        self.mouse_batch_buffer = []
+        self.keyboard_batch_buffer = []
+        self.file_batch_buffer = []
 
-            # Flags to manage specific queues
-            self.manage_mouse = mouse
-            self.manage_keyboard = keyboard
-            self.manage_clipboard = clipboard
-            self.manage_files = file
+        # Flags to manage specific queues
+        self.manage_mouse = mouse
+        self.manage_keyboard = keyboard
+        self.manage_clipboard = clipboard
+        self.manage_files = file
 
-            self.log = Logger.get_instance().log
+        self.log = Logger.get_instance().log
 
     def send(self, queue_type, message):
         if queue_type == self.MOUSE:
@@ -293,7 +287,7 @@ class QueueManager:
             except Empty:
                 continue
 
-    def join(self):
+    def join(self, timeout=None):
         self._stop_event.set()
         for thread in self._thread_pool:
             thread.join()
@@ -305,29 +299,21 @@ class QueueManager:
         return self._threads_started
 
 
-class BaseMessageQueueManager:
-    _instance = None
-    _lock = threading.Lock()
+class BaseMessageQueueManager(threading.Thread, IMessageQueueManager):
     _stop_event = threading.Event()
 
-    def __new__(cls, *args, **kwargs):
-        if not cls._instance:
-            with cls._lock:
-                if not cls._instance:
-                    cls._instance = super(BaseMessageQueueManager, cls).__new__(cls)
-        return cls._instance
-
     def __init__(self):
-        if not hasattr(self, 'initialized'):
-            self.send_queue = StablePriorityQueue()
+        super().__init__()
 
-            self._sending_thread = threading.Thread(target=self._process_send_queue, daemon=True)
-            self._threads_started = False
-            self.initialized = True
+        self.send_queue = StablePriorityQueue()
 
-            self.log = Logger.get_instance().log
+        self._sending_thread = threading.Thread(target=self._process_send_queue, daemon=True)
+        self._threads_started = False
+        self.initialized = True
 
-    def join(self):
+        self.log = Logger.get_instance().log
+
+    def join(self, timeout=None):
         self._stop_event.set()
         if self._threads_started:
             self._sending_thread.join()
@@ -396,11 +382,11 @@ class BaseMessageQueueManager:
 
 class ServerMessageQueueManager(BaseMessageQueueManager):
 
-    def __init__(self, connected_clients, get_client, change_screen):
+    def __init__(self, context: IServerContext):
         super().__init__()
-        self.get_connected_clients = connected_clients
-        self.get_client = get_client
-        self.change_screen = change_screen
+        self.get_connected_clients = context.get_connected_clients
+        self.get_client = context.get_client
+        self.change_screen = context.change_screen
 
     def _send_message(self, message):
         screen, data = message
@@ -458,21 +444,19 @@ class ServerMessageQueueManager(BaseMessageQueueManager):
 
 class ClientMessageQueueManager(BaseMessageQueueManager):
 
-    def __init__(self, conn):
-        if not hasattr(self, 'initialized'):
-            super().__init__()
-
-        self.conn = conn
+    def __init__(self, context: IClientContext):
+        super().__init__()
+        self.conn = context.get_connected_server
 
     def _send_message(self, message):
         try:
-            if not self.conn.is_socket_open():
+            if not self.conn().is_socket_open():
                 return
             if isinstance(message, tuple):
                 screen, data = message
                 formatted_data = format_data(data)
-                self._send_in_chunks(self.conn, formatted_data)
+                self._send_in_chunks(self.conn(), formatted_data)
             else:
-                self._send_in_chunks(self.conn, message)
+                self._send_in_chunks(self.conn(), message)
         except Exception as e:
             self.log(f"Error sending data: {e}", Logger.ERROR)

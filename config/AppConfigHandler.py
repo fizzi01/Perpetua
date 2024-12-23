@@ -7,7 +7,7 @@ import ipaddress
 from typing import Tuple
 
 import config
-from utils import net
+from utils.net import NetUtils
 
 
 class ConfigFactory:
@@ -98,11 +98,12 @@ class AppConfigHandler:
         print(f"SSL certificate generated: {cert_path}, {key_path}")
         return cert_path, key_path
 
-    def _get_local_ips_in_subnet(self) -> list:
+    @staticmethod
+    def _get_local_ips_in_subnet() -> list:
         """Rileva automaticamente gli IP locali nella subnet."""
         local_ips = []
         try:
-            local_ip = net.get_local_ip()
+            local_ip = NetUtils.get_local_ip()
             subnet = ipaddress.IPv4Network(f"{local_ip}/24", strict=False)
             local_ips = [str(ip) for ip in subnet]
             # Filtra gli IP riservati (es: .0, .1, .255)

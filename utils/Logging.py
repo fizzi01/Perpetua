@@ -1,6 +1,7 @@
 # Strategy Pattern per la gestione del logging
 import threading
 from datetime import datetime
+from queue import Queue
 
 
 class LoggingStrategy:
@@ -12,13 +13,13 @@ class ConsoleLoggingStrategy(LoggingStrategy):
     def log(self, stdout, message, priority):
         cur_time = datetime.now().strftime("%H:%M:%S.%f")[:-3]
         if priority == Logger.WARNING:
-            stdout(f"\033[93m[{cur_time}] WARNING: {message}\033[0m")
+            stdout(f"\033[93m[{cur_time}] [WARNING]: {message}\033[0m")
         elif priority == Logger.ERROR:
-            stdout(f"\033[91m[{cur_time}] ERROR: {message}\033[0m")
+            stdout(f"\033[91m[{cur_time}] [ERROR]: {message}\033[0m")
         elif priority == Logger.INFO:
-            stdout(f"\033[94m[{cur_time}] INFO: {message}\033[0m")
+            stdout(f"\033[94m[{cur_time}] [INFO]: {message}\033[0m")
         elif priority == Logger.DEBUG:
-            stdout(f"\033[92m[{cur_time}] DEBUG: {message}\033[0m")
+            stdout(f"\033[92m[{cur_time}] [DEBUG]: {message}\033[0m")
         else:
             stdout(f"[{cur_time}] ", message)
 
@@ -47,6 +48,8 @@ class LoggingStrategyFactory:
 class Logger:
     _instance = None
     _lock = threading.Lock()
+    _queue = Queue()
+    _log_queue_thread: threading.Thread | None = None
 
     WARNING = 3
     ERROR = 2
@@ -67,7 +70,17 @@ class Logger:
         self.logging_strategy = LoggingStrategyFactory.get_logging_strategy(self.logging)
 
     def log(self, message, priority: int = 0):
-        self.logging_strategy.log(self.stdout, message, priority)
+        with self._lock:
+            self._queue.put((message, priority))
+
+        if not (self._log_queue_thread and self._log_queue_thread.is_alive()):
+            self._log_queue_thread = threading.Thread(target=self._log, daemon=True)
+            self._log_queue_thread.start()
+
+    def _log(self):
+        while not self._queue.empty():
+            message, priority = self._queue.get()
+            self.logging_strategy.log(self.stdout, message, priority)
 
     @classmethod
     def get_instance(cls):

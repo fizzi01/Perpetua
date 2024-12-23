@@ -1,8 +1,10 @@
 import socket
 from typing import Dict, Optional
 
+from utils.Interfaces import IBaseSocket, IClients, IClientObj
 
-class Client:
+
+class Client(IClientObj):
     """
     Class to manage the possible clients of the server.
     :param conn: Connection of the client.
@@ -10,9 +12,9 @@ class Client:
     :param key_map: Mapping of the keys pressed by the client. Es: {"ctrl": "cmd"}
     """
 
-    def __init__(self, conn: Optional[socket.socket] = None, addr: str = "", port: int = 5000,
+    def __init__(self, conn: Optional[socket.socket | IBaseSocket] = None, addr: str = "", port: int = 5000,
                  key_map: Dict[str, str] = None):
-        self.conn: Optional[socket.socket] = conn
+        self.conn: Optional[socket.socket | IBaseSocket] = conn
         self.addr: str = addr
         self.port: int = port
         self.key_map = key_map if key_map is not None else {}
@@ -24,7 +26,7 @@ class Client:
     def set_screen_size(self, size: tuple):
         self.screen_size = size
 
-    def get_connection(self) -> Optional[socket.socket]:
+    def get_connection(self) -> Optional[socket.socket | IBaseSocket]:
         return self.conn
 
     def get_address(self) -> str:
@@ -42,7 +44,7 @@ class Client:
     def get_key(self, key: str) -> str:
         return self.key_map.get(key, key)
 
-    def set_connection(self, conn: Optional[socket.socket]):
+    def set_connection(self, conn: Optional[socket.socket | IBaseSocket]):
         self.conn = conn
 
     def set_address(self, addr: str):
@@ -55,26 +57,26 @@ class Client:
         return self.conn is not None
 
 
-class Clients:
+class Clients(IClients):
     """
     Class to manage the possible clients of the server.
     :param clients: Dictionary of client positions and their associated Client objects.
     """
 
-    def __init__(self, clients: Optional[Dict[str, Client]] = None):
-        self.clients: Dict[str, Client] = clients if clients is not None else {}
+    def __init__(self, clients: Optional[Dict[str, IClientObj]] = None):
+        self.clients: Dict[str, IClientObj] = clients if clients is not None else {}
 
-    def get_client(self, position: str) -> Optional[Client]:
-        return self.clients.get(position)
+    def get_client(self, position: str) -> Optional[IClientObj]:
+        return self.clients.get(position, None)
 
-    def set_client(self, position: str, client: Client):
+    def set_client(self, position: str, client: IClientObj):
         self.clients[position] = client
 
-    def get_connection(self, position: str) -> Optional[socket.socket]:
+    def get_connection(self, position: str) -> Optional[socket.socket | IBaseSocket]:
         client = self.get_client(position)
         return client.get_connection() if client else None
 
-    def set_connection(self, position: str, conn: socket.socket):
+    def set_connection(self, position: str, conn: IBaseSocket):
         client = self.get_client(position)
         if client:
             client.set_connection(conn)
@@ -114,7 +116,7 @@ class Clients:
         if position in self.clients:
             del self.clients[position]
 
-    def get_connected_clients(self) -> Dict[str, Client]:
+    def get_connected_clients(self) -> Dict[str, IClientObj]:
         return {pos: client for pos, client in self.clients.items() if client.is_connected()}
 
     def __str__(self):

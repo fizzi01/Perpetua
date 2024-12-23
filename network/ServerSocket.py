@@ -2,16 +2,18 @@ import ssl
 import socket
 import time
 import uuid
-from abc import ABC, abstractmethod
 from typing import Callable
+
+from zeroconf import ServiceInfo, Zeroconf, ServiceStateChange, ServiceBrowser
+
+from utils import screen_size
+from utils.net import netConstants, NetUtils
+from utils.Interfaces import IBaseSocket, IClientConnectionHandler, IServerSocket, IClientHandlerFactory, \
+    IConnectionHandlerFactory
+from utils.Logging import Logger
 
 from config import SERVICE_NAME
 from config.ServerConfig import Clients
-from server.ClientHandler import ClientHandlerFactory
-from utils.Logging import Logger
-
-from zeroconf import ServiceInfo, Zeroconf, ServiceStateChange, ServiceBrowser
-from utils import net, netConstants, screen_size
 
 
 class SSLFactory:
@@ -23,21 +25,20 @@ class SSLFactory:
         return ssl_sock
 
 
-class ConnectionHandler(ABC):
+class ConnectionHandler(IClientConnectionHandler):
     INACTIVITY_TIMEOUT = 3
 
-    def __init__(self, command_processor: Callable[[str | tuple], None] = None, server_info: dict = None):
+    def __init__(self, process_command: Callable[[str | tuple, str], None],
+                 client_handler_factory: IClientHandlerFactory):
         self.log = Logger.get_instance().log
         self.client_handlers = []
-
-        self.server_info = None
 
         self.recent_activity = False
         self.last_check_time = time.time()
 
-        self.command_processor = command_processor
+        self.command_processor = process_command
+        self.client_handler_factory = client_handler_factory
 
-    @abstractmethod
     def handle_connection(self, conn: socket.socket, addr: tuple, clients: Clients):
         pass
 
@@ -84,21 +85,26 @@ class ConnectionHandler(ABC):
             return None
 
 
-class ConnectionHandlerFactory:
+class ConnectionHandlerFactory(IConnectionHandlerFactory):
     @staticmethod
     def create_handler(ssl_enabled: bool, certfile: str = None,
                        keyfile: str = None,
-                       command_processor: Callable[[str | tuple], None] = None) -> ConnectionHandler:
+                       context=None,  # Not used by server
+                       handler_socket=None,     # Not used by server
+                       command_processor: Callable[[str | tuple, str], None] = None,
+                       handler_factory: IClientHandlerFactory = None) -> ConnectionHandler:
         if ssl_enabled:
-            return SSLConnectionHandler(certfile=certfile, keyfile=keyfile, command_processor=command_processor)
+            return SSLConnectionHandler(certfile=certfile, keyfile=keyfile, process_command=command_processor,
+                                        client_handler_factory=handler_factory)
         else:
-            return NonSSLConnectionHandler(command_processor=command_processor)
+            return NonSSLConnectionHandler(process_command=command_processor, client_handler_factory=handler_factory)
 
 
 class SSLConnectionHandler(ConnectionHandler):
 
-    def __init__(self, certfile: str, keyfile: str, command_processor: Callable[[str | tuple], None] = None):
-        super().__init__(command_processor=command_processor)
+    def __init__(self, certfile: str, keyfile: str, process_command: Callable[[str | tuple, str], None] = None,
+                 client_handler_factory: IClientHandlerFactory = None):
+        super().__init__(process_command=process_command, client_handler_factory=client_handler_factory)
         self.ssl_factory = SSLFactory()
         self.certfile = certfile
         self.keyfile = keyfile
@@ -117,7 +123,7 @@ class SSLConnectionHandler(ConnectionHandler):
                 return
 
             # Wrap socket with BaseSocket
-            ssl_conn = BaseSocket(ssl_conn)
+            ssl_conn = BaseSocket(ssl_conn, address=addr[0])
 
             # Add the SSL connection to the clients manager
             self.add_client_connection(ssl_conn, addr, clients, client_config)
@@ -134,7 +140,8 @@ class SSLConnectionHandler(ConnectionHandler):
             if clients.get_address(pos) == addr[0]:
                 clients.set_connection(pos, ssl_conn)
                 clients.set_screen_size(pos, client_config["screen_resolution"])
-                client_handler = ClientHandlerFactory.create_client_handler(ssl_conn, addr, pos, self.command_processor)
+                client_handler = self.client_handler_factory.create_handler(conn=ssl_conn, screen=pos,
+                                                                            process_command=self.command_processor)
                 client_handler.start()
                 self.client_handlers.append(client_handler)
                 return
@@ -169,14 +176,14 @@ class NonSSLConnectionHandler(ConnectionHandler):
             if clients.get_address(pos) == addr[0]:
                 clients.set_connection(pos, conn)
                 clients.set_screen_size(pos, client_config["screen_resolution"])
-                client_handler = ClientHandlerFactory.create_client_handler(conn, addr, pos, self.command_processor)
+                client_handler = self.client_handler_factory.create_handler(conn=conn, screen=pos,
+                                                                            process_command=self.command_processor)
                 client_handler.start()
                 self.client_handlers.append(client_handler)
                 break
 
 
-# Singleton per il socket del server
-class ServerSocket:
+class ServerSocket(IServerSocket):
     _instance = None
 
     def __new__(cls, host: str, port: int, wait: int):
@@ -196,6 +203,12 @@ class ServerSocket:
         self.zeroconf = Zeroconf()
         self._resolve_port_conflict()
         self._register_mdns_service()
+
+    def get_host(self):
+        return self.host
+
+    def get_port(self):
+        return self.port
 
     def bind_and_listen(self):
         self.socket.bind((self.host, self.port))
@@ -232,10 +245,13 @@ class ServerSocket:
             nonlocal conflict_found
             if state_change == ServiceStateChange.Added:
                 info = zeroconf.get_service_info(service_type, name)
-                if info:
-                    properties = {key.decode(): value.decode() for key, value in info.properties.items()}
-                    if properties.get("app_name") == SERVICE_NAME and info.port == port:
-                        conflict_found = True
+                if info and info.properties:
+                    try:
+                        properties = {key.decode(): value.decode() for key, value in info.properties.items()}
+                        if properties.get("app_name") == SERVICE_NAME and info.port == port:
+                            conflict_found = True
+                    except AttributeError:
+                        pass
 
         browser = ServiceBrowser(self.zeroconf, "_http._tcp.local.", handlers=[on_service_state_change])
         time.sleep(1)  # Aspetta che i servizi vengano scoperti
@@ -243,7 +259,7 @@ class ServerSocket:
         return conflict_found
 
     def _register_mdns_service(self):
-        self.host = net.get_local_ip()
+        self.host = NetUtils.get_local_ip()
         if not self.host:
             raise Exception("No connection.")
         service_info = ServiceInfo(
@@ -263,14 +279,19 @@ class ServerSocket:
         self.log(f"[mDNS] Server service {SERVICE_NAME} unregistered.", Logger.DEBUG)
 
 
-class BaseSocket:
+class BaseSocket(IBaseSocket):
     # Maschera il socket di base per consentire l'accesso ai metodi di socket
     def __getattr__(self, item):
         return getattr(self.socket, item)
 
-    def __init__(self, socket: socket.socket):
-        self.socket = socket
+    def __init__(self, sock: socket.socket, address: str = ""):
+        self.socket = sock
+        self._address = address
         self.log = Logger.get_instance().log
+
+    @property
+    def address(self) -> str:
+        return self._address
 
     def send(self, data: str | bytes):
         if isinstance(data, str):
@@ -287,7 +308,15 @@ class BaseSocket:
     def close(self):
         try:
             self.socket.close()
-        except Exception as e:
+        except EOFError:
+            pass
+        except ConnectionResetError:
+            pass
+        except BrokenPipeError:
+            pass
+        except OSError:
+            pass
+        except ConnectionAbortedError:
             pass
 
     def is_socket_open(self):

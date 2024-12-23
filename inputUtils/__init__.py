@@ -1,6 +1,4 @@
 import platform as _platform
-from .HandlerInterface import *
-from .FileTransferEventHandler import *
 
 if _platform.system() == 'Windows':
     from .WinInputHandler import *

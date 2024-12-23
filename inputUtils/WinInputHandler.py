@@ -2,8 +2,9 @@ import math
 import threading
 import time
 import urllib
-from collections.abc import Callable
+from urllib import parse
 from concurrent.futures import ThreadPoolExecutor
+from typing import Optional
 
 # System libraries
 import win32clipboard
@@ -11,7 +12,6 @@ import win32con
 import win32gui
 import win32process
 from comtypes import client
-from comtypes import stream
 import psutil
 import os
 
@@ -21,56 +21,99 @@ from pynput import mouse
 from pynput.keyboard import Key, KeyCode, Listener as KeyboardListener, Controller as KeyboardController
 from pynput.mouse import Button, Controller as MouseController, Listener as MouseListener
 
-from inputUtils import HandlerInterface, MouseListenerHandler
-from inputUtils import FileTransferEventHandler
-
-# Network libraries
-from network.IOManager import QueueManager
-
-# Other libraries
-from client.ClientState import ClientState, HiddleState
-from config.ServerConfig import Clients
-
-# Logging
+from client.state.ClientState import HiddleState
+from utils.Interfaces import (
+    IServerContext, IMessageService, IHandler, IEventBus, IMouseController,
+    IClipboardController, IFileTransferContext, IFileTransferService, IClientContext,
+    IScreenContext, IKeyboardController, IControllerContext, IMouseListener
+)
 from utils.Logging import Logger
-from utils.netData import *
+from utils.net.netData import format_command
 
 
-class ServerMouseListener(MouseListenerHandler):
+class ServerMouseController(IMouseController):
+    """
+    Wrapper class for the mouse controller
+    This class is used to control the mouse on the server side
+    :param context: The server context
+    """
+
+    def __init__(self, context: IServerContext):
+        self.context = context
+        self.logger = Logger.log
+        self.mouse_controller = MouseController()
+
+    def process_mouse_command(self, x: int | float, y: int | float, mouse_action: str, is_pressed: bool):
+        pass
+
+    def get_current_position(self):
+        return self.mouse_controller.position
+
+    def set_position(self, x, y):
+        self.mouse_controller.position = (x, y)
+
+    def move(self, dx, dy):
+        self.mouse_controller.move(dx, dy)
+
+    def start(self):
+        pass
+
+    def stop(self):
+        pass
+
+
+class ServerClipboardController(IClipboardController):
+    """
+        Wrapper class for the clipboard controller
+        This class is used to control the clipboard on the server side
+        :param context: The server context
+    """
+
+    def __init__(self, context: IServerContext):
+        self.context = context
+        self.logger = Logger.get_instance().log
+
+    def get_clipboard_data(self) -> str:
+        return pyperclip.paste()
+
+    def set_clipboard_data(self, data: str) -> None:
+        pyperclip.copy(data)
+
+
+class ServerMouseListener(IMouseListener):
+    """
+    Listener del mouse lato Server in ambiente Windows.
+    Adattato alla stessa interfaccia di OSXInputHandler.ServerMouseListener
+    """
     IGNORE_NEXT_MOVE_EVENT = 0.001
     MAX_DXDY_THRESHOLD = 100
     SCREEN_CHANGE_DELAY = 0.001
     EMULATION_STOP_DELAY = 0.1
 
-    """
-    :param send_function: Function to send data to the clients
-    :param change_screen_function: Function to change the active screen
-    :param get_active_screen: Function to get the active screen
-    :param get_clients: Function to get the clients of the current screen
-    :param screen_width: Width of the screen
-    :param screen_height: Height of the screen
-    :param screen_threshold: Threshold to change the screen
-    """
+    def __init__(
+            self,
+            context: IServerContext | IControllerContext,
+            message_service: IMessageService,
+            event_bus: IEventBus,
+            screen_width: int,
+            screen_height: int,
+            screen_threshold: int = 5
+    ):
+        self.context = context
+        self.event_bus = event_bus
 
-    def __init__(self, change_screen_function: Callable, get_active_screen: Callable,
-                 get_status: Callable,
-                 screen_width: int, screen_height: int, screen_threshold: int = 5,
-                 clients: Clients = None):
-
-        self.send = QueueManager(None).send_mouse
-        self.active_screen = get_active_screen
-        self.change_screen = change_screen_function
-        self.get_trasmission_status = get_status
-        self.clients = clients
         self.screen_width = screen_width
         self.screen_height = screen_height
-        self.screen_treshold = screen_threshold
+        self.screen_threshold = screen_threshold
+
+        self.logger = Logger.log
+        self.send = message_service.send_mouse
 
         self.last_x = None
         self.last_y = None
         self.x_print = 0
         self.y_print = 0
-        self.mouse_controller = MouseController()
+        self.mouse_controller: Optional[IMouseController] = None
         self.buttons_pressed = set()
         self.stop_emulation = False
         self.stop_emulation_timeout = 0
@@ -81,8 +124,13 @@ class ServerMouseListener(MouseListenerHandler):
         self.to_warp = threading.Event()
         self.stop_warp = threading.Event()
 
-        self._listener = MouseListener(on_move=self.on_move, on_scroll=self.on_scroll, on_click=self.on_click,
-                                       win32_event_filter=self.mouse_suppress_filter)
+        # In Windows, l’equivalente di darwin_intercept è win32_event_filter
+        self._listener = MouseListener(
+            on_move=self.on_move,
+            on_scroll=self.on_scroll,
+            on_click=self.on_click,
+            win32_event_filter=self.mouse_suppress_filter
+        )
 
     def get_position(self):
         return self.x_print, self.y_print
@@ -91,6 +139,12 @@ class ServerMouseListener(MouseListenerHandler):
         return self._listener
 
     def start(self):
+        # Get the mouse controller from the context
+        if isinstance(self.context, IControllerContext):
+            self.mouse_controller = self.context.mouse_controller
+        else:  # In case of wrong context, cancel the start
+            raise ValueError("Mouse controller not found in the context")
+
         self._listener.start()
         threading.Thread(target=self.warp_cursor_to_center, daemon=True).start()
         self.stop_warp.clear()
@@ -106,33 +160,35 @@ class ServerMouseListener(MouseListenerHandler):
         return self._listener.is_alive()
 
     def mouse_suppress_filter(self, msg, data):
-
-        screen = self.active_screen()
-        listener = self._listener
-
-        if screen and (msg == 513 or msg == 514):  # Left click
-            listener._suppress = True
-        elif screen and (msg == 516 or msg == 517):  # Right click
-            listener._suppress = True
-        elif screen and (msg == 519 or msg == 520):  # Middle click
-            listener._suppress = True
-        elif screen and (msg == 522 or msg == 523):  # Scroll
-            listener._suppress = True
+        """
+        Intercetta e sopprime gli eventi di mouse se siamo su uno screen remoto.
+        """
+        screen = self.context.get_active_screen()
+        if screen:
+            # Se c'è uno screen attivo, sopprime alcuni eventi di click/scroll
+            # in modo simile a come avviene su macOS (darwin_intercept).
+            # msg = 513/514 -> left down/up
+            # msg = 516/517 -> right down/up
+            # msg = 519/520 -> middle down/up
+            # msg = 522/523 -> scroll
+            if msg in (513, 514, 516, 517, 519, 520, 522, 523):
+                self._listener._suppress = True
+            else:
+                self._listener._suppress = False
         else:
-            listener._suppress = False
+            self._listener._suppress = False
 
         return True
 
     def warp_cursor_to_center(self):
         while not self.stop_warp.is_set():
             try:
-                if self.to_warp.is_set() and self.get_trasmission_status():
+                if self.to_warp.is_set() and self.context.is_transition_in_progress():
                     current_time = time.time()
 
                     if self.stop_emulation and current_time <= self.stop_emulation_timeout:
                         return
 
-                    # Check if the screen change is in progress, if yes don't warp the cursor
                     if self.screen_change_in_progress and current_time <= self.screen_change_timeout:
                         return
 
@@ -140,12 +196,13 @@ class ServerMouseListener(MouseListenerHandler):
                     center_x = self.screen_width // 2
                     center_y = self.screen_height // 2
 
-                    # Last check before moving the cursor
                     if not self.stop_emulation and self.to_warp.is_set():
-                        self.mouse_controller.position = (center_x, center_y)
-                        self.last_x, self.last_y = self.mouse_controller.position
+                        self.mouse_controller.set_position(center_x, center_y)
+                        self.last_x, self.last_y = self.mouse_controller.get_current_position()
                         self.to_warp.clear()
-            except Exception:
+            except TypeError:
+                pass
+            except AttributeError:
                 pass
 
             time.sleep(0.01)
@@ -154,109 +211,111 @@ class ServerMouseListener(MouseListenerHandler):
         self.to_warp.clear()
         current_time = time.time()
 
+        # Se la simulazione era fermata, verifica se il timeout è passato
         if self.stop_emulation and current_time > self.stop_emulation_timeout and len(self.buttons_pressed) == 0:
             self.stop_emulation = False
 
+        # Ignora i movimenti se siamo ancora nel tempo di "ignore"
         if not self.stop_emulation and self.ignore_move_events_until > current_time:
             self.last_x = x
             self.last_y = y
             return True
 
-        # Check if the screen change is in progress and if the timeout has expired
+        # Check screen change in corso
         if self.screen_change_in_progress and current_time > self.screen_change_timeout:
             self.screen_change_in_progress = False
 
-        # Calcola il movimento relativo
         dx = 0
         dy = 0
-
         if self.last_x is not None and self.last_y is not None:
             dx = x - self.last_x
             dy = y - self.last_y
 
-        # Ignora movimenti anomali e troppo grandi (quando cursore bloccato possono esserci movimenti anomali)
+        # Ignora movimenti anomali
         if abs(dx) > self.MAX_DXDY_THRESHOLD or abs(dy) > self.MAX_DXDY_THRESHOLD:
             self.last_x = x
             self.last_y = y
             return True
 
-        # Aggiorna l'ultima posizione e tempo conosciuti
         self.last_x = x
         self.last_y = y
 
-        # Controlla se il cursore è al bordo
         at_right_edge = x >= self.screen_width - 1
         at_left_edge = x <= 0
         at_bottom_edge = y >= self.screen_height - 1
         at_top_edge = y <= 0
 
-        screen = self.active_screen()
-        client = self.clients.get_connection(screen)
-        client_screen = self.clients.get_screen_size(screen)
-        is_transmitting = self.get_trasmission_status()
+        screen = self.context.get_active_screen()
+        client = self.context.get_client(screen)
+        is_transmitting = self.context.is_transition_in_progress()
 
+        # Se c'è uno screen attivo e siamo in trasmissione
         if screen and client and is_transmitting:
             if not self.buttons_pressed and not self.stop_emulation:
-                # scale_x = client_screen[0] / self.screen_width
-                # scale_y = client_screen[1] / self.screen_height
-                # dx *= 1
-                # dy *= 1
-
                 self.x_print += dx
                 self.y_print += dy
-
-                # Clip the cursor position to the screen bounds
+                # Clipping
                 self.x_print = max(0, min(self.x_print, self.screen_width))
                 self.y_print = max(0, min(self.y_print, self.screen_height))
 
-                self.send(screen, format_command(
-                    f"mouse position {self.x_print / self.screen_width} {self.y_print / self.screen_height}"))
-
-                self.to_warp.set()  # trigger the warp cursor thread
+                self.send(
+                    screen,
+                    format_command(
+                        f"mouse position {self.x_print / self.screen_width} {self.y_print / self.screen_height}"
+                    )
+                )
+                self.to_warp.set()
             elif self.stop_emulation or self.buttons_pressed:
                 normalized_x = x / self.screen_width
                 normalized_y = y / self.screen_height
                 self.send(screen, format_command(f"mouse position {normalized_x} {normalized_y}"))
 
+        # Se non siamo in emulazione e non stiamo cliccando, verifichiamo se attraversiamo un bordo
         elif not self.buttons_pressed and not self.screen_change_in_progress:
-            # Quando si attraversa un bordo, invia una posizione assoluta normalizzata
             if at_right_edge:
                 self.stop_emulation = False
                 self.screen_change_in_progress = True
                 self.screen_change_timeout = time.time() + self.SCREEN_CHANGE_DELAY
-                self.change_screen("right")
-                normalized_x = 0  # Entra dal bordo sinistro del client
+                self.event_bus.publish(IEventBus.SCREEN_CHANGE_EVENT, "right")
+
+                normalized_x = 0
                 normalized_y = y / self.screen_height
                 self.send("right", format_command(f"mouse position {normalized_x} {normalized_y}"))
                 self.x_print = normalized_x * self.screen_width
                 self.y_print = normalized_y * self.screen_height
+
             elif at_left_edge:
                 self.stop_emulation = False
                 self.screen_change_in_progress = True
                 self.screen_change_timeout = time.time() + self.SCREEN_CHANGE_DELAY
-                self.change_screen("left")
-                normalized_x = 1  # Entra dal bordo destro del client
+                self.event_bus.publish(IEventBus.SCREEN_CHANGE_EVENT, "left")
+
+                normalized_x = 1
                 normalized_y = y / self.screen_height
                 self.send("left", format_command(f"mouse position {normalized_x} {normalized_y}"))
                 self.x_print = normalized_x * self.screen_width
                 self.y_print = normalized_y * self.screen_height
+
             elif at_bottom_edge:
                 self.stop_emulation = False
                 self.screen_change_in_progress = True
                 self.screen_change_timeout = time.time() + self.SCREEN_CHANGE_DELAY
-                self.change_screen("down")
+                self.event_bus.publish(IEventBus.SCREEN_CHANGE_EVENT, "down")
+
                 normalized_x = x / self.screen_width
-                normalized_y = 0  # Entra dal bordo superiore del client
+                normalized_y = 0
                 self.send("down", format_command(f"mouse position {normalized_x} {normalized_y}"))
                 self.x_print = normalized_x * self.screen_width
                 self.y_print = normalized_y * self.screen_height
+
             elif at_top_edge:
                 self.stop_emulation = False
                 self.screen_change_in_progress = True
                 self.screen_change_timeout = time.time() + self.SCREEN_CHANGE_DELAY
-                self.change_screen("up")
+                self.event_bus.publish(IEventBus.SCREEN_CHANGE_EVENT, "up")
+
                 normalized_x = x / self.screen_width
-                normalized_y = 1  # Entra dal bordo inferiore del client
+                normalized_y = 1
                 self.send("up", format_command(f"mouse position {normalized_x} {normalized_y}"))
                 self.x_print = normalized_x * self.screen_width
                 self.y_print = normalized_y * self.screen_height
@@ -267,23 +326,15 @@ class ServerMouseListener(MouseListenerHandler):
         return True
 
     def on_click(self, x, y, button, pressed):
+        screen = self.context.get_active_screen()
+        client = self.context.get_client(screen)
+        is_transmitting = self.context.is_transition_in_progress()
 
-        screen = self.active_screen()
-        client = self.clients.get_connection(screen)
-        is_transmitting = self.get_trasmission_status()
-
-        # Gestisce il passaggio da stima della posizione con cursore bloccato,
-        # a posizione assoluta con cursore libero. La stima della posizione è
-        # necessaria per evitare che il cursore vada sui bordi ad inizio transizione
-        # Stima e posizione reale sono equivalenti allo stato attuale. Solo che la stima
-        # blocca il cursore al centro, e siccome un click evita il blocco del cursore si
-        # fa fallback alla posizione assoluta reale (Sono intercambiabili, ma la stima è necessaria per la transizione)
+        # Se è un left click in trasmissione
         if button == mouse.Button.left and pressed and screen and client and is_transmitting:
             self.buttons_pressed.add(button)
-
-            # Move cursor to the x_y saved in the last move event
             if not self.stop_emulation:
-                self.mouse_controller.position = (self.x_print, self.y_print)
+                self.mouse_controller.set_position(self.x_print, self.y_print)
 
             self.stop_emulation = True
             self.stop_emulation_timeout = time.time() + self.EMULATION_STOP_DELAY
@@ -304,40 +355,55 @@ class ServerMouseListener(MouseListenerHandler):
         elif button == mouse.Button.middle:
             if screen and client and pressed:
                 self.send(screen, format_command(f"mouse middle_click {x} {y}"))
+
         return True
 
     def on_scroll(self, x, y, dx, dy):
-        screen = self.active_screen()
-        clients = self.clients.get_connection(screen)
-        if screen and clients:
+        screen = self.context.get_active_screen()
+        client = self.context.get_client(screen)
+        if screen and client:
             self.send(screen, format_command(f"mouse scroll {dx} {dy}"))
         return True
 
     def __str__(self):
-        return f"ServerMouseListener: screen_width={self.screen_width}, screen_height={self.screen_height}, screen_threshold={self.screen_treshold}"
+        return "ServerMouseListener"
 
 
-class ServerKeyboardListener(HandlerInterface):
+class ServerKeyboardListener(IHandler):
     """
-    :param get_clients: Function to get the clients of the current screen
-    :param get_active_screen: Function to get the active screen
+    Listener della tastiera lato Server in ambiente Windows.
+    Adattato per avere la stessa interfaccia di OSXInputHandler.ServerKeyboardListener
     """
 
-    def __init__(self, get_clients: Callable, get_active_screen: Callable):
-        self.clients = get_clients
-        self.active_screen = get_active_screen
-        self.send = QueueManager(None).send_keyboard
+    def __init__(
+            self,
+            context: IServerContext | IFileTransferContext,
+            message_service: IMessageService,
+            event_bus: IEventBus
+    ):
+        self.context = context
+        self.event_bus = event_bus
+        self.send = message_service.send_keyboard
+        self.logger = Logger.get_instance().log
 
-        self.file_transfer_handler = FileTransferEventHandler()
+        self.file_transfer_handler: IFileTransferService | None = None
         self.command_pressed = False
 
-        self._listener = KeyboardListener(on_press=self.on_press, on_release=self.on_release,
-                                          win32_event_filter=self.keyboard_suppress_filter)
+        # In Windows l’equivalente di darwin_intercept è win32_event_filter
+        self._listener = KeyboardListener(
+            on_press=self.on_press,
+            on_release=self.on_release,
+            win32_event_filter=self.keyboard_suppress_filter
+        )
 
     def get_listener(self):
         return self._listener
 
     def start(self):
+        # Se stiamo usando contesto di file transfer, recuperiamo l’handler
+        if isinstance(self.context, IFileTransferContext):
+            self.file_transfer_handler = self.context.file_transfer_service
+
         self._listener.start()
 
     def stop(self):
@@ -386,37 +452,36 @@ class ServerKeyboardListener(HandlerInterface):
             return None
 
     def keyboard_suppress_filter(self, msg, data):
-        screen = self.active_screen()
-        listener = self._listener
-
+        screen = self.context.get_active_screen()
         if screen:
-            listener._suppress = True
+            self._listener._suppress = True
         else:
-            listener._suppress = False
+            self._listener._suppress = False
 
     def on_press(self, key: Key | KeyCode | None):
-        screen = self.active_screen()
-        clients = self.clients(screen)
+        screen = self.context.get_active_screen()
+        clients = self.context.get_client(screen)
 
         if isinstance(key, Key):
             data = key.name
         else:
             data = key.char
 
+        # Riconosciamo ctrl come "command_pressed"
         if key in [Key.ctrl, Key.ctrl_l]:
             self.command_pressed = True
-        elif data == "\x16" and self.command_pressed:
+        # Se si preme ctrl+v
+        elif data == "\x16" and self.command_pressed:  # \x16 = 'V'
             current_dir = self.get_current_clicked_directory()
-            print(current_dir)
-            if current_dir:
-                self.file_transfer_handler.handle_file_paste(current_dir, self.file_transfer_handler.SERVER_REQUEST)
+            if current_dir and self.file_transfer_handler:
+                self.file_transfer_handler.handle_file_paste(current_dir)
 
         if screen and clients:
             self.send(screen, format_command(f"keyboard press {data}"))
 
     def on_release(self, key: Key | KeyCode | None):
-        screen = self.active_screen()
-        clients = self.clients(screen)
+        screen = self.context.get_active_screen()
+        clients = self.context.get_client(screen)
 
         if isinstance(key, Key):
             data = key.name
@@ -429,24 +494,47 @@ class ServerKeyboardListener(HandlerInterface):
         if screen and clients:
             self.send(screen, format_command(f"keyboard release {data}"))
 
+    def __str__(self):
+        return "ServerKeyboardListener"
 
-class ServerClipboardListener(HandlerInterface):
-    def __init__(self, get_clients: Callable, get_active_screen: Callable):
 
-        self.send = QueueManager(None).send_clipboard
-        self.active_clients = get_clients
-        self.active_screen = get_active_screen
-        self._thread = None
+class ServerClipboardListener(IHandler):
 
-        self.logger = Logger.get_instance().log
-
-        self.last_clipboard_content = pyperclip.paste()  # Inizializza con il contenuto attuale della clipboard
-        self.last_clipboard_files = None
-        self.file_transfer_handler = FileTransferEventHandler()
+    def __init__(
+            self,
+            context: IServerContext | IControllerContext | IFileTransferContext,
+            message_service: IMessageService,
+            event_bus: IEventBus
+    ):
+        self.context = context
+        self.event_bus = event_bus
+        self.send = message_service.send_clipboard
 
         self._stop_event = threading.Event()
+        self._thread = None
+
+        self.logger = Logger.log
+
+        self.clipboard_controller: Optional[IClipboardController] = None
+        self.last_clipboard_content: Optional[str] = None
+        self.last_clipboard_files = None
+
+        self.file_transfer_handler: Optional[IFileTransferService] = None
 
     def start(self):
+        if isinstance(self.context, IFileTransferContext):
+            self.file_transfer_handler = self.context.file_transfer_service
+        else:
+            raise ValueError("File transfer handler not found in the context")
+
+        if isinstance(self.context, IControllerContext):
+            clip_ctrl = self.context.clipboard_controller
+            if clip_ctrl:
+                self.clipboard_controller = clip_ctrl
+                self.last_clipboard_content = clip_ctrl.get_clipboard_data()
+            else:
+                raise ValueError("Clipboard controller not found in the context")
+
         self._stop_event.clear()
         self._thread = threading.Thread(target=self._run)
         self._thread.start()
@@ -455,14 +543,7 @@ class ServerClipboardListener(HandlerInterface):
         self._stop_event.set()
 
     def is_alive(self):
-        return self._thread.is_alive()
-
-    def set_clipboard(self, content):
-        pyperclip.copy(content)
-        self.last_clipboard_content = content
-
-    def get_clipboard(self):
-        return self.last_clipboard_content
+        return self._thread.is_alive() if self._thread else False
 
     @staticmethod
     def get_clipboard_files():
@@ -482,7 +563,7 @@ class ServerClipboardListener(HandlerInterface):
             win32clipboard.CloseClipboard()
 
     @staticmethod
-    def get_file_info(file_path):
+    def get_file_info(file_path: str):
         if os.path.isfile(file_path):
             return {
                 'file_name': os.path.basename(file_path),
@@ -494,41 +575,82 @@ class ServerClipboardListener(HandlerInterface):
     def _run(self):
         while not self._stop_event.is_set():
             try:
-                current_clipboard_content = pyperclip.paste()
+                current_clipboard_content = self.clipboard_controller.get_clipboard_data()
                 current_clipboard_files = self.get_clipboard_files()
 
+                # Se ci sono file nuovi in clipboard
                 if current_clipboard_files and current_clipboard_files != self.last_clipboard_files:
                     # Takes the last file in the list
                     file_info = self.get_file_info(current_clipboard_files[-1])
                     if file_info:
-                        self.file_transfer_handler.handle_file_copy(file_info,
-                                                                    self.file_transfer_handler.LOCAL_SERVER_OWNERSHIP)
+
+                        file_name = file_info.get("file_name", "")
+                        file_size = file_info.get("file_size", 0)
+                        file_path = file_info.get("file_path", "")
+                        if self.file_transfer_handler:
+                            self.file_transfer_handler.handle_file_copy(file_name=file_name,
+                                                                        file_size=file_size,
+                                                                        file_path=file_path,
+                                                                        local_owner=self.file_transfer_handler.LOCAL_SERVER_OWNERSHIP)
+
                         self.last_clipboard_files = current_clipboard_files
 
+                # Se è cambiato il testo in clipboard
                 elif current_clipboard_content != self.last_clipboard_content:
-                    # Invia il contenuto della clipboard a tutti i client
                     self.send("all", format_command("clipboard ") + current_clipboard_content)
                     self.last_clipboard_content = current_clipboard_content
 
                 time.sleep(0.5)
             except Exception as e:
+                # Reset the clipboard content if an error occurs
+                self.last_clipboard_content = self.clipboard_controller.get_clipboard_data()
                 self.logger(f"[CLIPBOARD] {e}", Logger.ERROR)
 
+    def __str__(self):
+        return "ServerClipboardListener"
 
-class ClientClipboardListener(HandlerInterface):
-    def __init__(self):
 
-        self.send = QueueManager(None).send_clipboard
-        self._thread = None
-        self.logger = Logger.get_instance().log
+class ClientClipboardListener(IHandler):
+    """
+    Listener della clipboard lato Client in ambiente Windows.
+    Adattato come in OSXInputHandler.ClientClipboardListener
+    """
 
-        self.last_clipboard_content = pyperclip.paste()  # Inizializza con il contenuto attuale della clipboard
-        self.last_clipboard_files = None
-        self.file_transfer_handler = FileTransferEventHandler()
+    def __init__(
+            self,
+            context: IClientContext | IFileTransferContext,
+            message_service: IMessageService,
+            event_bus: IEventBus
+    ):
+        self.context = context
+        self.event_bus = event_bus
+        self.send = message_service.send_clipboard
 
         self._stop_event = threading.Event()
+        self._thread = None
+
+        self.logger = Logger.log
+
+        self.clipboard_controller: Optional[IClipboardController] = None
+        self.last_clipboard_content: Optional[str] = None
+        self.last_clipboard_files = None
+
+        self.file_transfer_handler: IFileTransferService | None = None
 
     def start(self):
+        if isinstance(self.context, IFileTransferContext):
+            self.file_transfer_handler = self.context.file_transfer_service
+        else:
+            raise ValueError("File transfer handler not found in the context")
+
+        if isinstance(self.context, IControllerContext):
+            clip_ctrl = self.context.clipboard_controller
+            if clip_ctrl:
+                self.clipboard_controller = clip_ctrl
+                self.last_clipboard_content = clip_ctrl.get_clipboard_data()
+            else:
+                raise ValueError("Clipboard controller not found in the context")
+
         self._stop_event.clear()
         self._thread = threading.Thread(target=self._run)
         self._thread.start()
@@ -537,14 +659,7 @@ class ClientClipboardListener(HandlerInterface):
         self._stop_event.set()
 
     def is_alive(self):
-        return self._thread.is_alive()
-
-    def set_clipboard(self, content):
-        pyperclip.copy(content)
-        self.last_clipboard_content = content
-
-    def get_clipboard(self):
-        return self.last_clipboard_content
+        return self._thread.is_alive() if self._thread else False
 
     @staticmethod
     def get_clipboard_files():
@@ -564,7 +679,7 @@ class ClientClipboardListener(HandlerInterface):
             win32clipboard.CloseClipboard()
 
     @staticmethod
-    def get_file_info(file_path):
+    def get_file_info(file_path: str):
         if os.path.isfile(file_path):
             return {
                 'file_name': os.path.basename(file_path),
@@ -576,67 +691,82 @@ class ClientClipboardListener(HandlerInterface):
     def _run(self):
         while not self._stop_event.is_set():
             try:
-                current_clipboard_content = pyperclip.paste()
+                current_clipboard_content = self.clipboard_controller.get_clipboard_data()
                 current_clipboard_files = self.get_clipboard_files()
 
                 if current_clipboard_files and current_clipboard_files != self.last_clipboard_files:
-                    # Takes the last file in the list
                     file_info = self.get_file_info(current_clipboard_files[-1])
                     if file_info:
-                        self.file_transfer_handler.handle_file_copy(file_info,
-                                                                    self.file_transfer_handler.LOCAL_OWNERSHIP)
-                        self.last_clipboard_files = current_clipboard_files
 
+                        file_name = file_info.get("file_name", "")
+                        file_size = file_info.get("file_size", 0)
+                        file_path = file_info.get("file_path", "")
+                        if self.file_transfer_handler:
+                            self.file_transfer_handler.handle_file_copy(file_name=file_name,
+                                                                        file_size=file_size,
+                                                                        file_path=file_path,
+                                                                        local_owner=self.file_transfer_handler.LOCAL_OWNERSHIP)
+
+                        self.last_clipboard_files = current_clipboard_files
                 elif current_clipboard_content != self.last_clipboard_content:
-                    # Invia il contenuto della clipboard a tutti i client
-                    self.send("all", format_command("clipboard ") + current_clipboard_content)
+                    self.send(None, format_command("clipboard ") + current_clipboard_content)
                     self.last_clipboard_content = current_clipboard_content
 
                 time.sleep(0.5)
             except Exception as e:
                 self.logger(f"[CLIPBOARD] {e}", Logger.ERROR)
 
+    def __str__(self):
+        return "ClientClipboardListener"
 
-class ClientMouseListener(HandlerInterface):
-    def __init__(self, screen_width, screen_height, threshold):
+
+class ClientMouseListener(IHandler):
+
+    def __init__(
+            self,
+            context: IClientContext,
+            message_service: IMessageService,
+            event_bus: IEventBus,
+            screen_width: int,
+            screen_height: int,
+            screen_threshold: int = 5
+    ):
+        self.context = context
+        self.event_bus = event_bus
+        self.send = message_service.send_mouse
+
         self.screen_width = screen_width
         self.screen_height = screen_height
-        self.threshold = threshold
-        self.send = QueueManager(None).send_mouse
-        self.client_status = ClientState()
-        self.log = Logger.get_instance().log
-        self._listener = MouseListener(on_move=self.handle_mouse, on_scroll=self.on_scroll, on_click=self.on_click)
+        self.threshold = screen_threshold
 
-    def get_listener(self):
-        return self._listener
+        self._listener = MouseListener(on_move=self.handle_mouse)
+        self.logger = Logger.log
 
     def start(self):
         self._listener.start()
 
     def stop(self):
-        self._listener.stop()
+        if self.is_alive():
+            self._listener.stop()
 
-    def on_scroll(self, x, y, dx, dy):
-        return True
-
-    def on_click(self, x, y, button, pressed):
-        return True
+    def is_alive(self):
+        return self._listener.is_alive()
 
     def handle_mouse(self, x, y):
 
-        if self.client_status.get_state():  # Return True if the client is in Controlled state
+        if self.context.get_state():
             if x <= self.threshold:
                 self.send(None, format_command(f"return left {y / self.screen_height}"))
-                self.client_status.set_state(HiddleState())
+                self.context.set_state(HiddleState())
             elif x >= self.screen_width - self.threshold:
                 self.send(None, format_command(f"return right {y / self.screen_height}"))
-                self.client_status.set_state(HiddleState())
+                self.context.set_state(HiddleState())
             elif y <= self.threshold:
                 self.send(None, format_command(f"return up {x / self.screen_width}"))
-                self.client_status.set_state(HiddleState())
+                self.context.set_state(HiddleState())
             elif y >= self.screen_height - self.threshold:
                 self.send(None, format_command(f"return down {x / self.screen_width}"))
-                self.client_status.set_state(HiddleState())
+                self.context.set_state(HiddleState())
 
         return True
 
@@ -644,9 +774,113 @@ class ClientMouseListener(HandlerInterface):
         return "ClientMouseListener"
 
 
-class ClientKeyboardController(HandlerInterface):
+class ClientKeyboardListener(IHandler):
+    """
+    Listener della tastiera lato Client in ambiente Windows.
+    Adattato come in OSXInputHandler.ClientKeyboardListener
+    """
 
-    def __init__(self):
+    def __init__(
+            self,
+            context: IClientContext | IFileTransferContext,
+            message_service: IMessageService,
+            event_bus: IEventBus
+    ):
+        self.context = context
+        self.send = message_service.send_keyboard
+        self.event_bus = event_bus
+
+        self.file_transfer_handler: IFileTransferService | None = None
+        self.command_pressed = False
+
+        self._listener = KeyboardListener(on_press=self.on_press, on_release=self.on_release)
+        self.logger = Logger.log
+
+    def start(self):
+        if isinstance(self.context, IFileTransferContext):
+            self.file_transfer_handler = self.context.file_transfer_service
+
+        self._listener.start()
+
+    def stop(self):
+        if self.is_alive():
+            self._listener.stop()
+
+    def is_alive(self):
+        return self._listener.is_alive()
+
+    @staticmethod
+    def get_current_clicked_directory():
+        """
+        Controlla se la finestra attiva è Explorer
+        e preleva la cartella selezionata.
+        """
+        try:
+            # Ottieni l'handle della finestra attiva
+            hwnd = win32gui.GetForegroundWindow()
+
+            # Ottieni il processo associato
+            _, pid = win32process.GetWindowThreadProcessId(hwnd)
+            process = psutil.Process(pid)
+
+            # Verifica se il processo è Esplora Risorse
+            if "explorer.exe" in process.name().lower():
+                # Verifica se la finestra attiva è il Desktop
+                # Desktop ha tipicamente titolo vuoto o nullo
+                window_text = win32gui.GetWindowText(hwnd).strip()
+                if window_text == 'Program Manager' or window_text == '':
+                    # Restituisce il percorso del Desktop
+                    desktop_path = os.path.join(os.environ["USERPROFILE"], "Desktop")
+                    # Clean the path
+                    return desktop_path
+
+                shell = client.CreateObject("Shell.Application")
+                windows = shell.Windows()
+
+                for window in windows:
+                    # Compare the handle of the active window
+                    if int(hwnd) == int(window.HWND):
+                        # Get the path of the active directory
+                        directory = window.LocationURL
+                        if directory.startswith("file:///"):
+                            # Convert URL format to Windows path
+                            directory = urllib.parse.unquote(directory[8:].replace("/", "\\"))
+                        return directory
+
+            # Se il processo non è Esplora Risorse
+            return None
+
+        except AttributeError:
+            return None
+        except TypeError:
+            return None
+        except Exception:
+            return None
+
+    def on_press(self, key: Key | KeyCode | None):
+        if isinstance(key, Key):
+            data = key.name
+        else:
+            data = key.char
+
+        # Riconosciamo ctrl come "command_pressed"
+        if key in [Key.ctrl, Key.ctrl_l]:
+            self.command_pressed = True
+        # Se ctrl+v
+        elif data == "\x16" and self.command_pressed:  # \x16 = 'V'
+            current_dir = self.get_current_clicked_directory()
+            if current_dir:
+                self.file_transfer_handler.handle_file_paste(current_dir)
+
+    def on_release(self, key: Key | KeyCode | None):
+        if key in [Key.ctrl, Key.ctrl_l]:
+            self.command_pressed = False
+
+
+class ClientKeyboardController(IKeyboardController):
+
+    def __init__(self, context: IClientContext):
+        self.context = context
         self.pressed_keys = set()
         self.key_filter = {
             "option": "alt",
@@ -672,7 +906,7 @@ class ClientKeyboardController(HandlerInterface):
         try:
             key = Key[key_data]
             return key
-        except Exception:
+        except KeyError:
             return key_data
 
     def is_special_key(self, key_data: str | Key):
@@ -710,59 +944,59 @@ class ClientKeyboardController(HandlerInterface):
                 self.controller.release(key)
                 self.pressed_keys.discard(key)
 
+    def __str__(self):
+        return "ClientKeyboardController"
 
-class ClientMouseController(HandlerInterface):
 
-    def __init__(self, screen_width, screen_height, client_info: dict):
+class ClientMouseController(IMouseController):
+
+    def __init__(self, context: IClientContext | IScreenContext):
+        self.context = context
         self.mouse = MouseController()
-        self.screen_width = screen_width
-        self.screen_height = screen_height
-        self.client_info = client_info
+        self.client_info = context.get_client_info_obj
+
         self.server_screen_width = 0
         self.server_screen_height = 0
+
         self.pressed = False
         self.last_press_time = -99
         self.doubleclick_counter = 0
 
-        self.client_status = ClientState()
-
-        # Mouse scrool thread pool
         self.scroll_thread = ThreadPoolExecutor(max_workers=5)
 
         self.target_x = None
         self.target_y = None
         self.stop_event = threading.Event()
 
-        # Avvia il thread di smoothing
-        self.smoothing_thread = threading.Thread(target=self.smoothing_loop, daemon=True)
-        self.smoothing_thread.start()
+        # Smoothing thread
+        self.smoothing_thread: Optional[threading.Thread] = None
 
         self.log = Logger.get_instance().log
 
     def stop(self):
         self.stop_event.set()
         self.smoothing_thread.join()
+        self.stop_event.clear()
 
     def start(self):
-        pass
-
-    def restart(self):
-        self.stop_event.clear()
-        self.smoothing_thread = threading.Thread(target=self.smoothing_loop, daemon=True)
+        self.smoothing_thread = threading.Thread(target=self._smoothing_loop, daemon=True)
         self.smoothing_thread.start()
 
-    def get_server_screen_size(self):
-        if "server_screen_size" in self.client_info:
+    def _get_server_screen_size(self):
+        """
+        Recupera la dimensione dello screen server dal contesto client.
+        """
+        if self.client_info() and self.client_info().screen_size:
             if not self.server_screen_width or not self.server_screen_height:
-                self.server_screen_width, self.server_screen_height = self.client_info["server_screen_size"]
+                self.server_screen_width, self.server_screen_height = self.client_info().server_screen_size
 
-    def set_target_position(self, x, y):
+    def _set_target_position(self, x, y):
         self.target_x = x
         self.target_y = y
-        if not self.client_status.get_state():
-            self.smooth_logic(0, 0, 0.5)
+        if not self.context.get_state():
+            self._smooth_logic(0, 0, 0.5)
 
-    def smooth_logic(self, last_x, last_y, speed_factor=0.1):
+    def _smooth_logic(self, last_x, last_y, speed_factor=0.1):
         current_x, current_y = self.mouse.position
         dx = self.target_x - current_x
         dy = self.target_y - current_y
@@ -780,7 +1014,7 @@ class ClientMouseController(HandlerInterface):
             self.mouse.position = (move_x, move_y)
             return move_x, move_y
 
-    def smoothing_loop(self, refresh_rate=0.001, speed_factor=0.1):
+    def _smoothing_loop(self, refresh_rate=0.001, speed_factor=0.1):
         """
         Loop eseguito in un thread separato.
         Muove gradualmente il cursore verso la posizione target.
@@ -790,8 +1024,8 @@ class ClientMouseController(HandlerInterface):
         last_move_x = 0
         last_move_y = 0
         while not self.stop_event.is_set():
-            if self.client_status.get_state() and self.target_x is not None and self.target_y is not None:
-                x, y = self.smooth_logic(last_move_x, last_move_y, speed_factor)
+            if self.context.get_state() and self.target_x is not None and self.target_y is not None:
+                x, y = self._smooth_logic(last_move_x, last_move_y, speed_factor)
                 if x is not None and y is not None:
                     last_move_x = x
                     last_move_y = y
@@ -799,39 +1033,49 @@ class ClientMouseController(HandlerInterface):
             time.sleep(refresh_rate)
 
     def process_mouse_command(self, x, y, mouse_action, is_pressed):
-        self.get_server_screen_size()
-        if mouse_action == "position":
-            target_x = max(0.0,
-                           min(x * self.screen_width, self.screen_width))  # Ensure target_x is within screen bounds
-            target_y = max(0.0,
-                           min(y * self.screen_height, self.screen_height))  # Ensure target_y is within screen bounds
+        self._get_server_screen_size()
+        # Converte x,y in float se necessario
+        if isinstance(x, str) or isinstance(y, str):
+            try:
+                x = float(x)
+                y = float(y)
+            except ValueError:
+                self.log(f"Invalid mouse position: {x}, {y}", Logger.ERROR)
+                return
 
-            self.set_target_position(target_x, target_y)
+        if mouse_action == "position":
+            target_x = max(0, min(x * self.client_info().screen_size[0], self.client_info().screen_size[0]))
+            target_y = max(0, min(y * self.client_info().screen_size[1], self.client_info().screen_size[1]))
+            self._set_target_position(target_x, target_y)
+
         elif mouse_action == "move":
             # Denormalize the x and y values
-            scale_x = self.server_screen_width / self.screen_width
-            scale_y = self.server_screen_height / self.screen_height
+            scale_x = self.server_screen_width / self.client_info().screen_size[0]
+            scale_y = self.server_screen_height / self.client_info().screen_size[1]
             dx = x * scale_x
             dy = y * scale_y
             current_x, current_y = self.mouse.position
             # Imposta il target come posizione attuale + dx, dy
-            self.set_target_position(current_x + dx, current_y + dy)
+            self._set_target_position(current_x + dx, current_y + dy)
+
         elif mouse_action == "click":
             self.handle_click(Button.left, is_pressed)
+
         elif mouse_action == "right_click":
             self.mouse.click(Button.right)
+
         elif mouse_action == "scroll":
-            self.scroll_thread.submit(self.smooth_scroll, x, y)
+            self.scroll_thread.submit(self._smooth_scroll, x, y, 0.01, 5)
 
     def handle_click(self, button, is_pressed):
         current_time = time.time()
         if self.pressed and not is_pressed:
-
             self.mouse.release(button)
             self.pressed = False
         elif not self.pressed and is_pressed:
+            # Se c'è un doppio click in <0.2s, inviamo un double-click effettivo
             if current_time - self.last_press_time < 0.2:
-                self.mouse.click(button, 2 + self.doubleclick_counter)  # Perform a double click
+                self.mouse.click(button, 2 + self.doubleclick_counter)
                 self.doubleclick_counter = 0 if self.doubleclick_counter == 2 else 2
                 self.pressed = False
             else:
@@ -840,95 +1084,32 @@ class ClientMouseController(HandlerInterface):
                 self.pressed = True
             self.last_press_time = current_time
 
-    def smooth_scroll(self, x, y, delay=0.01, steps=2):
-        """Smoothly scroll the mouse."""
-        dx, dy = x, y
+    def _smooth_scroll(self, x, y, delay=0.01, steps=5):
         for _ in range(steps):
-            self.mouse.scroll(dx, dy)
+            self.mouse.scroll(x, y)
             time.sleep(delay)
 
+    def get_current_position(self) -> tuple:
+        return self.mouse.position
 
-class ClientKeyboardListener(HandlerInterface):
-    def __init__(self):
-        self.keyboard = KeyboardController()
-        self.send = QueueManager(None).send_keyboard
-        self.logger = Logger.get_instance().log
+    def set_position(self, x: int | float, y: int | float) -> None:
+        self.mouse.position = (x, y)
 
-        self.file_transfer_handler = FileTransferEventHandler()
-        self.command_pressed = False
+    def move(self, dx: int | float, dy: int | float) -> None:
+        self.mouse.move(dx, dy)
 
-        self._listener = KeyboardListener(on_press=self.on_press, on_release=self.on_release)
+    def __str__(self):
+        return "ClientMouseController"
 
-    def get_listener(self):
-        return self._listener
 
-    def start(self):
-        self.logger("Starting keyboard listener")
-        self._listener.start()
+class ClientClipboardController(IClipboardController):
 
-    def stop(self):
-        if self.is_alive():
-            self._listener.stop()
+    def __init__(self, context: IClientContext):
+        self.context = context
+        self.logger = Logger.log
 
-    def is_alive(self):
-        return self._listener.is_alive()
+    def get_clipboard_data(self) -> str:
+        return pyperclip.paste()
 
-    @staticmethod
-    def get_current_clicked_directory():
-        try:
-            # Ottieni l'handle della finestra attiva
-            hwnd = win32gui.GetForegroundWindow()
-
-            # Ottieni il processo associato
-            _, pid = win32process.GetWindowThreadProcessId(hwnd)
-            process = psutil.Process(pid)
-
-            # Verifica se il processo è Esplora Risorse
-            if "explorer.exe" in process.name().lower():
-                # Verifica se la finestra attiva è il Desktop
-                # Desktop ha tipicamente titolo vuoto o nullo
-                window_text = win32gui.GetWindowText(hwnd).strip()
-                if window_text == 'Program Manager' or window_text == '':
-                    # Restituisce il percorso del Desktop
-                    desktop_path = os.path.join(os.environ["USERPROFILE"], "Desktop")
-                    # Clean the path
-                    return desktop_path
-
-                shell = client.CreateObject("Shell.Application")
-                windows = shell.Windows()
-
-                for window in windows:
-                    # Compare the handle of the active window
-                    if int(hwnd) == int(window.HWND):
-                        # Get the path of the active directory
-                        directory = window.LocationURL
-                        if directory.startswith("file:///"):
-                            # Convert URL format to Windows path
-                            directory = urllib.parse.unquote(directory[8:].replace("/", "\\"))
-                        return directory
-
-            # Se il processo non è Esplora Risorse
-            return None
-        except Exception as e:
-            return None
-
-    def on_press(self, key: Key | KeyCode | None):
-
-        if isinstance(key, Key):
-            data = key.name
-        else:
-            data = key.char
-
-        # Check if command + v is pressed
-        if key in [Key.ctrl_l, Key.ctrl]:
-            self.command_pressed = True
-        elif data == "\x16" and self.command_pressed:
-            current_dir = self.get_current_clicked_directory()
-            if current_dir:
-                self.file_transfer_handler.handle_file_paste(current_dir, self.file_transfer_handler.CLIENT_REQUEST)
-
-    def on_release(self, key: Key | KeyCode | None):
-
-        # Check if command is released
-        if key in [Key.ctrl_l, Key.ctrl]:
-            self.command_pressed = False
+    def set_clipboard_data(self, data: str) -> None:
+        pyperclip.copy(data)

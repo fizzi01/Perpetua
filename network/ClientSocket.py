@@ -2,21 +2,25 @@ import socket
 import ssl
 import time
 from threading import Lock
-from abc import ABC, abstractmethod
-from typing import Callable
+from abc import abstractmethod
+from typing import Callable, Optional
 
-from client.ServerHandler import ServerHandlerFactory
 from config import SERVICE_NAME
 from network.exceptions import ServerNotFoundException
-from utils import netConstants
+from utils.net import netConstants
+from utils.Interfaces import IServerHandlerFactory
 from utils.Logging import Logger
+from utils.Interfaces import IClientSocket, IServerConnectionHandler, IConnectionHandlerFactory, \
+    IClientContext
 
 from zeroconf import Zeroconf, ServiceBrowser, ServiceStateChange
 
 
-class ClientSocket:
+class ClientSocket(IClientSocket):
     _instance = None
     _lock = Lock()
+    ssl_socket = None
+    socket = None
 
     def __new__(cls, host: str, port: int, wait: int, use_ssl: bool = False, certfile: str = None):
         if cls._instance is None or not cls._instance.is_socket_open():
@@ -33,6 +37,7 @@ class ClientSocket:
         self.use_ssl = use_ssl
         self.certfile = certfile
         self.socket = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+        self.ssl_socket = None
         # self.socket.settimeout(wait)
 
         self.use_discovery = True if len(self.host) == 0 else False
@@ -45,13 +50,16 @@ class ClientSocket:
             nonlocal service_found
             if state_change == ServiceStateChange.Added and not service_found:
                 info = zeroconf.get_service_info(service_type, name)
-                if info:
-                    properties = {key.decode(): value.decode() for key, value in info.properties.items()}
-                    if properties.get("app_name") == SERVICE_NAME and info.port == self.port:
-                        self.host = socket.inet_ntoa(info.addresses[0])
-                        self.port = info.port
-                        self.log(f"[mDNS] Resolved server to {self.host}:{self.port}")
-                        service_found = True
+                if info and info.properties:
+                    try:
+                        properties = {key.decode(): value.decode() for key, value in info.properties.items()}
+                        if properties.get("app_name") == SERVICE_NAME and info.port == self.port:
+                            self.host = socket.inet_ntoa(info.addresses[0])
+                            self.port = info.port
+                            self.log(f"[mDNS] Resolved server to {self.host}:{self.port}")
+                            service_found = True
+                    except AttributeError as e:
+                        pass
 
         zeroconf = Zeroconf()
         browser = ServiceBrowser(zeroconf, "_http._tcp.local.", handlers=[on_service_state_change])
@@ -81,10 +89,18 @@ class ClientSocket:
     def close(self):
         try:
             self.socket.close()
-        except Exception as e:
+        except EOFError:
+            pass
+        except ConnectionResetError:
+            pass
+        except BrokenPipeError:
+            pass
+        except OSError:
+            pass
+        except ConnectionAbortedError:
             pass
 
-    def send(self, data: bytes):
+    def send(self, data: bytes | str):
         try:
             self.socket.send(data)
         except EOFError:
@@ -95,7 +111,7 @@ class ClientSocket:
 
     def is_socket_open(self):
         try:
-            self.socket.getsockname()
+            self.socket.getpeername()
             return True
         except socket.error:
             return False
@@ -105,10 +121,14 @@ class ClientSocket:
         self._initialize_socket(self.host, self.port, self.wait, self.use_ssl, self.certfile)
 
 
-class ConnectionHandler(ABC):
+class ConnectionHandler(IServerConnectionHandler):
     INACTIVITY_TIMEOUT = 5
 
-    def __init__(self, client_socket: ClientSocket, command_processor: Callable, client_info=None):
+    def __init__(self, client_socket: IClientSocket, command_processor: Callable,
+                 handler_factory: IServerHandlerFactory, context: IClientContext):
+        self.context = context
+        self.handler_factory = handler_factory
+
         self.client_socket = client_socket
         self.command_processor = command_processor
         self.server_handler = None
@@ -117,8 +137,6 @@ class ConnectionHandler(ABC):
         self.last_check_time = time.time()
 
         self.first_connection = True
-
-        self.client_info = client_info
 
         self.logger = Logger.get_instance().log
 
@@ -138,6 +156,8 @@ class ConnectionHandler(ABC):
         self.client_socket.close()
 
     def exchange_configurations(self):
+        client_info = self.context.get_client_info_obj()
+
         try:
             # Listen for server to ask for client configuration
             data = self.client_socket.recv(1024)
@@ -145,13 +165,16 @@ class ConnectionHandler(ABC):
             # Client should receive SCREEN_CONFIG_EXCHANGE_COMMAND
             if data.decode() == netConstants.SCREEN_CONFIG_EXCHANGE_COMMAND:
                 # Send screen size to server
-                screen_size = self.client_info["screen_size"]
+                screen_size = client_info.screen_size
                 self.client_socket.send(f"{screen_size[0]}x{screen_size[1]}".encode())
 
                 # Receive server screen size
                 data = self.client_socket.recv(1024)
                 server_screen_size = data.decode().split("x")
-                self.client_info["server_screen_size"] = (int(server_screen_size[0]), int(server_screen_size[1]))
+
+                client_info.server_screen_size = (int(server_screen_size[0]), int(server_screen_size[1]))
+                self.context.set_client_info_obj(client_info)
+
                 return True
         except (socket.error, ssl.SSLError) as e:
             self.logger(f"Error during configuration exchange: {e}", Logger.ERROR)
@@ -206,7 +229,7 @@ class SSLConnectionHandler(ConnectionHandler):
 
     def add_server_connection(self):
         # Adding server screen size to client info
-        self.server_handler = ServerHandlerFactory.create_server_handler(self.client_socket, self.command_processor)
+        self.server_handler = self.handler_factory.create_handler(self.client_socket, self.command_processor)
         self.server_handler.start()
 
 
@@ -228,16 +251,22 @@ class NonSSLConnectionHandler(ConnectionHandler):
             return False
 
     def add_server_connection(self):
-        self.server_handler = ServerHandlerFactory.create_server_handler(self.client_socket,
-                                                                         self.command_processor)
+        self.server_handler = self.handler_factory.create_handler(self.client_socket,
+                                                                  self.command_processor)
         self.server_handler.start()
 
 
-class ConnectionHandlerFactory:
+class ConnectionHandlerFactory(IConnectionHandlerFactory):
+
     @staticmethod
-    def create_handler(client_socket: ClientSocket, command_processor: Callable,
-                       client_info: dict) -> ConnectionHandler:
-        if client_socket.use_ssl:
-            return SSLConnectionHandler(client_socket, command_processor, client_info)
+    def create_handler(ssl_enabled: bool, certfile: Optional[str] = None, keyfile: Optional[str] = None,
+                       handler_socket: Optional[IClientSocket] = None,
+                       context: Optional[IClientContext] = None,
+                       command_processor: Callable[[str | tuple, str], None] = None,
+                       handler_factory: IServerHandlerFactory = None) -> IServerConnectionHandler:
+        if ssl_enabled:
+            return SSLConnectionHandler(client_socket=handler_socket, command_processor=command_processor,
+                                        handler_factory=handler_factory, context=context)
         else:
-            return NonSSLConnectionHandler(client_socket, command_processor, client_info)
+            return NonSSLConnectionHandler(client_socket=handler_socket, command_processor=command_processor,
+                                           handler_factory=handler_factory, context=context)

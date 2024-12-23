@@ -13,6 +13,10 @@ class AbstractHiddenWindow(ABC):
         pass
 
     @abstractmethod
+    def start(self):
+        pass
+
+    @abstractmethod
     def close(self):
         pass
 

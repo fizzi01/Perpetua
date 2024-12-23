@@ -10,3 +10,4 @@ zeroconf==0.136.0
 pywin32==308
 comtypes==1.4.8
 wxPython==4.2.2
+desktop-notifier==6.0.0
