@@ -145,6 +145,9 @@ class MessageService(IMessageService):
         self.MessageSender.send(self.FILE_PRIORITY, (screen, data))
 
     def start(self):
+        if not self.MessageSender.is_alive():
+            self.MessageSender.start()
+
         if not self._threads_started:
             if self.manage_mouse:
                 self._thread_pool.append(threading.Thread(target=self._process_mouse_queue, daemon=True))
@@ -289,6 +292,10 @@ class MessageService(IMessageService):
 
     def join(self, timeout=None):
         self._stop_event.set()
+
+        if self.MessageSender.is_alive():
+            self.MessageSender.join()
+
         for thread in self._thread_pool:
             thread.join()
         self._threads_started = False

@@ -12,10 +12,8 @@ class KeyboardCommand(Command):
         # Silence logging for this command
         logging.getLogger().setLevel(logging.ERROR)
 
-        logging.debug(f"({self.DESCRIPTION}) Executing command")
-
         if len(self.payload) >= 2:
-            key, event = self.payload[0], self.payload[1]
+            key, event = self.payload[1], self.payload[0]
         else:
             logging.error(f"({self.DESCRIPTION}) error: invalid payload")
             return

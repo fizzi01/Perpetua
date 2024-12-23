@@ -54,8 +54,11 @@ class ServerHandler(IServerHandler):
         self._running = False
         # check if main_thread is current thread
         if threading.current_thread() != self.main_thread:
-            self.main_thread.join()
-        self.buffer_thread.join()
+            if self.main_thread.is_alive():
+                self.main_thread.join()
+
+        if self.buffer_thread.is_alive():
+            self.buffer_thread.join()
 
     def start(self):
         self._running = True
