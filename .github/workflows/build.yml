@@ -1,0 +1,131 @@
+name: Build
+
+on:
+  workflow_dispatch:
+    inputs:
+      logLevel:
+        description: 'Log level'     
+        required: true
+        default: 'warning'
+      tags:
+        description: 'Forced build' 
+  push:
+    branches:
+      - master
+    paths-ignore:
+      - '.github/**'
+
+jobs:
+  build-windows:
+    name: Win64 Build
+    runs-on: windows-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+      - name: Install Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.10'
+          architecture: 'x64'
+      - name: Install requirements
+        run: |
+          pip install -r requirements.txt
+      - name: Run PyInstaller
+        run: |
+          pip install pyinstaller
+          PyInstaller --windowed --onefile -n PyContinuity --icon="logo/logo.ico"  gui.py
+          
+      - uses: actions/upload-artifact@v4
+        with:
+          name: PyContinuity_win64
+          path: dist/PyContinuity.exe
+          
+  build-mac:
+    name: MacOSX (silicon) Build
+    runs-on: macos-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+      - name: Install Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.10'
+      - name: Install requirements
+        run: |
+          python -m pip install pyinstaller
+          pip install -r requirements.txt
+      - name: Run PyInstaller
+        run: |
+          PyInstaller --windowed --target-arch arm64 -n PyContinuity --icon="logo/logo.icns" gui.py
+      - name: Decode and import certificate
+        env:
+          MAC_CERTIFICATE: ${{ secrets.CERTIFICATE }}
+          MAC_CERTIFICATE_PASSWORD: ${{ secrets.CERTIFICATE_PASSWORD }}
+        run: |
+          echo "$MAC_CERTIFICATE" | base64 --decode > certificate.p12
+          security create-keychain -p "action" build.keychain
+          security import certificate.p12 -k build.keychain -P "$MAC_CERTIFICATE_PASSWORD" -T /usr/bin/codesign
+          security list-keychains -s build.keychain
+          security unlock-keychain -p "action" build.keychain
+          security set-key-partition-list -S apple-tool:,apple:,codesign: -s -k "action" build.keychain
+      - name: Change permissions
+        run: chmod +x dist/PyContinuity.app/Contents/MacOS/PyContinuity
+
+      - name: Sign the app
+        run: |
+          codesign --deep --force --verify --verbose --sign "PyContinuity" dist/PyContinuity.app
+
+      - name: Create tarball of the app
+        run: tar -czvf "PyContinuity_macos(silicon).tar.gz" -C dist PyContinuity.app
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: PyContinuity_macos(silicon)
+          path: PyContinuity_macos(silicon).tar.gz
+
+  build-mac-intel:
+    name: MacOSX (x86_64) Build
+    runs-on: macos-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+      - name: Install Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.10'
+      - name: Install requirements
+        run: |
+          python -m pip install pyinstaller
+          pip install -r requirements.txt
+      - name: Run PyInstaller
+        run: |
+          PyInstaller --windowed --target-arch x86_64 -n PyContinuity --icon="logo/logo.icns" gui.py
+          
+
+      - name: Decode and import certificate
+        env:
+          MAC_CERTIFICATE: ${{ secrets.CERTIFICATE }}
+          MAC_CERTIFICATE_PASSWORD: ${{ secrets.CERTIFICATE_PASSWORD }}
+        run: |
+          echo "$MAC_CERTIFICATE" | base64 --decode > certificate.p12
+          security create-keychain -p "action" build.keychain
+          security import certificate.p12 -k build.keychain -P "$MAC_CERTIFICATE_PASSWORD" -T /usr/bin/codesign
+          security list-keychains -s build.keychain
+          security unlock-keychain -p "action" build.keychain
+          security set-key-partition-list -S apple-tool:,apple:,codesign: -s -k "action" build.keychain
+
+      - name: Change permissions
+        run: chmod +x dist/PyContinuity.app/Contents/MacOS/PyContinuity
+
+      - name: Sign the app
+        run: |
+          codesign --deep --force --verify --verbose --sign "PyContinuity" dist/PyContinuity.app
+      
+
+      - name: Create tarball of the app
+        run: tar -czvf "PyContinuity_macos(x86_64).tar.gz" -C dist PyContinuity.app
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: PyContinuity_macos(x86_64)
+          path: PyContinuity_macos(x86_64).tar.gz

@@ -1,15 +1,8 @@
-import os
+import platform as _platform
 
-if os.name == "nt":
-    from .WinWindow import TransparentFullscreenWindow as Window
-elif os.name == "posix":
-    from .WinWindow import TransparentFullscreenWindow as Window
-    # from .OSXServer import Server
-elif os.name == "java":
-    from .WinWindow import TransparentFullscreenWindow as Window
-    # from .LinuxServer import Server
+if _platform.system() == 'Windows':
+    from .WinWindow import HiddenWindow as Window
+elif _platform.system() == 'Darwin':
+    from .OSXWindow import HiddenWindow as Window
 else:
-    from .WinWindow import TransparentFullscreenWindow as Window
-    # from .Server import Server
-
-__all__ = ['Window']
+    raise OSError("Unsupported platform '{}'".format(_platform.system()))

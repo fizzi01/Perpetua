@@ -132,3 +132,9 @@ dmypy.json
 .idea/
 *.iml
 README.md
+entitlements.plist
+
+dist/*
+Test/*
+Test
+.gitignore

@@ -1,306 +1,263 @@
-import socket
-import threading
-from time import sleep
+from threading import Lock
+from typing import Optional
 
-from pynput import mouse
+# General interfaces
+from utils.Interfaces import (
+    IServer,
+    IBaseSocket,
+    IServerSocket,
+    IClients,
+    IScreenTransitionController,
+    IMouseController,
+    IEventBus,
+    IKeyboardController,
+    IClipboardController,
+)
 
-from .ClientHandler import ClientHandler
-from inputUtils import InputHandler
-from window import Window
+# Contexts
+from utils.Interfaces import (
+    IServerContext,
+    IFileTransferContext,
+    IScreenContext,
+    IControllerContext
+)
+
+# Services
+from utils.Interfaces import (
+    IMessageService,
+    IServerConnectionService,
+    IFileTransferService,
+    IInputListenerService,
+    IInputControllerService,
+    IServerScreenMouseService
+)
+
+# Logging
+from utils.Logging import Logger
 
 
-class Server:
-    """
-    Classe per la gestione del server.
+class Server(IFileTransferContext, IControllerContext, IScreenContext, IServerContext, IServer):
+    def __init__(self, server_socket: IServerSocket, clients: IClients = None, screen_threshold: int = 10,
+                 logger: Logger = None, screen_width: int = 0, screen_height: int = 0):
 
-    :param host: Indirizzo del server
-    :param port: Porta del server
-    :param clients: Dizionario contenente le posizioni dei client abilitate
-    :param screen_width: Larghezza dello schermo
-    :param screen_height: Altezza dello schermo
-    :param wait: Tempo di attesa per la connessione dei client
-    :param logging: Enable logs
-    :param screen_threshold: Soglia per la transizione dello schermo
-    :param root: Main gui window
-    :param stdout: Funzione per la stampa dei messaggi
-    """
-
-    def __init__(self, host: str = "0.0.0.0", port: int = 5001, clients=None, screen_width=1920, screen_height=1080,
-                 wait: int = 5, logging: bool = False, screen_threshold: int = 10, root=None, stdout=print):
-
-        if clients is None:
-            clients = {"left": {"conn": None, "addr": None}}
-
-        self.logging = logging
-        self.host = host
-        self.port = port
-        self.clients = clients
-
-        self.lock = threading.Lock()
-
-        self.server_socket = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
-        self.server_socket.settimeout(wait)
-        self.wait = wait
-
-        # List of client handlers started
-        self._client_handlers = []
-
-        # Main variable for server status, if False the server is stopped automatically
-        self._started = False
-
-        # Window initialization for screen transition
-        self.window = Window(root)
-        self.stdout = stdout
-
-        # Screen transition variables
-        self.active_screen = None
-        self._changed = False
-        self.screen_width = screen_width
-        self.screen_height = screen_height
+        # Screen variables
+        self.screen_width, self.screen_height = screen_width, screen_height
         self.screen_threshold = screen_threshold
 
-        # Screen transition orchestrator
-        self._checker = threading.Thread(target=self.check_screen_transition)
+        self._thread_pool = []
+        self._started = False  # Main variable for server status, if False the server is stopped automatically
 
-        # Server core thread
-        self._main_thread = threading.Thread(target=self._accept_clients)
+        # Locks for context and screen transition
+        self._context_lock = Lock()
 
-        # Input listeners
-        self.mouse_listener = None
-        self.keyboard_listener = None
-        self.mouse_controller = mouse.Controller()
+        # Initialize logging
+        self.logger: Logger = logger
+
+        # Initialize IO Managers
+        self.message_service: IMessageService | None = None
+
+        # Initialize server variables
+        self.clients: IClients | None = clients
+        self.server_socket: IServerSocket = server_socket
+
+        # Screen transition variables
+        self.screen_transition_controller: IScreenTransitionController | None = None
+        self.active_screen: str | None = None
+
+        # Connection service
+        self.connection_service: IServerConnectionService | None = None
+
+        # Event Bus
+        self.event_bus: IEventBus | None = None
+
+        # Input Services
+        self.listeners_service: IInputListenerService | None = None
+        self.controller_service: IInputControllerService | None = None
+        self.current_mouse_position: tuple | None = None
+        self.mouse_service: IServerScreenMouseService | None = None
+
+        # File Transfer Service
+        self._file_transfer_service: IFileTransferService | None = None
+
+    """ --- Server --- """
+    def set_event_bus(self, event_bus: 'IEventBus') -> None:
+        self.event_bus = event_bus
+        self._thread_pool.append(self.event_bus)
+
+    def set_connection_service(self, connection_service: 'IServerConnectionService') -> None:
+        self.connection_service = connection_service
+        self._thread_pool.append(self.connection_service)
+
+    def set_message_service(self, service: 'IMessageService') -> None:
+        self.message_service = service
+
+        self._thread_pool.append(self.message_service)
+
+    def set_input_service(self, input_listener_service: 'IInputListenerService',
+                          input_controller_service: 'IInputControllerService',
+                          screen_mouse_service: 'IServerScreenMouseService') -> None:
+
+        self.listeners_service = input_listener_service
+        self.controller_service = input_controller_service
+        self.mouse_service = screen_mouse_service
+
+        if isinstance(self.controller_service.get_mouse_controller(), IMouseController):
+            self.current_mouse_position = self.controller_service.get_mouse_controller().get_current_position()
+
+        self._thread_pool.append(self.listeners_service)
+        self._thread_pool.append(self.controller_service)
+
+    def set_file_transfer_service(self, file_transfer_service: 'IFileTransferService') -> None:
+        self._file_transfer_service = file_transfer_service
+        self._thread_pool.append(self.file_transfer_service)
+
+    def set_transition_service(self, transition_service: 'IScreenTransitionController') -> None:
+        self.screen_transition_controller = transition_service
+        # Put as the first thread to start, it should be the first to stop
+        self._thread_pool.insert(0, self.screen_transition_controller)
 
     def start(self):
         try:
-            self.server_socket.bind((self.host, self.port))
-            self.server_socket.listen()
-            self.log(f"Server starting on {self.host}:{self.port}", 1)
-
             self._started = True
 
             # Threads initialization
-            self._main_thread.start()  # Accept clients
-            self._start_listeners()  # Start listeners
-            self._checker.start()  # Start screen transition checker
+            for thread in self._thread_pool:
+                thread.start()
 
-            self.log(f"Server started.", 1)
+            self.log("Server started.", Logger.INFO)
 
         except Exception as e:
-            self._started = False
-            self.log(f"Errore nell'avvio del server: {e}")
+            self.log(f"Server not started: {e}", Logger.ERROR)
             return self.stop()
 
         return True
 
     def stop(self):
+        if not self._started and not self.connection_service.is_alive():
+            return True
 
-        self.log(f"Server stopping...", 1)
-
-        if not self._started:
-            return False
-
-        # Stops threads
+        self.log("Server stopping ...", Logger.WARNING)
         self._started = False
 
         # --- Start cleanup ----
-        # Close window for transition
-        self.window.close()
-
-        # Close all client handlers
-        for handler in self._client_handlers:
-            try:
-                handler.stop()
-            except Exception as e:
-                self.log(f"Errore nella chiusura del client handler: {e}", 2)
-                continue
 
         try:
-            self._checker.join()  # Screen transition orchestrator thread
-            self.mouse_listener.get_listener().stop()  # Mouse listener
-            self.server_socket.close()  # Server socket
 
+            # Wait for all threads to finish
+            for thread in self._thread_pool:
+                if thread.is_alive():
+                    thread.join()
+
+            # Recheck if all threads are stopped
+            for thread in self._thread_pool:
+                if thread.is_alive():
+                    self.log(f"Thread {thread} is still alive.", Logger.WARNING)
+
+            self.log("Server stopped.", Logger.INFO)
             return True
         except Exception as e:
-            self.log(f"Errore nella chiusura del server: {e}", 2)
+            self.log(f"{e}", Logger.ERROR)
             return False
 
-    def _start_listeners(self):
-        self.mouse_listener = InputHandler.ServerMouseListener(send_function=self._send_to_clients,
-                                                               change_screen_function=self._change_screen,
-                                                               get_active_screen=self._get_active_screen,
-                                                               get_clients=self._get_clients,
-                                                               screen_width=self.screen_width,
-                                                               screen_height=self.screen_height,
-                                                               screen_threshold=self.screen_threshold)
-        try:
-            self.mouse_listener.get_listener().start()
-        except Exception as e:
-            self.log(f"Errore nell'avvio del mouse listener: {e}", 2)
+    """ --- Server Context --- """
+    def is_running(self):
+        with self._context_lock:
+            return self._started
 
-        self.log("Mouse listener started.")
-
-    def _accept_clients(self):
-        while self._started:
-            for key in self.clients:
-                try:
-                    if not self.clients[key]['conn']:
-                        conn, addr = self.server_socket.accept()
-                    else:
-                        sleep(float(self.wait))
-                        continue
-                except socket.timeout:
-                    self.log("Waiting for clients.")
-                    continue
-                except Exception as e:
-                    if self._started:
-                        self.log(f"{e}", 2)
-                    continue
-
-                self.clients[key]['conn'] = conn
-                self.clients[key]['addr'] = addr
-                client_handler = ClientHandler(conn, addr, self._process_client_command, self._on_disconnect,
-                                               logger=self.log)
-                client_handler.start()
-                self._client_handlers.append(client_handler)
-
-    def _on_disconnect(self, conn):
+    def on_disconnect(self, conn):
         # Set client connection to None and change screen to Host (None)
-        for key, info in self.clients.items():
-            if info['conn'] == conn:
-                info['conn'] = None
-                self._change_screen(None)
-                return
+        with self._context_lock:
+            for key in self.clients.get_possible_positions():
+                if self.clients.get_connection(key) == conn:
+                    self.log(f"Client {key} disconnected.", Logger.WARNING)
+                    self.clients.remove_connection(key)
+                    self.event_bus.publish(self.event_bus.SCREEN_CHANGE_EVENT, None)
+                    return
 
-    def _get_active_screen(self):
-        return self.active_screen
+    def get_client(self, screen) -> IBaseSocket:
+        with self._context_lock:
+            return self.clients.get_connection(screen)
 
-    def _get_clients(self, screen):
-        if screen:
-            try:
-                return self.clients[screen]['conn']
-            except KeyError:
-                return None
-        else:
-            return None
+    def get_connected_clients(self):
+        with self._context_lock:
+            return self.clients.get_connected_clients()
 
-    def _process_client_command(self, command):
-        parts = command.split()
+    def change_screen(self, screen=None):
+        self.screen_transition_controller.change_screen(screen)
 
-        if parts[0] == 'return':
-            if self.active_screen == "left" and parts[1] == "right":
-                with self.lock:
-                    self.active_screen = None
-                    self._changed = True
-                    self._reset_mouse("left", self.current_mouse_position[1])
-            elif self.active_screen == "right" and parts[1] == "left":
-                with self.lock:
-                    self.active_screen = None
-                    self._changed = True
-                    self._reset_mouse("right", self.current_mouse_position[1])
-            elif self.active_screen == "up" and parts[1] == "down":
-                with self.lock:
-                    self.active_screen = None
-                    self._changed = True
-                    self._reset_mouse("up", self.current_mouse_position[0])
-            elif self.active_screen == "down" and parts[1] == "up":
-                with self.lock:
-                    self.active_screen = None
-                    self._changed = True
-                    self._reset_mouse("down", self.current_mouse_position[0])
+    def reset_screen(self, direction: str, position: tuple):
+        self.screen_transition_controller.reset_screen(direction, position)
 
-    def _send_to_clients(self, screen, data):
+    def mark_transition_changed(self):
+        self.screen_transition_controller.mark_transition()
 
-        try:
-            conn = self.clients[screen].get('conn')
-        except KeyError:
-            self.log(f"Errore nell'invio dei dati al client {screen}: Client non trovato.", 2)
-            return
-        except Exception as e:
-            self.log(f"Errore nell'invio dei dati al client {screen}: {e}", 2)
-            return
+    def mark_transition_blocked(self):
+        self.screen_transition_controller.mark_transition_blocked()
 
-        if conn:
-            try:
-                conn.send(data.encode())
-            except socket.error as e:
-                self.log(f"Errore nell'invio dei dati al client {screen}: {e}", 2)
-                self._change_screen(None)
-
-    def _change_screen(self, screen):
-
-        # Check if screen is already active
-        if self.active_screen == screen:
-            return
-
-        # Check if is screen connected, if not return and set active_screen to None
-        if screen and self._get_clients(screen) is None:
-            if self.active_screen:
-                with self.lock:
-                    self.active_screen = None
-                    self._changed = True
-            return
-
-        # Change screen and set mouse position
-        with self.lock:
-            self.active_screen = screen
-            self.current_mouse_position = self.mouse_controller.position
-            self._changed = True
-
-    """
-    Funzione per la gestione del cambio di schermata.
-    Disabilita o meno lo schermo dell'host al cambio di schermata.
-    """
-
-    def _screen_toggle(self, screen):
-        if not screen:
-            # Disable screen transition
-            self.window.minimize()
-        else:
-            # Enable screen transition
-            self.window.maximize()
-
-    def check_screen_transition(self):
-        self.log(f"Transition Checker started.")
-        while self._started:
-            sleep(0.1)
-            if self._changed:
-                self.log(f"Changing screen to {self.active_screen}", 1)
-
-                if self.active_screen == "left":
-                    self._reset_mouse("right", self.current_mouse_position[1])
-                elif self.active_screen == "right":
-                    self._reset_mouse("left", self.current_mouse_position[1])
-                elif self.active_screen == "up":
-                    self._reset_mouse("down", self.current_mouse_position[0])
-                elif self.active_screen == "down":
-                    self._reset_mouse("up", self.current_mouse_position[0])
-
-                self._screen_toggle(self.active_screen)
-
-                with self.lock:
-                    self._changed = False
-
-    def _reset_mouse(self, param, y):
-        if param == "left":
-            self.mouse_controller.position = (self.screen_threshold + 50, int(float(y)))
-            self.log(f"Moving mouse to x: {self.screen_threshold + 100}, y:{y}")
-        elif param == "right":
-            self.mouse_controller.position = (self.screen_width - self.screen_threshold - 50, int(float(y)))
-            self.log(f"Moving mouse to x: {self.screen_width - self.screen_threshold - 50}, y:{y}")
-        elif param == "up":
-            self.mouse_controller.position = (int(float(y)), self.screen_threshold + 50)
-            self.log(f"Moving mouse to x: {y}, y:{self.screen_threshold + 5}")
-        elif param == "down":
-            self.mouse_controller.position = (int(float(y)), self.screen_height - self.screen_threshold - 50)
-            self.log(f"Moving mouse to x: {y}, y:{self.screen_height - self.screen_threshold - 50}")
+    def mark_transition_completed(self):
+        self.screen_transition_controller.mark_transition_completed()
 
     def log(self, message, priority: int = 0):
-        if priority == 2:
-            print(f"ERROR: {message}")
-            self.stdout(f"ERROR: {message}")
-        elif priority == 1:
-            print(f"INFO: {message}")
-            self.stdout(f"INFO: {message}")
-        elif self.logging:
-            print(message)
-            self.stdout(message)
+        self.logger.log(message, priority)
+
+    def get_clients(self):
+        with self._context_lock:
+            return self.clients
+
+    def get_active_screen(self):
+        with self._context_lock:
+            return self.active_screen
+
+    def is_transition_in_progress(self):
+        with self._context_lock:
+            return self.screen_transition_controller.is_transition_in_progress()
+
+    def set_active_screen(self, screen: Optional[str]) -> None:
+        with self._context_lock:
+            self.active_screen = screen
+
+    def is_transition_blocked(self) -> bool:
+        with self._context_lock:
+            return self.screen_transition_controller.is_transition_blocked()
+
+    def get_current_mouse_position(self) -> tuple:
+        if self.listeners_service:  # Get current virtual mouse position
+            return self.listeners_service.get_mouse_position()
+        elif self.mouse_controller:  # Fall back on real mouse position
+            return self.mouse_controller.get_current_position()
+
+    def has_client_position(self, screen: str) -> bool:
+        with self._context_lock:
+            return screen in self.clients.get_possible_positions()
+
+    def is_client_connected(self, screen: str) -> bool:
+        with self._context_lock:
+            return self.clients.get_connection(screen) is not None
+
+    def reset_mouse(self, direction: str, position: float):
+        self.mouse_service.reset_mouse(direction, position)
+
+    """ --- Controller Context --- """
+    @property
+    def mouse_controller(self) -> IMouseController:
+        return self.controller_service.get_mouse_controller()
+
+    @property
+    def clipboard_controller(self) -> IClipboardController:
+        return self.controller_service.get_clipboard_controller()
+
+    @property
+    def keyboard_controller(self) -> IKeyboardController:
+        return self.controller_service.get_keyboard_controller()
+
+    """ --- Server Screen Context --- """
+    def get_screen_treshold(self) -> int:
+        return self.screen_threshold
+
+    def get_screen_size(self) -> tuple:
+        return self.screen_width, self.screen_height
+
+    """ --- File Transfer Context --- """
+    @property
+    def file_transfer_service(self) -> 'IFileTransferService':
+        return self._file_transfer_service

@@ -1,12 +1,8 @@
-import os
+import platform as _platform
 
-if os.name == "nt":
-    from . import WinInputHandler as InputHandler
-elif os.name == "posix":
-    from . import OSXInputHandler as InputHandler
-elif os.name == "java":
-    from . import LinuxInputHandler as InputHandler
+if _platform.system() == 'Windows':
+    from .WinInputHandler import *
+elif _platform.system() == 'Darwin':
+    from .OSXInputHandler import *
 else:
-    from . import WinInputHandler as InputHandler
-
-__all__ = ['InputHandler']
+    raise OSError("Unsupported platform '{}'".format(_platform.system()))
