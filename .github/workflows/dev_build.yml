@@ -1,4 +1,4 @@
-name: Dev Build
+name: Win64 Build
 
 on:
   workflow_dispatch:
