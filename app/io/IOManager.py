@@ -1,5 +1,3 @@
-# io_manager.py
-import errno
 from multiprocessing import connection
 from threading import Thread
 from queue import Queue, Empty

@@ -1,4 +1,3 @@
-# io/process_monitor.py
 import sys
 from threading import Thread, Event
 from multiprocessing import Process, Pipe
