@@ -1,5 +1,5 @@
 import logging
-from dataclasses import dataclass
+from attr import dataclass
 from typing import Callable, Dict, Optional
 
 from utils.Interfaces import IServerContext, IMessageService, IEventBus, IControllerContext, IFileTransferService, \
