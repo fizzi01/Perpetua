@@ -72,7 +72,6 @@ class ScreenTransitionController(IScreenTransitionController):
         """Esegue la logica di cambio schermo """
         state = ScreenStateFactory.get_screen_state(screen, self.context)
         with self.lock:
-            self.context.log(f"Requesting screen change to {screen}", Logger.INFO)
             state.handle()
 
     def reset_screen(self, direction: str, position: tuple) -> None:
