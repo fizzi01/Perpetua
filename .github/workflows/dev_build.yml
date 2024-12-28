@@ -16,7 +16,7 @@ on:
         default: 'false'
         type: boolean
       run_mac_build:
-        description: 'OSX Build'
+        description: 'MacOS Build'
         required: true
         default: 'false'
         type: boolean
@@ -117,8 +117,10 @@ jobs:
       - name: Sign the app
         run: |
           codesign --deep --force --verify --verbose --sign "PyContinuity" dist/PyContinuity.app
-      - run: mkdir "tempdir" && mv dist/PyContinuity.app "tempdir/" && mkdir "dist/pack" && mv "tempdir" "dist/pack/"
-      - uses: actions/upload-artifact@v4
+      - name: Move the app to a temporary directory
+        run: mkdir "tempdir" && mv dist/PyContinuity.app "tempdir/" && mkdir "dist/pack" && mv "tempdir" "dist/pack/"
+      - name: Upload the app
+        uses: actions/upload-artifact@v4
         with:
           name: PyContinuity_macos
           path: ./dist/pack/tempdir

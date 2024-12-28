@@ -3,104 +3,115 @@ name: Build
 on:
   workflow_dispatch:
     inputs:
-      logLevel:
-        description: 'Log level'     
-        required: true
-        default: 'warning'
       tags:
-        description: 'Forced build' 
+        description: 'Build name'
+      all_build:
+        description: 'Complete build'
+        required: true
+        default: 'false'
+        type: boolean
+      run_windows_build:
+        description: 'Windows Build'
+        required: true
+        default: 'false'
+        type: boolean
+      run_mac_build:
+        description: 'MacOS Build'
+        required: true
+        default: 'false'
+        type: boolean
   push:
     branches:
       - master
     paths-ignore:
       - '.github/**'
+      - 'dist/**'
+      - 'README.md'
+
+run-name: ${{ github.event.inputs.tags }}
 
 jobs:
   build-windows:
-    name: Win64 Build
+    if: contains(github.event.head_commit.message, '#build') || contains(github.event.head_commit.message, '#win') || github.event.inputs.run_windows_build == 'true' || github.event.inputs.all_build == 'true'
+    name: Windows Build
     runs-on: windows-latest
     steps:
       - name: Checkout
         uses: actions/checkout@v4
+
       - name: Install Python
         uses: actions/setup-python@v5
         with:
-          python-version: '3.10'
-          architecture: 'x64'
+          python-version: '3.11'
+          cache: 'pip'
+          cache-dependency-path: requirements/Win/requirements.txt
+
       - name: Install requirements
+        run: pip install -r requirements/Win/requirements.txt
+
+      - name: Build with Nuitka
+        uses: Nuitka/Nuitka-Action@main
+        with:
+          script-name: start.py
+          mode: standalone
+          output-file: PyContinuity
+          prefer-source-code: true
+          output-dir: dist
+          windows-icon-from-ico: logo/logo.ico
+
+      - name: Create zip of the app
         run: |
-          pip install -r requirements.txt
-      - name: Run PyInstaller
-        run: |
-          pip install pyinstaller
-          PyInstaller --windowed --onefile -n PyContinuity --icon="logo/logo.ico"  gui.py
-          
+          cd dist/start.dist
+          7z a -tzip ../../PyContinuity_windows.zip *
+
       - uses: actions/upload-artifact@v4
         with:
-          name: PyContinuity_win64
-          path: dist/PyContinuity.exe
-          
+          name: PyContinuity_windows
+          path: PyContinuity_windows.zip
+
   build-mac:
-    name: MacOSX (silicon) Build
+    if: contains(github.event.head_commit.message, '#build') || contains(github.event.head_commit.message, '#osx') || github.event.inputs.run_mac_build == 'true' || github.event.inputs.all_build == 'true'
+    name: MacOS Build
     runs-on: macos-latest
     steps:
       - name: Checkout
         uses: actions/checkout@v4
+
+      - name: Install gobject-introspection
+        run: brew install gobject-introspection
+
       - name: Install Python
         uses: actions/setup-python@v5
         with:
-          python-version: '3.10'
+          python-version: '3.11'
+          cache: 'pip'
+          cache-dependency-path: requirements/Osx/requirements.txt
+
       - name: Install requirements
         run: |
-          python -m pip install pyinstaller
-          pip install -r requirements.txt
-      - name: Run PyInstaller
-        run: |
-          PyInstaller --windowed --target-arch arm64 -n PyContinuity --icon="logo/logo.icns" gui.py
-      - name: Decode and import certificate
-        env:
-          MAC_CERTIFICATE: ${{ secrets.CERTIFICATE }}
-          MAC_CERTIFICATE_PASSWORD: ${{ secrets.CERTIFICATE_PASSWORD }}
-        run: |
-          echo "$MAC_CERTIFICATE" | base64 --decode > certificate.p12
-          security create-keychain -p "action" build.keychain
-          security import certificate.p12 -k build.keychain -P "$MAC_CERTIFICATE_PASSWORD" -T /usr/bin/codesign
-          security list-keychains -s build.keychain
-          security unlock-keychain -p "action" build.keychain
-          security set-key-partition-list -S apple-tool:,apple:,codesign: -s -k "action" build.keychain
-      - name: Change permissions
-        run: chmod +x dist/PyContinuity.app/Contents/MacOS/PyContinuity
+          pip install -r requirements/Osx/requirements.txt
 
-      - name: Sign the app
+      - name: Install ccache
         run: |
-          codesign --deep --force --verify --verbose --sign "PyContinuity" dist/PyContinuity.app
+          brew install ccache
 
-      - name: Create tarball of the app
-        run: tar -czvf "PyContinuity_macos(silicon).tar.gz" -C dist PyContinuity.app
-
-      - uses: actions/upload-artifact@v4
+      - name: Build with Nuitka
+        uses: Nuitka/Nuitka-Action@main
         with:
-          name: PyContinuity_macos(silicon)
-          path: PyContinuity_macos(silicon).tar.gz
+          script-name: start.py
+          output-file: PyContinuity
+          output-dir: dist
+          mode: app
+          prefer-source-code: true
+          macos-app-icon: logo/logo.icns
+          macos-app-protected-resource: |
+            NSInputMonitoringUsageDescription:This application needs access to input monitoring to interact with other applications.
+            NSAccessibilityUsageDescription:This application needs access to accessibility to interact with other applications.
+          product-name: PyContinuity
 
-  build-mac-intel:
-    name: MacOSX (x86_64) Build
-    runs-on: macos-latest
-    steps:
-      - name: Checkout
-        uses: actions/checkout@v4
-      - name: Install Python
-        uses: actions/setup-python@v5
-        with:
-          python-version: '3.10'
-      - name: Install requirements
+      - name: Rename directory
         run: |
-          python -m pip install pyinstaller
-          pip install -r requirements.txt
-      - name: Run PyInstaller
-        run: |
-          PyInstaller --windowed --target-arch x86_64 -n PyContinuity --icon="logo/logo.icns" gui.py
-          
+          mv dist/start.app dist/PyContinuity.app
 
       - name: Decode and import certificate
         env:
@@ -115,17 +126,16 @@ jobs:
           security set-key-partition-list -S apple-tool:,apple:,codesign: -s -k "action" build.keychain
 
       - name: Change permissions
-        run: chmod +x dist/PyContinuity.app/Contents/MacOS/PyContinuity
+        run: chmod +x dist/PyContinuity.app/Contents/MacOS/*
 
       - name: Sign the app
         run: |
           codesign --deep --force --verify --verbose --sign "PyContinuity" dist/PyContinuity.app
-      
 
-      - name: Create tarball of the app
-        run: tar -czvf "PyContinuity_macos(x86_64).tar.gz" -C dist PyContinuity.app
-
-      - uses: actions/upload-artifact@v4
+      - name: Move the app to a temporary directory
+        run: mkdir "tempdir" && mv dist/PyContinuity.app "tempdir/" && mkdir "dist/pack" && mv "tempdir" "dist/pack/"
+      - name: Upload the app
+        uses: actions/upload-artifact@v4
         with:
-          name: PyContinuity_macos(x86_64)
-          path: PyContinuity_macos(x86_64).tar.gz
+          name: PyContinuity_macos
+          path: ./dist/pack/tempdir
