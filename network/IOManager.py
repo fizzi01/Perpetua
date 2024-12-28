@@ -145,6 +145,9 @@ class MessageService(IMessageService):
         self.MessageSender.send(self.FILE_PRIORITY, (screen, data))
 
     def start(self):
+        if not self.MessageSender.is_alive():
+            self.MessageSender.start()
+
         if not self._threads_started:
             if self.manage_mouse:
                 self._thread_pool.append(threading.Thread(target=self._process_mouse_queue, daemon=True))
@@ -289,6 +292,10 @@ class MessageService(IMessageService):
 
     def join(self, timeout=None):
         self._stop_event.set()
+
+        if self.MessageSender.is_alive():
+            self.MessageSender.join()
+
         for thread in self._thread_pool:
             thread.join()
         self._threads_started = False
@@ -355,7 +362,6 @@ class BaseMessageQueueManager(threading.Thread, IMessageQueueManager):
             # Send data in chunks to ensure it fits within the buffer limit
             # Se data inizia con file_chunk, deve codificare il comando ma non il contenuto ovvero "file_chunk::content" codifica solo "file_chunk::"
             data_bytes = data.encode()
-
             data_length = len(data_bytes)
 
             chunk_size_with_delimiter = CHUNK_SIZE - len(CHUNK_DELIMITER.encode())
@@ -402,7 +408,7 @@ class ServerMessageQueueManager(BaseMessageQueueManager):
     def _send_to_client(self, client_key, data, max_retries=20, retry_delay=0.5):
         retries = 0
         try:
-            if not client_key or client_key == "None":  # Skip sending data if the client key is None
+            if not client_key or client_key is None:  # Skip sending data if the client key is None
                 return
 
             # Prepare data to send

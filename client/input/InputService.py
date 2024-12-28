@@ -77,9 +77,12 @@ class InputControllerService(IInputControllerService):
 
     def start(self) -> None:
         self._started = True
+        self.mouse_controller.start()
 
     def join(self, timeout: int = 0) -> None:
         self._started = False
+        if self.mouse_controller.is_alive():
+            self.mouse_controller.stop()
 
     def stop(self) -> None:
         self._started = False

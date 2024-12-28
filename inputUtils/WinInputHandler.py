@@ -980,7 +980,7 @@ class ClientMouseController(IMouseController):
 
     def start(self):
         self.smoothing_thread = threading.Thread(target=self._smoothing_loop, daemon=True)
-        self.smoothing_thread.start()
+        #self.smoothing_thread.start()
 
     def _get_server_screen_size(self):
         """
@@ -1046,7 +1046,8 @@ class ClientMouseController(IMouseController):
         if mouse_action == "position":
             target_x = max(0, min(x * self.client_info().screen_size[0], self.client_info().screen_size[0]))
             target_y = max(0, min(y * self.client_info().screen_size[1], self.client_info().screen_size[1]))
-            self._set_target_position(target_x, target_y)
+            self.mouse.position = (target_x, target_y)
+            #self._set_target_position(target_x, target_y)
 
         elif mouse_action == "move":
             # Denormalize the x and y values

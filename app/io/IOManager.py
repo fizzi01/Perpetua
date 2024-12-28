@@ -1,5 +1,3 @@
-# io_manager.py
-import errno
 from multiprocessing import connection
 from threading import Thread
 from queue import Queue, Empty
@@ -150,6 +148,10 @@ class IOManager(Thread):
                     input_msg = self.queue_obj.get()
                     value = self._handle_message(input_msg)
                     self.queue_obj.put(value)
+
+                # Se on_message_callback è definita, la usiamo per elaborazioni extra
+                if self.on_message_callback:
+                    self.on_message_callback("")
             except ValueError:
                 break
             except EOFError:
@@ -171,10 +173,6 @@ class IOManager(Thread):
             msg = "" if msg is None else msg
             value = self.input_stream(msg)
         else:
-            # Se on_message_callback è definita, la usiamo per elaborazioni extra
-            if self.on_message_callback:
-                self.on_message_callback(msg)
-
             value = msg
             if value:
                 self.output_stream(msg)

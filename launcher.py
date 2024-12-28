@@ -1,5 +1,3 @@
-# application_launcher.py
-
 import os
 import signal
 from multiprocessing import Pipe, Process, Event, managers
@@ -13,7 +11,7 @@ from config.ServerConfig import ServerConfig, Clients
 from config.ClientConfig import ClientConfig
 from app.managers.ServerManager import ServerManager
 from app.managers.ClientManager import ClientManager
-from gui.GUIController import GUIControllerFactory, BaseGUIController
+from app.gui.GUIController import GUIControllerFactory, BaseGUIController
 
 from app.io.common import ProcessMessage, QueueLogger
 

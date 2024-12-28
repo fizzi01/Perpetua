@@ -117,18 +117,22 @@ class FileTransferService(IFileTransferService):
         file_name = urllib.parse.unquote(file_name)
         file_path = urllib.parse.unquote(file_path)
 
+        # Reparse the file name and path for network transmission
         file_name_parsed = urllib.parse.quote(file_name)
         file_path_parsed = urllib.parse.quote(file_path)
 
         if local_owner:  # LOCAL_OWNERSHIP or LOCAL_SERVER_OWNERSHIP
             # File copiato da un client o dal server localmente
             owner = local_owner
-            self.log(f"[FileTransferService] Local copied file: {file_path_parsed}")
+            self.log(f"[FileTransferService] Local copied file: {file_name}")
 
             if local_owner is self.LOCAL_SERVER_OWNERSHIP:  # Server ha copiato un file e broadcasta
                 # Broadcast a tutti i client: file_copied <file_name> <file_size> <file_path>
-                cmd = format_command(f"file_copied {file_name} {file_size} {file_path}")
+                cmd = format_command(f"file_copied {file_name_parsed} {file_size} {file_path_parsed}")
                 self.io_manager.send_file_copy("all", cmd)  # Tutti i client memorizzeranno con EXTERNAL_OWNERSHIP
+            else:   # Client ha copiato un file, manda al server per memorizzare
+                cmd = format_command(f"file_copied {file_name_parsed} {file_size} {file_path_parsed}")
+                self.io_manager.send_file_copy(None, cmd)
 
             # Salva internamente
             self.current_file_info = {
@@ -141,7 +145,7 @@ class FileTransferService(IFileTransferService):
         else:  # Received by a Server from a client
             # Un client 'caller_screen' ha copiato un file
             # Il server riceve 'file_copied' e imposta owner=caller_screen
-            self.log(f"[FileTransferService] Client {caller_screen} copied file: {file_name_parsed}")
+            self.log(f"[FileTransferService] Client {caller_screen} copied file: {file_name}")
             self.current_file_info = {
                 "owner": caller_screen,  # Lo screen del client
                 "file_name": file_name_parsed,
@@ -149,7 +153,7 @@ class FileTransferService(IFileTransferService):
                 "file_path": file_path_parsed
             }
             # Broadcast a tutti i client per far salvare info con EXTERNAL_OWNERSHIP
-            cmd = format_command(f"file_copied {file_name} {file_size} {file_path}")
+            cmd = format_command(f"file_copied {file_name_parsed} {file_size} {file_path_parsed}")
             self.io_manager.send_file_copy("all", cmd)  # Invio a tutti tanto se lo stesso client lo riceve, lo ignora
 
     def handle_file_copy_external(self, file_name: str, file_size: int, file_path: str):
@@ -248,6 +252,7 @@ class FileTransferService(IFileTransferService):
 
             # Avoiding auto-request
             if requester_screen == self.CLIENT_REQUEST and owner == self.LOCAL_OWNERSHIP:
+                self.log("[FileTransferService] Client: Avoiding auto-request", Logger.DEBUG)
                 return
 
             if owner == self.LOCAL_OWNERSHIP:

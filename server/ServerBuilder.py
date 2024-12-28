@@ -160,4 +160,8 @@ class ServerBuilder:
         screen_transition_service = ScreenTransitionController(context=server)
         server.set_transition_service(screen_transition_service)
 
+        # ---- Commands Initialization ----
+        from server.command import register_commands
+        register_commands()
+
         return server

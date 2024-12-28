@@ -11,9 +11,7 @@ class MouseCommand(Command):
 
     def execute(self):
         # Silence logging for this command
-        logging.getLogger().setLevel(logging.DEBUG)
-
-        logging.debug(f"({self.DESCRIPTION}) Executing command")
+        logging.getLogger().setLevel(logging.ERROR)
 
         # If client_state is Hiddle, set it to Controlled
         if isinstance(self.context, IClientContext):

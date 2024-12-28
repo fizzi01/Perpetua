@@ -23,11 +23,12 @@ class ServerHandler(IServerHandler):
     :param command_func: Function to process commands
     """
 
-    BATCH_PROCESS_INTERVAL = 0.00001
-    TIMEOUT = 0.00001
+    BATCH_PROCESS_INTERVAL = 0.0000001
+    TIMEOUT = 0.0000001
 
     CHUNK_DELIMITER = CHUNK_DELIMITER.encode()
     END_DELIMITER = END_DELIMITER.encode()
+    CMD_DELIMITER = CMD.encode()
 
     def __init__(self, connection: IClientSocket, command_func: Callable[[str], None]):
         self.conn = connection
@@ -54,8 +55,11 @@ class ServerHandler(IServerHandler):
         self._running = False
         # check if main_thread is current thread
         if threading.current_thread() != self.main_thread:
-            self.main_thread.join()
-        self.buffer_thread.join()
+            if self.main_thread.is_alive():
+                self.main_thread.join()
+
+        if self.buffer_thread.is_alive():
+            self.buffer_thread.join()
 
     def start(self):
         self._running = True
@@ -88,6 +92,25 @@ class ServerHandler(IServerHandler):
                 break
         self.stop()
 
+    def _check_chunk_batch(self, data: bytes):
+        """
+        Check if the chunk delimiter seperates a single command data. If not data should be split.
+        :param data: Data to check
+        :return: Data split into batches or the input data
+        """
+        # Split by CHUNK_DELIMITER
+        if self.CHUNK_DELIMITER not in data:
+            return [data]
+
+        chunks = data.split(self.CHUNK_DELIMITER)
+        # If the last chunk has 2 or more CMD_DELIMITER, it means the last chunk is not a complete command
+        if chunks[-1].count(self.CMD_DELIMITER) > 1:
+            # If so, reuturn all chunks
+            return chunks
+
+        # Return data as a single batch
+        return [data]
+
     def _buffer_and_process_batches(self):
         """Buffer data and process batches in a separate thread."""
         buffer = bytearray()
@@ -102,10 +125,15 @@ class ServerHandler(IServerHandler):
                     batch = buffer[:end_pos]
                     buffer = buffer[end_pos + len(self.END_DELIMITER):]
 
-                    # Remove CHUNK_DELIMITER from the batch
-                    batch = batch.replace(self.CHUNK_DELIMITER, b'')
+                    # Check if the batch is a single command
+                    clean_batch = self._check_chunk_batch(batch)
 
-                    self._process_batch(batch.decode())
+                    # Process each batch
+                    for batch in clean_batch:
+                        # Remove CHUNK_DELIMITER from the batch
+                        batch = batch.replace(self.CHUNK_DELIMITER, b'')
+
+                        self._process_batch(batch.decode())
                 sleep(self.TIMEOUT)
             except Empty:
                 sleep(self.TIMEOUT)

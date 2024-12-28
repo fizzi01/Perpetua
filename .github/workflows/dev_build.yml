@@ -16,7 +16,7 @@ on:
         default: 'false'
         type: boolean
       run_mac_build:
-        description: 'OSX Build'
+        description: 'MacOS Build'
         required: true
         default: 'false'
         type: boolean
@@ -66,7 +66,7 @@ jobs:
 
   build-mac:
     if: contains(github.event.head_commit.message, '#build') || contains(github.event.head_commit.message, '#osx') || github.event.inputs.run_mac_build == 'true' || github.event.inputs.all_build == 'true'
-    name: MacOS (silicon) Build
+    name: MacOSX (silicon) Build
     runs-on: macos-latest
     steps:
       - name: Checkout
@@ -117,9 +117,10 @@ jobs:
       - name: Sign the app
         run: |
           codesign --deep --force --verify --verbose --sign "PyContinuity" dist/PyContinuity.app
-      - name: Create tarball of the app
-        run: tar -czvf "PyContinuity_macos.tar.gz" -C dist PyContinuity.app
-      - uses: actions/upload-artifact@v4
+      - name: Move the app to a temporary directory
+        run: mkdir "tempdir" && mv dist/PyContinuity.app "tempdir/" && mkdir "dist/pack" && mv "tempdir" "dist/pack/"
+      - name: Upload the app
+        uses: actions/upload-artifact@v4
         with:
           name: PyContinuity_macos
-          path: PyContinuity_macos.tar.gz
+          path: ./dist/pack/tempdir

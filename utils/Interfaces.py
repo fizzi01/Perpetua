@@ -1,4 +1,3 @@
-# interfaces.py
 from threading import Thread
 from abc import ABC, abstractmethod
 from typing import Protocol, List, Optional, Any, Dict, Callable, runtime_checkable
