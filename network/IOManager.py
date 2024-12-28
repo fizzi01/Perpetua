@@ -362,7 +362,6 @@ class BaseMessageQueueManager(threading.Thread, IMessageQueueManager):
             # Send data in chunks to ensure it fits within the buffer limit
             # Se data inizia con file_chunk, deve codificare il comando ma non il contenuto ovvero "file_chunk::content" codifica solo "file_chunk::"
             data_bytes = data.encode()
-
             data_length = len(data_bytes)
 
             chunk_size_with_delimiter = CHUNK_SIZE - len(CHUNK_DELIMITER.encode())

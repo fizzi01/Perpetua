@@ -149,4 +149,8 @@ class ClientBuilder:
         # Start all services
         client.start()
 
+        # ---- Commands Initialization ----
+        from client.command import register_commands
+        register_commands()
+
         return client
