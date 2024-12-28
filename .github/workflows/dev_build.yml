@@ -117,9 +117,8 @@ jobs:
       - name: Sign the app
         run: |
           codesign --deep --force --verify --verbose --sign "PyContinuity" dist/PyContinuity.app
-      - name: Create tarball of the app
-        run: tar -czvf "PyContinuity_macos(silicon).tar.gz" -C dist PyContinuity.app
+      - run: mkdir "tempdir" && mv dist/PyContinuity.app "tempdir/" && mkdir "dist/pack" && mv "tempdir" "dist/pack/"
       - uses: actions/upload-artifact@v4
         with:
-          name: PyContinuity_macos(silicon)
-          path: PyContinuity_macos(silicon).tar.gz
+          name: PyContinuity_macos
+          path: ./dist/pack/tempdir
