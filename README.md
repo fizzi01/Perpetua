@@ -62,8 +62,8 @@ ___
 
 ######   3.	Clipboard and File Sharing:
 
-  •	Automatically sync clipboard content across all connected devices.
-  •	Copy files directly from one device to another as though working in a unified environment.
+*   Automatically sync clipboard content across all connected devices.
+*	Copy files directly from one device to another as though working in a unified environment.
 ___
 ## System Requirements
 
