@@ -80,10 +80,9 @@ ___
 ## Getting Started
 
 1. **Download PyContinuity**:
-   - [Download for macOS (arm64)](#)
-   - [Download for Windows](#)
+   - [Latest release](https://github.com/fizzi01/PyContinuity/releases/latest)
 2. **Install**:
-   - Follow the instructions in the provided [installation guide](#).
+   - Follow the instructions in the provided [installation guide](#installation-guide).
 3. **Configure**:
    - Launch the application and [configure](#configuration-details) device layout and settings.
    - Set up clipboard and file-sharing preferences.
@@ -145,6 +144,11 @@ The current version of PyContinuity provides a **Terminal Interface** for setup 
 | **10** | Exit the application.                                    |
 
 ---
+
+## Installation guide
+
+Coming soon...
+___
 
 ## Support
 
