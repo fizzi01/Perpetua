@@ -408,7 +408,7 @@ class ServerMessageQueueManager(BaseMessageQueueManager):
     def _send_to_client(self, client_key, data, max_retries=20, retry_delay=0.5):
         retries = 0
         try:
-            if not client_key or client_key == "None":  # Skip sending data if the client key is None
+            if not client_key or client_key is None:  # Skip sending data if the client key is None
                 return
 
             # Prepare data to send

@@ -80,10 +80,11 @@ class ServerClipboardController(IClipboardController):
 
 
 class ServerMouseListener(IMouseListener):
-    IGNORE_NEXT_MOVE_EVENT = 0.01
+    IGNORE_NEXT_MOVE_EVENT = 0.001
     MAX_DXDY_THRESHOLD = 200
     SCREEN_CHANGE_DELAY = 0.001
-    EMULATION_STOP_DELAY = 0.1
+    EMULATION_STOP_DELAY = 0.7
+    WARP_DELAY = 0.003
 
     def __init__(self,
                  context: IServerContext | IControllerContext,
@@ -220,10 +221,14 @@ class ServerMouseListener(IMouseListener):
             except AttributeError:
                 pass
 
-            time.sleep(0.01)
+            time.sleep(self.WARP_DELAY)
 
     def on_move(self, x, y):
-        self.to_warp.clear()
+        # Check if cursor is in warped position
+        if self.to_warp.is_set() and x == self.screen_width // 2 and y == self.screen_height // 2:
+            self.to_warp.clear()
+            return True # Skip the event
+
         current_time = time.time()
 
         if self.stop_emulation and current_time > self.stop_emulation_timeout and len(self.buttons_pressed) == 0:
@@ -351,6 +356,7 @@ class ServerMouseListener(IMouseListener):
 
             # Move cursor to the x_y saved in the last move event
             if not self.stop_emulation:
+                self.to_warp.clear()
                 self.mouse_controller.set_position(self.x_print, self.y_print)
 
             self.stop_emulation = True
@@ -360,6 +366,7 @@ class ServerMouseListener(IMouseListener):
             current_time = time.time()
             if self.stop_emulation and current_time > self.stop_emulation_timeout:
                 self.stop_emulation = False
+                self.to_warp.clear()
 
         if button == mouse.Button.left:
             if screen and client and pressed:
