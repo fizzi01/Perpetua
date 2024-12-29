@@ -1,4 +1,5 @@
-![logo](https://github.com/fizzi01/PyContinuity/blob/master/logo/logo_256x256.png?raw=true)
+<img src="https://github.com/fizzi01/PyContinuity/blob/master/logo/logo_256x256.png?raw=true" alt="logo" width=128px height=128px>
+
 # PyContinuity
 
 **PyContinuity** is a cross-platform application designed to streamline control and resource sharing across multiple devices. 
