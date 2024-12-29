@@ -1,4 +1,4 @@
-<img src="https://github.com/fizzi01/PyContinuity/blob/master/logo/logo_256x256.png?raw=true" alt="logo" width=128px height=128px>
+<img src="/logo/logo_256x256.png?raw=true" alt="logo" width=128px height=128px>
 
 # PyContinuity
 
