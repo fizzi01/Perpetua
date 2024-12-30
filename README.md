@@ -1,10 +1,12 @@
+<img src="/logo/logo_256x256.png" alt="logo" width=128px height=128px>
+
 # PyContinuity
 
 **PyContinuity** is a cross-platform application designed to streamline control and resource sharing across multiple devices. 
 It allows users to manage their devices as a unified system, offering seamless screen transitions, clipboard synchronization, and file sharing. 
 PyContinuity supports **macOS** and **Windows**, bridging gaps between platforms for an efficient workflow.
 
----
+
 
 ## Key Features and Advantages
 
@@ -30,7 +32,7 @@ PyContinuity supports **macOS** and **Windows**, bridging gaps between platforms
 - Built-in **SSL/TLS encryption** ensures all communications between devices are secure, reliable, and private.
 - No data is stored.
 
----
+
 
 ## Use Cases
 
@@ -47,7 +49,7 @@ Simplify file and clipboard sharing tasks:
 - Copy and paste content instantly between devices.
 
 
-___
+
 ## How It Works
 
 ###### 1.	Setup and Configuration:
@@ -64,7 +66,7 @@ ___
 
 *   Automatically sync clipboard content across all connected devices.
 *	Copy files directly from one device to another as though working in a unified environment.
-___
+
 ## System Requirements
 
 ###### Supported Platforms
@@ -76,7 +78,7 @@ ___
 
 ###### Additional Requirements
 - **OpenSSL**: Required for SSL/TLS certificate generation.
-___
+
 ## Getting Started
 
 1. **Download PyContinuity**:
