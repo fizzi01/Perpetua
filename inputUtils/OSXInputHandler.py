@@ -670,9 +670,11 @@ class ServerClipboardListener(IHandler):
 
 class ClientKeyboardController(IKeyboardController):
 
-    def __init__(self, context = IClientContext):
-        self.context = context  # Reserved for future use
+    def __init__(self, context = IClientContext | IFileTransferContext):
+        self.context = context
         self.pressed_keys = set()
+
+        self.file_transfer_handler: IFileTransferService | None = None
 
         # self.key_filter = {  # Darwin specific key codes
         #     "alt": 0x3a,  # Option key
@@ -710,7 +712,8 @@ class ClientKeyboardController(IKeyboardController):
         self.logger = Logger.log
 
     def start(self):
-        pass
+        if isinstance(self.context, IFileTransferContext):
+            self.file_transfer_handler = self.context.file_transfer_service
 
     def stop(self):
         pass
@@ -741,6 +744,50 @@ class ClientKeyboardController(IKeyboardController):
     def is_special_key(key_data):
         return key_data in ["shift", "alt_l", "cmd"]
 
+    @staticmethod
+    def get_current_clicked_directory():
+        try:
+            # Execute AppleScript to get the active window directory
+            script = """
+                       tell application "System Events"
+                           set frontApp to name of first application process whose frontmost is true
+                       end tell
+                       if frontApp is "Finder" then
+                           tell application "Finder"
+                               try
+                                   -- Se c'è una cartella selezionata, usa quella
+                                   set selectedItems to selection
+                                   if (count of selectedItems) > 0 then
+                                       set selectedItem to item 1 of selectedItems
+                                       if (class of selectedItem) is folder then
+                                           return POSIX path of (selectedItem as alias)
+                                       end if
+                                   end if
+
+                                   -- Altrimenti, usa la finestra attiva
+                                   if (count of Finder windows) > 0 then
+                                       set currentFolder to (target of Finder window 1 as alias)
+                                       return POSIX path of currentFolder
+                                   else
+                                       -- Se nessuna finestra è attiva, ritorna la Scrivania
+                                       return POSIX path of (path to desktop folder)
+                                   end if
+                               on error
+                                   -- Fallback al Desktop in caso di errore
+                                   return POSIX path of (path to desktop folder)
+                               end try
+                           end tell
+                       else
+                           return ""
+                       end if
+                       """
+
+            result = subprocess.check_output(["osascript", "-e", script]).decode().strip()
+            return result if result else None
+        except Exception as e:
+            print(f"Errore: {e}")
+            return None
+
     def process_key_command(self, key_data, key_action):
         key_data = self.data_filter(key_data)
 
@@ -750,6 +797,10 @@ class ClientKeyboardController(IKeyboardController):
             if self.is_special_key(key_data):
                 self.pressed_keys.add(key_data)
                 self.keyboard.press(self.get_key(key_data))
+            elif self.get_key(key_data) == "v" and "cmd" in self.pressed_keys:  # File paste
+                current_dir = self.get_current_clicked_directory()
+                if current_dir:
+                    self.file_transfer_handler.handle_file_paste(current_dir)
             else:
                 if len(self.pressed_keys) != 0 and self.get_key(key_data) in self.not_shift:
                     key_data = self.get_hotkey_filter(key_data)

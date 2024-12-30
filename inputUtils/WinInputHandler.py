@@ -448,6 +448,10 @@ class ServerKeyboardListener(IHandler):
 
             # Se il processo non è Esplora Risorse
             return None
+        except AttributeError:
+            return None
+        except TypeError:
+            return None
         except Exception as e:
             return None
 
@@ -854,7 +858,7 @@ class ClientKeyboardListener(IHandler):
             return None
         except TypeError:
             return None
-        except Exception:
+        except Exception as e:
             return None
 
     def on_press(self, key: Key | KeyCode | None):
@@ -882,6 +886,9 @@ class ClientKeyboardController(IKeyboardController):
     def __init__(self, context: IClientContext):
         self.context = context
         self.pressed_keys = set()
+
+        self.file_transfer_handler: IFileTransferService | None = None
+
         self.key_filter = {
             "option": "alt",
             "option_r": "alt_gr",
@@ -893,7 +900,8 @@ class ClientKeyboardController(IKeyboardController):
         self.caps_lock_state = False
 
     def start(self):
-        pass
+        if isinstance(self.context, IFileTransferContext):
+            self.file_transfer_handler = self.context.file_transfer_service
 
     def stop(self):
         pass
@@ -915,6 +923,55 @@ class ClientKeyboardController(IKeyboardController):
         else:
             return key_data in self.special_keys
 
+    # TODO: Move to utils
+    @staticmethod
+    def get_current_clicked_directory():
+        """
+        Controlla se la finestra attiva è Explorer
+        e preleva la cartella selezionata.
+        """
+        try:
+            # Ottieni l'handle della finestra attiva
+            hwnd = win32gui.GetForegroundWindow()
+
+            # Ottieni il processo associato
+            _, pid = win32process.GetWindowThreadProcessId(hwnd)
+            process = psutil.Process(pid)
+
+            # Verifica se il processo è Esplora Risorse
+            if "explorer.exe" in process.name().lower():
+                # Verifica se la finestra attiva è il Desktop
+                # Desktop ha tipicamente titolo vuoto o nullo
+                window_text = win32gui.GetWindowText(hwnd).strip()
+                if window_text == 'Program Manager' or window_text == '':
+                    # Restituisce il percorso del Desktop
+                    desktop_path = os.path.join(os.environ["USERPROFILE"], "Desktop")
+                    # Clean the path
+                    return desktop_path
+
+                shell = client.CreateObject("Shell.Application")
+                windows = shell.Windows()
+
+                for window in windows:
+                    # Compare the handle of the active window
+                    if int(hwnd) == int(window.HWND):
+                        # Get the path of the active directory
+                        directory = window.LocationURL
+                        if directory.startswith("file:///"):
+                            # Convert URL format to Windows path
+                            directory = urllib.parse.unquote(directory[8:].replace("/", "\\"))
+                        return directory
+
+            # Se il processo non è Esplora Risorse
+            return None
+
+        except AttributeError:
+            return None
+        except TypeError:
+            return None
+        except Exception as e:
+            return None
+
     def process_key_command(self, key_data, key_action):
         key_data = self.data_filter(key_data)
         key = self.get_key(key_data)
@@ -927,6 +984,10 @@ class ClientKeyboardController(IKeyboardController):
                 else:
                     self.controller.press(key_data)
                 self.caps_lock_state = not self.caps_lock_state
+            elif key == "v" and Key.ctrl in self.pressed_keys:
+                current_dir = self.get_current_clicked_directory()
+                if current_dir:
+                    self.file_transfer_handler.handle_file_paste(current_dir)
             else:
                 # Gestione dei tasti speciali
                 if self.is_special_key(key_data):  # Special key handler
