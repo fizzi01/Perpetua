@@ -80,11 +80,11 @@ class ServerClipboardController(IClipboardController):
 
 
 class ServerMouseListener(IMouseListener):
-    IGNORE_NEXT_MOVE_EVENT = 0.001
-    MAX_DXDY_THRESHOLD = 200
+    IGNORE_NEXT_MOVE_EVENT = 0.01
+    MAX_DXDY_THRESHOLD = 400
     SCREEN_CHANGE_DELAY = 0.001
     EMULATION_STOP_DELAY = 0.7
-    WARP_DELAY = 0.003
+    WARP_DELAY = 0.008
 
     def __init__(self,
                  context: IServerContext | IControllerContext,
@@ -225,7 +225,7 @@ class ServerMouseListener(IMouseListener):
 
     def on_move(self, x, y):
         # Check if cursor is in warped position
-        if self.to_warp.is_set() and x == self.screen_width // 2 and y == self.screen_height // 2:
+        if self.to_warp.is_set() and ( x == self.screen_width // 2 and y == self.screen_height // 2):
             self.to_warp.clear()
             return True # Skip the event
 

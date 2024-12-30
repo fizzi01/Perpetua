@@ -18,6 +18,13 @@ import wx
 
 # Object-c Library
 import objc
+from objc import objc_method
+
+# Quartz API
+from Quartz import kCGMaximumWindowLevel
+
+# Foundation API
+from Foundation import NSObject, NSNotificationCenter
 
 # AppKit API
 from AppKit import (
@@ -29,7 +36,11 @@ from AppKit import (
     NSWorkspace,
     NSApplicationActivateIgnoringOtherApps,
     NSApplicationPresentationAutoHideDock,
-    NSApplicationPresentationAutoHideMenuBar
+    NSApplicationPresentationAutoHideMenuBar,
+    NSWindowCollectionBehaviorParticipatesInCycle,
+    NSWindowCollectionBehaviorStationary,
+    NSWindowCollectionBehaviorFullScreenAuxiliary,
+    NSWindowCollectionBehaviorMoveToActiveSpace
 )
 
 # Accessibility API
@@ -49,67 +60,78 @@ kAXFullScreenAttribute = "AXFullScreen"
 
 
 def overlay_process(conn):
-    class OverlayFrame(wx.Frame):
-        def __init__(self):
+    class WindowStateObserver(NSObject):
+        @objc_method
+        def init(self):
+            self = objc.super(WindowStateObserver, self).init()
+            if self is None:
+                return None
+
+            # Register for notifications
+            self.notification_center = NSWorkspace.sharedWorkspace().notificationCenter()
+            self.notification_center.addObserver_selector_name_object_(
+                self,
+                self.windowDidChangeScreen_,
+                "NSWorkspaceActiveSpaceDidChangeNotification",
+                None
+            )
+            return self
+
+        @objc_method
+        def windowDidChangeScreen_(self, notification):
+            # Invoke ForceOverlay on the OverlayPanel instance
+            if hasattr(self, "overlay_panel") and not self.overlay_panel.is_hide_invoked:
+                self.overlay_panel.ShowOverlay()
+
+    class OverlayPanel(wx.Panel):
+        def __init__(self, parent):
+            super().__init__(parent)
+
             self.previous_app = NSWorkspace.sharedWorkspace().frontmostApplication()
             self.previous_app_pid = self.previous_app.processIdentifier()
             self.fullscreen_windows = []
 
-            # Ottieni la geometria dello schermo principale
-            display = wx.Display(0)
-            geometry = display.GetGeometry()
-            display_x = geometry.GetX()
-            display_y = geometry.GetY()
-            display_width = geometry.GetWidth()
-            display_height = geometry.GetHeight()
+            # Set background color and transparency
+            self.SetBackgroundColour(wx.TransparentColour)
 
-            # Inizializza il frame senza bordi e senza taskbar
-            wx.Frame.__init__(
-                self,
-                None,
-                title="",
-                pos=(display_x, display_y),
-                size=(display_width, display_height),
-                style=wx.NO_BORDER | wx.FRAME_NO_TASKBAR
-            )
-
-            # Imposta l'opacità del frame
-            self.SetTransparent(1)  # 50% di trasparenza
-
-            # Imposta il colore di sfondo
-            self.SetBackgroundColour(wx.Colour(0, 0, 0))
-
-            # Nasconde il cursore usando le API di macOS
+            # Hide the cursor using macOS APIs
             NSCursor.hide()
-
-            # Ottieni l'istanza di NSApplication
-            NSApp = NSApplication.sharedApplication()
-
-            # Imposta l'activation policy a Accessory per nascondere l'icona nel Dock
-            NSApp.setActivationPolicy_(NSApplicationActivationPolicyAccessory)
-
-            # Mostra il frame
-            self.Show()
-
-            # Imposta il focus sulla finestra
-            self.SetFocus()
 
             self.running = True
             self.pipe_thread = threading.Thread(target=self.listen_for_commands, args=(conn,))
             self.pipe_thread.daemon = True
             self.pipe_thread.start()
 
-            # Initialize wx.Timer
+            self.force_event_bound = False
+
+            # Hide invoked Event
+            self.is_hide_invoked = False
+
+            # Initialize window state observer
+            self.window_state_observer = WindowStateObserver.alloc().init()
+            self.window_state_observer.overlay_panel = self
+
             self.monitor_timer = wx.Timer(self)
             self.Bind(wx.EVT_TIMER, self.monitor_overlay, self.monitor_timer)
 
-            # Flag per il thread di monitoraggio
-            self.overlay_active = False
-            self.monitor_thread = None
+        def on_focus(self, event):
+            self.ShowOverlay()
+
+        def on_kill_focus(self, event):
+            self.ShowOverlay()
+            event.Skip()
+
+        def monitor_overlay(self, event):
+            window_ptr = self.GetHandle()
+            ns_view = objc.objc_object(c_void_p=window_ptr)
+            ns_window = ns_view.window()
+            wx.CallAfter(NSCursor.hide)
+            if not ns_window.isKeyWindow():
+                wx.CallAfter(self.ShowOverlay)
 
         def listen_for_commands(self, channel):
             while self.running:
-                if channel.poll(0.1):  # Timeout per controllare self.running
+                if channel.poll(0.1):
                     try:
                         command = channel.recv()
                         if command == 'minimize':
@@ -125,75 +147,61 @@ def overlay_process(conn):
                     except EOFError:
                         break
 
+        def Close(self, force=False):
+            self.RestorePreviousApp()
+            self.window_state_observer.autorelease()
+            self.monitor_timer.Stop()
+            if self.force_event_bound:
+                self.Unbind(wx.EVT_KILL_FOCUS, self.on_kill_focus)
+                self.force_event_bound = False
+
+            super().Close(force)
+            self.Parent.Close(force)
+
         def HideOverlay(self):
+            self.is_hide_invoked = True
             self.monitor_timer.Stop()
 
+            if self.force_event_bound:
+                self.Unbind(wx.EVT_KILL_FOCUS)
+                self.force_event_bound = False
+
             self.Hide()
+            self.Parent.Hide()
             NSCursor.unhide()
-
-            self.RestoreFullscreenApps()
-
             self.RestorePreviousApp()
 
         def ShowOverlay(self):
-            self.HandleFullscreen()
+            self.is_hide_invoked = False
+
+            if not self.force_event_bound:
+                self.Bind(wx.EVT_KILL_FOCUS, self.on_kill_focus)
+                self.force_event_bound = True
 
             self.Show()
+            self.Parent.Show()
             NSCursor.hide()
             self.ForceOverlay()
-            self.SetFocus()
 
             self.monitor_timer.Start(10)
 
-        def monitor_overlay(self, event):
-            window_ptr = self.GetHandle()
-            ns_view = objc.objc_object(c_void_p=window_ptr)
-            ns_window = ns_view.window()
-            wx.CallAfter(NSCursor.hide)
-            if not ns_window.isKeyWindow():
-                wx.CallAfter(self.HandleFullscreen)
-                wx.CallAfter(self.Show)
-                wx.CallAfter(self.ForceOverlay)
-                wx.CallAfter(self.SetFocus)
-
-        def HandleFullscreen(self):
+        def ForceOverlay(self):
             self.previous_app = NSWorkspace.sharedWorkspace().frontmostApplication()
             self.previous_app_pid = self.previous_app.processIdentifier()
 
-            # Ottieni le finestre dell'applicazione
-            app_windows = self.get_application_windows(self.previous_app_pid)
-            # Verifica se qualche finestra è in fullscreen
-            for window in app_windows:
-                is_fullscreen = self.is_window_fullscreen(window)
-                if is_fullscreen:
-                    # Esci dal fullscreen per questa finestra
-                    self.set_window_fullscreen(window, False)
-                    # Tieni traccia della finestra per ripristinare il fullscreen dopo
-                    self.fullscreen_windows.append(window)
-
-        def ForceOverlay(self):
-            # Ottieni l'istanza di NSApplication
             NSApp = NSApplication.sharedApplication()
-            # Imposta le opzioni di presentazione per nascondere il Dock e la barra dei menu
             NSApp.setPresentationOptions_(
                 NSApplicationPresentationAutoHideDock | NSApplicationPresentationAutoHideMenuBar)
-            # Attiva l'applicazione ignorando le altre
             NSApp.activateIgnoringOtherApps_(True)
 
-            # Ottieni l'NSWindow associata alla finestra wxPython
             window_ptr = self.GetHandle()
+
             ns_view = objc.objc_object(c_void_p=window_ptr)
             ns_window = ns_view.window()
-
-            # Imposta il livello della finestra per mantenerla sopra le altre
-            ns_window.setLevel_(NSScreenSaverWindowLevel)
-
-            # Imposta la finestra per apparire su tutti gli spazi
-            ns_window.setCollectionBehavior_(NSWindowCollectionBehaviorCanJoinAllSpaces)
-
+            ns_window.setLevel_(kCGMaximumWindowLevel + 1)
+            ns_window.setCollectionBehavior_(
+                NSWindowCollectionBehaviorCanJoinAllSpaces | NSWindowCollectionBehaviorFullScreenAuxiliary | NSWindowCollectionBehaviorStationary)
             ns_window.setIgnoresMouseEvents_(False)
-
-            # Rende la finestra la finestra chiave e la porta in primo piano
             ns_window.makeKeyAndOrderFront_(None)
 
         def RestorePreviousApp(self):
@@ -202,32 +210,42 @@ def overlay_process(conn):
             self.previous_app = None
             self.previous_app_pid = None
 
-        def RestoreFullscreenApps(self):
-            for window in self.fullscreen_windows:
-                self.set_window_fullscreen(window, True)
-            self.fullscreen_windows = []
 
-        @staticmethod
-        def get_application_windows(pid):
-            app_element = AXUIElementCreateApplication(pid)
-            error, result = AXUIElementCopyAttributeValue(app_element, kAXWindowsAttribute, None)
-            if error != 0:
-                print("Error getting windows for application.")
-                return []
-            return result
 
-        @staticmethod
-        def is_window_fullscreen(window):
-            error, fullscreen_value = AXUIElementCopyAttributeValue(window, kAXFullScreenAttribute, None)
-            if error == 0:
-                return bool(fullscreen_value)
-            return False
+    class OverlayFrame(wx.Frame):
+        def __init__(self):
+            display = wx.Display(0)
+            geometry = display.GetGeometry()
+            display_x = geometry.GetX()
+            display_y = geometry.GetY()
+            display_width = geometry.GetWidth()
+            display_height = geometry.GetHeight()
 
-        @staticmethod
-        def set_window_fullscreen(window, fullscreen):
-            error = AXUIElementSetAttributeValue(window, kAXFullScreenAttribute, fullscreen)
-            if error != 0:
-                print("Error setting fullscreen attribute.")
+            # Obtain NSApplication instance
+            NSApp = NSApplication.sharedApplication()
+
+            # Set activation policy to Accessory to hide the icon in the Dock
+            NSApp.setActivationPolicy_(NSApplicationActivationPolicyAccessory)
+
+            wx.Frame.__init__(
+                self,
+                None,
+                title="",
+                pos=(display_x, display_y),
+                size=(display_width, display_height),
+            )
+
+            self.SetTransparent(0)
+
+            self.panel = OverlayPanel(self)
+
+            parent_ptr = self.GetHandle()
+            ns_view = objc.objc_object(c_void_p=parent_ptr)
+            ns_window = ns_view.window()
+            ns_window.setCollectionBehavior_(
+                NSWindowCollectionBehaviorCanJoinAllSpaces | NSWindowCollectionBehaviorFullScreenAuxiliary | NSWindowCollectionBehaviorStationary)
+
+            self.Show()
 
     app = wx.App()
     OverlayFrame()
