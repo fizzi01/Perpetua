@@ -12,6 +12,8 @@ import heapq
 from utils.Interfaces import IServerContext, IMessageService, IMessageQueueManager, IClientContext
 from utils.Logging import Logger
 from utils.net.netData import *
+from utils.protocol.message import MessageBuilder
+from utils.protocol.adapter import ProtocolAdapter
 
 MOUSE_BATCH_INTERVAL = 0.02  # 20 ms, intervallo per inviare il batch dei messaggi del mouse
 MOUSE_MAX_BATCH_SIZE = 10  # Massimo numero di messaggi nel batch prima di inviare
@@ -105,6 +107,11 @@ class MessageService(IMessageService):
         self.manage_files = file
 
         self.log = Logger.get_instance().log
+        
+        # Protocol support
+        self.message_builder = MessageBuilder()
+        self.protocol_adapter = ProtocolAdapter()
+        self.use_structured_protocol = True  # Enable new protocol by default
 
     def send(self, queue_type, message):
         if queue_type == self.MOUSE:
@@ -116,7 +123,33 @@ class MessageService(IMessageService):
 
     def send_mouse(self, screen, message):
         if self.manage_mouse:
-            self.mouse_queue.put((screen, message))
+            # Handle both legacy and new message formats
+            if isinstance(message, str):
+                # Legacy format - convert to structured if needed
+                if self.use_structured_protocol:
+                    # Parse legacy mouse command and create structured message
+                    parts = message.split()
+                    if len(parts) >= 4:
+                        try:
+                            event = parts[0]
+                            x = float(parts[1])
+                            y = float(parts[2])
+                            is_pressed = parts[3] == "true" if len(parts) > 3 else False
+                            
+                            structured_msg = self.message_builder.create_mouse_message(
+                                x=x, y=y, event=event, is_pressed=is_pressed, target=screen
+                            )
+                            self.mouse_queue.put((screen, structured_msg))
+                        except (ValueError, IndexError):
+                            # Fallback to legacy format
+                            self.mouse_queue.put((screen, message))
+                    else:
+                        self.mouse_queue.put((screen, message))
+                else:
+                    self.mouse_queue.put((screen, message))
+            else:
+                # Already structured message
+                self.mouse_queue.put((screen, message))
 
     def send_keyboard(self, screen, message):
         if self.manage_keyboard:
@@ -190,12 +223,22 @@ class MessageService(IMessageService):
         if not self.mouse_batch_buffer:
             return
 
-        # Prepara i messaggi per l'invio come batch
-        batch_message = END_DELIMITER.join([format_data(data) for _, data in self.mouse_batch_buffer])
-        screen = self.mouse_batch_buffer[0][0]  # Assume che tutti i messaggi del batch siano per lo stesso schermo
-        self.MessageSender.send(self.MOUSE_PRIORITY, (screen, batch_message))
+        screen = self.mouse_batch_buffer[0][0]  # Assume all messages in batch are for same screen
+        
+        if self.use_structured_protocol:
+            # Send structured messages individually to preserve timestamps and ordering
+            for _, message in self.mouse_batch_buffer:
+                if hasattr(message, 'to_json'):  # Structured message
+                    formatted_message = self.protocol_adapter.encode_structured_message(message)
+                else:  # Legacy message
+                    formatted_message = format_data(message)
+                self.MessageSender.send(self.MOUSE_PRIORITY, (screen, formatted_message))
+        else:
+            # Legacy batch processing
+            batch_message = END_DELIMITER.join([format_data(data) for _, data in self.mouse_batch_buffer])
+            self.MessageSender.send(self.MOUSE_PRIORITY, (screen, batch_message))
 
-        # Pulisce il buffer dopo l'invio
+        # Clear buffer after sending
         self.mouse_batch_buffer.clear()
 
     def _process_keyboard_queue(self):

@@ -1,0 +1,227 @@
+"""
+Protocol adapter for handling both new structured and legacy message formats.
+"""
+import json
+from typing import Union, Optional, Tuple
+from .message import ProtocolMessage, MessageBuilder
+from utils.net.netData import extract_command_parts, format_command
+
+
+class ProtocolAdapter:
+    """
+    Adapter that handles conversion between legacy string format and new structured format.
+    Provides backward compatibility while enabling new protocol features.
+    """
+    
+    # Protocol version markers
+    PROTOCOL_V2_MARKER = "PYCONT_V2:"
+    
+    def __init__(self):
+        self.message_builder = MessageBuilder()
+    
+    def is_structured_message(self, data: str) -> bool:
+        """Check if message uses new structured format."""
+        return data.startswith(self.PROTOCOL_V2_MARKER)
+    
+    def encode_structured_message(self, message: ProtocolMessage) -> str:
+        """Encode structured message for transmission."""
+        return f"{self.PROTOCOL_V2_MARKER}{message.to_json()}"
+    
+    def decode_structured_message(self, data: str) -> ProtocolMessage:
+        """Decode structured message from transmission format."""
+        if not self.is_structured_message(data):
+            raise ValueError("Not a structured message")
+        
+        json_data = data[len(self.PROTOCOL_V2_MARKER):]
+        return ProtocolMessage.from_json(json_data)
+    
+    def legacy_to_structured(self, legacy_command: str, source: str = None, 
+                           target: str = None) -> Optional[ProtocolMessage]:
+        """
+        Convert legacy string command to structured message format.
+        
+        Args:
+            legacy_command: Legacy command string (e.g., "mouse::move::100::200")
+            source: Source identifier
+            target: Target identifier
+            
+        Returns:
+            ProtocolMessage or None if conversion fails
+        """
+        try:
+            parts = extract_command_parts(legacy_command)
+            if not parts:
+                return None
+            
+            command_type = parts[0]
+            
+            if command_type == "mouse" and len(parts) >= 4:
+                # mouse::event::x::y::pressed
+                event = parts[1]
+                x = float(parts[2])
+                y = float(parts[3])
+                is_pressed = parts[4] == "true" if len(parts) > 4 else False
+                
+                return self.message_builder.create_mouse_message(
+                    x=x, y=y, event=event, is_pressed=is_pressed,
+                    source=source, target=target
+                )
+            
+            elif command_type == "keyboard" and len(parts) >= 3:
+                # keyboard::key::event
+                key = parts[1]
+                event = parts[2]
+                
+                return self.message_builder.create_keyboard_message(
+                    key=key, event=event, source=source, target=target
+                )
+            
+            elif command_type == "clipboard" and len(parts) >= 2:
+                # clipboard::content
+                content = parts[1]
+                content_type = parts[2] if len(parts) > 2 else "text"
+                
+                return self.message_builder.create_clipboard_message(
+                    content=content, content_type=content_type,
+                    source=source, target=target
+                )
+            
+            elif command_type.startswith("file_"):
+                # file_start::filename::size, file_chunk::data::index, etc.
+                file_command = command_type[5:]  # Remove "file_" prefix
+                data = {}
+                
+                if file_command == "start" and len(parts) >= 3:
+                    data = {"filename": parts[1], "size": int(parts[2])}
+                elif file_command == "chunk" and len(parts) >= 3:
+                    data = {"data": parts[1], "index": int(parts[2])}
+                elif file_command == "end" and len(parts) >= 2:
+                    data = {"filename": parts[1]}
+                
+                return self.message_builder.create_file_message(
+                    command=file_command, data=data, source=source, target=target
+                )
+            
+            elif command_type == "screen" and len(parts) >= 2:
+                # screen::command::data
+                screen_command = parts[1]
+                screen_data = {}
+                if len(parts) > 2:
+                    # Try to parse additional data
+                    for i in range(2, len(parts), 2):
+                        if i + 1 < len(parts):
+                            screen_data[parts[i]] = parts[i + 1]
+                
+                return self.message_builder.create_screen_message(
+                    command=screen_command, data=screen_data,
+                    source=source, target=target
+                )
+            
+            return None
+            
+        except (ValueError, IndexError) as e:
+            return None
+    
+    def structured_to_legacy(self, message: ProtocolMessage) -> str:
+        """
+        Convert structured message back to legacy format for compatibility.
+        
+        Args:
+            message: ProtocolMessage to convert
+            
+        Returns:
+            Legacy command string
+        """
+        msg_type = message.message_type
+        payload = message.payload
+        
+        if msg_type == "mouse":
+            # Convert to: mouse::event::x::y::pressed
+            event = payload.get("event", "move")
+            x = payload.get("x", 0)
+            y = payload.get("y", 0)
+            is_pressed = payload.get("is_pressed", False)
+            
+            return format_command(f"mouse {event} {x} {y} {str(is_pressed).lower()}")
+        
+        elif msg_type == "keyboard":
+            # Convert to: keyboard::key::event
+            key = payload.get("key", "")
+            event = payload.get("event", "")
+            
+            return format_command(f"keyboard {key} {event}")
+        
+        elif msg_type == "clipboard":
+            # Convert to: clipboard::content::type
+            content = payload.get("content", "")
+            content_type = payload.get("content_type", "text")
+            
+            return format_command(f"clipboard {content} {content_type}")
+        
+        elif msg_type == "file":
+            # Convert to: file_command::data
+            file_command = payload.get("command", "")
+            
+            if file_command == "start":
+                filename = payload.get("filename", "")
+                size = payload.get("size", 0)
+                return format_command(f"file_start {filename} {size}")
+            
+            elif file_command == "chunk":
+                data = payload.get("data", "")
+                index = payload.get("index", 0)
+                return format_command(f"file_chunk {data} {index}")
+            
+            elif file_command == "end":
+                filename = payload.get("filename", "")
+                return format_command(f"file_end {filename}")
+        
+        elif msg_type == "screen":
+            # Convert to: screen::command::data
+            screen_command = payload.get("command", "")
+            screen_data = payload.get("data", {})
+            
+            command_parts = [f"screen {screen_command}"]
+            for key, value in screen_data.items():
+                command_parts.extend([key, str(value)])
+            
+            return format_command(" ".join(command_parts))
+        
+        return ""
+    
+    def encode_message(self, message: ProtocolMessage, use_structured: bool = True) -> str:
+        """
+        Encode message in appropriate format.
+        
+        Args:
+            message: Message to encode
+            use_structured: Whether to use new structured format
+            
+        Returns:
+            Encoded message string
+        """
+        if use_structured:
+            return self.encode_structured_message(message)
+        else:
+            return self.structured_to_legacy(message)
+    
+    def decode_message(self, data: str, source: str = None, 
+                      target: str = None) -> Optional[ProtocolMessage]:
+        """
+        Decode message from either format.
+        
+        Args:
+            data: Message data string
+            source: Source identifier  
+            target: Target identifier
+            
+        Returns:
+            ProtocolMessage or None if decoding fails
+        """
+        if self.is_structured_message(data):
+            try:
+                return self.decode_structured_message(data)
+            except (json.JSONDecodeError, ValueError):
+                return None
+        else:
+            return self.legacy_to_structured(data, source, target)

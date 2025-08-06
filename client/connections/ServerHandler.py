@@ -7,6 +7,9 @@ from queue import Queue, Empty
 from utils.Interfaces import IServerHandler, IClientSocket, IServerHandlerFactory
 from utils.Logging import Logger
 from utils.net.netData import *
+from utils.protocol.adapter import ProtocolAdapter
+from utils.protocol.ordering import OrderedMessageProcessor
+from utils.protocol.message import ProtocolMessage
 
 
 class ServerHandlerFactory(IServerHandlerFactory):
@@ -42,6 +45,13 @@ class ServerHandler(IServerHandler):
         self.init_threads()
 
         self.data_queue = Queue()
+        
+        # Protocol support for ordered processing
+        self.protocol_adapter = ProtocolAdapter()
+        self.ordered_processor = OrderedMessageProcessor(
+            process_callback=self._process_ordered_message,
+            max_delay_tolerance=0.05  # 50ms tolerance for mouse smoothness
+        )
 
     def init_threads(self):
         self.main_thread = threading.Thread(target=self._handle_server_commands, daemon=True)
@@ -65,12 +75,14 @@ class ServerHandler(IServerHandler):
         self._running = True
         try:
             self.start_threads()
+            self.ordered_processor.start()  # Start ordered message processing
             self.log("Client in listening mode.", Logger.DEBUG)
         except Exception as e:
             self.log(f"Error starting client: {e}", Logger.ERROR)
 
     def stop(self):
         self.stop_threads()
+        self.ordered_processor.stop()  # Stop ordered message processing
         self.log("Client disconnected.", Logger.WARNING)
         self.conn.close()
 
@@ -142,4 +154,30 @@ class ServerHandler(IServerHandler):
                 self.log(f"Error processing data: {e}", Logger.ERROR)
 
     def _process_batch(self, command):
-        self.process_command(command)
+        # Check if this is a structured message
+        if self.protocol_adapter.is_structured_message(command):
+            try:
+                structured_msg = self.protocol_adapter.decode_structured_message(command)
+                # Use ordered processing for mouse messages to ensure smoothness
+                if structured_msg.message_type == "mouse":
+                    self.ordered_processor.add_message(structured_msg)
+                else:
+                    # Process other message types immediately
+                    self._process_ordered_message(structured_msg)
+            except Exception as e:
+                self.log(f"Error processing structured message: {e}", Logger.ERROR)
+                # Fallback to legacy processing
+                self.process_command(command)
+        else:
+            # Legacy command processing
+            self.process_command(command)
+    
+    def _process_ordered_message(self, message: ProtocolMessage):
+        """Process a structured message by converting it back to legacy format."""
+        try:
+            # Convert structured message back to legacy format for existing command processors
+            legacy_command = self.protocol_adapter.structured_to_legacy(message)
+            if legacy_command:
+                self.process_command(legacy_command)
+        except Exception as e:
+            self.log(f"Error converting structured message to legacy format: {e}", Logger.ERROR)
