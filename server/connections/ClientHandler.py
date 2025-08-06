@@ -10,6 +10,9 @@ from utils.Interfaces import IBaseSocket, IClientHandler
 from utils.Logging import Logger
 from utils.net.netData import *
 from utils.Interfaces import IClientCommandProcessor, IClientHandlerFactory
+from utils.protocol.adapter import ProtocolAdapter
+from utils.protocol.ordering import OrderedMessageProcessor
+from utils.protocol.message import ProtocolMessage
 
 BATCH_PROCESS_INTERVAL = 0.01
 MAX_BATCH_SIZE = 10
@@ -50,6 +53,13 @@ class ClientHandler(IClientHandler):
         self.clipboard_thread: Thread | None = None
 
         self._thread_pool = []
+        
+        # Protocol support for ordered processing
+        self.protocol_adapter = ProtocolAdapter()
+        self.ordered_processor = OrderedMessageProcessor(
+            process_callback=self._process_ordered_message,
+            max_delay_tolerance=0.05  # 50ms tolerance for mouse smoothness
+        )
 
     def start(self):
         self.thread = Thread(target=self._handle, daemon=True)
@@ -68,11 +78,18 @@ class ClientHandler(IClientHandler):
         self.clipboard_thread = Thread(target=self._process_clipboard_queue, daemon=True)
         self._thread_pool.append(self.clipboard_thread)
         self.clipboard_thread.start()
+        
+        # Start ordered message processing
+        self.ordered_processor.start()
 
     def stop(self):
         self._running = False
         self.batch_ready_event.set()  # Wake up the processor thread
         self.executor.shutdown()
+        
+        # Stop ordered message processing
+        self.ordered_processor.stop()
+        
         self.conn.close()
         self.process(("disconnect", self.conn), self.screen)
         # Trigger the clipboard thread to process the last command
@@ -152,10 +169,36 @@ class ClientHandler(IClientHandler):
             if "clipboard" in command:
                 self.clipboard_queue.put(command)
             else:
-                self.executor.submit(self._process, command)
+                # Check if this is a structured message
+                if self.protocol_adapter.is_structured_message(command):
+                    try:
+                        structured_msg = self.protocol_adapter.decode_structured_message(command)
+                        # Use ordered processing for mouse messages to ensure smoothness
+                        if structured_msg.message_type == "mouse":
+                            self.ordered_processor.add_message(structured_msg)
+                        else:
+                            # Process other message types immediately
+                            self._process_ordered_message(structured_msg)
+                    except Exception as e:
+                        self.logger(f"Error processing structured message: {e}", 2)
+                        # Fallback to legacy processing
+                        self.executor.submit(self._process, command)
+                else:
+                    # Legacy command processing
+                    self.executor.submit(self._process, command)
 
     def _process(self, command):
         self.process(command, self.screen)
+
+    def _process_ordered_message(self, message: ProtocolMessage):
+        """Process a structured message by converting it back to legacy format."""
+        try:
+            # Convert structured message back to legacy format for existing command processors
+            legacy_command = self.protocol_adapter.structured_to_legacy(message)
+            if legacy_command:
+                self.process(legacy_command, self.screen)
+        except Exception as e:
+            self.logger(f"Error converting structured message to legacy format: {e}", 2)
 
 
 class ClientCommandProcessor(IClientCommandProcessor):
