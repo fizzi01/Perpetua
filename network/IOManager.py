@@ -12,16 +12,19 @@ import heapq
 from utils.Interfaces import IServerContext, IMessageService, IMessageQueueManager, IClientContext
 from utils.Logging import Logger
 from utils.net.netData import *
-from utils.protocol.message import MessageBuilder
+from utils.net.ChunkManager import ChunkManager
+from utils.protocol.message import MessageBuilder, ProtocolMessage
 from utils.protocol.adapter import ProtocolAdapter
 
-MOUSE_BATCH_INTERVAL = 0.02  # 20 ms, intervallo per inviare il batch dei messaggi del mouse
-MOUSE_MAX_BATCH_SIZE = 10  # Massimo numero di messaggi nel batch prima di inviare
+# Optimized batch settings for the new protocol
+MOUSE_BATCH_INTERVAL = 0.015  # 15ms - faster for better responsiveness
+MOUSE_MAX_BATCH_SIZE = 5      # Smaller batches for structured messages
 
-KEYBOARD_BATCH_INTERVAL = 0.01  # 20 ms, intervallo per inviare il batch dei messaggi della tastiera
-KEYBOARD_MAX_BATCH_SIZE = 7  # Massimo numero di messaggi nel batch prima di inviare
+KEYBOARD_BATCH_INTERVAL = 0.01  # 10ms - faster keyboard response
+KEYBOARD_MAX_BATCH_SIZE = 5      # Smaller batches
 
-FILE_MAX_BATCH_SIZE = CHUNK_SIZE - END_DELIMITER.encode().__len__()  # Massimo numero di byte nel batch prima di inviare
+# Use ChunkManager for file size calculations
+FILE_MAX_BATCH_SIZE = ChunkManager.get_max_message_size()
 
 
 class StablePriorityQueue:
@@ -123,33 +126,44 @@ class MessageService(IMessageService):
 
     def send_mouse(self, screen, message):
         if self.manage_mouse:
-            # Handle both legacy and new message formats
+            # Always create structured messages for mouse events
             if isinstance(message, str):
-                # Legacy format - convert to structured if needed
-                if self.use_structured_protocol:
-                    # Parse legacy mouse command and create structured message
-                    parts = message.split()
-                    if len(parts) >= 4:
-                        try:
-                            event = parts[0]
-                            x = float(parts[1])
-                            y = float(parts[2])
-                            is_pressed = parts[3] == "true" if len(parts) > 3 else False
-                            
-                            structured_msg = self.message_builder.create_mouse_message(
-                                x=x, y=y, event=event, is_pressed=is_pressed, target=screen
-                            )
-                            self.mouse_queue.put((screen, structured_msg))
-                        except (ValueError, IndexError):
-                            # Fallback to legacy format
-                            self.mouse_queue.put((screen, message))
-                    else:
+                # Parse legacy mouse command and create structured message
+                parts = message.split()
+                if len(parts) >= 4:
+                    try:
+                        event = parts[0]
+                        x = float(parts[1])
+                        y = float(parts[2])
+                        is_pressed = parts[3] == "true" if len(parts) > 3 else False
+                        
+                        structured_msg = self.message_builder.create_mouse_message(
+                            x=x, y=y, event=event, is_pressed=is_pressed, target=screen
+                        )
+                        self.mouse_queue.put((screen, structured_msg))
+                    except (ValueError, IndexError):
+                        # Fallback to legacy format for malformed commands
                         self.mouse_queue.put((screen, message))
                 else:
                     self.mouse_queue.put((screen, message))
-            else:
+            elif isinstance(message, ProtocolMessage):
                 # Already structured message
                 self.mouse_queue.put((screen, message))
+            else:
+                # Convert other types to structured messages
+                try:
+                    x = getattr(message, 'x', 0)
+                    y = getattr(message, 'y', 0)
+                    event = getattr(message, 'event', 'move')
+                    is_pressed = getattr(message, 'is_pressed', False)
+                    
+                    structured_msg = self.message_builder.create_mouse_message(
+                        x=x, y=y, event=event, is_pressed=is_pressed, target=screen
+                    )
+                    self.mouse_queue.put((screen, structured_msg))
+                except:
+                    # Last resort fallback
+                    self.mouse_queue.put((screen, str(message)))
 
     def send_keyboard(self, screen, message):
         if self.manage_keyboard:
@@ -223,20 +237,10 @@ class MessageService(IMessageService):
         if not self.mouse_batch_buffer:
             return
 
-        screen = self.mouse_batch_buffer[0][0]  # Assume all messages in batch are for same screen
-        
-        if self.use_structured_protocol:
-            # Send structured messages individually to preserve timestamps and ordering
-            for _, message in self.mouse_batch_buffer:
-                if hasattr(message, 'to_json'):  # Structured message
-                    formatted_message = self.protocol_adapter.encode_structured_message(message)
-                else:  # Legacy message
-                    formatted_message = format_data(message)
-                self.MessageSender.send(self.MOUSE_PRIORITY, (screen, formatted_message))
-        else:
-            # Legacy batch processing
-            batch_message = END_DELIMITER.join([format_data(data) for _, data in self.mouse_batch_buffer])
-            self.MessageSender.send(self.MOUSE_PRIORITY, (screen, batch_message))
+        # For structured protocol, send messages individually to preserve timestamps
+        # This ensures proper chronological ordering on the receiving end
+        for screen, message in self.mouse_batch_buffer:
+            self.MessageSender.send(self.MOUSE_PRIORITY, (screen, message))
 
         # Clear buffer after sending
         self.mouse_batch_buffer.clear()
@@ -277,39 +281,36 @@ class MessageService(IMessageService):
     def _send_file(self, file_path, screen=None):
         try:
             with open(file_path, 'rb') as file:
-                # Invia file_start con i metadati del file
+                # Send file_start with metadata
                 file_name = urllib.parse.quote(os.path.basename(file_path))
                 file_size = os.path.getsize(file_path)
 
                 start_message = format_command(f"file_start {file_name} {file_size}")
                 self.MessageSender.send(self.FILE_PRIORITY, (screen, start_message))
-                self.log(f"Starting file sharing: {file_name} ({file_size} byte)")
+                self.log(f"Starting file sharing: {file_name} ({file_size} bytes)")
 
-                # Invia il file in chunk
-                chunk_size_with_delimiter = CHUNK_SIZE - len(CHUNK_DELIMITER.encode())
-                chunk_size_with_end_delimiter = CHUNK_SIZE - len(END_DELIMITER.encode())
-                real_chunk_size = int(min(chunk_size_with_delimiter, chunk_size_with_end_delimiter) * 0.65)
-
+                # Use ChunkManager for optimal chunk size calculation
+                optimal_chunk_size = int(ChunkManager.get_max_message_size() * 0.6)  # Conservative for encoding overhead
                 chunk_index = 0
 
                 while True:
-                    chunk = file.read(real_chunk_size)
+                    chunk = file.read(optimal_chunk_size)
                     if not chunk:
                         break
 
+                    # Compress and encode chunk
                     compressed_chunk = zlib.compress(chunk)
-
                     encoded_chunk = base64.b64encode(compressed_chunk).decode()
-                    chunck_message = format_command(f"file_chunk {encoded_chunk} {chunk_index}")
                     
+                    chunk_message = format_command(f"file_chunk {encoded_chunk} {chunk_index}")
                     chunk_index += 1
 
-                    self.MessageSender.send(self.FILE_PRIORITY, (screen, chunck_message))
+                    self.MessageSender.send(self.FILE_PRIORITY, (screen, chunk_message))
 
-                # Invia file_end
+                # Send file_end
                 end_message = format_command(f"file_end {file_name}")
                 self.MessageSender.send(self.FILE_PRIORITY, (screen, end_message))
-                self.log(f"File shared succesfully: {file_path}")
+                self.log(f"File shared successfully: {file_path}")
         except Exception as e:
             self.log(f"Error during file sharing {file_path}: {e}", Logger.ERROR)
 
@@ -317,12 +318,26 @@ class MessageService(IMessageService):
         if not self.keyboard_batch_buffer:
             return
 
-        # Prepara i messaggi per l'invio come batch
-        batch_message = CHUNK_DELIMITER.join([format_data(data) for _, data in self.keyboard_batch_buffer])
-        screen = self.keyboard_batch_buffer[0][0]  # Assume che tutti i messaggi del batch siano per lo stesso schermo
-        self.MessageSender.send(self.KEYBOARD_PRIORITY, (screen, batch_message))
+        # Group messages by screen for efficient processing
+        screen_messages = {}
+        for screen, message in self.keyboard_batch_buffer:
+            if screen not in screen_messages:
+                screen_messages[screen] = []
+            screen_messages[screen].append(message)
 
-        # Pulisce il buffer dopo l'invio
+        # Send batched or individual messages per screen
+        for screen, messages in screen_messages.items():
+            # Check if messages can be batched (only legacy strings)
+            if all(isinstance(msg, str) for msg in messages) and len(messages) > 1:
+                # Create batch for legacy messages
+                batch_message = CHUNK_DELIMITER.join([format_data(msg) for msg in messages])
+                self.MessageSender.send(self.KEYBOARD_PRIORITY, (screen, batch_message))
+            else:
+                # Send individually (structured messages or single items)
+                for message in messages:
+                    self.MessageSender.send(self.KEYBOARD_PRIORITY, (screen, message))
+
+        # Clear buffer after sending
         self.keyboard_batch_buffer.clear()
 
     def _process_clipboard_queue(self):
@@ -362,6 +377,9 @@ class BaseMessageQueueManager(threading.Thread, IMessageQueueManager):
         self.initialized = True
 
         self.log = Logger.get_instance().log
+        
+        # Use new ChunkManager for efficient data transmission
+        self.chunk_manager = ChunkManager()
 
     def join(self, timeout=None):
         self._stop_event.set()
@@ -399,30 +417,31 @@ class BaseMessageQueueManager(threading.Thread, IMessageQueueManager):
     def _send_to_client(self, client_key, data):
         pass
 
+    def _send_data_efficiently(self, conn, data):
+        """
+        Send data using the improved ChunkManager for better efficiency.
+        
+        Args:
+            conn: Network connection
+            data: Data to send (can be ProtocolMessage or string)
+        """
+        try:
+            self.chunk_manager.send_data(conn, data)
+        except ssl.SSLEOFError:
+            raise
+        except Exception as e:
+            raise ConnectionError(f"Failed to send data efficiently: {e}")
+
     @staticmethod
     def _send_in_chunks(conn, data):
+        """
+        Legacy chunking method - kept for backward compatibility.
+        For new code, use _send_data_efficiently instead.
+        """
+        # Create a temporary ChunkManager for legacy calls
+        chunk_manager = ChunkManager()
         try:
-            # Send data in chunks to ensure it fits within the buffer limit
-            # Se data inizia con file_chunk, deve codificare il comando ma non il contenuto ovvero "file_chunk::content" codifica solo "file_chunk::"
-            data_bytes = data.encode()
-            data_length = len(data_bytes)
-
-            chunk_size_with_delimiter = CHUNK_SIZE - len(CHUNK_DELIMITER.encode())
-            chunk_size_with_end_delimiter = CHUNK_SIZE - len(END_DELIMITER.encode())
-            real_chunk_size = min(chunk_size_with_delimiter, chunk_size_with_end_delimiter)
-
-            if data_length > real_chunk_size:
-                chunks = [data_bytes[i:i + real_chunk_size] for i in range(0, data_length, real_chunk_size)]
-                for i, chunk in enumerate(chunks):
-                    if i == len(chunks) - 1:
-                        # Last chunk - add the END_DELIMITER
-                        conn.send(chunk + END_DELIMITER.encode())
-                    else:
-                        # Intermediate chunk - add the CHUNK_DELIMITER
-                        conn.send(chunk + CHUNK_DELIMITER.encode())
-            else:
-                # Data fits in a single chunk - add END_DELIMITER
-                conn.send(data_bytes + END_DELIMITER.encode())
+            chunk_manager.send_data(conn, data)
         except ssl.SSLEOFError as e:
             raise e
         except Exception as e:
@@ -454,9 +473,6 @@ class ServerMessageQueueManager(BaseMessageQueueManager):
             if not client_key or client_key is None:  # Skip sending data if the client key is None
                 return
 
-            # Prepare data to send
-            formatted_data = format_data(data)
-
             conn = self.get_client(client_key)
             if not conn:
                 return  # Skip sending data if the client is not connected
@@ -464,8 +480,14 @@ class ServerMessageQueueManager(BaseMessageQueueManager):
             if not conn.is_socket_open():
                 return  # Skip sending data if the socket is closed
 
-            # Send the data in chunks if needed
-            self._send_in_chunks(conn, formatted_data)
+            # Use improved chunk manager for efficient transmission
+            if isinstance(data, (ProtocolMessage, str)):
+                # Send directly using ChunkManager
+                self._send_data_efficiently(conn, data)
+            else:
+                # Format legacy data and send
+                formatted_data = format_data(data)
+                self._send_data_efficiently(conn, formatted_data)
 
         except KeyError as e:
             self.log(f"Error sending data to client {client_key}: {e}", Logger.ERROR)
@@ -477,11 +499,17 @@ class ServerMessageQueueManager(BaseMessageQueueManager):
 
                 # Check socket status
                 if conn and conn.is_socket_open():
-                    formatted_data = format_data(data)
-                    self._send_in_chunks(conn, formatted_data)
-                    return  # Exit the loop if the data is sent successfully
+                    try:
+                        if isinstance(data, (ProtocolMessage, str)):
+                            self._send_data_efficiently(conn, data)
+                        else:
+                            formatted_data = format_data(data)
+                            self._send_data_efficiently(conn, formatted_data)
+                        return  # Exit the loop if the data is sent successfully
+                    except:
+                        pass  # Continue retrying
 
-                time.sleep(retry_delay)  # Attendi prima del retry
+                time.sleep(retry_delay)  # Wait before retry
             self.log(f"Can't communicate with client {client_key}", Logger.ERROR)
             self.change_screen()
         except socket.error as e:
@@ -503,9 +531,10 @@ class ClientMessageQueueManager(BaseMessageQueueManager):
                 return
             if isinstance(message, tuple):
                 screen, data = message
-                formatted_data = format_data(data)
-                self._send_in_chunks(self.conn(), formatted_data)
+                # Use improved chunk manager for client communication
+                self._send_data_efficiently(self.conn(), data)
             else:
-                self._send_in_chunks(self.conn(), message)
+                # Direct message sending
+                self._send_data_efficiently(self.conn(), message)
         except Exception as e:
             self.log(f"Error sending data: {e}", Logger.ERROR)
