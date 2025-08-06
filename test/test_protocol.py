@@ -5,8 +5,13 @@ Tests message ordering, protocol conversion, and timing behavior.
 """
 
 import sys
+import os
 import time
 import threading
+
+# Add project root to path
+sys.path.append(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
+
 from utils.protocol.message import MessageBuilder, ProtocolMessage
 from utils.protocol.adapter import ProtocolAdapter
 from utils.protocol.ordering import OrderedMessageProcessor

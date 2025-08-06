@@ -7,7 +7,12 @@ import json
 import socket
 import threading
 import time
+import os
+import sys
 from unittest.mock import Mock
+
+# Add project root to path
+sys.path.append(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
 # Import the necessary modules
 from utils.net.ChunkManager import ChunkManager

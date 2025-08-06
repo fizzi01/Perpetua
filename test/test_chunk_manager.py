@@ -10,7 +10,7 @@ import threading
 from queue import Queue
 
 # Add the project root to the path
-sys.path.append(os.path.dirname(os.path.abspath(__file__)))
+sys.path.append(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
 # Import necessary modules
 from utils.net.ChunkManager import ChunkManager
