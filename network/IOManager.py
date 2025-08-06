@@ -329,8 +329,8 @@ class MessageService(IMessageService):
         for screen, messages in screen_messages.items():
             # Check if messages can be batched (only legacy strings)
             if all(isinstance(msg, str) for msg in messages) and len(messages) > 1:
-                # Create batch for legacy messages
-                batch_message = CHUNK_DELIMITER.join([format_data(msg) for msg in messages])
+                # Create batch for legacy messages using new method
+                batch_message = "|".join([format_data(msg) for msg in messages])
                 self.MessageSender.send(self.KEYBOARD_PRIORITY, (screen, batch_message))
             else:
                 # Send individually (structured messages or single items)

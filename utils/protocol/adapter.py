@@ -2,8 +2,9 @@
 Protocol adapter for handling both new structured and legacy message formats.
 """
 import json
-from typing import Union, Optional, Tuple
+from typing import Union, Optional, Tuple, List
 from .message import ProtocolMessage, MessageBuilder
+from .chunking import ChunkReassembler
 from utils.net.netData import extract_command_parts, format_command
 
 
@@ -16,8 +17,9 @@ class ProtocolAdapter:
     # Protocol version markers
     PROTOCOL_V2_MARKER = "PYCONT_V2:"
     
-    def __init__(self):
+    def __init__(self, chunk_size: int = 4096):
         self.message_builder = MessageBuilder()
+        self.reassembler = ChunkReassembler()
     
     def is_structured_message(self, data: str) -> bool:
         """Check if message uses new structured format."""

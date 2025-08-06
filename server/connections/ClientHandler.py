@@ -9,6 +9,7 @@ from utils.command.Command import CommandFactory
 from utils.Interfaces import IBaseSocket, IClientHandler
 from utils.Logging import Logger
 from utils.net.netData import *
+from utils.net.ChunkManager import ChunkManager
 from utils.Interfaces import IClientCommandProcessor, IClientHandlerFactory
 from utils.protocol.adapter import ProtocolAdapter
 from utils.protocol.ordering import OrderedMessageProcessor
@@ -105,37 +106,36 @@ class ClientHandler(IClientHandler):
             return self.processor_thread.is_alive() and self.clipboard_thread.is_alive()
 
     def _handle(self):
-        buffer = bytearray()
+        """Handle incoming data using new protocol-level chunking."""
+        chunk_manager = ChunkManager()
+        
         while self._running:
             try:
+                # Receive fixed-size chunk
                 data = self.conn.recv(CHUNK_SIZE)
                 if not data or data == b'':
                     break
-                buffer.extend(data)
-
-                while END_DELIMITER.encode() in buffer or CHUNK_DELIMITER.encode() in buffer:
-                    if END_DELIMITER.encode() in buffer:
-                        pos = buffer.find(END_DELIMITER.encode())
-                        batch = buffer[:pos]
-                        buffer = buffer[pos + len(END_DELIMITER):]  # Remove the batch from the buffer
-
-                        # Add the batch to the queue
-                        self.message_queue.put(batch.decode())
-                        self.batch_ready_event.set()
-                    elif CHUNK_DELIMITER.encode() in buffer:
-                        pos = buffer.find(CHUNK_DELIMITER.encode())
-                        chunk = buffer[:pos]
-                        buffer = buffer[pos + len(CHUNK_DELIMITER):]  # Remove the chunk from the buffer
-
-                        # Add the chunk to the queue
-                        self.message_queue.put(chunk.decode())
-                        self.batch_ready_event.set()
+                
+                # Process chunk using chunk manager
+                complete_message = chunk_manager.receive_chunk(data)
+                
+                if complete_message:
+                    # We have a complete message, add to queue
+                    if isinstance(complete_message, ProtocolMessage):
+                        # Structured message - add to queue for ordered processing
+                        self.message_queue.put(complete_message)
+                    else:
+                        # Legacy data - add as string
+                        self.message_queue.put(str(complete_message))
+                    
+                    self.batch_ready_event.set()
+                    
             except socket.timeout:
                 continue
             except socket.error:
                 break
             except Exception as e:
-                # Controllo se il client ha chiuso la connessione
+                # Check if client closed connection
                 self.logger(f"Error receiving data: {e}", 2)
                 break
         self.stop()

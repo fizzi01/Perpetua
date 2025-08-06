@@ -111,11 +111,11 @@ class SmartDataBuffer:
             message_size = len(message.encode('utf-8'))
             
             # Check if adding this message would exceed chunk size
-            delimiter_size = len(self.chunk_manager.protocol_adapter.PROTOCOL_V2_MARKER.encode('utf-8'))
-            batch_size = current_size + message_size + delimiter_size
+            # No delimiter overhead with fixed chunking
+            batch_size = current_size + message_size + 1  # +1 for separator
             
             if (current_batch and 
-                batch_size > self.chunk_manager.EFFECTIVE_CHUNK_SIZE):
+                batch_size > self.chunk_manager.get_max_message_size()):
                 # Current batch is full, start a new one
                 if len(current_batch) == 1:
                     batches.append(current_batch[0])  # Single message
@@ -243,9 +243,8 @@ class BufferedMessageQueue:
             batches = self.buffer.get_optimal_batches(legacy_messages)
             for batch in batches:
                 if isinstance(batch, list):
-                    # Create batched message
-                    from ..net.netConstants import CHUNK_DELIMITER
-                    batched_message = CHUNK_DELIMITER.join(batch)
+                    # Create batched message using new separator
+                    batched_message = "|".join(batch)
                     self.sender_callback(priority, (screen, batched_message))
                 else:
                     # Single message

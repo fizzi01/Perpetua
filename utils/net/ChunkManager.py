@@ -1,108 +1,131 @@
 """
-Improved chunk management system for efficient data transmission.
-Handles both structured protocol messages and legacy data with better performance.
+Protocol-level chunk management system for efficient data transmission.
+Handles fixed-size chunking without visible delimiters.
 """
 import ssl
+import struct
 from typing import Union, List
-from utils.net.netConstants import CHUNK_SIZE, END_DELIMITER, CHUNK_DELIMITER
+from utils.net.netConstants import CHUNK_SIZE
 from utils.protocol.message import ProtocolMessage
 from utils.protocol.adapter import ProtocolAdapter
 
 
 class ChunkManager:
     """
-    Efficient chunk management for network transmission.
-    Handles both structured protocol messages and legacy string data.
+    Protocol-level chunk manager for network transmission.
+    Uses fixed chunk sizes without delimiters, with protocol-level reassembly.
     """
     
-    # Reserve space for delimiters and safety margin
-    DELIMITER_OVERHEAD = max(len(END_DELIMITER.encode()), len(CHUNK_DELIMITER.encode()))
-    SAFETY_MARGIN = 64  # Extra safety margin for encoding differences
-    EFFECTIVE_CHUNK_SIZE = CHUNK_SIZE - DELIMITER_OVERHEAD - SAFETY_MARGIN
-    
-    def __init__(self):
-        self.protocol_adapter = ProtocolAdapter()
-    
-    def prepare_for_transmission(self, data: Union[str, ProtocolMessage]) -> str:
+    def __init__(self, chunk_size: int = CHUNK_SIZE):
         """
-        Prepare data for transmission, handling both structured and legacy formats.
+        Initialize chunk manager.
         
         Args:
-            data: Either a structured ProtocolMessage or legacy string
-            
-        Returns:
-            String ready for transmission
+            chunk_size: Fixed size for each chunk (default: 4096 bytes)
         """
-        if isinstance(data, ProtocolMessage):
-            # Use structured format for protocol messages
-            return self.protocol_adapter.encode_structured_message(data)
-        elif isinstance(data, str):
-            # Legacy string data - pass through
-            return data
-        else:
-            # Convert other types to string
-            return str(data)
+        self.chunk_size = chunk_size
+        self.protocol_adapter = ProtocolAdapter(chunk_size)
+        
+        # Reserve space for chunk metadata header
+        # Format: [message_id(16 bytes)][chunk_index(4 bytes)][total_chunks(4 bytes)][data_size(4 bytes)]
+        self.header_size = 28
+        self.data_size = chunk_size - self.header_size
     
     def send_data(self, conn, data: Union[str, ProtocolMessage]) -> None:
         """
-        Send data through connection with efficient chunking.
+        Send data through connection using protocol-level chunking.
         
         Args:
             conn: Network connection
             data: Data to send (ProtocolMessage or string)
         """
         try:
-            # Prepare data for transmission
-            transmission_data = self.prepare_for_transmission(data)
-            
-            # Convert to bytes for size calculation
-            data_bytes = transmission_data.encode('utf-8')
-            data_length = len(data_bytes)
-            
-            if data_length <= self.EFFECTIVE_CHUNK_SIZE:
-                # Single chunk - add end delimiter
-                self._send_single_chunk(conn, data_bytes)
+            if isinstance(data, ProtocolMessage):
+                # Structured message - encode to JSON first
+                json_data = self.protocol_adapter.encode_structured_message(data)
+                data_bytes = json_data.encode('utf-8')
             else:
-                # Multiple chunks needed
-                self._send_multiple_chunks(conn, data_bytes)
+                # Legacy string data
+                data_bytes = str(data).encode('utf-8')
+            
+            # Send as chunks
+            self._send_chunked_data(conn, data_bytes)
                 
         except ssl.SSLEOFError:
             raise
         except Exception as e:
             raise ConnectionError(f"Failed to send data: {e}")
     
-    def _send_single_chunk(self, conn, data_bytes: bytes) -> None:
-        """Send a single chunk with end delimiter."""
-        conn.send(data_bytes + END_DELIMITER.encode('utf-8'))
-    
-    def _send_multiple_chunks(self, conn, data_bytes: bytes) -> None:
-        """Send data in multiple chunks with appropriate delimiters."""
-        chunks = self._split_into_chunks(data_bytes)
+    def _send_chunked_data(self, conn, data_bytes: bytes) -> None:
+        """
+        Send data as fixed-size chunks with minimal metadata.
         
-        for i, chunk in enumerate(chunks):
-            if i == len(chunks) - 1:
-                # Last chunk - use end delimiter
-                conn.send(chunk + END_DELIMITER.encode('utf-8'))
-            else:
-                # Intermediate chunk - use chunk delimiter
-                conn.send(chunk + CHUNK_DELIMITER.encode('utf-8'))
-    
-    def _split_into_chunks(self, data_bytes: bytes) -> List[bytes]:
-        """Split data into appropriately sized chunks."""
-        chunks = []
-        offset = 0
+        Args:
+            conn: Network connection
+            data_bytes: Data to send as bytes
+        """
+        import uuid
         
-        while offset < len(data_bytes):
-            chunk_end = min(offset + self.EFFECTIVE_CHUNK_SIZE, len(data_bytes))
-            chunks.append(data_bytes[offset:chunk_end])
-            offset = chunk_end
+        # Generate unique message ID
+        message_id = uuid.uuid4().bytes  # 16 bytes
+        
+        # Calculate number of chunks needed
+        total_chunks = (len(data_bytes) + self.data_size - 1) // self.data_size
+        
+        # Send each chunk
+        for chunk_index in range(total_chunks):
+            start_pos = chunk_index * self.data_size
+            end_pos = min(start_pos + self.data_size, len(data_bytes))
+            chunk_data = data_bytes[start_pos:end_pos]
             
-        return chunks
+            # Create header: message_id(16) + chunk_index(4) + total_chunks(4) + data_size(4)
+            header = message_id + struct.pack('>III', chunk_index, total_chunks, len(chunk_data))
+            
+            # Create fixed-size chunk
+            chunk = header + chunk_data
+            
+            # Pad to exact chunk size
+            if len(chunk) < self.chunk_size:
+                chunk += b'\x00' * (self.chunk_size - len(chunk))
+            
+            conn.send(chunk)
+    
+    def receive_chunk(self, data: bytes) -> Union[ProtocolMessage, str, None]:
+        """
+        Process received chunk data and return complete message if available.
+        
+        Args:
+            data: Received chunk data (exactly chunk_size bytes)
+            
+        Returns:
+            Complete message if ready, None if more chunks needed
+        """
+        if len(data) != self.chunk_size:
+            return None
+        
+        try:
+            # Parse header
+            message_id = data[:16]
+            chunk_index, total_chunks, data_size = struct.unpack('>III', data[16:28])
+            chunk_data = data[28:28+data_size]
+            
+            # Add to reassembler
+            return self.protocol_adapter.reassembler.add_raw_chunk(
+                message_id, chunk_index, total_chunks, chunk_data
+            )
+            
+        except struct.error:
+            return None
+        except Exception:
+            return None
     
     def can_batch_together(self, data1: Union[str, ProtocolMessage], 
                           data2: Union[str, ProtocolMessage]) -> bool:
         """
-        Determine if two pieces of data can be batched together efficiently.
+        Determine if two pieces of data can be batched together.
+        
+        Note: With protocol-level chunking, batching is handled differently.
+        Structured messages are generally not batched to preserve timestamps.
         
         Args:
             data1: First data item
@@ -115,16 +138,14 @@ class ChunkManager:
         if isinstance(data1, ProtocolMessage) or isinstance(data2, ProtocolMessage):
             return False
         
-        # Check combined size
+        # For legacy strings, check if combined size fits in one chunk
         combined_size = len(str(data1).encode('utf-8')) + len(str(data2).encode('utf-8'))
-        combined_size += len(CHUNK_DELIMITER.encode('utf-8'))  # Delimiter between items
-        
-        return combined_size <= self.EFFECTIVE_CHUNK_SIZE
+        return combined_size <= self.data_size
     
     def create_batch(self, data_items: List[Union[str, ProtocolMessage]]) -> str:
         """
         Create a batched message from multiple data items.
-        Only batches legacy string messages for efficiency.
+        Only batches legacy string messages.
         
         Args:
             data_items: List of data items to batch
@@ -138,10 +159,14 @@ class ChunkManager:
         if not batchable_items:
             return ""
         
-        # Join with chunk delimiter
-        return CHUNK_DELIMITER.join(batchable_items)
+        # Join with separator (but no delimiter overhead since we use fixed chunks)
+        return "|".join(batchable_items)
     
     @classmethod
     def get_max_message_size(cls) -> int:
-        """Get the maximum size for a single message."""
-        return cls.EFFECTIVE_CHUNK_SIZE
+        """Get the maximum size for a single chunk's data payload."""
+        return CHUNK_SIZE - 28  # Subtract header size
+    
+    def get_pending_messages_count(self) -> int:
+        """Get number of pending incomplete messages in reassembler."""
+        return self.protocol_adapter.reassembler.get_pending_count()

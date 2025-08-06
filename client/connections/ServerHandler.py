@@ -7,6 +7,7 @@ from queue import Queue, Empty
 from utils.Interfaces import IServerHandler, IClientSocket, IServerHandlerFactory
 from utils.Logging import Logger
 from utils.net.netData import *
+from utils.net.ChunkManager import ChunkManager
 from utils.protocol.adapter import ProtocolAdapter
 from utils.protocol.ordering import OrderedMessageProcessor
 from utils.protocol.message import ProtocolMessage
@@ -29,10 +30,6 @@ class ServerHandler(IServerHandler):
     BATCH_PROCESS_INTERVAL = 0.0000001
     TIMEOUT = 0.0000001
 
-    CHUNK_DELIMITER = CHUNK_DELIMITER.encode()
-    END_DELIMITER = END_DELIMITER.encode()
-    CMD_DELIMITER = CMD.encode()
-
     def __init__(self, connection: IClientSocket, command_func: Callable[[str], None]):
         self.conn = connection
         self.process_command = command_func
@@ -48,6 +45,7 @@ class ServerHandler(IServerHandler):
         
         # Protocol support for ordered processing
         self.protocol_adapter = ProtocolAdapter()
+        self.chunk_manager = ChunkManager()
         self.ordered_processor = OrderedMessageProcessor(
             process_callback=self._process_ordered_message,
             max_delay_tolerance=0.05  # 50ms tolerance for mouse smoothness
@@ -87,15 +85,21 @@ class ServerHandler(IServerHandler):
         self.conn.close()
 
     def _handle_server_commands(self):
-        """Handle commands continuously received from the server."""
+        """Handle commands continuously received from the server using new protocol-level chunking."""
         while self._running:
             try:
+                # Receive fixed-size chunk
                 data = self.conn.recv(CHUNK_SIZE)
 
                 if not data:
                     break
 
-                self.data_queue.put(data)
+                # Process chunk using chunk manager
+                complete_message = self.chunk_manager.receive_chunk(data)
+                
+                if complete_message:
+                    self.data_queue.put(complete_message)
+                    
             except socket.timeout:
                 sleep(self.TIMEOUT)
                 continue
@@ -104,73 +108,43 @@ class ServerHandler(IServerHandler):
                 break
         self.stop()
 
-    def _check_chunk_batch(self, data: bytes):
-        """
-        Check if the chunk delimiter seperates a single command data. If not data should be split.
-        :param data: Data to check
-        :return: Data split into batches or the input data
-        """
-        # Split by CHUNK_DELIMITER
-        if self.CHUNK_DELIMITER not in data:
-            return [data]
-
-        chunks = data.split(self.CHUNK_DELIMITER)
-        # If the last chunk has 2 or more CMD_DELIMITER, it means the last chunk is not a complete command
-        if chunks[-1].count(self.CMD_DELIMITER) > 1:
-            # If so, reuturn all chunks
-            return chunks
-
-        # Return data as a single batch
-        return [data]
-
     def _buffer_and_process_batches(self):
-        """Buffer data and process batches in a separate thread."""
-        buffer = bytearray()
-        last_batch_time = 0
+        """Process complete messages from the data queue."""
         while self._running:
             try:
-                while not self.data_queue.empty() or time() - last_batch_time < self.BATCH_PROCESS_INTERVAL:
-                    buffer.extend(self.data_queue.get())
-
-                while self.END_DELIMITER in buffer:
-                    end_pos = buffer.find(self.END_DELIMITER)
-                    batch = buffer[:end_pos]
-                    buffer = buffer[end_pos + len(self.END_DELIMITER):]
-
-                    # Check if the batch is a single command
-                    clean_batch = self._check_chunk_batch(batch)
-
-                    # Process each batch
-                    for batch in clean_batch:
-                        # Remove CHUNK_DELIMITER from the batch
-                        batch = batch.replace(self.CHUNK_DELIMITER, b'')
-
-                        self._process_batch(batch.decode())
-                sleep(self.TIMEOUT)
+                # Get complete message from queue
+                message = self.data_queue.get(timeout=self.BATCH_PROCESS_INTERVAL)
+                
+                if isinstance(message, ProtocolMessage):
+                    # Structured message - use ordered processing for mouse events
+                    if message.message_type == "mouse":
+                        self.ordered_processor.add_message(message)
+                    else:
+                        # Process other message types immediately
+                        self._process_ordered_message(message)
+                else:
+                    # Legacy string message
+                    command_str = str(message)
+                    if command_str:  # Skip empty messages
+                        self._process_legacy_batch(command_str)
+                        
             except Empty:
                 sleep(self.TIMEOUT)
                 continue
             except Exception as e:
                 self.log(f"Error processing data: {e}", Logger.ERROR)
 
-    def _process_batch(self, command):
-        # Check if this is a structured message
-        if self.protocol_adapter.is_structured_message(command):
-            try:
-                structured_msg = self.protocol_adapter.decode_structured_message(command)
-                # Use ordered processing for mouse messages to ensure smoothness
-                if structured_msg.message_type == "mouse":
-                    self.ordered_processor.add_message(structured_msg)
-                else:
-                    # Process other message types immediately
-                    self._process_ordered_message(structured_msg)
-            except Exception as e:
-                self.log(f"Error processing structured message: {e}", Logger.ERROR)
-                # Fallback to legacy processing
-                self.process_command(command)
+    def _process_legacy_batch(self, batch_data: str):
+        """Process legacy batch data that may contain multiple commands."""
+        # Handle batched legacy commands separated by '|'
+        if '|' in batch_data:
+            commands = batch_data.split('|')
+            for command in commands:
+                if command.strip():
+                    self.process_command(command.strip())
         else:
-            # Legacy command processing
-            self.process_command(command)
+            # Single command
+            self.process_command(batch_data)
     
     def _process_ordered_message(self, message: ProtocolMessage):
         """Process a structured message by converting it back to legacy format."""
