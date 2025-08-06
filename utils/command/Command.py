@@ -13,8 +13,6 @@ class Command:
 
     DESCRIPTION = "Default"
 
-    logging.basicConfig(level=logging.DEBUG, format="[%(levelname)s][COMMAND] %(message)s")
-
     context: IServerContext | IClientContext | IControllerContext | IFileTransferService
     message_service: IMessageService
     event_bus: IEventBus
