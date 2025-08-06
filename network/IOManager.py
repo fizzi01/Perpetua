@@ -281,11 +281,18 @@ class MessageService(IMessageService):
     def _send_file(self, file_path, screen=None):
         try:
             with open(file_path, 'rb') as file:
-                # Send file_start with metadata
+                # Send file_start with metadata using ProtocolMessage
                 file_name = urllib.parse.quote(os.path.basename(file_path))
                 file_size = os.path.getsize(file_path)
 
-                start_message = format_command(f"file_start {file_name} {file_size}")
+                start_message = self.message_builder.create_file_message(
+                    command="start",
+                    data={
+                        "filename": file_name,
+                        "size": file_size
+                    },
+                    target=screen
+                )
                 self.MessageSender.send(self.FILE_PRIORITY, (screen, start_message))
                 self.log(f"Starting file sharing: {file_name} ({file_size} bytes)")
 
@@ -302,13 +309,24 @@ class MessageService(IMessageService):
                     compressed_chunk = zlib.compress(chunk)
                     encoded_chunk = base64.b64encode(compressed_chunk).decode()
                     
-                    chunk_message = format_command(f"file_chunk {encoded_chunk} {chunk_index}")
+                    chunk_message = self.message_builder.create_file_message(
+                        command="chunk",
+                        data={
+                            "data": encoded_chunk,
+                            "index": chunk_index
+                        },
+                        target=screen
+                    )
                     chunk_index += 1
 
                     self.MessageSender.send(self.FILE_PRIORITY, (screen, chunk_message))
 
-                # Send file_end
-                end_message = format_command(f"file_end {file_name}")
+                # Send file_end using ProtocolMessage
+                end_message = self.message_builder.create_file_message(
+                    command="end",
+                    data={"filename": file_name},
+                    target=screen
+                )
                 self.MessageSender.send(self.FILE_PRIORITY, (screen, end_message))
                 self.log(f"File shared successfully: {file_path}")
         except Exception as e:
