@@ -106,21 +106,29 @@ class ClientHandler(IClientHandler):
             return self.processor_thread.is_alive() and self.clipboard_thread.is_alive()
 
     def _handle(self):
-        """Handle incoming data using new protocol-level chunking."""
+        """Handle incoming data using new ProtocolMessage-level chunking."""
         chunk_manager = ChunkManager()
+        data_buffer = b''
         
         while self._running:
             try:
-                # Receive fixed-size chunk
-                data = self.conn.recv(CHUNK_SIZE)
-                if not data or data == b'':
+                # Receive data from socket
+                incoming_data = self.conn.recv(CHUNK_SIZE)
+                if not incoming_data or incoming_data == b'':
                     break
                 
-                # Process chunk using chunk manager
-                complete_message = chunk_manager.receive_chunk(data)
+                # Add to buffer
+                data_buffer += incoming_data
                 
-                if complete_message:
-                    # We have a complete message, add to queue
+                # Process complete messages from buffer
+                complete_messages, bytes_consumed = chunk_manager.receive_data(data_buffer)
+                
+                # Remove processed data from buffer
+                if bytes_consumed > 0:
+                    data_buffer = data_buffer[bytes_consumed:]
+                
+                # Add complete messages to queue
+                for complete_message in complete_messages:
                     if isinstance(complete_message, ProtocolMessage):
                         # Structured message - add to queue for ordered processing
                         self.message_queue.put(complete_message)

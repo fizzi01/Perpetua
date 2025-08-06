@@ -23,7 +23,7 @@ class ChunkReassembler:
             timeout: Timeout in seconds for incomplete messages
         """
         self.timeout = timeout
-        self._pending_messages: Dict[bytes, Dict] = {}  # Use bytes for message_id
+        self._pending_messages: Dict[str, Dict] = {}  # Use string for message_id
         self._lock = threading.Lock()
         self._last_cleanup = time.time()
         self._cleanup_interval = 10.0  # Cleanup every 10 seconds
@@ -106,22 +106,69 @@ class ChunkReassembler:
     
     def add_chunk(self, chunk: ProtocolMessage) -> Optional[ProtocolMessage]:
         """
-        Legacy method for compatibility - converts ProtocolMessage chunks.
+        Add a ProtocolMessage chunk and return complete message if all chunks are received.
         
         Args:
-            chunk: Chunk message to add
+            chunk: Chunk ProtocolMessage to add
             
         Returns:
-            Complete message if all chunks received, None otherwise
+            Complete reconstructed ProtocolMessage if all chunks received, None otherwise
         """
         if not chunk.is_chunk or not chunk.message_id:
             return chunk  # Not a chunk, return as-is
         
-        # Convert to raw chunk format
-        message_id = chunk.message_id.encode('utf-8')
-        chunk_data = chunk.payload.get('data', '').encode('utf-8')
+        with self._lock:
+            self._cleanup_expired_messages()
+            
+            message_id = chunk.message_id
+            
+            # Initialize message entry if not exists
+            if message_id not in self._pending_messages:
+                self._pending_messages[message_id] = {
+                    'chunks': {},
+                    'total_chunks': chunk.total_chunks,
+                    'timestamp': time.time(),
+                    'message_type': chunk.payload.get("_original_type", chunk.message_type),
+                    'source': chunk.source,
+                    'target': chunk.target,
+                    'original_timestamp': chunk.timestamp,
+                    'original_sequence_id': chunk.sequence_id
+                }
+            
+            # Store chunk
+            entry = self._pending_messages[message_id]
+            entry['chunks'][chunk.chunk_index] = chunk
+            
+            # Check if all chunks received
+            if len(entry['chunks']) == entry['total_chunks']:
+                # Reassemble message
+                complete_message = self._reassemble_message(message_id)
+                del self._pending_messages[message_id]
+                return complete_message
+            
+            return None
+    
+    def _reassemble_message(self, message_id: str) -> ProtocolMessage:
+        """
+        Reassemble a complete ProtocolMessage from its chunks.
         
-        return self.add_raw_chunk(message_id, chunk.chunk_index, chunk.total_chunks, chunk_data)
+        Args:
+            message_id: ID of message to reassemble
+            
+        Returns:
+            Complete reassembled ProtocolMessage
+        """
+        from .message import MessageBuilder
+        
+        entry = self._pending_messages[message_id]
+        chunks_dict = entry['chunks']
+        
+        # Sort chunks by index
+        sorted_chunks = [chunks_dict[i] for i in sorted(chunks_dict.keys())]
+        
+        # Use MessageBuilder to reconstruct
+        message_builder = MessageBuilder()
+        return message_builder.reconstruct_from_chunks(sorted_chunks)
     
     def _cleanup_expired_messages(self):
         """Clean up expired incomplete messages."""

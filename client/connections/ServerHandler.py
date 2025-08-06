@@ -85,19 +85,29 @@ class ServerHandler(IServerHandler):
         self.conn.close()
 
     def _handle_server_commands(self):
-        """Handle commands continuously received from the server using new protocol-level chunking."""
+        """Handle commands continuously received from the server using new ProtocolMessage-level chunking."""
+        data_buffer = b''
+        
         while self._running:
             try:
-                # Receive fixed-size chunk
-                data = self.conn.recv(CHUNK_SIZE)
+                # Receive data from socket
+                incoming_data = self.conn.recv(CHUNK_SIZE)
 
-                if not data:
+                if not incoming_data:
                     break
 
-                # Process chunk using chunk manager
-                complete_message = self.chunk_manager.receive_chunk(data)
+                # Add to buffer
+                data_buffer += incoming_data
                 
-                if complete_message:
+                # Process complete messages from buffer
+                complete_messages, bytes_consumed = self.chunk_manager.receive_data(data_buffer)
+                
+                # Remove processed data from buffer
+                if bytes_consumed > 0:
+                    data_buffer = data_buffer[bytes_consumed:]
+                
+                # Add complete messages to queue
+                for complete_message in complete_messages:
                     self.data_queue.put(complete_message)
                     
             except socket.timeout:

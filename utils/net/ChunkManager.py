@@ -1,19 +1,20 @@
 """
 Protocol-level chunk management system for efficient data transmission.
-Handles fixed-size chunking without visible delimiters.
+Handles ProtocolMessage-level chunking with internal metadata.
 """
+import json
 import ssl
 import struct
-from typing import Union, List
+from typing import Union, List, Tuple
 from utils.net.netConstants import CHUNK_SIZE
-from utils.protocol.message import ProtocolMessage
+from utils.protocol.message import ProtocolMessage, MessageBuilder
 from utils.protocol.adapter import ProtocolAdapter
 
 
 class ChunkManager:
     """
     Protocol-level chunk manager for network transmission.
-    Uses fixed chunk sizes without delimiters, with protocol-level reassembly.
+    Chunks at ProtocolMessage level with internal chunking metadata.
     """
     
     def __init__(self, chunk_size: int = CHUNK_SIZE):
@@ -21,19 +22,19 @@ class ChunkManager:
         Initialize chunk manager.
         
         Args:
-            chunk_size: Fixed size for each chunk (default: 4096 bytes)
+            chunk_size: Maximum size for each ProtocolMessage chunk when serialized
         """
         self.chunk_size = chunk_size
+        self.message_builder = MessageBuilder()
         self.protocol_adapter = ProtocolAdapter(chunk_size)
         
-        # Reserve space for chunk metadata header
-        # Format: [message_id(16 bytes)][chunk_index(4 bytes)][total_chunks(4 bytes)][data_size(4 bytes)]
-        self.header_size = 28
-        self.data_size = chunk_size - self.header_size
+        # For ProtocolMessage chunking, we reserve some overhead for the message structure
+        # This ensures each serialized ProtocolMessage chunk fits within chunk_size
+        self.max_message_size = chunk_size
     
     def send_data(self, conn, data: Union[str, ProtocolMessage]) -> None:
         """
-        Send data through connection using protocol-level chunking.
+        Send data through connection using ProtocolMessage-level chunking.
         
         Args:
             conn: Network connection
@@ -41,91 +42,100 @@ class ChunkManager:
         """
         try:
             if isinstance(data, ProtocolMessage):
-                # Structured message - encode to JSON first
-                json_data = self.protocol_adapter.encode_structured_message(data)
-                data_bytes = json_data.encode('utf-8')
+                # Check if message needs chunking
+                if data.get_serialized_size() <= self.chunk_size:
+                    # Send as single chunk
+                    self._send_protocol_message(conn, data)
+                else:
+                    # Split into ProtocolMessage chunks
+                    chunks = self.message_builder.create_chunked_message(data, self.chunk_size)
+                    for chunk in chunks:
+                        self._send_protocol_message(conn, chunk)
             else:
-                # Legacy string data
-                data_bytes = str(data).encode('utf-8')
-            
-            # Send as chunks
-            self._send_chunked_data(conn, data_bytes)
+                # Legacy string data - convert to ProtocolMessage first
+                legacy_message = ProtocolMessage(
+                    message_type="legacy",
+                    timestamp=self.message_builder._next_sequence_id(),  # Use as timestamp
+                    sequence_id=self.message_builder._next_sequence_id(),
+                    payload={"data": str(data)}
+                )
+                self.send_data(conn, legacy_message)
                 
         except ssl.SSLEOFError:
             raise
         except Exception as e:
             raise ConnectionError(f"Failed to send data: {e}")
     
-    def _send_chunked_data(self, conn, data_bytes: bytes) -> None:
+    def _send_protocol_message(self, conn, message: ProtocolMessage) -> None:
         """
-        Send data as fixed-size chunks with minimal metadata.
+        Send a single ProtocolMessage by serializing it to bytes.
         
         Args:
             conn: Network connection
-            data_bytes: Data to send as bytes
+            message: ProtocolMessage to send
         """
-        import uuid
+        # Serialize ProtocolMessage directly to bytes
+        message_bytes = message.to_bytes()
         
-        # Generate unique message ID
-        message_id = uuid.uuid4().bytes  # 16 bytes
-        
-        # Calculate number of chunks needed
-        total_chunks = (len(data_bytes) + self.data_size - 1) // self.data_size
-        
-        # Send each chunk
-        for chunk_index in range(total_chunks):
-            start_pos = chunk_index * self.data_size
-            end_pos = min(start_pos + self.data_size, len(data_bytes))
-            chunk_data = data_bytes[start_pos:end_pos]
-            
-            # Create header: message_id(16) + chunk_index(4) + total_chunks(4) + data_size(4)
-            header = message_id + struct.pack('>III', chunk_index, total_chunks, len(chunk_data))
-            
-            # Create fixed-size chunk
-            chunk = header + chunk_data
-            
-            # Pad to exact chunk size
-            if len(chunk) < self.chunk_size:
-                chunk += b'\x00' * (self.chunk_size - len(chunk))
-            
-            conn.send(chunk)
+        # Send the serialized bytes
+        conn.send(message_bytes)
     
-    def receive_chunk(self, data: bytes) -> Union[ProtocolMessage, str, None]:
+    def receive_data(self, data: bytes) -> Tuple[List[Union[ProtocolMessage, str]], int]:
         """
-        Process received chunk data and return complete message if available.
+        Process received data and return complete messages along with bytes consumed.
+        Handles both ProtocolMessage chunks and legacy data.
         
         Args:
-            data: Received chunk data (exactly chunk_size bytes)
+            data: Received raw bytes
             
         Returns:
-            Complete message if ready, None if more chunks needed
+            Tuple of (complete_messages, bytes_consumed)
         """
-        if len(data) != self.chunk_size:
-            return None
+        messages = []
+        offset = 0
         
-        try:
-            # Parse header
-            message_id = data[:16]
-            chunk_index, total_chunks, data_size = struct.unpack('>III', data[16:28])
-            chunk_data = data[28:28+data_size]
-            
-            # Add to reassembler
-            return self.protocol_adapter.reassembler.add_raw_chunk(
-                message_id, chunk_index, total_chunks, chunk_data
-            )
-            
-        except struct.error:
-            return None
-        except Exception:
-            return None
+        while offset < len(data):
+            try:
+                # Try to parse as ProtocolMessage
+                remaining_data = data[offset:]
+                if len(remaining_data) < 4:
+                    break  # Not enough data for length prefix
+                
+                # Parse ProtocolMessage from bytes
+                message = ProtocolMessage.from_bytes(remaining_data)
+                message_size = message.get_serialized_size()
+                offset += message_size
+                
+                # Handle chunked messages
+                if message.is_chunk:
+                    # Add to reassembler
+                    complete_message = self.protocol_adapter.reassembler.add_chunk(message)
+                    if complete_message:
+                        messages.append(complete_message)
+                else:
+                    # Complete message
+                    messages.append(message)
+                    
+            except (ValueError, json.JSONDecodeError, struct.error):
+                # Could be legacy data or malformed - try as string
+                try:
+                    remaining_str = data[offset:].decode('utf-8', errors='replace')
+                    messages.append(remaining_str)
+                    offset = len(data)  # Consumed all remaining data as string
+                    break
+                except:
+                    # Skip this byte and continue
+                    offset += 1
+        
+        return messages, offset
     
     def can_batch_together(self, data1: Union[str, ProtocolMessage], 
                           data2: Union[str, ProtocolMessage]) -> bool:
         """
         Determine if two pieces of data can be batched together.
         
-        Note: With protocol-level chunking, batching is handled differently.
-        Structured messages are generally not batched to preserve timestamps.
+        With ProtocolMessage-level chunking, each message is typically sent individually
+        to preserve ordering and timestamps.
         
         Args:
             data1: First data item
@@ -134,15 +144,20 @@ class ChunkManager:
         Returns:
             True if they can be batched together
         """
-        # Don't batch structured messages - they need individual timestamps
+        # Don't batch ProtocolMessages - they need individual timestamps
         if isinstance(data1, ProtocolMessage) or isinstance(data2, ProtocolMessage):
             return False
         
-        # For legacy strings, check if combined size fits in one chunk
-        combined_size = len(str(data1).encode('utf-8')) + len(str(data2).encode('utf-8'))
-        return combined_size <= self.data_size
+        # For legacy strings, check if combined size fits in one message
+        combined_message = ProtocolMessage(
+            message_type="legacy_batch",
+            timestamp=0,
+            sequence_id=0,
+            payload={"data": [str(data1), str(data2)]}
+        )
+        return combined_message.get_serialized_size() <= self.chunk_size
     
-    def create_batch(self, data_items: List[Union[str, ProtocolMessage]]) -> str:
+    def create_batch(self, data_items: List[Union[str, ProtocolMessage]]) -> Union[ProtocolMessage, str]:
         """
         Create a batched message from multiple data items.
         Only batches legacy string messages.
@@ -151,7 +166,7 @@ class ChunkManager:
             data_items: List of data items to batch
             
         Returns:
-            Batched message string
+            Batched ProtocolMessage or string
         """
         # Filter out structured messages - they should be sent individually
         batchable_items = [item for item in data_items if isinstance(item, str)]
@@ -159,13 +174,21 @@ class ChunkManager:
         if not batchable_items:
             return ""
         
-        # Join with separator (but no delimiter overhead since we use fixed chunks)
-        return "|".join(batchable_items)
+        if len(batchable_items) == 1:
+            return batchable_items[0]
+        
+        # Create batched ProtocolMessage
+        return ProtocolMessage(
+            message_type="legacy_batch",
+            timestamp=self.message_builder._next_sequence_id(),
+            sequence_id=self.message_builder._next_sequence_id(),
+            payload={"batch_data": batchable_items}
+        )
     
     @classmethod
     def get_max_message_size(cls) -> int:
-        """Get the maximum size for a single chunk's data payload."""
-        return CHUNK_SIZE - 28  # Subtract header size
+        """Get the maximum size for a ProtocolMessage."""
+        return CHUNK_SIZE
     
     def get_pending_messages_count(self) -> int:
         """Get number of pending incomplete messages in reassembler."""

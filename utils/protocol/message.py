@@ -2,6 +2,7 @@
 Structured message format for improved data handling and ordering.
 """
 import json
+import struct
 import time
 import uuid
 from typing import Dict, Any, Optional, List
@@ -33,6 +34,24 @@ class ProtocolMessage:
         """Serialize message to JSON string."""
         return json.dumps(self.to_dict())
     
+    def to_bytes(self) -> bytes:
+        """
+        Serialize message directly to binary format.
+        This is more efficient than JSON for network transmission.
+        """
+        # Convert to dict first
+        data = self.to_dict()
+        
+        # Serialize to compact JSON (no spaces)
+        json_str = json.dumps(data, separators=(',', ':'))
+        
+        # Convert to bytes
+        json_bytes = json_str.encode('utf-8')
+        
+        # Add length prefix for proper framing
+        length = len(json_bytes)
+        return struct.pack('>I', length) + json_bytes
+    
     @classmethod
     def from_json(cls, json_str: str) -> 'ProtocolMessage':
         """Deserialize message from JSON string."""
@@ -40,9 +59,40 @@ class ProtocolMessage:
         return cls(**data)
     
     @classmethod
+    def from_bytes(cls, data: bytes) -> 'ProtocolMessage':
+        """
+        Deserialize message from binary format.
+        
+        Args:
+            data: Binary data containing serialized ProtocolMessage
+            
+        Returns:
+            Deserialized ProtocolMessage
+        """
+        if len(data) < 4:
+            raise ValueError("Invalid binary data: too short for length prefix")
+        
+        # Read length prefix
+        length = struct.unpack('>I', data[:4])[0]
+        
+        if len(data) < 4 + length:
+            raise ValueError("Invalid binary data: incomplete message")
+        
+        # Extract JSON bytes
+        json_bytes = data[4:4+length]
+        json_str = json_bytes.decode('utf-8')
+        
+        # Parse JSON and create object
+        return cls.from_json(json_str)
+    
+    @classmethod
     def from_dict(cls, data: Dict[str, Any]) -> 'ProtocolMessage':
         """Create message from dictionary."""
         return cls(**data)
+    
+    def get_serialized_size(self) -> int:
+        """Get the size of the message when serialized to bytes."""
+        return len(self.to_bytes())
 
 
 class MessageBuilder:
@@ -62,43 +112,70 @@ class MessageBuilder:
         """Generate unique message ID for chunk tracking."""
         return str(uuid.uuid4())
     
-    def create_chunked_message(self, message: ProtocolMessage, chunk_size: int) -> List[ProtocolMessage]:
+    def create_chunked_message(self, message: ProtocolMessage, max_chunk_size: int) -> List[ProtocolMessage]:
         """
-        Split a message into chunks for protocol-level chunking.
+        Split a message into ProtocolMessage chunks with internal chunking metadata.
+        Each chunk is a complete ProtocolMessage with chunking info in its fields.
         
         Args:
             message: Original message to chunk
-            chunk_size: Size of each chunk in bytes
+            max_chunk_size: Maximum size for each serialized chunk in bytes
             
         Returns:
-            List of chunked protocol messages
+            List of ProtocolMessage chunks, each containing chunking metadata
         """
-        # Serialize the original message
-        message_json = message.to_json()
-        message_bytes = message_json.encode('utf-8')
-        
-        # If message fits in one chunk, return as-is
-        if len(message_bytes) <= chunk_size:
+        # First check if message fits in one chunk
+        if message.get_serialized_size() <= max_chunk_size:
+            # No chunking needed, return original message
             return [message]
         
-        # Create chunks
-        chunks = []
+        # Need to split the payload into chunks
+        payload_json = json.dumps(message.payload, separators=(',', ':'))
+        payload_bytes = payload_json.encode('utf-8')
+        
+        # Generate unique message ID for this chunking session
         message_id = self._generate_message_id()
-        total_chunks = (len(message_bytes) + chunk_size - 1) // chunk_size
+        
+        # Calculate chunk payload size
+        # We need to account for the overhead of the ProtocolMessage structure
+        # Create a sample chunk to estimate overhead
+        sample_chunk = ProtocolMessage(
+            message_type=message.message_type,
+            timestamp=message.timestamp,
+            sequence_id=self._next_sequence_id(),
+            payload={},  # Empty payload
+            source=message.source,
+            target=message.target,
+            message_id=message_id,
+            chunk_index=0,
+            total_chunks=1,
+            is_chunk=True
+        )
+        
+        # Calculate overhead (everything except payload)
+        overhead_size = sample_chunk.get_serialized_size()
+        available_payload_size = max_chunk_size - overhead_size - 50  # 50 bytes safety margin
+        
+        if available_payload_size <= 0:
+            raise ValueError("Chunk size too small to fit ProtocolMessage overhead")
+        
+        # Split payload into chunks
+        chunks = []
+        total_chunks = (len(payload_bytes) + available_payload_size - 1) // available_payload_size
         
         for i in range(total_chunks):
-            start_pos = i * chunk_size
-            end_pos = min(start_pos + chunk_size, len(message_bytes))
-            chunk_data = message_bytes[start_pos:end_pos]
+            start_pos = i * available_payload_size
+            end_pos = min(start_pos + available_payload_size, len(payload_bytes))
+            chunk_payload_bytes = payload_bytes[start_pos:end_pos]
             
-            # Create chunk message
+            # Create chunk ProtocolMessage
             chunk_message = ProtocolMessage(
-                message_type="chunk",
+                message_type=message.message_type,
                 timestamp=message.timestamp,
                 sequence_id=self._next_sequence_id(),
                 payload={
-                    "data": chunk_data.decode('utf-8', errors='replace'),
-                    "original_type": message.message_type
+                    "_chunk_data": chunk_payload_bytes.decode('utf-8', errors='replace'),
+                    "_original_type": message.message_type
                 },
                 source=message.source,
                 target=message.target,
@@ -110,6 +187,63 @@ class MessageBuilder:
             chunks.append(chunk_message)
         
         return chunks
+    
+    def reconstruct_from_chunks(self, chunks: List[ProtocolMessage]) -> ProtocolMessage:
+        """
+        Reconstruct original message from ProtocolMessage chunks.
+        
+        Args:
+            chunks: List of chunk ProtocolMessages with same message_id
+            
+        Returns:
+            Reconstructed original ProtocolMessage
+        """
+        if not chunks:
+            raise ValueError("No chunks provided")
+        
+        if len(chunks) == 1 and not chunks[0].is_chunk:
+            # Single message, no chunking
+            return chunks[0]
+        
+        # Sort chunks by index
+        sorted_chunks = sorted(chunks, key=lambda c: c.chunk_index)
+        
+        # Verify chunk integrity
+        expected_total = sorted_chunks[0].total_chunks
+        if len(sorted_chunks) != expected_total:
+            raise ValueError(f"Missing chunks: expected {expected_total}, got {len(sorted_chunks)}")
+        
+        # Get original message metadata from first chunk
+        first_chunk = sorted_chunks[0]
+        
+        # Reconstruct payload
+        payload_parts = []
+        for chunk in sorted_chunks:
+            if chunk.message_id != first_chunk.message_id:
+                raise ValueError("Chunks have different message IDs")
+            
+            chunk_data = chunk.payload.get("_chunk_data", "")
+            payload_parts.append(chunk_data)
+        
+        # Combine payload data
+        combined_payload_str = "".join(payload_parts)
+        combined_payload = json.loads(combined_payload_str)
+        
+        # Create reconstructed message
+        reconstructed = ProtocolMessage(
+            message_type=first_chunk.payload.get("_original_type", first_chunk.message_type),
+            timestamp=first_chunk.timestamp,
+            sequence_id=first_chunk.sequence_id,
+            payload=combined_payload,
+            source=first_chunk.source,
+            target=first_chunk.target,
+            message_id=None,  # Clear chunking metadata
+            chunk_index=None,
+            total_chunks=None,
+            is_chunk=False
+        )
+        
+        return reconstructed
     
     def create_chunk_from_data(self, data: str, chunk_index: int, total_chunks: int, 
                               message_id: str, original_type: str = "data") -> ProtocolMessage:
