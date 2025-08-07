@@ -1,5 +1,4 @@
 from .Command import Command, CommandRegistry, CommandFactory
-from .BaseCommand import BaseCommand
 from .MouseCommand import MouseCommand
 from .KeyboardCommand import KeyboardCommand
 from .ClipboardCommand import ClipboardCommand
@@ -14,7 +13,7 @@ from .FileRequestCommand import FileRequestCommand
 from .FileCopiedCommand import FileCopiedCommand
 
 __all__ = [
-    "Command", "CommandRegistry", "CommandFactory", "BaseCommand",
+    "Command", "CommandRegistry", "CommandFactory",
     "MouseCommand", "KeyboardCommand", "ClipboardCommand", "ReturnCommand",
     "CommandBuilder",
     "FileStartCommand", "FileChunkCommand", "FileEndCommand", 

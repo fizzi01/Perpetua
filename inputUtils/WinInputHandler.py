@@ -29,7 +29,6 @@ from utils.Interfaces import (
 )
 from utils.Logging import Logger
 from utils.command import CommandBuilder
-from utils.command.CommandHelper import CommandHelper
 
 
 class ServerMouseController(IMouseController):

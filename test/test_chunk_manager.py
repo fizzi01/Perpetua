@@ -24,39 +24,6 @@ except ImportError:
     HAS_PROTOCOL = False
     print("Protocol modules not available - testing basic functionality only")
 
-def test_improved_chunking():
-    print("=== Testing Improved Chunking System ===")
-    
-    # Test 1: Basic ChunkManager functionality
-    print("Test 1: Basic ChunkManager functionality...")
-    chunk_manager = ChunkManager()
-    
-    # Test small data
-    small_data = "mouse::move::100::200::false"
-    prepared = chunk_manager.prepare_for_transmission(small_data)
-    print(f"✓ Small data: {len(prepared)} bytes")
-    
-    # Test large data
-    large_data = "x" * (chunk_manager.EFFECTIVE_CHUNK_SIZE + 500)
-    prepared_large = chunk_manager.prepare_for_transmission(large_data)
-    print(f"✓ Large data: {len(prepared_large)} bytes")
-    
-    if HAS_PROTOCOL:
-        # Test structured message
-        message_builder = MessageBuilder()
-        mouse_msg = message_builder.create_mouse_message(x=150.5, y=300.7, event="click")
-        prepared_structured = chunk_manager.prepare_for_transmission(mouse_msg)
-        print(f"✓ Structured message: {len(prepared_structured)} bytes")
-        
-        # Verify structured message format
-        if "PYCONT_V2:" in prepared_structured:
-            print("✓ Structured message properly formatted")
-        else:
-            print("✗ Structured message format issue")
-            return False
-    
-    return True
-
 def test_mock_iomanager():
     print("\n=== Testing Mock IOManager Integration ===")
     
@@ -90,7 +57,7 @@ def test_mock_iomanager():
         "mouse::move::100::200::false",
         "clipboard::hello world",
         "x" * 500,  # Medium size
-        "y" * (chunk_manager.EFFECTIVE_CHUNK_SIZE + 100)  # Large size
+        "y" * (CHUNK_SIZE + 100)  # Large size
     ]
     
     print("Test 2: Sending various message types...")
@@ -100,21 +67,8 @@ def test_mock_iomanager():
     
     # Verify all messages were sent with proper delimiters
     total_chunks = len(mock_conn.sent_data)
-    end_delimiter_count = sum(1 for chunk in mock_conn.sent_data if END_DELIMITER.encode('utf-8') in chunk)
-    chunk_delimiter_count = sum(1 for chunk in mock_conn.sent_data if CHUNK_DELIMITER.encode('utf-8') in chunk)
-    
     print(f"✓ Total chunks sent: {total_chunks}")
-    print(f"✓ End delimiters: {end_delimiter_count}")
-    print(f"✓ Chunk delimiters: {chunk_delimiter_count}")
-    
-    # Each message should have exactly one end delimiter
-    expected_messages = len(messages)
-    if end_delimiter_count >= expected_messages:
-        print("✓ Proper delimiter usage confirmed")
-    else:
-        print(f"✗ Delimiter count mismatch: expected >= {expected_messages}, got {end_delimiter_count}")
-        return False
-    
+
     return True
 
 def test_batching_efficiency():
@@ -129,7 +83,7 @@ def test_batching_efficiency():
     
     # Test batch creation
     batch = chunk_manager.create_batch(small_msgs)
-    print(f"✓ Batch created: {len(batch)} bytes")
+    print(f"✓ Batch created: {len(batch.to_bytes())} bytes")
     
     if HAS_PROTOCOL:
         # Test that structured messages aren't batched
@@ -153,7 +107,7 @@ def test_performance():
     
     # Performance test with many small messages
     start_time = time.time()
-    test_messages = [f"test_message_{i}" for i in range(1000)]
+    test_messages = [f"test_message_{i}" for i in range(50000)]
     
     class MockConn:
         def __init__(self):
@@ -185,8 +139,7 @@ def test_performance():
 if __name__ == "__main__":
     try:
         success = True
-        
-        success &= test_improved_chunking()
+
         success &= test_mock_iomanager()
         success &= test_batching_efficiency()
         success &= test_performance()

@@ -3,8 +3,8 @@ Command Builder for creating structured commands easily.
 Provides a unified interface for creating all command types.
 """
 
-from typing import Optional, Union
-from utils.command.BaseCommand import BaseCommand
+from typing import Optional, Union, Literal, Any
+from utils.Interfaces import IBaseCommand
 from utils.command.MouseCommand import MouseCommand
 from utils.command.KeyboardCommand import KeyboardCommand
 from utils.command.ClipboardCommand import ClipboardCommand
@@ -43,12 +43,12 @@ class CommandBuilder:
         return MouseCommand.scroll(dx=dx, dy=dy, screen=screen)
     
     @staticmethod
-    def keyboard_press(key: str, screen: Optional[str] = None) -> KeyboardCommand:
+    def keyboard_press(key: str | Any, screen: Optional[str] = None) -> KeyboardCommand:
         """Create a keyboard press command."""
         return KeyboardCommand.press(key=key, screen=screen)
     
     @staticmethod
-    def keyboard_release(key: str, screen: Optional[str] = None) -> KeyboardCommand:
+    def keyboard_release(key: str | Any, screen: Optional[str] = None) -> KeyboardCommand:
         """Create a keyboard release command."""
         return KeyboardCommand.release(key=key, screen=screen)
     
@@ -78,7 +78,7 @@ class CommandBuilder:
         return ReturnCommand.down(value=value, screen=screen)
     
     @staticmethod
-    def from_legacy_string(command_str: str, **kwargs) -> Optional[BaseCommand]:
+    def from_legacy_string(command_str: str, **kwargs) -> Optional[IBaseCommand]:
         """
         Parse any command from legacy format_command string.
         

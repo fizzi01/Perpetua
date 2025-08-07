@@ -1,9 +1,9 @@
 from typing import Optional
-from utils.command.BaseCommand import BaseCommand
+from utils.Interfaces import IBaseCommand
 from utils.protocol.message import ProtocolMessage
 
 
-class ReturnCommand(BaseCommand):
+class ReturnCommand(IBaseCommand):
     """
     Structured command for screen return actions.
     Supports: left, right, up, down

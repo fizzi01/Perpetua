@@ -1,9 +1,9 @@
 from typing import Optional
-from utils.command.BaseCommand import BaseCommand
+from utils.Interfaces import IBaseCommand
 from utils.protocol.message import ProtocolMessage
 
 
-class KeyboardCommand(BaseCommand):
+class KeyboardCommand(IBaseCommand):
     """
     Structured command for keyboard actions.
     Supports: press, release

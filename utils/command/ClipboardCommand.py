@@ -1,9 +1,9 @@
 from typing import Optional
-from utils.command.BaseCommand import BaseCommand
+from utils.Interfaces import IBaseCommand
 from utils.protocol.message import ProtocolMessage
 
 
-class ClipboardCommand(BaseCommand):
+class ClipboardCommand(IBaseCommand):
     """
     Structured command for clipboard actions.
     """

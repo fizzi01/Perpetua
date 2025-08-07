@@ -1,9 +1,9 @@
 from typing import Optional
-from utils.command.BaseCommand import BaseCommand
+from utils.Interfaces import IBaseCommand
 from utils.protocol.message import ProtocolMessage
 
 
-class MouseCommand(BaseCommand):
+class MouseCommand(IBaseCommand):
     """
     Structured command for mouse actions.
     Supports: position, click, right_click, middle_click, scroll

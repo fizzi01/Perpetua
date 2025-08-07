@@ -16,6 +16,8 @@ from utils.net.ChunkManager import ChunkManager
 from utils.protocol.message import MessageBuilder, ProtocolMessage
 from utils.protocol.adapter import ProtocolAdapter
 
+from utils.Interfaces import IBaseCommand
+
 # Optimized batch settings for the new protocol
 MOUSE_BATCH_INTERVAL = 0.015  # 15ms - faster for better responsiveness
 MOUSE_MAX_BATCH_SIZE = 5      # Smaller batches for structured messages
@@ -126,9 +128,8 @@ class MessageService(IMessageService):
 
     def send_mouse(self, screen, message):
         if self.manage_mouse:
-            from utils.command.BaseCommand import BaseCommand
-            
-            if isinstance(message, BaseCommand):
+
+            if isinstance(message, IBaseCommand):
                 # Convert BaseCommand directly to ProtocolMessage
                 try:
                     structured_msg = message.to_protocol_message(source="input", target=screen)
@@ -177,9 +178,9 @@ class MessageService(IMessageService):
 
     def send_keyboard(self, screen, message):
         if self.manage_keyboard:
-            from utils.command.BaseCommand import BaseCommand
             
-            if isinstance(message, BaseCommand):
+            
+            if isinstance(message, IBaseCommand):
                 # Convert BaseCommand directly to ProtocolMessage  
                 try:
                     structured_msg = message.to_protocol_message(source="input", target=screen)
@@ -197,9 +198,9 @@ class MessageService(IMessageService):
 
     def send_clipboard(self, screen, message):
         if self.manage_clipboard:
-            from utils.command.BaseCommand import BaseCommand
             
-            if isinstance(message, BaseCommand):
+            
+            if isinstance(message, IBaseCommand):
                 # Convert BaseCommand directly to ProtocolMessage
                 try:
                     structured_msg = message.to_protocol_message(source="input", target=screen)
@@ -392,8 +393,8 @@ class MessageService(IMessageService):
             structured_messages = []
             
             for message in messages:
-                from utils.command.BaseCommand import BaseCommand
-                if isinstance(message, BaseCommand):
+                
+                if isinstance(message, IBaseCommand):
                     structured_messages.append(message)
                 elif isinstance(message, str):
                     legacy_messages.append(message)
