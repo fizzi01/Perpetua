@@ -174,24 +174,22 @@ class ClientHandler(IClientHandler):
 
     def _process_batch(self, batch_buffer):
         for command in batch_buffer:
-            if "clipboard" in command:
-                self.clipboard_queue.put(command)
+            # Check if this is a structured message
+            if isinstance(command, ProtocolMessage):
+                try:
+                    # Use ordered processing for mouse messages to ensure smoothness
+                    if command.message_type == "mouse":
+                        self.ordered_processor.add_message(command)
+                    else:
+                        # Process other message types immediately
+                        self._process_ordered_message(command)
+                except Exception as e:
+                    self.logger(f"Error processing structured message: {e}", 2)
+                    # Fallback to legacy processing
+                    self.executor.submit(self._process, command)
             else:
-                # Check if this is a structured message
-                if self.protocol_adapter.is_structured_message(command):
-                    try:
-                        structured_msg = self.protocol_adapter.decode_structured_message(command)
-                        # Use ordered processing for mouse messages to ensure smoothness
-                        if structured_msg.message_type == "mouse":
-                            self.ordered_processor.add_message(structured_msg)
-                        else:
-                            # Process other message types immediately
-                            self._process_ordered_message(structured_msg)
-                    except Exception as e:
-                        self.logger(f"Error processing structured message: {e}", 2)
-                        # Fallback to legacy processing
-                        self.executor.submit(self._process, command)
-                else:
+                command_str = str(command)
+                if command_str:
                     # Legacy command processing
                     self.executor.submit(self._process, command)
 

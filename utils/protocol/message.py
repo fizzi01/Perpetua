@@ -326,7 +326,7 @@ class MessageBuilder:
                             source: str = None, target: str = None) -> ProtocolMessage:
         """Create a screen notification message with timestamp."""
         return ProtocolMessage(
-            message_type="screen",
+            message_type="return",
             timestamp=time.time(),
             sequence_id=self._next_sequence_id(),
             payload={

@@ -49,7 +49,7 @@ class ReturnCommand(IBaseCommand):
         
         builder = MessageBuilder()
         return builder.create_screen_message(
-            command=f"return_{self.direction}",
+            command=f"{self.direction}",
             data={"value": self.value},
             source=source,
             target=target or self.screen

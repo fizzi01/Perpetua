@@ -104,8 +104,8 @@ class ProtocolAdapter:
                     command=file_command, data=data, source=source, target=target
                 )
             
-            elif command_type == "screen" and len(parts) >= 2:
-                # screen::command::data
+            elif command_type == "return" and len(parts) >= 2:
+                # return::command::data
                 screen_command = parts[1]
                 screen_data = {}
                 if len(parts) > 2:
@@ -178,14 +178,13 @@ class ProtocolAdapter:
                 filename = payload.get("filename", "")
                 return format_command(f"file_end {filename}")
         
-        elif msg_type == "screen":
-            # Convert to: screen::command::data
+        elif msg_type == "return":
+            # Convert to: return::command::data
             screen_command = payload.get("command", "")
             screen_data = payload.get("data", {})
+            screen_value = screen_data.get("value", "")
             
-            command_parts = [f"screen {screen_command}"]
-            for key, value in screen_data.items():
-                command_parts.extend([key, str(value)])
+            command_parts = [f"return {screen_command} {screen_value}"]
             
             return format_command(" ".join(command_parts))
         
