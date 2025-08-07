@@ -7,7 +7,7 @@ from datetime import datetime
 from queue import Queue, Empty
 from typing import Callable, Dict, Any, Optional
 from utils.Logging import Logger
-from utils.net.netData import format_command
+from utils.command.CommandBuilder import CommandBuilder
 from utils.Interfaces import IMessageService, IServerContext, IFileTransferService, IClientContext
 
 
@@ -128,10 +128,10 @@ class FileTransferService(IFileTransferService):
 
             if local_owner is self.LOCAL_SERVER_OWNERSHIP:  # Server ha copiato un file e broadcasta
                 # Broadcast a tutti i client: file_copied <file_name> <file_size> <file_path>
-                cmd = format_command(f"file_copied {file_name_parsed} {file_size} {file_path_parsed}")
+                cmd = CommandBuilder.file_copied(file_name_parsed, file_size, file_path_parsed)
                 self.io_manager.send_file_copy("all", cmd)  # Tutti i client memorizzeranno con EXTERNAL_OWNERSHIP
             else:   # Client ha copiato un file, manda al server per memorizzare
-                cmd = format_command(f"file_copied {file_name_parsed} {file_size} {file_path_parsed}")
+                cmd = CommandBuilder.file_copied(file_name_parsed, file_size, file_path_parsed)
                 self.io_manager.send_file_copy(None, cmd)
 
             # Salva internamente
@@ -153,7 +153,7 @@ class FileTransferService(IFileTransferService):
                 "file_path": file_path_parsed
             }
             # Broadcast a tutti i client per far salvare info con EXTERNAL_OWNERSHIP
-            cmd = format_command(f"file_copied {file_name_parsed} {file_size} {file_path_parsed}")
+            cmd = CommandBuilder.file_copied(file_name_parsed, file_size, file_path_parsed)
             self.io_manager.send_file_copy("all", cmd)  # Invio a tutti tanto se lo stesso client lo riceve, lo ignora
 
     def handle_file_copy_external(self, file_name: str, file_size: int, file_path: str):
@@ -217,7 +217,8 @@ class FileTransferService(IFileTransferService):
 
                 def on_accept():
                     self.log(f"[FileTransferService] Server: Sending file_request to {owner}.")
-                    self.io_manager.send_file_request(owner, format_command(f"file_request {file_path_raw}"))
+                    cmd = CommandBuilder.file_request(file_path_raw)
+                    self.io_manager.send_file_request(owner, cmd)
 
                 def on_reject():
                     self.log("[FileTransferService] Server: User refused to request file.")
@@ -239,7 +240,7 @@ class FileTransferService(IFileTransferService):
                 self.bridge_requester = requester_screen
 
                 # Inoltra file_request a owner
-                forward_cmd = format_command(f"file_request {file_path_raw}")
+                forward_cmd = CommandBuilder.file_request(file_path_raw)
                 self.io_manager.send_file_request(owner, forward_cmd)
                 self.log_bridge = True
                 self.log(f"[FileTransferService] Forwarded file_request from {requester_screen} to {owner}")
@@ -268,7 +269,7 @@ class FileTransferService(IFileTransferService):
                 # Siamo un client con EXTERNAL_OWNERSHIP → devo chiedere conferma UTENTE prima di inviargli `file_request`
                 def on_accept():
                     # Mando file_request al server
-                    cmd = format_command(f"file_request {file_path}")
+                    cmd = CommandBuilder.file_request(file_path)
                     self.log(f"[FileTransferService] Sending file request to Server: {cmd}")
                     self.io_manager.send_file_request("server", cmd)
 
@@ -297,7 +298,7 @@ class FileTransferService(IFileTransferService):
 
         # Se server e bridging è attivo e from_screen == bridge_owner, forward a bridge_requester
         if self.bridge_active.is_set() and from_screen == self.bridge_owner:
-            forward_cmd = format_command(f"file_start {encoded_file_name} {file_size}")
+            forward_cmd = CommandBuilder.file_start(encoded_file_name, file_size)
             self.io_manager.send_file_request(self.bridge_requester, forward_cmd)
             self.log_bridge and self.log(
                 f"[BRIDGE] Forwarded file_start from {self.bridge_owner} -> {self.bridge_requester}")
@@ -357,7 +358,7 @@ class FileTransferService(IFileTransferService):
         if self.bridge_active.is_set():
             # Se from_screen=bridge_owner, forward a bridge_requester
             if from_screen == self.bridge_owner:
-                forward_cmd = format_command(f"file_chunk {encoded_chunk} {chunk_index}")
+                forward_cmd = CommandBuilder.file_chunk(encoded_chunk, chunk_index)
                 self.io_manager.forward_file_data(self.bridge_requester, forward_cmd)
                 self.log_bridge and self.log(
                     f"[BRIDGE] Forward chunk {chunk_index} from {self.bridge_owner} -> {self.bridge_requester}")
@@ -392,7 +393,7 @@ class FileTransferService(IFileTransferService):
         if self.bridge_active.is_set():
             if from_screen == self.bridge_owner:
                 # forward a bridge_requester
-                forward_cmd = format_command("file_end")
+                forward_cmd = CommandBuilder.file_end()
                 self.io_manager.forward_file_data(self.bridge_requester, forward_cmd)
                 self.log_bridge and self.log(f"[BRIDGE] Forward file_end -> {self.bridge_requester}")
             elif from_screen == self.bridge_requester:
