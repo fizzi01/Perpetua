@@ -146,7 +146,7 @@ class ProtocolAdapter:
             y = payload.get("y", 0)
             is_pressed = payload.get("is_pressed", False)
 
-            mouse_cmd = MouseCommand(event=event, x=x, y=y, is_pressed=is_pressed)
+            mouse_cmd = MouseCommand(action=event, x=x, y=y, is_pressed=is_pressed)
             return mouse_cmd.to_legacy_string()
 
         elif msg_type == "keyboard":
@@ -192,9 +192,9 @@ class ProtocolAdapter:
 
             screen_command = payload.get("command", "")
             screen_data = payload.get("data", {})
-            screen_value = screen_data.get("value", "")
+            screen_value = screen_data.get("value", 0.0)
 
-            return_cmd = ReturnCommand(command=screen_command, data=screen_data)
+            return_cmd = ReturnCommand(direction=screen_command, value=screen_value)
 
             return return_cmd.to_legacy_string()
 
