@@ -68,7 +68,8 @@ def main():
         test_dir / "test_new_chunking.py", 
         test_dir / "test_chunk_manager.py",
         test_dir / "test_integration_simple.py",
-        test_dir / "test_performance.py"
+        test_dir / "test_performance.py",
+        test_dir / "test_clipboard_reconstruction.py"
     ]
     
     # Filter existing files
