@@ -29,6 +29,8 @@ from utils.Interfaces import IServerContext, IMessageService, IHandler, IEventBu
 
 from utils.Logging import Logger
 from utils.net.netData import *
+from utils.command import CommandBuilder
+from utils.command.CommandHelper import CommandHelper
 
 
 class ServerMouseController(IMouseController):
@@ -289,7 +291,8 @@ class ServerMouseListener(IMouseListener):
             elif self.stop_emulation or self.buttons_pressed:
                 normalized_x = x / self.screen_width
                 normalized_y = y / self.screen_height
-                self.send(screen, format_command(f"mouse position {normalized_x} {normalized_y}"))
+                mouse_cmd = CommandBuilder.mouse_position(normalized_x, normalized_y)
+                self.send(screen, format_command(mouse_cmd.to_legacy_string()))
 
         elif not self.buttons_pressed and not self.screen_change_in_progress:
             # Quando si attraversa un bordo, invia una posizione assoluta normalizzata

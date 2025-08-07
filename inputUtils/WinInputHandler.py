@@ -29,6 +29,8 @@ from utils.Interfaces import (
 )
 from utils.Logging import Logger
 from utils.net.netData import format_command
+from utils.command import CommandBuilder
+from utils.command.CommandHelper import CommandHelper
 
 
 class ServerMouseController(IMouseController):
@@ -258,17 +260,17 @@ class ServerMouseListener(IMouseListener):
                 self.x_print = max(0, min(self.x_print, self.screen_width))
                 self.y_print = max(0, min(self.y_print, self.screen_height))
 
-                self.send(
-                    screen,
-                    format_command(
-                        f"mouse position {self.x_print / self.screen_width} {self.y_print / self.screen_height}"
-                    )
+                mouse_cmd = CommandBuilder.mouse_position(
+                    self.x_print / self.screen_width, 
+                    self.y_print / self.screen_height
                 )
+                self.send(screen, format_command(mouse_cmd.to_legacy_string()))
                 self.to_warp.set()
             elif self.stop_emulation or self.buttons_pressed:
                 normalized_x = x / self.screen_width
                 normalized_y = y / self.screen_height
-                self.send(screen, format_command(f"mouse position {normalized_x} {normalized_y}"))
+                mouse_cmd = CommandBuilder.mouse_position(normalized_x, normalized_y)
+                self.send(screen, format_command(mouse_cmd.to_legacy_string()))
 
         # Se non siamo in emulazione e non stiamo cliccando, verifichiamo se attraversiamo un bordo
         elif not self.buttons_pressed and not self.screen_change_in_progress:
@@ -280,7 +282,8 @@ class ServerMouseListener(IMouseListener):
 
                 normalized_x = 0
                 normalized_y = y / self.screen_height
-                self.send("right", format_command(f"mouse position {normalized_x} {normalized_y}"))
+                mouse_cmd = CommandBuilder.mouse_position(normalized_x, normalized_y)
+                self.send("right", format_command(mouse_cmd.to_legacy_string()))
                 self.x_print = normalized_x * self.screen_width
                 self.y_print = normalized_y * self.screen_height
 
@@ -292,7 +295,8 @@ class ServerMouseListener(IMouseListener):
 
                 normalized_x = 1
                 normalized_y = y / self.screen_height
-                self.send("left", format_command(f"mouse position {normalized_x} {normalized_y}"))
+                mouse_cmd = CommandBuilder.mouse_position(normalized_x, normalized_y)
+                self.send("left", format_command(mouse_cmd.to_legacy_string()))
                 self.x_print = normalized_x * self.screen_width
                 self.y_print = normalized_y * self.screen_height
 
@@ -304,7 +308,8 @@ class ServerMouseListener(IMouseListener):
 
                 normalized_x = x / self.screen_width
                 normalized_y = 0
-                self.send("down", format_command(f"mouse position {normalized_x} {normalized_y}"))
+                mouse_cmd = CommandBuilder.mouse_position(normalized_x, normalized_y)
+                self.send("down", format_command(mouse_cmd.to_legacy_string()))
                 self.x_print = normalized_x * self.screen_width
                 self.y_print = normalized_y * self.screen_height
 
@@ -316,7 +321,8 @@ class ServerMouseListener(IMouseListener):
 
                 normalized_x = x / self.screen_width
                 normalized_y = 1
-                self.send("up", format_command(f"mouse position {normalized_x} {normalized_y}"))
+                mouse_cmd = CommandBuilder.mouse_position(normalized_x, normalized_y)
+                self.send("up", format_command(mouse_cmd.to_legacy_string()))
                 self.x_print = normalized_x * self.screen_width
                 self.y_print = normalized_y * self.screen_height
 
@@ -346,15 +352,19 @@ class ServerMouseListener(IMouseListener):
 
         if button == mouse.Button.left:
             if screen and client and pressed:
-                self.send(screen, format_command(f"mouse click {x} {y} true"))
+                mouse_cmd = CommandBuilder.mouse_click(x, y, True)
+                self.send(screen, format_command(mouse_cmd.to_legacy_string()))
             elif screen and client and not pressed:
-                self.send(screen, format_command(f"mouse click {x} {y} false"))
+                mouse_cmd = CommandBuilder.mouse_click(x, y, False)
+                self.send(screen, format_command(mouse_cmd.to_legacy_string()))
         elif button == mouse.Button.right:
             if screen and client and pressed:
-                self.send(screen, format_command(f"mouse right_click {x} {y}"))
+                mouse_cmd = CommandBuilder.mouse_right_click(x, y)
+                self.send(screen, format_command(mouse_cmd.to_legacy_string()))
         elif button == mouse.Button.middle:
             if screen and client and pressed:
-                self.send(screen, format_command(f"mouse middle_click {x} {y}"))
+                mouse_cmd = CommandBuilder.mouse_middle_click(x, y)
+                self.send(screen, format_command(mouse_cmd.to_legacy_string()))
 
         return True
 
@@ -362,7 +372,8 @@ class ServerMouseListener(IMouseListener):
         screen = self.context.get_active_screen()
         client = self.context.get_client(screen)
         if screen and client:
-            self.send(screen, format_command(f"mouse scroll {dx} {dy}"))
+            mouse_cmd = CommandBuilder.mouse_scroll(dx, dy)
+            self.send(screen, format_command(mouse_cmd.to_legacy_string()))
         return True
 
     def __str__(self):
@@ -477,7 +488,8 @@ class ServerKeyboardListener(IHandler):
                 self.file_transfer_handler.handle_file_paste(current_dir)
 
         if screen and clients:
-            self.send(screen, format_command(f"keyboard press {data}"))
+            keyboard_cmd = CommandBuilder.keyboard_press(data)
+            self.send(screen, format_command(keyboard_cmd.to_legacy_string()))
 
     def on_release(self, key: Key | KeyCode | None):
         screen = self.context.get_active_screen()
@@ -492,7 +504,8 @@ class ServerKeyboardListener(IHandler):
             self.command_pressed = False
 
         if screen and clients:
-            self.send(screen, format_command(f"keyboard release {data}"))
+            keyboard_cmd = CommandBuilder.keyboard_release(data)
+            self.send(screen, format_command(keyboard_cmd.to_legacy_string()))
 
     def __str__(self):
         return "ServerKeyboardListener"
@@ -597,7 +610,8 @@ class ServerClipboardListener(IHandler):
 
                 # Se è cambiato il testo in clipboard
                 elif current_clipboard_content != self.last_clipboard_content:
-                    self.send("all", format_command("clipboard ") + current_clipboard_content)
+                    clipboard_cmd = CommandBuilder.clipboard(current_clipboard_content)
+                    self.send("all", format_command(clipboard_cmd.to_legacy_string()))
                     self.last_clipboard_content = current_clipboard_content
 
                 time.sleep(0.5)
@@ -709,7 +723,8 @@ class ClientClipboardListener(IHandler):
 
                         self.last_clipboard_files = current_clipboard_files
                 elif current_clipboard_content != self.last_clipboard_content:
-                    self.send(None, format_command("clipboard ") + current_clipboard_content)
+                    clipboard_cmd = CommandBuilder.clipboard(current_clipboard_content)
+                    self.send(None, format_command(clipboard_cmd.to_legacy_string()))
                     self.last_clipboard_content = current_clipboard_content
 
                 time.sleep(0.5)
@@ -756,16 +771,20 @@ class ClientMouseListener(IHandler):
 
         if self.context.get_state():
             if x <= self.threshold:
-                self.send(None, format_command(f"return left {y / self.screen_height}"))
+                return_cmd = CommandBuilder.return_left(y / self.screen_height)
+                self.send(None, format_command(return_cmd.to_legacy_string()))
                 self.context.set_state(HiddleState())
             elif x >= self.screen_width - self.threshold:
-                self.send(None, format_command(f"return right {y / self.screen_height}"))
+                return_cmd = CommandBuilder.return_right(y / self.screen_height)
+                self.send(None, format_command(return_cmd.to_legacy_string()))
                 self.context.set_state(HiddleState())
             elif y <= self.threshold:
-                self.send(None, format_command(f"return up {x / self.screen_width}"))
+                return_cmd = CommandBuilder.return_up(x / self.screen_width)
+                self.send(None, format_command(return_cmd.to_legacy_string()))
                 self.context.set_state(HiddleState())
             elif y >= self.screen_height - self.threshold:
-                self.send(None, format_command(f"return down {x / self.screen_width}"))
+                return_cmd = CommandBuilder.return_down(x / self.screen_width)
+                self.send(None, format_command(return_cmd.to_legacy_string()))
                 self.context.set_state(HiddleState())
 
         return True
