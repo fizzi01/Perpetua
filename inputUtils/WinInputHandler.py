@@ -996,8 +996,10 @@ class ClientMouseController(IMouseController):
         self.stop_event.clear()
 
     def start(self):
-        self.smoothing_thread = threading.Thread(target=self._smoothing_loop, daemon=True)
+        pass
+        #self.smoothing_thread = threading.Thread(target=self._smoothing_loop, daemon=True)
         #self.smoothing_thread.start()
+
 
     def _get_server_screen_size(self):
         """
@@ -1074,7 +1076,8 @@ class ClientMouseController(IMouseController):
             dy = y * scale_y
             current_x, current_y = self.mouse.position
             # Imposta il target come posizione attuale + dx, dy
-            self._set_target_position(current_x + dx, current_y + dy)
+            #self._set_target_position(current_x + dx, current_y + dy)
+            self.mouse.position = (x, y)
 
         elif mouse_action == "click":
             self.handle_click(Button.left, is_pressed)
