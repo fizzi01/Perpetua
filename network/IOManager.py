@@ -483,6 +483,7 @@ class BaseMessageQueueManager(threading.Thread, IMessageQueueManager):
         self.send_queue.put(priority, message)
 
     def _process_send_queue(self):
+
         while not self._stop_event.is_set():
             try:
                 _, message = self.send_queue.get(timeout=0.1)

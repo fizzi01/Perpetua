@@ -136,30 +136,38 @@ class ProtocolAdapter:
         """
         msg_type = message.message_type
         payload = message.payload
-        
+
         if msg_type == "mouse":
-            # Convert to: mouse::event::x::y::pressed
+            # Use MouseCommand to generate legacy format
+            from utils.command.MouseCommand import MouseCommand
+
             event = payload.get("event", "move")
             x = payload.get("x", 0)
             y = payload.get("y", 0)
             is_pressed = payload.get("is_pressed", False)
-            
-            return format_command(f"mouse {event} {x} {y} {str(is_pressed).lower()}")
-        
+
+            mouse_cmd = MouseCommand(event=event, x=x, y=y, is_pressed=is_pressed)
+            return mouse_cmd.to_legacy_string()
+
         elif msg_type == "keyboard":
-            # Convert to: keyboard::key::event
+            # Use KeyboardCommand to generate legacy format
+            from utils.command.KeyboardCommand import KeyboardCommand
+
             key = payload.get("key", "")
             event = payload.get("event", "")
-            
-            return format_command(f"keyboard {key} {event}")
-        
+
+            keyboard_cmd = KeyboardCommand(action=event, key=key)
+            return keyboard_cmd.to_legacy_string()
+
         elif msg_type == "clipboard":
-            # Convert to: clipboard::content::type
+            # Use ClipboardCommand to generate legacy format
+            from utils.command.ClipboardCommand import ClipboardCommand
+
             content = payload.get("content", "")
             content_type = payload.get("content_type", "text")
-            
-            return format_command(f"clipboard {content} {content_type}")
-        
+
+            clipboard_cmd = ClipboardCommand(content=content, content_type=content_type)
+            return clipboard_cmd.to_legacy_string()
         elif msg_type == "file":
             # Convert to: file_command::data
             file_command = payload.get("command", "")
@@ -177,17 +185,19 @@ class ProtocolAdapter:
             elif file_command == "end":
                 filename = payload.get("filename", "")
                 return format_command(f"file_end {filename}")
-        
+
         elif msg_type == "return":
-            # Convert to: return::command::data
+            # Use ReturnCommand to generate legacy format
+            from utils.command.ReturnCommand import ReturnCommand
+
             screen_command = payload.get("command", "")
             screen_data = payload.get("data", {})
             screen_value = screen_data.get("value", "")
-            
-            command_parts = [f"return {screen_command} {screen_value}"]
-            
-            return format_command(" ".join(command_parts))
-        
+
+            return_cmd = ReturnCommand(command=screen_command, data=screen_data)
+
+            return return_cmd.to_legacy_string()
+
         return ""
     
     def encode_message(self, message: ProtocolMessage, use_structured: bool = True) -> str:
