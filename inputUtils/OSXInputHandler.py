@@ -423,10 +423,11 @@ class ServerMouseListener(IMouseListener):
         client = self.context.get_client(screen)
         if screen and client:
             cmd = CommandBuilder.mouse_scroll(
-                dx=dx / self.screen_width,
-                dy=dy / self.screen_height,
+                dx=dx * 1.0,
+                dy=dy * 1.0,
                 screen=screen
             )
+            print("[SCROLL] Sending scroll command:", cmd)
             self.send(screen, cmd)
         return True
 

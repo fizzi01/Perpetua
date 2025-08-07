@@ -61,8 +61,8 @@ class MouseCommand(IBaseCommand):
         
         builder = MessageBuilder()
         return builder.create_mouse_message(
-            x=self.x or 0,
-            y=self.y or 0,
+            x=self.x if self.x is not None else self.dx if self.dx is not None else 0,
+            y=self.y if self.y is not None else self.dy if self.dy is not None else 0,
             event=self.action,
             is_pressed=self.is_pressed or False,
             source=source,
