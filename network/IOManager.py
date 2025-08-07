@@ -126,8 +126,18 @@ class MessageService(IMessageService):
 
     def send_mouse(self, screen, message):
         if self.manage_mouse:
-            # Always create structured messages for mouse events
-            if isinstance(message, str):
+            from utils.command.BaseCommand import BaseCommand
+            
+            if isinstance(message, BaseCommand):
+                # Convert BaseCommand directly to ProtocolMessage
+                try:
+                    structured_msg = message.to_protocol_message(source="input", target=screen)
+                    self.mouse_queue.put((screen, structured_msg))
+                except Exception as e:
+                    # Fallback to legacy string if conversion fails
+                    self.log(f"Failed to convert BaseCommand to ProtocolMessage: {e}", Logger.ERROR)
+                    self.mouse_queue.put((screen, message.to_legacy_string()))
+            elif isinstance(message, str):
                 # Parse legacy mouse command and create structured message
                 parts = message.split()
                 if len(parts) >= 4:
@@ -167,11 +177,43 @@ class MessageService(IMessageService):
 
     def send_keyboard(self, screen, message):
         if self.manage_keyboard:
-            self.keyboard_queue.put((screen, message))
+            from utils.command.BaseCommand import BaseCommand
+            
+            if isinstance(message, BaseCommand):
+                # Convert BaseCommand directly to ProtocolMessage  
+                try:
+                    structured_msg = message.to_protocol_message(source="input", target=screen)
+                    self.keyboard_queue.put((screen, structured_msg))
+                except Exception as e:
+                    # Fallback to legacy string if conversion fails
+                    self.log(f"Failed to convert BaseCommand to ProtocolMessage: {e}", Logger.ERROR)
+                    self.keyboard_queue.put((screen, message.to_legacy_string()))
+            elif isinstance(message, ProtocolMessage):
+                # Already structured message
+                self.keyboard_queue.put((screen, message))
+            else:
+                # Handle legacy string messages and other types
+                self.keyboard_queue.put((screen, message))
 
     def send_clipboard(self, screen, message):
         if self.manage_clipboard:
-            self.clipboard_queue.put((screen, message))
+            from utils.command.BaseCommand import BaseCommand
+            
+            if isinstance(message, BaseCommand):
+                # Convert BaseCommand directly to ProtocolMessage
+                try:
+                    structured_msg = message.to_protocol_message(source="input", target=screen)
+                    self.clipboard_queue.put((screen, structured_msg))
+                except Exception as e:
+                    # Fallback to legacy string if conversion fails
+                    self.log(f"Failed to convert BaseCommand to ProtocolMessage: {e}", Logger.ERROR)
+                    self.clipboard_queue.put((screen, message.to_legacy_string()))
+            elif isinstance(message, ProtocolMessage):
+                # Already structured message
+                self.clipboard_queue.put((screen, message))
+            else:
+                # Handle legacy string messages and other types
+                self.clipboard_queue.put((screen, message))
 
     def send_screen_notification(self, screen, message):
         self.MessageSender.send(self.SCREEN_NOTIFICATION_PRIORITY, (screen, message))
@@ -346,14 +388,28 @@ class MessageService(IMessageService):
         # Send batched or individual messages per screen
         for screen, messages in screen_messages.items():
             # Check if messages can be batched (only legacy strings)
-            if all(isinstance(msg, str) for msg in messages) and len(messages) > 1:
-                # Create batch for legacy messages using new method
-                batch_message = "|".join([format_data(msg) for msg in messages])
+            legacy_messages = []
+            structured_messages = []
+            
+            for message in messages:
+                from utils.command.BaseCommand import BaseCommand
+                if isinstance(message, BaseCommand):
+                    structured_messages.append(message)
+                elif isinstance(message, str):
+                    legacy_messages.append(message)
+                else:
+                    structured_messages.append(message)
+            
+            # Send legacy messages as batch if multiple
+            if len(legacy_messages) > 1:
+                batch_message = "|".join([format_data(msg) for msg in legacy_messages])
                 self.MessageSender.send(self.KEYBOARD_PRIORITY, (screen, batch_message))
-            else:
-                # Send individually (structured messages or single items)
-                for message in messages:
-                    self.MessageSender.send(self.KEYBOARD_PRIORITY, (screen, message))
+            elif len(legacy_messages) == 1:
+                self.MessageSender.send(self.KEYBOARD_PRIORITY, (screen, legacy_messages[0]))
+                
+            # Send structured messages individually to preserve structure
+            for message in structured_messages:
+                self.MessageSender.send(self.KEYBOARD_PRIORITY, (screen, message))
 
         # Clear buffer after sending
         self.keyboard_batch_buffer.clear()
@@ -362,7 +418,13 @@ class MessageService(IMessageService):
         while not self._stop_event.is_set():
             try:
                 message = self.clipboard_queue.get(timeout=0.1)
-                self.MessageSender.send(self.CLIPBOARD_PRIORITY, message)
+                # Handle tuple format (screen, message) or direct message
+                if isinstance(message, tuple):
+                    screen, clipboard_data = message
+                    self.MessageSender.send(self.CLIPBOARD_PRIORITY, (screen, clipboard_data))
+                else:
+                    # Direct message format for backward compatibility
+                    self.MessageSender.send(self.CLIPBOARD_PRIORITY, message)
             except Empty:
                 continue
 

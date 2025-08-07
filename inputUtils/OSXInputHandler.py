@@ -292,7 +292,7 @@ class ServerMouseListener(IMouseListener):
                 normalized_x = x / self.screen_width
                 normalized_y = y / self.screen_height
                 mouse_cmd = CommandBuilder.mouse_position(normalized_x, normalized_y)
-                self.send(screen, format_command(mouse_cmd.to_legacy_string()))
+                self.send(screen, mouse_cmd)
 
         elif not self.buttons_pressed and not self.screen_change_in_progress:
             # Quando si attraversa un bordo, invia una posizione assoluta normalizzata
