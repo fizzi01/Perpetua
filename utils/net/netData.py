@@ -22,7 +22,7 @@ def format_command(command: str):
 
 
 def extract_command_parts(command: str):
-    return command.split(CMD)
+    return command.split()
 
 
 def extract_text(part: str):

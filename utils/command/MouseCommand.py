@@ -72,15 +72,15 @@ class MouseCommand(IBaseCommand):
     def to_legacy_string(self) -> str:
         """Convert to legacy format_command string."""
         if self.action == self.POSITION:
-            return f"mouse {self.x} {self.y} position {str(self.is_pressed).lower()}"
+            return f"mouse position {self.x} {self.y} {str(self.is_pressed).lower()}"
         elif self.action == self.CLICK:
-            return f"mouse {self.x} {self.y} click {str(self.is_pressed).lower()}"
+            return f"mouse click {self.x} {self.y} {str(self.is_pressed).lower()}"
         elif self.action == self.RIGHT_CLICK:
-            return f"mouse {self.x} {self.y} right_click {str(self.is_pressed).lower()}"
+            return f"mouse right_click {self.x} {self.y} {str(self.is_pressed).lower()}"
         elif self.action == self.MIDDLE_CLICK:
-            return f"mouse {self.x} {self.y} middle_click {str(self.is_pressed).lower()}"
+            return f"mouse middle_click {self.x} {self.y} {str(self.is_pressed).lower()}"
         elif self.action == self.SCROLL:
-            return f"mouse {self.dx} {self.dy} scroll {str(self.is_pressed).lower()}"
+            return f"mouse scroll {self.dx} {self.dy} {str(self.is_pressed).lower()}"
         return ""
 
     @classmethod
@@ -90,9 +90,9 @@ class MouseCommand(IBaseCommand):
         if len(parts) < 4 or parts[0] != "mouse":
             return None
 
-        x = float(parts[1])
-        y = float(parts[2])
-        action = parts[3]
+        x = float(parts[2])
+        y = float(parts[3])
+        action = parts[1]
         is_pressed = parts[4].lower() == "true" if len(parts) > 4 else False
 
         if action == "position":
