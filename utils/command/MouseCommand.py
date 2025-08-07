@@ -72,36 +72,38 @@ class MouseCommand(IBaseCommand):
     def to_legacy_string(self) -> str:
         """Convert to legacy format_command string."""
         if self.action == self.POSITION:
-            return f"mouse position {self.x} {self.y}"
+            return f"mouse {self.x} {self.y} position {str(self.is_pressed).lower()}"
         elif self.action == self.CLICK:
-            return f"mouse click {self.x} {self.y} {str(self.is_pressed).lower()}"
+            return f"mouse {self.x} {self.y} click {str(self.is_pressed).lower()}"
         elif self.action == self.RIGHT_CLICK:
-            return f"mouse right_click {self.x} {self.y}"
+            return f"mouse {self.x} {self.y} right_click {str(self.is_pressed).lower()}"
         elif self.action == self.MIDDLE_CLICK:
-            return f"mouse middle_click {self.x} {self.y}"
+            return f"mouse {self.x} {self.y} middle_click {str(self.is_pressed).lower()}"
         elif self.action == self.SCROLL:
-            return f"mouse scroll {self.dx} {self.dy}"
+            return f"mouse {self.dx} {self.dy} scroll {str(self.is_pressed).lower()}"
         return ""
-    
+
     @classmethod
     def from_legacy_string(cls, command_str: str, **kwargs) -> Optional['MouseCommand']:
         """Parse from legacy format_command string."""
         parts = command_str.split()
-        if len(parts) < 2 or parts[0] != "mouse":
+        if len(parts) < 4 or parts[0] != "mouse":
             return None
-            
-        action = parts[1]
-        
-        if action == "position" and len(parts) >= 4:
-            return cls.position(float(parts[2]), float(parts[3]), **kwargs)
-        elif action == "click" and len(parts) >= 5:
-            return cls.click(float(parts[2]), float(parts[3]), 
-                           parts[4].lower() == "true", **kwargs)
-        elif action == "right_click" and len(parts) >= 4:
-            return cls.right_click(float(parts[2]), float(parts[3]), **kwargs)
-        elif action == "middle_click" and len(parts) >= 4:
-            return cls.middle_click(float(parts[2]), float(parts[3]), **kwargs)
-        elif action == "scroll" and len(parts) >= 4:
-            return cls.scroll(float(parts[2]), float(parts[3]), **kwargs)
-            
+
+        x = float(parts[1])
+        y = float(parts[2])
+        action = parts[3]
+        is_pressed = parts[4].lower() == "true" if len(parts) > 4 else False
+
+        if action == "position":
+            return cls.position(x, y, **kwargs)
+        elif action == "click":
+            return cls.click(x, y, is_pressed, **kwargs)
+        elif action == "right_click":
+            return cls.right_click(x, y, **kwargs)
+        elif action == "middle_click":
+            return cls.middle_click(x, y, **kwargs)
+        elif action == "scroll":
+            return cls.scroll(x, y, **kwargs)  # Using x,y as dx,dy for scroll
+
         return None
