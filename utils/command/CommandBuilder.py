@@ -9,6 +9,11 @@ from utils.command.MouseCommand import MouseCommand
 from utils.command.KeyboardCommand import KeyboardCommand
 from utils.command.ClipboardCommand import ClipboardCommand
 from utils.command.ReturnCommand import ReturnCommand
+from utils.command.FileStartCommand import FileStartCommand
+from utils.command.FileChunkCommand import FileChunkCommand
+from utils.command.FileEndCommand import FileEndCommand
+from utils.command.FileRequestCommand import FileRequestCommand
+from utils.command.FileCopiedCommand import FileCopiedCommand
 
 
 class CommandBuilder:
@@ -77,6 +82,32 @@ class CommandBuilder:
         """Create a return down command."""
         return ReturnCommand.down(value=value, screen=screen)
     
+    # File command creation methods
+    @staticmethod
+    def file_start(file_name: str, file_size: int, screen: Optional[str] = None) -> FileStartCommand:
+        """Create a file start command."""
+        return FileStartCommand.create(file_name=file_name, file_size=file_size, screen=screen)
+    
+    @staticmethod
+    def file_chunk(chunk_data: str, chunk_index: int, screen: Optional[str] = None) -> FileChunkCommand:
+        """Create a file chunk command."""
+        return FileChunkCommand.create(chunk_data=chunk_data, chunk_index=chunk_index, screen=screen)
+    
+    @staticmethod
+    def file_end(screen: Optional[str] = None) -> FileEndCommand:
+        """Create a file end command."""
+        return FileEndCommand.create(screen=screen)
+    
+    @staticmethod
+    def file_request(file_path: Optional[str] = None, screen: Optional[str] = None) -> FileRequestCommand:
+        """Create a file request command."""
+        return FileRequestCommand.create(file_path=file_path, screen=screen)
+    
+    @staticmethod
+    def file_copied(file_name: str, file_size: int, file_path: str, screen: Optional[str] = None) -> FileCopiedCommand:
+        """Create a file copied command."""
+        return FileCopiedCommand.create(file_name=file_name, file_size=file_size, file_path=file_path, screen=screen)
+    
     @staticmethod
     def from_legacy_string(command_str: str, **kwargs) -> Optional[IBaseCommand]:
         """
@@ -100,5 +131,15 @@ class CommandBuilder:
             return ClipboardCommand.from_legacy_string(command_str, **kwargs)
         elif command_str.startswith("return "):
             return ReturnCommand.from_legacy_string(command_str, **kwargs)
+        elif command_str.startswith("file_start "):
+            return FileStartCommand.from_legacy_string(command_str, **kwargs)
+        elif command_str.startswith("file_chunk "):
+            return FileChunkCommand.from_legacy_string(command_str, **kwargs)
+        elif command_str.startswith("file_end"):
+            return FileEndCommand.from_legacy_string(command_str, **kwargs)
+        elif command_str.startswith("file_request"):
+            return FileRequestCommand.from_legacy_string(command_str, **kwargs)
+        elif command_str.startswith("file_copied "):
+            return FileCopiedCommand.from_legacy_string(command_str, **kwargs)
         
         return None

@@ -95,7 +95,7 @@ class MouseCommand(IBaseCommand):
         action = parts[1]
         is_pressed = parts[4].lower() == "true" if len(parts) > 4 else False
 
-        if action == "position":
+        if action == "position" or action == "move":
             return cls.position(x, y, **kwargs)
         elif action == "click":
             return cls.click(x, y, is_pressed, **kwargs)

@@ -121,6 +121,7 @@ class IEventBus(Thread):
 
 class IClientConnectionHandler(ABC):
     @abstractmethod
+    @abstractmethod
     def handle_connection(self, conn: socket, addr: tuple, clients: 'IClients'):
         pass
 
@@ -597,7 +598,7 @@ class IClientCommandProcessor(Protocol):
     event_bus: 'IEventBus'
     logger: Callable
 
-    def process_client_command(self, command: str | tuple, screen: str | None) -> None:
+    def process_client_command(self, command: str | tuple | IBaseCommand, screen: str | None) -> None:
         ...
 
 
@@ -767,7 +768,7 @@ class IServerCommandProcessor(Protocol):
         self.logger = context.log
 
     # TODO: Use same interface as IClientCommandProcessor and GENERALIZE THEM :D
-    def process_server_command(self, command: str | tuple, screen: str | None = None) -> None:
+    def process_server_command(self, command: str | tuple | IBaseCommand, screen: str | None = None) -> None:
         ...
 
 
