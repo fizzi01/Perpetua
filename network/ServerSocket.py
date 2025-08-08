@@ -2,7 +2,7 @@ import ssl
 import socket
 import time
 import uuid
-from typing import Callable
+from typing import Callable, Any
 
 from zeroconf import ServiceInfo, Zeroconf, ServiceStateChange, ServiceBrowser
 
@@ -28,7 +28,7 @@ class SSLFactory:
 class ConnectionHandler(IClientConnectionHandler):
     INACTIVITY_TIMEOUT = 3
 
-    def __init__(self, process_command: Callable[[str | tuple, str], None],
+    def __init__(self, process_command: Callable[[str | tuple, str, Any], None],
                  client_handler_factory: IClientHandlerFactory):
         self.log = Logger.get_instance().log
         self.client_handlers = []
@@ -91,7 +91,7 @@ class ConnectionHandlerFactory(IConnectionHandlerFactory):
                        keyfile: str = None,
                        context=None,  # Not used by server
                        handler_socket=None,     # Not used by server
-                       command_processor: Callable[[str | tuple, str], None] = None,
+                       command_processor: Callable[[str | tuple, str, Any], None] = None,
                        handler_factory: IClientHandlerFactory = None) -> ConnectionHandler:
         if ssl_enabled:
             return SSLConnectionHandler(certfile=certfile, keyfile=keyfile, process_command=command_processor,
@@ -102,7 +102,7 @@ class ConnectionHandlerFactory(IConnectionHandlerFactory):
 
 class SSLConnectionHandler(ConnectionHandler):
 
-    def __init__(self, certfile: str, keyfile: str, process_command: Callable[[str | tuple, str], None] = None,
+    def __init__(self, certfile: str, keyfile: str, process_command: Callable[[str | tuple, str, Any], None] = None,
                  client_handler_factory: IClientHandlerFactory = None):
         super().__init__(process_command=process_command, client_handler_factory=client_handler_factory)
         self.ssl_factory = SSLFactory()

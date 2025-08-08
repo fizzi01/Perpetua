@@ -586,7 +586,7 @@ class IClientHandler(Protocol):
 
 class IClientHandlerFactory(Protocol):
     def create_handler(self, conn: IBaseSocket, screen: str,
-                       process_command: Callable[[str | tuple, str], None]) -> IClientHandler:
+                       process_command: Callable[[str | tuple, str, Any], None]) -> IClientHandler:
         ...
 
 
@@ -786,7 +786,7 @@ class IServerHandlerFactory(Protocol):
 
     # TODO: Generalize with the ClientHandlerFactory
     def create_handler(self, conn: IBaseSocket | IClientSocket,
-                       process_command: Callable[[str], None]) -> IServerHandler:
+                       process_command: Callable[[str, Any, Any], None]) -> IServerHandler:
         """
         Create a new server handler (client context)
         :param conn: Connected Socket
@@ -823,7 +823,7 @@ class IConnectionHandlerFactory(Protocol):
                        context: Optional[IServerContext | IClientContext] = None,
                        keyfile: Optional[str] = None,
                        handler_socket: Optional[IBaseSocket | IServerSocket | IClientSocket] = None,
-                       command_processor: Callable[[str | tuple, str], None] = None,
+                       command_processor: Callable[[str | tuple, str, Any], None] = None,
                        handler_factory: IClientHandlerFactory | IServerHandlerFactory = None) -> (
             IClientConnectionHandler
             | IServerConnectionHandler):

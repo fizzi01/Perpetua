@@ -150,7 +150,7 @@ class ServerBuilder:
             ssl_enabled=self.use_ssl,
             certfile=self.certfile,
             keyfile=self.keyfile,
-            command_processor=lambda cmd, scr: command_processor.process_client_command(cmd, scr),
+            command_processor=command_processor.process_client_command,
             handler_factory=client_handler_factory,
         )
         connection_service = ConnectionService(server_socket, self.clients, connection_handler, server, logger)

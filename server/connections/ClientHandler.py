@@ -3,7 +3,7 @@ from threading import Thread, Event
 
 from concurrent.futures import ThreadPoolExecutor
 from queue import Queue
-from typing import Callable
+from typing import Callable, Any, Optional
 
 from utils.command.Command import CommandFactory
 from utils.Interfaces import IBaseSocket, IClientHandler
@@ -24,7 +24,7 @@ MAX_WORKERS = 10
 class ClientHandlerFactory(IClientHandlerFactory):
 
     def create_handler(self, conn: IBaseSocket, screen: str,
-                       process_command: Callable[[str | tuple, str], None]):
+                       process_command: Callable[[Optional[str | tuple], Optional[str], Optional[Any]], None]):
         return ClientHandler(client_socket=conn, screen=screen, command_processor=process_command)
 
 
@@ -35,7 +35,7 @@ class ClientHandler(IClientHandler):
     :param process: process(command, screen) with 'command' as a tuple of elements
     """
 
-    def __init__(self, client_socket: IBaseSocket | socket.socket, screen: str, command_processor: Callable[[str | tuple, str], None]):
+    def __init__(self, client_socket: IBaseSocket | socket.socket, screen: str, command_processor: Callable[[Optional[str | tuple], Optional[str], Optional[Any]], None]):
         self.conn = client_socket
         self.address = self.conn.address
         self.screen = screen
@@ -93,7 +93,7 @@ class ClientHandler(IClientHandler):
         self.ordered_processor.stop()
         
         self.conn.close()
-        self.process(("disconnect", self.conn), self.screen)
+        self.process(("disconnect", self.conn), self.screen, None)
         # Trigger the clipboard thread to process the last command
         self.clipboard_queue.put("")
         # Trigger the processor thread to process the last batch
@@ -105,6 +105,7 @@ class ClientHandler(IClientHandler):
     def is_alive(self) -> bool:
         if self.processor_thread and self.clipboard_thread:
             return self.processor_thread.is_alive() and self.clipboard_thread.is_alive()
+        return False
 
     def _handle(self):
         """Handle incoming data using new ProtocolMessage-level chunking."""
@@ -195,7 +196,7 @@ class ClientHandler(IClientHandler):
                     self.executor.submit(self._process, command)
 
     def _process(self, command):
-        self.process(command, self.screen)
+        self.process(command, self.screen, None)
 
     def _process_ordered_message(self, message: ProtocolMessage):
         """Process a structured message using DataObject approach."""
@@ -209,7 +210,7 @@ class ClientHandler(IClientHandler):
                 # Fallback to legacy processing if DataObject creation fails
                 legacy_command = self.protocol_adapter.structured_to_legacy(message)
                 if legacy_command:
-                    self.process(legacy_command, self.screen)
+                    self.process(legacy_command, self.screen, None)
         except Exception as e:
             self.logger(f"Error processing structured message: {e}", 2)
     
@@ -219,7 +220,7 @@ class ClientHandler(IClientHandler):
             # Call the command processor with the data object
             if callable(self.process):
                 # Check if we can update the process function to accept data_object
-                self.process(data_object=data_object, screen=screen)
+                self.process(None, screen, data_object)
             else:
                 self.logger(f"Cannot process data object directly, using legacy fallback", Logger.DEBUG)
         except Exception as e:

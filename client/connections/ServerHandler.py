@@ -3,6 +3,7 @@ import threading
 from collections.abc import Callable
 from time import sleep, time
 from queue import Queue, Empty
+from typing import Any, Optional
 
 from utils.Interfaces import IServerHandler, IClientSocket, IServerHandlerFactory
 from utils.Logging import Logger
@@ -17,7 +18,7 @@ from utils.data import DataObjectFactory
 class ServerHandlerFactory(IServerHandlerFactory):
 
     def create_handler(self, conn: IClientSocket,
-                       process_command: Callable[[str], None]) -> IServerHandler:
+                       process_command: Callable[[str, Any, Any], None]) -> IServerHandler:
         return ServerHandler(connection=conn, command_func=process_command)
 
 
@@ -31,7 +32,7 @@ class ServerHandler(IServerHandler):
     BATCH_PROCESS_INTERVAL = 0.0000001
     TIMEOUT = 0.0000001
 
-    def __init__(self, connection: IClientSocket, command_func: Callable[[str], None]):
+    def __init__(self, connection: IClientSocket, command_func: Callable[[Optional[str], Any, Any], None]):
         self.conn = connection
         self.process_command = command_func
         self.on_disconnect = None
@@ -152,10 +153,10 @@ class ServerHandler(IServerHandler):
             commands = batch_data.split('|')
             for command in commands:
                 if command.strip():
-                    self.process_command(command.strip())
+                    self.process_command(command.strip(), None, None)
         else:
             # Single command
-            self.process_command(batch_data)
+            self.process_command(batch_data, None, None)
     
     def _process_ordered_message(self, message: ProtocolMessage):
         """Process a structured message using DataObject approach."""
@@ -169,7 +170,7 @@ class ServerHandler(IServerHandler):
                 # Fallback to legacy processing if DataObject creation fails
                 legacy_command = self.protocol_adapter.structured_to_legacy(message)
                 if legacy_command:
-                    self.process_command(legacy_command)
+                    self.process_command(legacy_command, None, None)
         except Exception as e:
             self.log(f"Error processing structured message: {e}", Logger.ERROR)
     
@@ -179,7 +180,7 @@ class ServerHandler(IServerHandler):
             # Call the command processor with the data object
             if hasattr(self.process_command, '__func__'):
                 # If process_command is bound method, call it with data_object parameter
-                self.process_command(data_object=data_object)
+                self.process_command(None, None, data_object)
             else:
                 # Fallback to legacy string conversion if needed
                 self.log(f"Using legacy fallback for data object: {data_object.data_type}", Logger.DEBUG)

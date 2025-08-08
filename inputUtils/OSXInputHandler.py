@@ -121,8 +121,8 @@ class ServerMouseListener(IMouseListener):
         self.to_warp = threading.Event()
         self.stop_warp = threading.Event()
 
-        self._listener = MouseListener(on_move=self.on_move, on_scroll=self.on_scroll, on_click=self.on_click,
-                                       darwin_intercept=self.mouse_suppress_filter)
+        self._listener = MouseListener(on_move=self.on_move, on_scroll=self.on_scroll, on_click=self.on_click,)
+                                      # darwin_intercept=self.mouse_suppress_filter)
 
     def get_position(self):
         return self.x_print, self.y_print
@@ -453,8 +453,8 @@ class ServerKeyboardListener(IHandler):
 
         self.command_pressed = False
 
-        self._listener = KeyboardListener(on_press=self.on_press, on_release=self.on_release,
-                                          darwin_intercept=self.keyboard_suppress_filter)
+        self._listener = KeyboardListener(on_press=self.on_press, on_release=self.on_release,)
+                                          #darwin_intercept=self.keyboard_suppress_filter)
 
         self._caps_lock = False
 
