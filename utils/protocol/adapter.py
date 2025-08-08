@@ -78,17 +78,10 @@ class ProtocolAdapter:
                     key=key, event=event, source=source, target=target
                 )
             
-            elif command_type == "clipboard":
-                # For clipboard commands, preserve exact whitespace by using direct string extraction
-                # instead of relying on extract_command_parts which normalizes whitespace
-                if legacy_command.startswith("clipboard "):
-                    content = legacy_command[10:]  # len("clipboard ") = 10
-                    content_type = "text"  # Default type for legacy clipboard commands
-                elif legacy_command == "clipboard":
-                    content = ""
-                    content_type = "text"
-                else:
-                    return None
+            elif command_type == "clipboard" and len(parts) >= 2:
+                # clipboard::content
+                content = parts[1]
+                content_type = parts[2] if len(parts) > 2 else "text"
                 
                 return self.message_builder.create_clipboard_message(
                     content=content, content_type=content_type,

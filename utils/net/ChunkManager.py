@@ -101,19 +101,6 @@ class ChunkManager:
                 if len(remaining_data) < 4:
                     break  # Not enough data for length prefix
                 
-                # Read length prefix to check if we have complete message
-                try:
-                    import struct
-                    length = struct.unpack('>I', remaining_data[:4])[0]
-                    
-                    # Check if we have the complete message
-                    if len(remaining_data) < 4 + length:
-                        break  # Incomplete message, wait for more data
-                        
-                except (struct.error, ValueError):
-                    # Invalid length prefix, could be legacy data
-                    break
-                
                 # Parse ProtocolMessage from bytes
                 message = ProtocolMessage.from_bytes(remaining_data)
                 message_size = message.get_serialized_size()
@@ -130,9 +117,15 @@ class ChunkManager:
                     messages.append(message)
                     
             except (ValueError, json.JSONDecodeError, struct.error):
-                # Could be legacy data or malformed - try to find message boundary
-                # For now, break and let more data accumulate
-                break
+                # Could be legacy data or malformed - try as string
+                try:
+                    remaining_str = data[offset:].decode('utf-8', errors='replace')
+                    messages.append(remaining_str)
+                    offset = len(data)  # Consumed all remaining data as string
+                    break
+                except:
+                    # Skip this byte and continue
+                    offset += 1
         
         return messages, offset
     
