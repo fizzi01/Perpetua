@@ -46,14 +46,26 @@ class ServerCommandProcessor(IServerCommandProcessor):
             except Empty:
                 continue
 
-    def process_server_command(self, command: str | tuple, screen: str | None = None):
-        if not command:
+    def process_server_command(self, command: str | tuple = None, screen: str | None = None, data_object = None):
+        """
+        Process server command using either legacy command string/tuple or structured data object.
+        
+        Args:
+            command: Legacy command string or tuple (optional)
+            screen: Screen identifier
+            data_object: Structured data object (preferred approach)
+        """
+        if not command and not data_object:
             return
-        cmd_instance = CommandFactory.create_command(raw_command=command, context=self.context,
-                                                     message_service=self.message_service, event_bus=self.event_bus,
-                                                     screen=screen)
+            
+        cmd_instance = CommandFactory.create_command(
+            raw_command=command, context=self.context,
+            message_service=self.message_service, event_bus=self.event_bus,
+            screen=screen, data_object=data_object
+        )
+        
         if not cmd_instance:
-            self.logger(f"[ServerCommandProcessor] Invalid server command: {command}", Logger.ERROR)
+            self.logger(f"[ServerCommandProcessor] Invalid server command: {command or data_object}", Logger.ERROR)
             return
 
         cmd_name = cmd_instance.DESCRIPTION
@@ -66,11 +78,11 @@ class ServerCommandProcessor(IServerCommandProcessor):
             self.keyboard_queue.put(cmd_instance)
         elif cmd_name == "clipboard":
             self.clipboard_queue.put(cmd_instance)
-        elif cmd_name == "screen":
-            # Se necessario, una coda dedicata, o esegui direttamente:
+        elif cmd_name == "return":
+            # Execute directly for screen commands
             cmd_instance.execute()
         else:
-            # Comando non riconosciuto
+            # Unknown command type
             self.logger(f"[ServerCommandProcessor] Unknown command type: {cmd_name}", Logger.WARNING)
 
     def stop(self):

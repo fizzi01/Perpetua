@@ -10,9 +10,15 @@ class DisconnectCommand(Command):
 
     def execute(self):
         logging.debug(f"({self.DESCRIPTION}) Executing command")
-        connection = self.payload[0]
-
-        if isinstance(connection, socket | IBaseSocket):
-            self.context.on_disconnect(connection)
+        
+        # This command typically uses payload for connection object, not data_object
+        # Keep legacy behavior since disconnect doesn't map well to ProtocolMessage → DataObject flow
+        if self.has_legacy_payload() and self.payload:
+            connection = self.payload[0]
+            
+            if isinstance(connection, socket | IBaseSocket):
+                self.context.on_disconnect(connection)
+            else:
+                logging.debug("({self.DESCRIPTION}) Invalid connection type")
         else:
-            logging.debug("({self.DESCRIPTION}) Invalid connection type")
+            logging.debug(f"({self.DESCRIPTION}) No connection data available")

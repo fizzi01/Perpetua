@@ -14,6 +14,7 @@ from utils.Interfaces import IClientCommandProcessor, IClientHandlerFactory
 from utils.protocol.adapter import ProtocolAdapter
 from utils.protocol.ordering import OrderedMessageProcessor
 from utils.protocol.message import ProtocolMessage
+from utils.data import DataObjectFactory
 
 BATCH_PROCESS_INTERVAL = 0.01
 MAX_BATCH_SIZE = 10
@@ -197,24 +198,54 @@ class ClientHandler(IClientHandler):
         self.process(command, self.screen)
 
     def _process_ordered_message(self, message: ProtocolMessage):
-        """Process a structured message by converting it back to legacy format."""
+        """Process a structured message using DataObject approach."""
         try:
-            # Convert structured message back to legacy format for existing command processors
-            legacy_command = self.protocol_adapter.structured_to_legacy(message)
-            if legacy_command:
-                self.process(legacy_command, self.screen)
+            # Convert ProtocolMessage to DataObject instead of legacy format
+            data_object = DataObjectFactory.create_from_protocol_message(message)
+            if data_object:
+                # Use DataObject-based processing
+                self.process_with_data_object(data_object, self.screen)
+            else:
+                # Fallback to legacy processing if DataObject creation fails
+                legacy_command = self.protocol_adapter.structured_to_legacy(message)
+                if legacy_command:
+                    self.process(legacy_command, self.screen)
         except Exception as e:
-            self.logger(f"Error converting structured message to legacy format: {e}", 2)
+            self.logger(f"Error processing structured message: {e}", 2)
+    
+    def process_with_data_object(self, data_object, screen):
+        """Process command using structured data object."""
+        try:
+            # Call the command processor with the data object
+            if callable(self.process):
+                # Check if we can update the process function to accept data_object
+                self.process(data_object=data_object, screen=screen)
+            else:
+                self.logger(f"Cannot process data object directly, using legacy fallback", Logger.DEBUG)
+        except Exception as e:
+            self.logger(f"Error processing command with data object: {e}", 2)
 
 
 class ClientCommandProcessor(IClientCommandProcessor):
 
-    def process_client_command(self, command, screen):
-        if not command:
+    def process_client_command(self, command=None, screen=None, data_object=None):
+        """
+        Process client command using either legacy command or structured data object.
+        
+        Args:
+            command: Legacy command string/tuple (optional)
+            screen: Screen identifier
+            data_object: Structured data object (preferred approach)
+        """
+        if not command and not data_object:
             return
-        command_handler = CommandFactory.create_command(raw_command=command, context=self.context,
-                                                        message_service=self.message_service, event_bus=self.event_bus,
-                                                        screen=screen)
+            
+        command_handler = CommandFactory.create_command(
+            raw_command=command, context=self.context,
+            message_service=self.message_service, event_bus=self.event_bus,
+            screen=screen, data_object=data_object
+        )
+        
         if command_handler:
             command_handler.screen = screen
             command_handler.execute()

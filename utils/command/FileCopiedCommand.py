@@ -2,6 +2,7 @@ import logging
 
 from utils.command.Command import Command
 from utils.Interfaces import IFileTransferContext, IServerContext
+from utils.data import FileData
 
 
 class FileCopiedCommand(Command):
@@ -11,9 +12,19 @@ class FileCopiedCommand(Command):
     def execute(self):
         try:
             owner = self.screen
-            file_name = self.payload[0]
-            file_size = int(self.payload[1])
-            file_path = self.payload[2]
+            
+            # Use structured data object if available, fallback to legacy payload
+            if self.has_data_object() and isinstance(self.data_object, FileData):
+                file_name = self.data_object.file_name
+                file_size = self.data_object.file_size
+                file_path = self.data_object.file_path
+            elif self.has_legacy_payload() and self.payload and len(self.payload) >= 3:
+                file_name = self.payload[0]
+                file_size = int(self.payload[1])
+                file_path = self.payload[2]
+            else:
+                logging.error(f"({self.DESCRIPTION}) No valid data source available")
+                return
 
             if (isinstance(self.context, IServerContext)
                     and isinstance(self.context, IFileTransferContext)):

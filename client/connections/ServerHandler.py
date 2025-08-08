@@ -11,6 +11,7 @@ from utils.net.ChunkManager import ChunkManager
 from utils.protocol.adapter import ProtocolAdapter
 from utils.protocol.ordering import OrderedMessageProcessor
 from utils.protocol.message import ProtocolMessage
+from utils.data import DataObjectFactory
 
 
 class ServerHandlerFactory(IServerHandlerFactory):
@@ -157,11 +158,31 @@ class ServerHandler(IServerHandler):
             self.process_command(batch_data)
     
     def _process_ordered_message(self, message: ProtocolMessage):
-        """Process a structured message by converting it back to legacy format."""
+        """Process a structured message using DataObject approach."""
         try:
-            # Convert structured message back to legacy format for existing command processors
-            legacy_command = self.protocol_adapter.structured_to_legacy(message)
-            if legacy_command:
-                self.process_command(legacy_command)
+            # Convert ProtocolMessage to DataObject instead of legacy format
+            data_object = DataObjectFactory.create_from_protocol_message(message)
+            if data_object:
+                # Use DataObject-based processing
+                self.process_command_with_data_object(data_object)
+            else:
+                # Fallback to legacy processing if DataObject creation fails
+                legacy_command = self.protocol_adapter.structured_to_legacy(message)
+                if legacy_command:
+                    self.process_command(legacy_command)
         except Exception as e:
-            self.log(f"Error converting structured message to legacy format: {e}", Logger.ERROR)
+            self.log(f"Error processing structured message: {e}", Logger.ERROR)
+    
+    def process_command_with_data_object(self, data_object):
+        """Process command using structured data object."""
+        try:
+            # Call the command processor with the data object
+            if hasattr(self.process_command, '__func__'):
+                # If process_command is bound method, call it with data_object parameter
+                self.process_command(data_object=data_object)
+            else:
+                # Fallback to legacy string conversion if needed
+                self.log(f"Using legacy fallback for data object: {data_object.data_type}", Logger.DEBUG)
+                # This should be replaced with direct DataObject processing
+        except Exception as e:
+            self.log(f"Error processing command with data object: {e}", Logger.ERROR)

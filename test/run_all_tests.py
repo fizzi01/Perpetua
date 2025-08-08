@@ -70,7 +70,9 @@ def main():
         test_dir / "test_integration_simple.py",
         test_dir / "test_performance.py",
         test_dir / "test_clipboard_reconstruction.py",
-        test_dir / "test_command_system.py"
+        test_dir / "test_command_system.py",
+        test_dir / "test_data_object_abstraction.py",  # New data object abstraction tests
+        test_dir / "test_data_object_integration.py"  # New integration tests
     ]
     
     # Filter existing files
