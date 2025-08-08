@@ -427,7 +427,6 @@ class ServerMouseListener(IMouseListener):
                 dy=dy * 1.0,
                 screen=screen
             )
-            print("[SCROLL] Sending scroll command:", cmd)
             self.send(screen, cmd)
         return True
 
