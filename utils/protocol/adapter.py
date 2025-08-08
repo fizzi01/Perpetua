@@ -5,8 +5,7 @@ import json
 from typing import Union, Optional, Tuple, List
 from .message import ProtocolMessage, MessageBuilder
 from .chunking import ChunkReassembler
-from utils.net.netData import extract_command_parts
-from utils.command.CommandBuilder import CommandBuilder
+from utils.net.netData import extract_command_parts, format_command
 
 
 class ProtocolAdapter:
@@ -44,7 +43,7 @@ class ProtocolAdapter:
         Convert legacy string command to structured message format.
         
         Args:
-            legacy_command: Legacy command string (e.g., "mouse move 100 200")
+            legacy_command: Legacy command string (e.g., "mouse::move::100::200")
             source: Source identifier
             target: Target identifier
             
@@ -52,12 +51,6 @@ class ProtocolAdapter:
             ProtocolMessage or None if conversion fails
         """
         try:
-            # Use CommandBuilder to parse the legacy command
-            base_command = CommandBuilder.from_legacy_string(legacy_command)
-            if base_command:
-                return base_command.to_protocol_message(source=source, target=target)
-            
-            # Fall back to manual parsing for non-standard commands
             parts = extract_command_parts(legacy_command)
             if not parts:
                 return None
@@ -65,7 +58,7 @@ class ProtocolAdapter:
             command_type = parts[0]
             
             if command_type == "mouse" and len(parts) >= 4:
-                # mouse event x y [pressed]
+                # mouse::event::x::y::pressed
                 event = parts[1]
                 x = float(parts[2])
                 y = float(parts[3])
@@ -77,9 +70,9 @@ class ProtocolAdapter:
                 )
             
             elif command_type == "keyboard" and len(parts) >= 3:
-                # keyboard event key
-                event = parts[1]
-                key = parts[2]
+                # keyboard::key::event
+                key = parts[1]
+                event = parts[2]
                 
                 return self.message_builder.create_keyboard_message(
                     key=key, event=event, source=source, target=target
@@ -189,18 +182,16 @@ class ProtocolAdapter:
             if file_command == "start":
                 filename = payload.get("filename", "")
                 size = payload.get("size", 0)
-                cmd = CommandBuilder.file_start(filename, size)
-                return cmd.to_legacy_string()
+                return format_command(f"file_start {filename} {size}")
             
             elif file_command == "chunk":
                 data = payload.get("data", "")
                 index = payload.get("index", 0)
-                cmd = CommandBuilder.file_chunk(data, index)
-                return cmd.to_legacy_string()
+                return format_command(f"file_chunk {data} {index}")
             
             elif file_command == "end":
-                cmd = CommandBuilder.file_end()
-                return cmd.to_legacy_string()
+                filename = payload.get("filename", "")
+                return format_command(f"file_end {filename}")
 
         elif msg_type == "return":
             # Use ReturnCommand to generate legacy format

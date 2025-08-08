@@ -92,10 +92,10 @@ def test_protocol_conversion():
     
     # Test cases: (legacy_command, expected_type, expected_payload_check)
     test_cases = [
-        ("mouse move 100 200 false", "mouse", lambda p: p['x'] == 100.0 and p['y'] == 200.0),
-        ("keyboard press a", "keyboard", lambda p: p['key'] == 'a' and p['event'] == 'press'),
-        ("clipboard hello", "clipboard", lambda p: p['content'] == 'hello'),
-        ("file_start test.txt 1024", "file", lambda p: p['command'] == 'file_start' and p['file_name'] == 'test.txt'),
+        ("mouse::move::100::200::false", "mouse", lambda p: p['x'] == 100.0 and p['y'] == 200.0),
+        ("keyboard::a::press", "keyboard", lambda p: p['key'] == 'a' and p['event'] == 'press'),
+        ("clipboard::hello::text", "clipboard", lambda p: p['content'] == 'hello'),
+        ("file_start::test.txt::1024", "file", lambda p: p['command'] == 'start' and p['filename'] == 'test.txt'),
     ]
     
     conversion_results = []

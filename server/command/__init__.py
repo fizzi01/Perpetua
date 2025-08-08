@@ -18,55 +18,39 @@ from utils.command.FileCopiedCommand import FileCopiedCommand
 def register_commands():
     logging.basicConfig(level=logging.ERROR)
     try:
-        # Register all commands here - updated to support both legacy and IBaseCommand
+        # Register all commands here
         CommandFactory.registry.register(ClipboardCommand.DESCRIPTION,
-                                         lambda context, message_service, event_bus, screen, payload, base_command=None: 
-                                         ClipboardCommand(
+                                         lambda context, message_service, event_bus, screen, payload: ClipboardCommand(
                                              context=context, message_service=message_service, event_bus=event_bus,
-                                             screen=screen, payload=payload, base_command=base_command))
+                                             screen=screen, payload=payload))
 
         CommandFactory.registry.register(ReturnCommand.DESCRIPTION,
-                                         lambda context, message_service, event_bus, screen, payload, base_command=None:
-                                         ReturnCommand(
-                                             context=context, message_service=message_service, event_bus=event_bus,
-                                             screen=screen, payload=payload, base_command=base_command))
+                                         lambda context, message_service, event_bus, screen, payload: ReturnCommand(
+                                             context, message_service, event_bus, screen, payload))
 
         CommandFactory.registry.register(DisconnectCommand.DESCRIPTION,
-                                         lambda context, message_service, event_bus, screen, payload, base_command=None:
-                                         DisconnectCommand(
-                                             context=context, message_service=message_service, event_bus=event_bus,
-                                             screen=screen, payload=payload, base_command=base_command))
+                                         lambda context, message_service, event_bus, screen, payload: DisconnectCommand(
+                                             context, message_service, event_bus, screen, payload))
 
-        # File commands - these now extend IBaseCommand and can execute themselves
         CommandFactory.registry.register(FileChunkCommand.DESCRIPTION,
-                                         lambda context, message_service, event_bus, screen, payload, base_command=None: 
-                                         base_command if base_command else FileChunkCommand(
-                                             context=context, message_service=message_service, event_bus=event_bus,
-                                             screen=screen, payload=payload))
+                                         lambda context, message_service, event_bus, screen, payload: FileChunkCommand(
+                                             context, message_service, event_bus, screen, payload))
 
         CommandFactory.registry.register(FileEndCommand.DESCRIPTION,
-                                         lambda context, message_service, event_bus, screen, payload, base_command=None:
-                                         base_command if base_command else FileEndCommand(
-                                             context=context, message_service=message_service, event_bus=event_bus,
-                                             screen=screen, payload=payload))
+                                         lambda context, message_service, event_bus, screen, payload: FileEndCommand(
+                                             context, message_service, event_bus, screen, payload))
 
         CommandFactory.registry.register(FileStartCommand.DESCRIPTION,
-                                         lambda context, message_service, event_bus, screen, payload, base_command=None:
-                                         base_command if base_command else FileStartCommand(
-                                             context=context, message_service=message_service, event_bus=event_bus,
-                                             screen=screen, payload=payload))
+                                         lambda context, message_service, event_bus, screen, payload: FileStartCommand(
+                                             context, message_service, event_bus, screen, payload))
 
         CommandFactory.registry.register(FileRequestCommand.DESCRIPTION,
-                                         lambda context, message_service, event_bus, screen, payload, base_command=None:
-                                         base_command if base_command else FileRequestCommand(
-                                             context=context, message_service=message_service, event_bus=event_bus,
-                                             screen=screen, payload=payload))
+                                         lambda context, message_service, event_bus, screen, payload: FileRequestCommand(
+                                             context, message_service, event_bus, screen, payload))
 
         CommandFactory.registry.register(FileCopiedCommand.DESCRIPTION,
-                                         lambda context, message_service, event_bus, screen, payload, base_command=None:
-                                         base_command if base_command else FileCopiedCommand(
-                                             context=context, message_service=message_service, event_bus=event_bus,
-                                             screen=screen, payload=payload))
+                                         lambda context, message_service, event_bus, screen, payload: FileCopiedCommand(
+                                             context, message_service, event_bus, screen, payload))
         return True
     except Exception as e:
         logging.error(f"Error while registering commands: {e}")

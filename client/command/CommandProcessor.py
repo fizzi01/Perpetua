@@ -2,7 +2,7 @@ from queue import Queue
 from threading import Thread, Event
 
 from server.command import CommandFactory
-from utils.Interfaces import IClientContext, IMessageService, IEventBus, IServerCommandProcessor, IFileTransferService, IBaseCommand
+from utils.Interfaces import IClientContext, IMessageService, IEventBus, IServerCommandProcessor, IFileTransferService
 from utils.Logging import Logger
 
 
@@ -46,7 +46,7 @@ class ServerCommandProcessor(IServerCommandProcessor):
             except Empty:
                 continue
 
-    def process_server_command(self, command: str | tuple | IBaseCommand, screen: str | None = None):
+    def process_server_command(self, command: str | tuple, screen: str | None = None):
         if not command:
             return
         cmd_instance = CommandFactory.create_command(raw_command=command, context=self.context,
@@ -66,11 +66,11 @@ class ServerCommandProcessor(IServerCommandProcessor):
             self.keyboard_queue.put(cmd_instance)
         elif cmd_name == "clipboard":
             self.clipboard_queue.put(cmd_instance)
-        elif cmd_name == "return":
-            # Execute return commands directly
+        elif cmd_name == "screen":
+            # Se necessario, una coda dedicata, o esegui direttamente:
             cmd_instance.execute()
         else:
-            # Unknown command
+            # Comando non riconosciuto
             self.logger(f"[ServerCommandProcessor] Unknown command type: {cmd_name}", Logger.WARNING)
 
     def stop(self):

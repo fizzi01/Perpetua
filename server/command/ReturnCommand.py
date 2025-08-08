@@ -1,31 +1,17 @@
 import logging
 
 from utils.command.Command import Command
-from utils.Interfaces import IEventBus, IBaseCommand
-from utils.command.ReturnCommand import ReturnCommand as ReturnDataCommand
+from utils.Interfaces import IEventBus
 
 
 class ReturnCommand(Command):
 
     DESCRIPTION = "return"
 
-    def __init__(self, **kwargs):
-        super().__init__(**kwargs)
-        self.base_command = kwargs.get('base_command', None)
-
     def execute(self):
         logging.info(f"({self.DESCRIPTION}) Executing command")
         active_screen = self.context.get_active_screen()
-        
-        # Extract direction from IBaseCommand object or legacy payload
-        if isinstance(self.base_command, ReturnDataCommand):
-            direction = self.base_command.direction
-        elif self.payload and len(self.payload) > 0:
-            direction = self.payload[0]  # Legacy payload support
-        else:
-            logging.error(f"({self.DESCRIPTION}) No direction provided")
-            return
-            
+        direction = self.payload[0]
         position = self.context.get_current_mouse_position()
 
         if active_screen == "left" and direction == "right":
