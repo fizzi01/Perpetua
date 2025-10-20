@@ -74,6 +74,7 @@ class ChunkManager:
             conn: Network connection
             message: ProtocolMessage to send
         """
+        print("Sending ProtocolMessage:", message)
         # Serialize ProtocolMessage directly to bytes
         message_bytes = message.to_bytes()
         

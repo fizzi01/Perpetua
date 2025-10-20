@@ -1077,7 +1077,7 @@ class ClientMouseController(IMouseController):
             current_x, current_y = self.mouse.position
             # Imposta il target come posizione attuale + dx, dy
             #self._set_target_position(current_x + dx, current_y + dy)
-            self.mouse.position = (x, y)
+            self.mouse.position = (current_x + dx, current_y + dy)
 
         elif mouse_action == "click":
             self.handle_click(Button.left, is_pressed)
