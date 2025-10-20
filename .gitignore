@@ -135,6 +135,4 @@ README.md
 entitlements.plist
 
 dist/*
-Test/*
-Test
 .gitignore
