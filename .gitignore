@@ -136,3 +136,7 @@ entitlements.plist
 
 dist/*
 .gitignore
+
+OLD/**
+OLD/*
+OLD/
