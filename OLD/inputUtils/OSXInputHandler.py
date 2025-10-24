@@ -117,6 +117,8 @@ class ServerMouseListener(IMouseListener):
         self.screen_change_timeout = 0
         self.ignore_move_events_until = 0
 
+        self.center = [self.screen_width // 2, self.screen_height // 2]
+
         self.to_warp = threading.Event()
         self.stop_warp = threading.Event()
 
@@ -137,7 +139,7 @@ class ServerMouseListener(IMouseListener):
             raise ValueError("Mouse controller not found in the context")
 
         self._listener.start()
-        threading.Thread(target=self.warp_cursor_to_center, daemon=True).start()
+        #threading.Thread(target=self.warp_cursor_to_center, daemon=True).start()
         self.stop_warp.clear()
         self.to_warp.clear()
 
@@ -224,20 +226,21 @@ class ServerMouseListener(IMouseListener):
             time.sleep(self.WARP_DELAY)
 
     def on_move(self, x, y):
-        # Check if cursor is in warped position
-        if self.to_warp.is_set() and ( x == self.screen_width // 2 and y == self.screen_height // 2):
-            self.to_warp.clear()
-            return True # Skip the event
+        # # Check if cursor is in warped position
+        # if self.to_warp.is_set() and ( x == self.screen_width // 2 and y == self.screen_height // 2):
+        #     self.to_warp.clear()
+        #     return True # Skip the event
+        #
+        #
+        # if self.stop_emulation and current_time > self.stop_emulation_timeout and len(self.buttons_pressed) == 0:
+        #     self.stop_emulation = False
+        #
+        # if not self.stop_emulation and self.ignore_move_events_until > current_time:
+        #     self.last_x = x
+        #     self.last_y = y
+        #     return True
 
         current_time = time.time()
-
-        if self.stop_emulation and current_time > self.stop_emulation_timeout and len(self.buttons_pressed) == 0:
-            self.stop_emulation = False
-
-        if not self.stop_emulation and self.ignore_move_events_until > current_time:
-            self.last_x = x
-            self.last_y = y
-            return True
 
         # Check if the screen change is in progress and if the timeout has expired
         if self.screen_change_in_progress and current_time > self.screen_change_timeout:
@@ -274,6 +277,10 @@ class ServerMouseListener(IMouseListener):
 
         if screen and client and is_transmitting:
 
+            # Recalculate dx and dy taking into account center position
+            dx = x - self.center[0]
+            dy = y - self.center[1]
+
             if not self.buttons_pressed and not self.stop_emulation:
 
                 self.x_print += dx
@@ -284,7 +291,7 @@ class ServerMouseListener(IMouseListener):
                 self.y_print = max(0, min(self.y_print, self.screen_height))
 
                 self.send(screen, format_command(
-                    f"mouse position {self.x_print / self.screen_width} {self.y_print / self.screen_height}"))
+                    f"mouse position {dx} {dy}"))
                 self.to_warp.set()
             elif self.stop_emulation or self.buttons_pressed:
                 normalized_x = x / self.screen_width

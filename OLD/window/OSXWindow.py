@@ -91,6 +91,10 @@ def overlay_process(conn):
             self.previous_app_pid = self.previous_app.processIdentifier()
             self.fullscreen_windows = []
 
+            size = self.GetSize()
+            pos = self.GetPosition()
+            self.center_pos = (pos.x + size.width // 2, pos.y + size.height // 2)
+
             # Set background color and transparency
             self.SetBackgroundColour(wx.TransparentColour)
 
@@ -103,6 +107,7 @@ def overlay_process(conn):
             self.pipe_thread.start()
 
             self.force_event_bound = False
+            self.mouse_captured = False
 
             # Hide invoked Event
             self.is_hide_invoked = False
@@ -113,6 +118,60 @@ def overlay_process(conn):
 
             self.monitor_timer = wx.Timer(self)
             self.Bind(wx.EVT_TIMER, self.monitor_overlay, self.monitor_timer)
+            self.Bind(wx.EVT_MOTION, self.on_mouse_move)
+
+        def on_mouse_move(self, event):
+            if not self.mouse_captured:
+                event.Skip()
+                return
+
+            # Ottieni posizione corrente
+            mouse_pos = wx.GetMousePosition()
+
+            # Calcola delta rispetto al centro
+            delta_x = mouse_pos.x - self.center_pos[0]
+            delta_y = mouse_pos.y - self.center_pos[1]
+
+            # Processa solo se c'è movimento
+            if delta_x != 0 or delta_y != 0:
+                # Resetta posizione
+                wx.CallAfter(self.reset_mouse_position)
+
+            event.Skip()
+
+        def reset_mouse_position(self):
+            if self.mouse_captured and self.center_pos:
+                # Sposta il cursore al centro della finestra
+                client_center = self.ScreenToClient(self.center_pos)
+                self.WarpPointer(client_center.x, client_center.y)
+
+        def enable_mouse_capture(self):
+            if not self.mouse_captured:
+                self.mouse_captured = True
+
+                # Calcola il centro della finestra
+                size = self.GetSize()
+                pos = self.GetPosition()
+                self.center_pos = (pos.x + size.width // 2, pos.y + size.height // 2)
+
+                # Nascondi il cursore
+                cursor = wx.Cursor(wx.CURSOR_BLANK)
+                self.SetCursor(cursor)
+
+                # Cattura il mouse
+                self.CaptureMouse()
+                self.reset_mouse_position()
+
+        def disable_mouse_capture(self):
+            if self.mouse_captured:
+                self.mouse_captured = False
+
+                # Rilascia il mouse
+                if self.HasCapture():
+                    self.ReleaseMouse()
+
+                # Ripristina il cursore
+                self.SetCursor(wx.NullCursor)
 
         def on_focus(self, event):
             self.ShowOverlay()
@@ -136,8 +195,10 @@ def overlay_process(conn):
                         command = channel.recv()
                         if command == 'minimize':
                             wx.CallAfter(self.HideOverlay)
+                            wx.CallAfter(self.disable_mouse_capture)
                         elif command == 'maximize':
                             wx.CallAfter(self.ShowOverlay)
+                            wx.CallAfter(self.enable_mouse_capture)
                         elif command == 'stop':
                             wx.CallAfter(self.Close)
                             channel.close()
