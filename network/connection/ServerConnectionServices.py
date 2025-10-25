@@ -7,29 +7,39 @@ from time import sleep
 import ssl
 from socket import timeout, error
 from threading import Thread, Event
-from typing import Optional
+from typing import Optional, Callable, Any
 
 from model.ClientObj import ClientsManager, ClientObj
 from network.data.MessageExchange import MessageExchange
 from network.protocol.message import MessageType
 from utils.logging.logger import Logger
 
-from .ServerSocket import ServerSocket, BaseSocket
+from .ServerSocket import ServerSocket
+from .GeneralSocket import BaseSocket, StreamType
 
 class ServerConnectionHandler:
     """
     Manages server-side socket connections to multiple clients.
-    It provides methods to start, stop, and monitor clients connections.
-    It provides methods to handle information handshake between server and clients. (first connection)
+    Handles SSL and NON-SSL connections, heartbeats, and client management.
+    Performs handshake to exchange information with clients.
 
-    It creates ClientObj instances to represent connected clients and stores them in a client manager.
-    It handles SSL and NON-SSL connections, heartbeats, and client management.
-    It create a socket server to listen for incoming client connections.
+    Attributes:
+        msg_exchange (MessageExchange): Message exchange handler.
+        connected_callback (callable): Callback for client connection.
+        disconnected_callback (callable): Callback for client disconnection.
+        host (str): Server host address.
+        port (int): Server port.
+        wait (int): Socket wait time.
+        heartbeat_interval (int): Interval for heartbeat checks.
+        max_errors (int): Max errors before stopping the server.
+        whitelist (ClientsManager): Manager for whitelisted clients.
+        certfile (str): SSL certificate file path.
+        keyfile (str): SSL key file path.
     """
 
     def __init__(self, msg_exchange: Optional['MessageExchange'] = None,
-                 connected_callback: Optional[callable] = None,
-                 disconnected_callback: Optional[callable] = None,
+                 connected_callback: Optional[Callable[['ClientObj'], Any]] = None,
+                 disconnected_callback: Optional[Callable[['ClientObj'], Any]] = None,
                  host: str = "0.0.0.0", port: int = 5001, wait: int = 5,
                  heartbeat_interval: int = 10, max_errors: int = 10,
                  whitelist: Optional[ClientsManager] = None,
@@ -126,17 +136,10 @@ class ServerConnectionHandler:
                     continue
 
                 # Perform handshake and update client info
-                if self._handshake(client_socket, client_obj):
+                if self._handshake(client_socket, client_addr=addr, client=client_obj):
 
-                    # Check if SSL is required for this client
-                    if client_obj.ssl:
-                        client_socket = self._ssl_wrap(client_socket)
-                        self.logger.log(f"SSL connection established with client {addr[0]}.", Logger.INFO)
-                    else:
-                        self.logger.log(f"Non-SSL connection established with client {addr[0]}.", Logger.INFO)
-
-                    client_obj.conn_socket = BaseSocket(client_socket, addr)
                     client_obj.is_connected = True
+
                     self.clients.update_client(client_obj)
                     if self.connected_callback:
                         self.connected_callback(client_obj)
@@ -170,7 +173,7 @@ class ServerConnectionHandler:
                     break
 
 
-    def _handshake(self, client_socket, client: ClientObj):
+    def _handshake(self, client_socket, client_addr, client: ClientObj):
         """
         Perform handshake with the connected client to exchange information.
         Returns a dictionary with client information.
@@ -187,6 +190,31 @@ class ServerConnectionHandler:
                 client.screen_resolution = response.payload.get("screen_resolution", None)
                 client.additional_params = response.payload.get("additional_params", {})
                 client.ssl = response.payload.get("ssl", False)
+
+                requested_streams = response.payload.get("streams", [])
+
+                # Create BaseSocket to manage multiple streams
+                client.conn_socket = BaseSocket(client_addr).put_stream(StreamType.COMMAND, client_socket)
+
+                # Server starts to accept connections on those ports only for this client
+                connected_streams = 0
+                while connected_streams < len(requested_streams):
+                    stream_socket, addr = self.socket_server.accept()
+                    if addr[0] != client.ip_address:
+                        self.logger.log(f"Unexpected connection from {addr[0]} during handshake. Expected {client.ip_address}. Closing.", Logger.WARNING)
+                        stream_socket.close()
+                        continue
+
+                    port = addr[1]
+                    if client.ssl:
+                        stream_socket = self._ssl_wrap(stream_socket)
+                        self.logger.log(f"SSL stream connection established with client {addr[0]} on port {port}.", Logger.INFO)
+                    else:
+                        self.logger.log(f"Non-SSL stream connection established with client {addr[0]} on port {port}.", Logger.INFO)
+                    client.conn_socket.put_stream(requested_streams[connected_streams], stream_socket)
+                    client.ports[requested_streams[connected_streams]] = port
+                    connected_streams += 1
+
                 self.logger.log(f"Handshake successful with client {client.ip_address}", Logger.INFO)
                 return True
             else:
@@ -217,6 +245,9 @@ class ServerConnectionHandler:
                         client.conn_socket.close()
                         client.conn_socket = None
                         self.clients.update_client(client)
+
+                        if self.disconnected_callback:
+                            self.disconnected_callback(client)
 
     def _ssl_wrap(self, client_socket):
         """

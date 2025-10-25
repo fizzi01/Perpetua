@@ -11,7 +11,7 @@ class ClientObj:
     """
     def __init__(self,
                  ip_address: str,
-                 port: int = 0,
+                 ports: dict[int, int] = None,
                  connection_time: float = 0.0,
                  is_connected: bool = True,
                  screen_position: str = "center",
@@ -21,7 +21,7 @@ class ClientObj:
                  conn_socket: Optional[object] = None,
                  additional_params: dict = None):
         self.ip_address = ip_address
-        self.port = port
+        self.ports = ports if ports is not None else {}
         self.connection_time = connection_time
         self.screen_position = screen_position
         self.screen_resolution = screen_resolution
@@ -32,7 +32,7 @@ class ClientObj:
         self.additional_params = additional_params if additional_params is not None else {}
 
     def __repr__(self):
-        return (f"ClientObj(ip_address={self.ip_address}, port={self.port}, "
+        return (f"ClientObj(ip_address={self.ip_address}, port={self.ports}, "
                 f"connection_time={self.connection_time}, screen_position={self.screen_position}, "
                 f"screen_resolution={self.screen_resolution}, client_name={self.client_name}, "
                 f"additional_params={self.additional_params})")
@@ -50,7 +50,7 @@ class ClientsManager:
     def update_client(self, client: 'ClientObj'):
         # Update existing client info based on IP and port
         for idx, existing_client in enumerate(self.clients):
-            if existing_client.ip_address == client.ip_address and existing_client.port == client.port:
+            if existing_client.ip_address == client.ip_address:
                 self.clients[idx] = client
                 return
         raise ValueError("Client not found to update.")
