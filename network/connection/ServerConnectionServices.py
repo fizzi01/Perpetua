@@ -196,7 +196,7 @@ class ServerConnectionHandler:
                 # Create BaseSocket to manage multiple streams
                 client.conn_socket = BaseSocket(client_addr).put_stream(StreamType.COMMAND, client_socket)
 
-                # Server starts to accept connections on those ports only for this client
+                # Server starts to accept connections only for this client
                 connected_streams = 0
                 while connected_streams < len(requested_streams):
                     stream_socket, addr = self.socket_server.accept()
