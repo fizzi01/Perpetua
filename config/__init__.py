@@ -17,6 +17,12 @@ class ApplicationConfig:
     server_key: str = "server"
     client_key: str = "client"
 
+    # Data exchange params
+    max_chunk_size: int = 1024  # 1 KB
+    max_delay_tolerance: float = 0.1
+    parallel_processors: int = 1
+    auto_chunk: bool = True
+
     config_files: dict = field(default_factory=dict)
 
     def __post_init__(self):

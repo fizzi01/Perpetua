@@ -286,7 +286,7 @@ class MessageBuilder:
 
     def create_mouse_message(self, x: float, y: float, event: str,
                              is_pressed: bool = False, source: str = None,
-                             target: str = None) -> ProtocolMessage:
+                             target: str = None, **kwargs) -> ProtocolMessage:
         """Create a mouse event message with timestamp."""
         return ProtocolMessage(
             message_type="mouse",
@@ -296,7 +296,8 @@ class MessageBuilder:
                 "x": x,
                 "y": y,
                 "event": event,
-                "is_pressed": is_pressed
+                "is_pressed": is_pressed,
+                **kwargs
             },
             source=source,
             target=target
@@ -364,19 +365,20 @@ class MessageBuilder:
 
     def create_handshake_message(self, client_name: str, screen_resolution: str,
                                  screen_position: str, additional_params: Dict[str, Any] = None,
-                                 ack: bool = True, ssl: bool = True,
+                                 ack: bool = True, ssl: bool = True, streams: List[int] = None,
                                  source: str = None, target: str = None) -> ProtocolMessage:
         """Create a handshake message with timestamp."""
         return ProtocolMessage(
-            message_type="exchange",
+            message_type=MessageType.EXCHANGE,
             timestamp=time.time(),
             sequence_id=self._next_sequence_id(),
             payload={
                 "client_name": client_name,
                 "screen_resolution": screen_resolution,
                 "screen_position": screen_position,
-                "acknowledged": ack,
+                "ack": ack,
                 "ssl": ssl,
+                "streams": streams or [],
                 "additional_params": additional_params or {}
             },
             source=source,

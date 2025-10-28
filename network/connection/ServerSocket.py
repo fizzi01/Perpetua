@@ -61,6 +61,7 @@ class ServerSocket:
 
     def _initialize_socket(self, host: str = "", port: int = 5001, wait: int = 5):
         self.socket = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+        self.socket.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
         self.socket.settimeout(wait)
         self.host = host
         self.port = port
@@ -79,7 +80,7 @@ class ServerSocket:
 
     def bind_and_listen(self):
         self.socket.bind((self.host, self.port))
-        self.socket.listen()
+        self.socket.listen(5)
 
     def accept(self):
         return self.socket.accept()
@@ -126,7 +127,7 @@ class ServerSocket:
         return conflict_found
 
     def _register_mdns_service(self):
-        self.host = NetUtils.get_local_ip()
+        #self.host = NetUtils.get_local_ip()
         if not self.host:
             raise Exception("No connection.")
         service_info = ServiceInfo(

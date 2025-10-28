@@ -3,9 +3,11 @@ Layer responsible for handling message exchanges between network nodes, using pr
 """
 import threading
 from time import sleep, time
-from typing import Callable, Dict, Optional, Any
+from typing import Callable, Dict, Optional, Any, List
 from dataclasses import dataclass, field
 
+from config import ApplicationConfig
+from utils.logging.logger import Logger
 from network.protocol.message import ProtocolMessage, MessageBuilder
 from network.protocol.ordering import OrderedMessageProcessor
 
@@ -13,11 +15,11 @@ from network.protocol.ordering import OrderedMessageProcessor
 @dataclass
 class MessageExchangeConfig:
     """Configuration for MessageExchange layer."""
-    max_delay_tolerance: float = 0.1
-    max_chunk_size: int = 1024  # bytes
+    max_delay_tolerance: float = ApplicationConfig.max_delay_tolerance
+    max_chunk_size: int = ApplicationConfig.max_chunk_size  # bytes
     enable_ordering: bool = True
-    auto_chunk: bool = True
-    parallel_processors: int = 1
+    auto_chunk: bool = ApplicationConfig.auto_chunk
+    parallel_processors: int = ApplicationConfig.parallel_processors
 
 
 class MessageExchange:
@@ -26,7 +28,7 @@ class MessageExchange:
     Handles protocol details, chunking, ordering, and callbacks.
     """
 
-    def __init__(self, conf: MessageExchangeConfig = None):
+    def __init__(self, conf: MessageExchangeConfig = None, stream_type: int = None):
         """
         Initialize MessageExchange layer.
 
@@ -35,6 +37,7 @@ class MessageExchange:
         """
         self.config = conf or MessageExchangeConfig()
         self.builder = MessageBuilder()
+        self.stream_type = stream_type
 
         # Message handlers registry
         self._handlers: Dict[str, Callable[[ProtocolMessage], None]] = {}
@@ -57,7 +60,9 @@ class MessageExchange:
         self._send_callback: Optional[Callable[[bytes], None]] = None
         self._receive_callback: Optional[Callable[[int], bytes]] = None
 
-    def set_transport(self, send_callback: Callable[[bytes], None], receive_callback: Optional[Callable[[int], bytes]] = None):
+        self.logger = Logger.get_instance()
+
+    def set_transport(self, send_callback: Optional[Callable[[bytes], None]] = None, receive_callback: Optional[Callable[[int], bytes]] = None):
         """
         Set the transport layer callback for sending messages.
 
@@ -77,13 +82,13 @@ class MessageExchange:
         """
         self._handlers[message_type] = handler
 
-    def send_mouse_event(self, x: float, y: float, event: str,
-                         is_pressed: bool = False,source: str = None, target: str = None):
+    def send_mouse_data(self, x: float, y: float, event: str,
+                        is_pressed: bool = False, source: str = None, target: str = None, **kwargs):
         """Send a mouse event message."""
-        message = self.builder.create_mouse_message(x, y, event, is_pressed,source=source, target=target)
+        message = self.builder.create_mouse_message(x, y, event, is_pressed, source=source, target=target, **kwargs)
         self._send_message(message)
 
-    def send_keyboard_event(self, key: str, event: str,source: str = None, target: str = None):
+    def send_keyboard_data(self, key: str, event: str, source: str = None, target: str = None):
         """Send a keyboard event message."""
         message = self.builder.create_keyboard_message(key, event,source=source, target=target)
         self._send_message(message)
@@ -105,7 +110,7 @@ class MessageExchange:
 
     def send_handshake_message(self, client_name: str = None, screen_resolution: str = None,
                                  screen_position: str = None, additional_params: Dict[str, Any] = None,
-                                 ack: bool = True, ssl: bool = False,
+                                 ack: bool = True, ssl: bool = False, streams: List[int] = None,
                                  source: str = None, target: str = None):
         """Send handshake message."""
         message = self.builder.create_handshake_message(
@@ -115,6 +120,7 @@ class MessageExchange:
             additional_params,
             ack=ack,
             ssl=ssl,
+            streams=streams,
             source=source,
             target=target
         )
@@ -161,9 +167,11 @@ class MessageExchange:
         try:
             data = self._receive_callback(self.config.max_chunk_size)
             if data:
-                self._receive_data(data, instant=instant)
+                return self._receive_data(data, instant=instant)
+            return None
         except Exception as e:
-            print(f"Error receiving message: {e}")
+            self.logger.log(f"Error receiving message: {e}", Logger.ERROR)
+            return None
 
     def _receive_data(self, data: bytes, instant: bool = False):
         """
@@ -180,11 +188,14 @@ class MessageExchange:
                 reconstructed = self._handle_chunk(message)
                 if reconstructed:
                     self._process_received_message(reconstructed)
+                    return None
+                return None
             else:
-                self._process_received_message(message, instant=instant)
+                return self._process_received_message(message, instant=instant)
 
         except Exception as e:
-            print(f"Error processing received data: {e}")
+            self.logger.log(f"Error processing received data: {e}", Logger.ERROR)
+            return None
 
     def _handle_chunk(self, chunk: ProtocolMessage) -> Optional[ProtocolMessage]:
         """
@@ -213,12 +224,14 @@ class MessageExchange:
         if self.config.enable_ordering and not instant:
             # Add to ordered processor
             self.processor.add_message(message)
+            return None
         elif instant:
             # Immediate processing
             return message
         else:
             # Process immediately
             self._dispatch_message(message)
+            return None
 
     def _dispatch_message(self, message: ProtocolMessage):
         """Dispatch message to registered handler."""
@@ -227,9 +240,9 @@ class MessageExchange:
             try:
                 handler(message)
             except Exception as e:
-                print(f"Error in message handler for {message.message_type}: {e}")
+                self.logger.log(f"Error in message handler for {message.message_type}: {e}", Logger.ERROR)
         else:
-            print(f"No handler registered for message type: {message.message_type}")
+            self.logger.log(f"No handler registered for message type: {message.message_type}", Logger.ERROR)
 
     def stop(self):
         """Cleanup and shutdown the message exchange layer."""
@@ -274,8 +287,8 @@ if __name__ == "__main__":
     exchange.register_handler("clipboard", handle_clipboard)
 
     # Invia messaggi
-    exchange.send_mouse_event(100, 200, "click", is_pressed=True)
-    exchange.send_keyboard_event("A", "press")
+    exchange.send_mouse_data(100, 200, "click", is_pressed=True)
+    exchange.send_keyboard_data("A", "press")
 
     # Simula ricezione dati
     raw_mouse_data = exchange.builder.create_mouse_message(150, 250, "move").to_bytes()

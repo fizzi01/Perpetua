@@ -6,12 +6,13 @@ from aioquic.asyncio import QuicConnectionProtocol
 from aioquic.quic.events import StreamDataReceived, HandshakeCompleted, ConnectionTerminated
 from enum import IntEnum
 
+from attr import dataclass
 
 from utils.logging.logger import Logger
 from utils.override import override
 
-
-class StreamType(IntEnum):
+@dataclass
+class StreamType:
     """Tipi di stream QUIC con priorità"""
     COMMAND = 0      # Alta priorità - comandi bidirezionali
     KEYBOARD = 4     # Alta priorità - eventi tastiera
@@ -56,7 +57,7 @@ class QuicProtocol(QuicConnectionProtocol):
             if self.on_connection_lost:
                 asyncio.create_task(self.on_connection_lost())
 
-    def send_stream_data(self, stream_type: StreamType, data: bytes):
+    def send_stream_data(self, stream_type: int, data: bytes):
         """Invia dati su uno stream specifico"""
         stream_id = stream_type
         self._quic.send_stream_data(stream_id, data, end_stream=False)
@@ -79,7 +80,7 @@ class QuicSocket(ABC):
         """Avvia la connessione QUIC"""
         pass
 
-    def send_on_stream(self, stream_type: StreamType, data: bytes):
+    def send_on_stream(self, stream_type: int, data: bytes):
         """Invia dati su uno stream specifico"""
         if not self.protocol:
             raise RuntimeError("QUIC connection not established")
@@ -106,12 +107,20 @@ class BaseSocket(socket.socket):
         :param address: Indirizzo del socket
         """
         super().__init__()
-        self.streams: Dict[StreamType, socket.socket] = {}
+        self.streams: Dict[int, socket.socket] = {}
 
         self._address = address
         self.log = Logger.get_instance().log
 
-    def put_stream(self, stream_type: StreamType, stream_socket: socket.socket) -> 'BaseSocket':
+    def get_stream(self, stream_type: int) -> socket.socket:
+        """
+        Restituisce lo stream associato al tipo di stream specificato
+        :param stream_type: Tipo di stream (StreamType)
+        :return: Socket associato allo stream
+        """
+        return self.streams.get(stream_type)
+
+    def put_stream(self, stream_type: int, stream_socket: socket.socket) -> 'BaseSocket':
         """
         Aggiunge uno stream al socket
         :param stream_type: Tipo di stream (StreamType)
@@ -120,7 +129,7 @@ class BaseSocket(socket.socket):
         self.streams[stream_type] = stream_socket
         return self
 
-    def close_stream(self, stream_type: StreamType) -> 'BaseSocket':
+    def close_stream(self, stream_type: int) -> 'BaseSocket':
         if stream_type in self.streams:
             try:
                 self.streams[stream_type].close()
@@ -134,7 +143,7 @@ class BaseSocket(socket.socket):
         return self._address
 
     @override
-    def send(self, data: str | bytes, stream: Optional[StreamType] = None):
+    def send(self, data: str | bytes, stream: Optional[int] = None):
         if isinstance(data, str):
             data = data.encode()
 
@@ -145,7 +154,7 @@ class BaseSocket(socket.socket):
             pass
 
     @override
-    def recv(self, size: int, stream: Optional[StreamType] = None) -> bytes:
+    def recv(self, size: int, stream: Optional[int] = None) -> bytes:
         try:
             if stream and self.streams[stream]:
                 return self.streams[stream].recv(size)

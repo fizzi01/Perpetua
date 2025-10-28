@@ -69,6 +69,9 @@ class Logger:
         self.stdout = stdout
         self.logging_strategy = LoggingStrategyFactory.get_logging_strategy(self.logging)
 
+    def set_level(self, level: int):
+        pass
+
     def log(self, message, priority: int = 0):
         with self._lock:
             self._queue.put((message, priority))

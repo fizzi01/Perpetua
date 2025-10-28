@@ -74,6 +74,7 @@ class ServerConnectionHandler:
     def initialize(self):
         if not self._initialized:
             self.socket_server = ServerSocket(self.host, self.port, self.wait)
+            self.socket_server.bind_and_listen()
             self._initialized = True
 
     def start(self) -> bool:
@@ -181,6 +182,7 @@ class ServerConnectionHandler:
         # Server sends handshake request
         self.msg_exchange.set_transport(client_socket.send, client_socket.recv)
         self.msg_exchange.send_handshake_message(ack=False,source="server", target=client.screen_position)
+        self.logger.log(f"Sent handshake request to client {client.ip_address}", Logger.DEBUG)
 
         # Server waits for client response
         response = self.msg_exchange.receive_message(instant=True)

@@ -75,7 +75,7 @@ class ClientsManager:
     def get_clients(self) -> list['ClientObj']:
         return self.clients
 
-    def get_client(self, ip_address: Optional[str], screen_position: Optional[str] = None) -> Optional['ClientObj']:
+    def get_client(self, ip_address: Optional[str] = None, screen_position: Optional[str] = None) -> Optional['ClientObj']:
         for client in self.clients:
             if ip_address:
                 if client.ip_address == ip_address:
