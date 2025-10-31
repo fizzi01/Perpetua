@@ -1,24 +1,17 @@
 import json
-import os
 import unittest
 import time
 from pathlib import Path
-from threading import Thread, Event
-from queue import Queue
-import socket
 
-from network.stream.CustomStream import MouseStreamHandler
+from network.stream.CustomStream import UnidirectionalStreamHandler
 from network.connection.ServerConnectionServices import ServerConnectionHandler
-from network.connection.GeneralSocket import BaseSocket, StreamType
+from network.stream.StreamObj import StreamType
 from model.ClientObj import ClientsManager, ClientObj
 from event.EventBus import ThreadSafeEventBus
 from event.Event import EventType, MouseEvent
 from utils.logging.logger import Logger
 
-from multiprocessing import Process, Queue as MPQueue, Event as MPEvent
-
 import subprocess
-import signal
 
 
 class TestMouseStreamHandler(unittest.TestCase):
@@ -147,7 +140,7 @@ class TestMouseStreamHandler(unittest.TestCase):
     @classmethod
     def _setup_mouse_handler(cls):
         """Inizializza MouseStreamHandler."""
-        cls.mouse_handler = MouseStreamHandler(
+        cls.mouse_handler = UnidirectionalStreamHandler(
             stream_type=StreamType.MOUSE,
             clients=cls.clients_manager,
             event_bus=cls.event_bus

@@ -4,12 +4,14 @@ Layer responsible for handling message exchanges between network nodes, using pr
 import threading
 from time import sleep, time
 from typing import Callable, Dict, Optional, Any, List
-from dataclasses import dataclass, field
+from dataclasses import dataclass
 
 from config import ApplicationConfig
 from utils.logging.logger import Logger
 from network.protocol.message import ProtocolMessage, MessageBuilder
 from network.protocol.ordering import OrderedMessageProcessor
+
+from network.stream.StreamObj import StreamType
 
 
 @dataclass
@@ -108,6 +110,11 @@ class MessageExchange:
         message = self.builder.create_screen_message(command, data,source=source, target=target)
         self._send_message(message)
 
+    def send_command_message(self, command: str, params: Dict[str, Any] = None, source: str = None, target: str = None):
+        """Send a generic command message."""
+        message = self.builder.create_command_message(command, params, source=source, target=target)
+        self._send_message(message)
+
     def send_handshake_message(self, client_name: str = None, screen_resolution: str = None,
                                  screen_position: str = None, additional_params: Dict[str, Any] = None,
                                  ack: bool = True, ssl: bool = False, streams: List[int] = None,
@@ -125,6 +132,28 @@ class MessageExchange:
             target=target
         )
         self._send_message(message)
+
+    def send_stream_type_message(self, stream_type: int, source: str = None, target: str = None, **kwargs):
+        """Send stream type message."""
+
+        match stream_type:
+            case StreamType.MOUSE:
+                self.send_mouse_data(source=source, target=target, **kwargs)
+                return
+            case StreamType.KEYBOARD:
+                self.send_keyboard_data(source=source, target=target, **kwargs)
+                return
+            case StreamType.CLIPBOARD:
+                self.send_clipboard_data(source=source, target=target, **kwargs)
+                return
+            case StreamType.FILE:
+                self.send_file_data(source=source, target=target, **kwargs)
+                return
+            case StreamType.COMMAND:
+                self.send_command_message(source=source, target=target, **kwargs)
+            case _:
+                self.logger.log(f"Unknown stream type: {stream_type}", Logger.ERROR)
+                return
 
     def send_custom_message(self, message_type: str, payload: Dict[str, Any],source: str = None, target: str = None):
         """Send a custom message with arbitrary payload."""

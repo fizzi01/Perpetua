@@ -15,7 +15,9 @@ from network.protocol.message import MessageType
 from utils.logging.logger import Logger
 
 from .ServerSocket import ServerSocket
-from .GeneralSocket import BaseSocket, StreamType
+from .GeneralSocket import BaseSocket
+from ..stream.StreamObj import StreamType
+
 
 class ServerConnectionHandler:
     """

@@ -16,6 +16,7 @@ class MessageType:
     KEYBOARD = "keyboard"
     CLIPBOARD = "clipboard"
     FILE = "file"
+    COMMAND = "command"
     SCREEN = "screen"
     EXCHANGE = "exchange"
 
@@ -343,6 +344,21 @@ class MessageBuilder:
             payload={
                 "command": command,
                 "data": data or {}
+            },
+            source=source,
+            target=target
+        )
+
+    def create_command_message(self, command: str, params: Dict[str, Any] = None,
+                               source: str = None, target: str = None) -> ProtocolMessage:
+        """Create a command message with timestamp."""
+        return ProtocolMessage(
+            message_type="command",
+            timestamp=time.time(),
+            sequence_id=self._next_sequence_id(),
+            payload={
+                "command": command,
+                "params": params or {}
             },
             source=source,
             target=target

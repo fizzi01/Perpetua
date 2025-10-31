@@ -10,7 +10,8 @@ from itertools import chain, repeat
 from time import sleep
 
 from network.connection.ServerConnectionServices import ServerConnectionHandler
-from network.connection.GeneralSocket import StreamType, BaseSocket
+from network.connection.GeneralSocket import BaseSocket
+from network.stream.StreamObj import StreamType
 from model.ClientObj import ClientsManager, ClientObj
 from network.data.MessageExchange import MessageExchange
 from network.protocol.message import ProtocolMessage, MessageType

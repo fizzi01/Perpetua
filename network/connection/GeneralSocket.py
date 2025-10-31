@@ -4,21 +4,9 @@ from typing import Optional, Callable, Dict
 from abc import ABC, abstractmethod
 from aioquic.asyncio import QuicConnectionProtocol
 from aioquic.quic.events import StreamDataReceived, HandshakeCompleted, ConnectionTerminated
-from enum import IntEnum
-
-from attr import dataclass
 
 from utils.logging.logger import Logger
 from utils.override import override
-
-@dataclass
-class StreamType:
-    """Tipi di stream QUIC con priorità"""
-    COMMAND = 0      # Alta priorità - comandi bidirezionali
-    KEYBOARD = 4     # Alta priorità - eventi tastiera
-    MOUSE = 1        # Media priorità - movimenti mouse (alta frequenza)
-    CLIPBOARD = 12   # Bassa priorità - clipboard
-    FILE = 16        # Bassa priorità - trasferimenti file
 
 
 class QuicProtocol(QuicConnectionProtocol):

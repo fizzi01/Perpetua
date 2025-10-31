@@ -1,3 +1,4 @@
+from abc import ABC
 from enum import IntEnum
 from typing import Optional
 
@@ -13,7 +14,14 @@ class EventType(IntEnum):
     ACTIVE_SCREEN_CHANGED = 1
 
 
-class MouseEvent:
+class Event(ABC):
+    """
+    Base event class.
+    """
+    def to_dict(self):
+        raise NotImplementedError
+
+class MouseEvent(Event):
     """
     Mouse event data structure.
     """
@@ -35,3 +43,20 @@ class MouseEvent:
             "event": self.action,
             "is_pressed": self.is_pressed
         }
+
+
+class CommandEvent(Event):
+    """
+    Command event data structure.
+    """
+
+    def __init__(self, command: str, params: Optional[dict] = None):
+        self.command = command
+        self.params = params if params else {}
+
+    def to_dict(self) -> dict:
+        return {
+            "command": self.command,
+            "params": self.params
+        }
+

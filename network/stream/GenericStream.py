@@ -11,13 +11,17 @@ class StreamHandler:
     A generic stream handler class for managing network streams.
     """
 
-    def __init__(self, stream_type: int, clients: ClientsManager, event_bus: EventBus):
+    def __init__(self, stream_type: int, clients: ClientsManager, event_bus: EventBus, bidirectional: bool = False):
         self.stream_type = stream_type
         self.clients = clients
         self.event_bus = event_bus
         self._send_queue = Queue()
+        self._recv_queue = Queue()
         self._active = False
-        self._thread = None
+        self._sender_thread = None
+        self._receiver_thread = None
+
+        self._bidirectional = bidirectional
 
         self.logger = Logger.get_instance()
 
@@ -26,8 +30,13 @@ class StreamHandler:
         Starts the stream handler.
         """
         self._active = True
-        self._thread = Thread(target=self._core, daemon=True)
-        self._thread.start()
+        self._sender_thread = Thread(target=self._core_sender, daemon=True)
+        self._sender_thread.start()
+
+        if self._bidirectional:
+            self._receiver_thread = Thread(target=self._core_receiver, daemon=True)
+            self._receiver_thread.start()
+
         self.logger.log(f"StreamHandler for {self.stream_type} started.", Logger.DEBUG)
 
     def stop(self):
@@ -35,9 +44,15 @@ class StreamHandler:
         Stops the stream handler.
         """
         self._active = False
-        if self._thread:
+        if self._sender_thread:
             try:
-                self._thread.join(timeout=2)
+                self._sender_thread.join(timeout=2)
+            except Exception as e:
+                self.logger.log(f"Error stopping StreamHandler for {self.stream_type}: {e}", Logger.ERROR)
+
+        if self._bidirectional and self._receiver_thread:
+            try:
+                self._receiver_thread.join(timeout=2)
             except Exception as e:
                 self.logger.log(f"Error stopping StreamHandler for {self.stream_type}: {e}", Logger.ERROR)
         self.logger.log(f"StreamHandler for {self.stream_type} stopped.", Logger.DEBUG)
@@ -48,8 +63,22 @@ class StreamHandler:
         """
         self._send_queue.put(data)
 
-    def _core(self):
+    def receive(self) -> Any:
         """
-        Core loop for handling sending and receiving data.
+        Retrieves data received from the stream.
+        """
+        if not self._recv_queue.empty():
+            return self._recv_queue.get()
+        return None
+
+    def _core_sender(self):
+        """
+        Core loop for handling sending data.
+        """
+        raise NotImplementedError
+
+    def _core_receiver(self):
+        """
+        Core loop for handling receiving data.
         """
         raise NotImplementedError
