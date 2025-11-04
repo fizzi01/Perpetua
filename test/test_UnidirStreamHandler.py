@@ -3,7 +3,7 @@ import unittest
 import time
 from pathlib import Path
 
-from network.stream.CustomStream import UnidirectionalStreamHandler
+from network.stream.ServerCustomStream import UnidirectionalStreamHandler
 from network.connection.ServerConnectionServices import ServerConnectionHandler
 from network.stream.StreamObj import StreamType
 from model.ClientObj import ClientsManager, ClientObj

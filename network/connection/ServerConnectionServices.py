@@ -176,7 +176,7 @@ class ServerConnectionHandler:
                     break
 
 
-    def _handshake(self, client_socket, client_addr, client: ClientObj):
+    def _handshake(self, client_socket, client_addr, client: ClientObj) -> bool:
         """
         Perform handshake with the connected client to exchange information.
         Returns a dictionary with client information.

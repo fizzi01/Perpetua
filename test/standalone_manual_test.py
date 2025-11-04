@@ -12,7 +12,7 @@ from pathlib import Path
 # Aggiungi il path del progetto
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 
-from network.stream.CustomStream import UnidirectionalStreamHandler
+from network.stream.ServerCustomStream import UnidirectionalStreamHandler
 from network.connection.ServerConnectionServices import ServerConnectionHandler
 from network.stream.StreamObj import StreamType
 from model.ClientObj import ClientsManager, ClientObj

@@ -15,12 +15,14 @@ class UnidirectionalStreamHandler(StreamHandler):
     A custom stream handler for managing mouse input streams. (Unidirectional: Server -> Client)
     """
 
-    def __init__(self, stream_type: int, clients: ClientsManager, event_bus: EventBus, handler_id: Optional[str] = None, source: str = "server"):
-        super().__init__(stream_type=stream_type, clients=clients, event_bus=event_bus, bidirectional=False)
+    def __init__(self, stream_type: int, clients: ClientsManager, event_bus: EventBus, handler_id: Optional[str] = None,
+                 source: str = "server", sender: bool = True, instant: bool = True):
+        super().__init__(stream_type=stream_type, clients=clients, event_bus=event_bus, bidirectional=False, sender=sender)
 
         self._active_client = None
         self.handler_id = handler_id if handler_id else f"UnidirectionalStreamHandler_{stream_type}"
         self.source = source
+        self.instant = instant
 
         # Create a MessageExchange object
         self.msg_exchange = MessageExchange(
@@ -72,12 +74,30 @@ class UnidirectionalStreamHandler(StreamHandler):
                     # Process sending queued mouse data
                     while not self._send_queue.empty():
                         data = self._send_queue.get(timeout=0.001) # It should be a dictionary from Event.to_dict()
-                        self.msg_exchange.send_stream_type_message(stream_type=self.stream_type,**data,source=self.source, target=self._active_client.screen_position)
+                        self.msg_exchange.send_stream_type_message(stream_type=self.stream_type,**data,
+                                                                   source=self.source,
+                                                                   target=self._active_client.screen_position)
 
                 except Empty:
                     continue
                 except Exception as e:
                     self.logger.log(f"Error in {self.handler_id} core loop: {e}", Logger.ERROR)
+
+    def _core_receiver(self):
+        """
+        Core loop for handling receiving data from the stream.
+        """
+
+        while self._active:
+            if self._active_client and self._active_client.is_connected:
+                try:
+                    # Process incoming messages
+                    msg = self.msg_exchange.receive_message(self.instant)
+                    if msg:
+                        self._recv_queue.put(msg)
+
+                except Exception as e:
+                    self.logger.log(f"Error in {self.handler_id} core receiver loop: {e}", Logger.ERROR)
 
 
 
@@ -86,7 +106,8 @@ class BidirectionalStreamHandler(StreamHandler):
     A custom stream handler for managing bidirectional streams. Server <-> Client
     """
 
-    def __init__(self, stream_type: int, clients: ClientsManager, event_bus: EventBus, handler_id: Optional[str] = None, source: str = "server", instant: bool = True):
+    def __init__(self, stream_type: int, clients: ClientsManager, event_bus: EventBus, handler_id: Optional[str] = None,
+                 source: str = "server", instant: bool = True):
         """
 
         Attributes:
@@ -95,7 +116,7 @@ class BidirectionalStreamHandler(StreamHandler):
         super().__init__(stream_type=stream_type, clients=clients, event_bus=event_bus, bidirectional=True)
 
         self._active_client = None
-        self.handler_id = handler_id if handler_id else f"UnidirectionalStreamHandler_{stream_type}"
+        self.handler_id = handler_id if handler_id else f"BidirectionalStreamHandler_{stream_type}"
         self.source = source
         self.instant = instant
 
@@ -155,7 +176,9 @@ class BidirectionalStreamHandler(StreamHandler):
                     # Process sending queued mouse data
                     while not self._send_queue.empty():
                         data = self._send_queue.get(timeout=0.001) # It should be a dictionary from Event.to_dict()
-                        self.msg_exchange.send_stream_type_message(stream_type=self.stream_type,**data,source=self.source, target=self._active_client.screen_position)
+                        self.msg_exchange.send_stream_type_message(stream_type=self.stream_type,**data,
+                                                                   source=self.source,
+                                                                   target=self._active_client.screen_position)
 
                 except Empty:
                     continue

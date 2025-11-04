@@ -11,7 +11,16 @@ class StreamHandler:
     A generic stream handler class for managing network streams.
     """
 
-    def __init__(self, stream_type: int, clients: ClientsManager, event_bus: EventBus, bidirectional: bool = False):
+    def __init__(self, stream_type: int, clients: ClientsManager, event_bus: EventBus,
+                 bidirectional: bool = False, sender: bool = True):
+        """
+        Attributes:
+            stream_type (int): The type of stream (e.g., mouse, keyboard, command).
+            clients (ClientsManager): Manager for connected clients.
+            event_bus (EventBus): Event bus for handling events.
+            bidirectional (bool): If True, the stream supports both sending and receiving.
+            sender (bool): If True, the stream sends data. (if false, it only receives)
+        """
         self.stream_type = stream_type
         self.clients = clients
         self.event_bus = event_bus
@@ -22,6 +31,7 @@ class StreamHandler:
         self._receiver_thread = None
 
         self._bidirectional = bidirectional
+        self._sender = sender
 
         self.logger = Logger.get_instance()
 
@@ -30,10 +40,11 @@ class StreamHandler:
         Starts the stream handler.
         """
         self._active = True
-        self._sender_thread = Thread(target=self._core_sender, daemon=True)
-        self._sender_thread.start()
+        if self._sender:
+            self._sender_thread = Thread(target=self._core_sender, daemon=True)
+            self._sender_thread.start()
 
-        if self._bidirectional:
+        if self._bidirectional or not self._sender:
             self._receiver_thread = Thread(target=self._core_receiver, daemon=True)
             self._receiver_thread.start()
 
@@ -44,13 +55,13 @@ class StreamHandler:
         Stops the stream handler.
         """
         self._active = False
-        if self._sender_thread:
+        if self._sender_thread and self._sender:
             try:
                 self._sender_thread.join(timeout=2)
             except Exception as e:
                 self.logger.log(f"Error stopping StreamHandler for {self.stream_type}: {e}", Logger.ERROR)
 
-        if self._bidirectional and self._receiver_thread:
+        if (self._bidirectional or not self._sender) and self._receiver_thread:
             try:
                 self._receiver_thread.join(timeout=2)
             except Exception as e:
