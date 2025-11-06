@@ -1,6 +1,5 @@
 import socket
 from time import sleep
-import ssl
 from socket import timeout, error
 from threading import Thread, Event
 from typing import Optional, Callable, Any
@@ -12,7 +11,6 @@ from network.protocol.message import MessageType
 from utils.logging.logger import Logger
 
 from .ClientSocket import ClientSocket
-from .GeneralSocket import BaseSocket
 from ..stream.StreamObj import StreamType
 
 class ClientConnectionHandler:
