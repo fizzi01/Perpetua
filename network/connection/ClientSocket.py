@@ -76,13 +76,14 @@ class ClientSocket(BaseSocket):
         if not self.host or not self.port:
             raise ServerNotFoundException("No matching server found.")
 
-    def connect(self, stream_type: Optional[int] = None, addr: str = ""):
+    def connect(self, stream_type: Optional[int] = None, addr: str = "") -> socket.socket:
         if self.use_discovery and (not self.host or self.host == ""):
             self._discover_server()
             # Update the address after discovery
             self._address = (self.host, self.port)
 
         curr_socket = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+        curr_socket.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
 
         if self.use_ssl:
             context = ssl.create_default_context()
@@ -97,9 +98,11 @@ class ClientSocket(BaseSocket):
 
         # Add the connected stream (hard copy of the socket)
         if stream_type:
-            self.put_stream(stream_type, copy.deepcopy(curr_socket))
+            self.put_stream(stream_type, curr_socket)
         else:
-            self.put_stream(StreamType.COMMAND, copy.deepcopy(curr_socket))
+            self.put_stream(StreamType.COMMAND, curr_socket)
+
+        return curr_socket
 
 
 

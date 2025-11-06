@@ -1,5 +1,6 @@
 import socket
 from typing import Optional, Dict
+from socket import timeout, error
 
 from utils.logging.logger import Logger
 from utils.override import override
@@ -76,10 +77,16 @@ class BaseSocket(socket.socket):
         try:
             if stream:
                 if stream in self.streams:
+                    self.streams[stream].shutdown(socket.SHUT_RDWR)
                     self.streams[stream].close()
+                    # Remove the stream from the dictionary after closing
+                    del self.streams[stream]
             else:
                 for stream in self.streams.values():
+                    stream.shutdown(socket.SHUT_RDWR)
                     stream.close()
+                # Clear all streams after closing
+                self.streams.clear()
         except EOFError:
             pass
         except ConnectionResetError:
@@ -93,8 +100,25 @@ class BaseSocket(socket.socket):
 
     def is_socket_open(self):
         try:
-            # Check only the first stream for simplicity
-            self.streams[next(iter(self.streams))].getpeername()
+            # Check only the first stream for simplicity if present
+            if len(self.streams) == 0:
+                return False
+
+            # self.streams[next(iter(self.streams))].getpeername()
+            for stream in self.streams:
+                data = self.streams[stream].recv(16, socket.MSG_DONTWAIT | socket.MSG_PEEK)
+                if len(data) == 0:
+                    return False
             return True
+        except BlockingIOError:
+            return True
+        except ConnectionResetError:
+            return False
+        except EOFError:
+            return False
         except socket.error:
+            return False
+        except (timeout, error) as e:
+            return False
+        except Exception:
             return False

@@ -109,6 +109,21 @@ class ServerConnectionHandler:
 
     def stop(self):
         self._running = False
+
+        # Disconnec all clients
+        for client in self.clients.clients:
+            if client.is_connected and client.conn_socket:
+                try:
+                    client.conn_socket.close()
+                except Exception as e:
+                    self.logger.log(f"Error disconnecting client {client.ip_address}: {e}", Logger.ERROR)
+                client.is_connected = False
+                client.conn_socket = None
+                self.clients.update_client(client)
+
+                if self.disconnected_callback:
+                    self.disconnected_callback(client)
+
         if self.socket_server:
             self.socket_server.close()
         try:
@@ -183,7 +198,7 @@ class ServerConnectionHandler:
         """
         # Server sends handshake request
         self.msg_exchange.set_transport(client_socket.send, client_socket.recv)
-        self.msg_exchange.send_handshake_message(ack=False,source="server", target=client.screen_position)
+        self.msg_exchange.send_handshake_message(ack=False,source="server",screen_position=client.screen_position, target=client.screen_position)
         self.logger.log(f"Sent handshake request to client {client.ip_address}", Logger.DEBUG)
 
         # Server waits for client response
