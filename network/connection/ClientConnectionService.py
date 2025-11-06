@@ -4,7 +4,7 @@ from socket import timeout, error
 from threading import Thread, Event
 from typing import Optional, Callable, Any
 
-from OLD.network.exceptions import ServerNotFoundException
+from network.exceptions.ConnectionExceptions import ServerNotFoundException
 from model.ClientObj import ClientsManager, ClientObj
 from network.data.MessageExchange import MessageExchange
 from network.protocol.message import MessageType

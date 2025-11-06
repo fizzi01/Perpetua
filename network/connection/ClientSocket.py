@@ -10,7 +10,7 @@ from utils.logging.logger import Logger
 
 from config import ApplicationConfig
 from .GeneralSocket import BaseSocket
-from ..exceptions.NetExceptions import ServerNotFoundException
+from ..exceptions.ConnectionExceptions import ServerNotFoundException
 from ..stream.StreamObj import StreamType
 
 
