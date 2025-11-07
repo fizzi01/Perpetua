@@ -44,8 +44,9 @@ class ClientsManager:
     Provides methods to add, remove, and retrieve clients.
     """
 
-    def __init__(self):
+    def __init__(self, client_mode: bool = False):
         self.clients = []
+        self._is_client_main = client_mode
 
     def update_client(self, client: 'ClientObj'):
         # Update existing client info based on IP and port
@@ -76,6 +77,10 @@ class ClientsManager:
         return self.clients
 
     def get_client(self, ip_address: Optional[str] = None, screen_position: Optional[str] = None) -> Optional['ClientObj']:
+
+        if self._is_client_main: # Return the only client in client mode
+            return self.clients[0] if self.clients else None
+
         for client in self.clients:
             if ip_address:
                 if client.ip_address == ip_address:
@@ -83,4 +88,6 @@ class ClientsManager:
             elif screen_position:
                 if client.screen_position == screen_position:
                     return client
+            else:
+                raise ValueError("Either ip_address or screen_position must be provided to get a client.")
         return None

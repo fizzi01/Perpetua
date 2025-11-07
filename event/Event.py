@@ -12,6 +12,8 @@ class EventType(IntEnum):
     """
 
     ACTIVE_SCREEN_CHANGED = 1
+    CLIENT_ACTIVE = 2
+    CLIENT_INACTIVE = 3
 
 
 class Event(ABC):

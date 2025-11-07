@@ -1,11 +1,9 @@
 import platform as _platform
 
 if _platform.system() == 'Windows':
-    from . import WinNet as NetUtils
-elif _platform.system() == 'Linux':
-    from . import OSXNet as NetUtils
+    from .win import common as NetUtils
 elif _platform.system() == 'Darwin':
-    from . import OSXNet as NetUtils
+    from .darwin import common as NetUtils
 else:
     raise OSError("Unsupported platform '{}'".format(_platform.system()))
 

@@ -1,5 +1,5 @@
 from queue import Queue
-from threading import Thread
+from threading import Thread, Lock
 from typing import Any
 
 from model.ClientObj import ClientsManager
@@ -30,8 +30,13 @@ class StreamHandler:
         self._sender_thread = None
         self._receiver_thread = None
 
+        self._slock = Lock()
+        self._rlock = Lock()
+
         self._bidirectional = bidirectional
         self._sender = sender
+
+        self._waiting_time = 0.001  # Time to wait in loops to prevent busy waiting
 
         self.logger = Logger.get_instance()
 
