@@ -1,4 +1,5 @@
 
+
 def get_local_ip():
     """Ottiene l'indirizzo IP locale dell'interfaccia en0 su macOS."""
     try:

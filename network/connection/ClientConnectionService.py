@@ -26,7 +26,7 @@ class ClientConnectionHandler:
         self.msg_exchange = msg_exchange if msg_exchange is not None else MessageExchange()
 
         self.certfile = certfile
-        self.clients = clients if clients is not None else ClientsManager()
+        self.clients = clients if clients is not None else ClientsManager(client_mode=True)
 
         self.connected_callback = connected_callback
         self.disconnected_callback = disconnected_callback

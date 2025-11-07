@@ -5,7 +5,7 @@ import uuid
 from zeroconf import ServiceInfo, Zeroconf, ServiceStateChange, ServiceBrowser
 
 from utils.logging.logger import Logger
-from utils.net import NetUtils
+from utils.net import get_local_ip
 
 from config import ApplicationConfig
 
@@ -122,7 +122,7 @@ class ServerSocket:
         return conflict_found
 
     def _register_mdns_service(self):
-        #self.host = NetUtils.get_local_ip()
+        #self.host = get_local_ip()
         if not self.host:
             raise Exception("No connection.")
         service_info = ServiceInfo(

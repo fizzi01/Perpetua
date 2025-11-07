@@ -45,6 +45,9 @@ class ClientsManager:
     """
 
     def __init__(self, client_mode: bool = False):
+        """
+        If client_mode is True, the manager is in client mode and will handle only a single main client.
+        """
         self.clients = []
         self._is_client_main = client_mode
 
