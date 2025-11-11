@@ -3,6 +3,37 @@ import time
 import threading
 from pynput.mouse import Controller
 
+# Object-c Library
+import objc
+from objc import objc_method
+import Quartz
+
+from Quartz import kCGMaximumWindowLevel
+
+
+from AppKit import (
+    NSCursor,
+    NSApplication,
+    NSWindowCollectionBehaviorCanJoinAllSpaces,
+    NSScreenSaverWindowLevel,
+    NSApplicationActivationPolicyAccessory,
+    NSWorkspace,
+    NSApplicationActivateIgnoringOtherApps,
+    NSApplicationPresentationAutoHideDock,
+    NSApplicationPresentationAutoHideMenuBar,
+    NSWindowCollectionBehaviorParticipatesInCycle,
+    NSWindowCollectionBehaviorStationary,
+    NSWindowCollectionBehaviorFullScreenAuxiliary,
+    NSWindowCollectionBehaviorMoveToActiveSpace
+)
+
+# Accessibility API
+from ApplicationServices import (
+    AXUIElementCreateApplication,
+    AXUIElementCopyAttributeValue,
+    AXUIElementSetAttributeValue,
+    kAXWindowsAttribute
+)
 
 class TestMouseCaptureWindow(wx.Frame):
     def __init__(self):
@@ -84,6 +115,33 @@ class TestMouseCaptureWindow(wx.Frame):
 
         self.Centre()
         self.Show()
+
+        # Forza il focus della window (importante per macOS)
+        self.Raise()
+        self.SetFocus()
+        self.RequestUserAttention()
+
+        # Porta la finestra in overlay
+        self.ForceOverlay()
+
+    def ForceOverlay(self):
+        self.previous_app = NSWorkspace.sharedWorkspace().frontmostApplication()
+        self.previous_app_pid = self.previous_app.processIdentifier()
+
+        NSApp = NSApplication.sharedApplication()
+        NSApp.setPresentationOptions_(
+            NSApplicationPresentationAutoHideDock | NSApplicationPresentationAutoHideMenuBar)
+        NSApp.activateIgnoringOtherApps_(True)
+
+        window_ptr = self.GetHandle()
+
+        ns_view = objc.objc_object(c_void_p=window_ptr)
+        ns_window = ns_view.window()
+        ns_window.setLevel_(kCGMaximumWindowLevel + 1)
+        ns_window.setCollectionBehavior_(
+            NSWindowCollectionBehaviorCanJoinAllSpaces | NSWindowCollectionBehaviorFullScreenAuxiliary | NSWindowCollectionBehaviorStationary)
+        ns_window.setIgnoresMouseEvents_(False)
+        ns_window.makeKeyAndOrderFront_(None)
 
     def on_key_press(self, event):
         key_code = event.GetKeyCode()
@@ -206,6 +264,10 @@ class TestMouseCaptureWindow(wx.Frame):
 
     def enable_mouse_capture(self):
         if not self.mouse_captured:
+            # Forza il focus prima di catturare
+            self.Raise()
+            self.SetFocus()
+
             self.mouse_captured = True
 
             # Calcola il centro della finestra
@@ -216,6 +278,7 @@ class TestMouseCaptureWindow(wx.Frame):
             # Nascondi il cursore
             cursor = wx.Cursor(wx.CURSOR_BLANK)
             self.SetCursor(cursor)
+            Quartz.CGDisplayHideCursor(Quartz.CGMainDisplayID())
 
             # Cattura il mouse
             self.CaptureMouse()
@@ -238,6 +301,7 @@ class TestMouseCaptureWindow(wx.Frame):
 
             # Ripristina il cursore
             self.SetCursor(wx.NullCursor)
+            Quartz.CGDisplayShowCursor(Quartz.CGMainDisplayID())
 
             # Aggiorna UI
             self.status_text.SetLabel("Mouse Capture: DISATTIVO")

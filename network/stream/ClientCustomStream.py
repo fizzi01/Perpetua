@@ -56,14 +56,14 @@ class UnidirectionalStreamHandler(StreamHandler):
         """
         Event handler for when a client becomes active.
         """
-        with self._rlock, self._slock:
+        with self._rlock, self._slock: # TODO: Check if both locks are necessary
             self._is_active = True
 
     def _on_client_inactive(self, data: dict):
         """
         Event handler for when a client becomes inactive.
         """
-        with self._rlock, self._slock:
+        with self._rlock, self._slock: # TODO: Check if both locks are necessary
             self._is_active = False
 
     def register_receive_callback(self, receive_callback, message_type: str):
