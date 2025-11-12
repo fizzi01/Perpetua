@@ -40,6 +40,12 @@ class StreamHandler:
 
         self.logger = Logger.get_instance()
 
+    def register_receive_callback(self, receive_callback, message_type: str):
+        """
+        Register a callback function for receiving messages of a specific type.
+        """
+        raise NotImplementedError
+
     def start(self):
         """
         Starts the stream handler.

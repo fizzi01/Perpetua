@@ -56,7 +56,7 @@ class TestServerMouseListener(unittest.TestCase):
         self.listener = ServerMouseListener(
             event_bus=self.event_bus,
             stream_handler=self.stream_handler,
-            filtering=True
+            filtering=False
         )
 
     def tearDown(self):
@@ -459,13 +459,13 @@ class TestServerMouseListener(unittest.TestCase):
         self.assertIsNotNone(self.listener._mouse_filter)
 
         # Create another with filtering disabled
-        listener_no_filter = ServerMouseListener(
+        listener_filter = ServerMouseListener(
             event_bus=self.event_bus,
             stream_handler=self.stream_handler,
-            filtering=False
+            filtering=True
         )
 
-        self.assertIsNotNone(listener_no_filter._mouse_filter)
+        self.assertIsNotNone(listener_filter._mouse_filter)
 
 
 class TestServerMouseListenerIntegration(unittest.TestCase):
@@ -491,7 +491,7 @@ class TestServerMouseListenerIntegration(unittest.TestCase):
         self.listener = ServerMouseListener(
             event_bus=self.event_bus,
             stream_handler=self.stream_handler,
-            filtering=True
+            filtering=False
         )
 
     def tearDown(self):

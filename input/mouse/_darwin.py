@@ -1,8 +1,9 @@
 """
 Provides mouse input support for macOS (Darwin) systems.
 """
+from time import time
 from queue import Queue
-from threading import Event
+from threading import Event, Thread
 
 import Quartz
 from AppKit import (NSPasteboard,
@@ -12,19 +13,18 @@ from AppKit import (NSPasteboard,
                     NSEventTypeSwipe, NSEventTypeRotate,
                     NSEventTypeMagnify)
 
-#from pynput.mouse import Button, Controller as MouseController
+from pynput.mouse import Button, Controller as MouseController
 from pynput.mouse import Listener as MouseListener
 
-from event.Event import EventType, MouseEvent
+from event.Event import EventType, MouseEvent, EventMapper, CommandEvent
 from event.EventBus import EventBus
-from network.stream.GenericStream import StreamHandler
-from utils.logging.logger import Logger
 
+from network.stream.GenericStream import StreamHandler
+
+from utils.logging.logger import Logger
 from utils.screen import Screen
 
-
-def _no_suppress_filter(event_type, event):
-    return event
+from ._base import EdgeDetector, ScreenEdge, _no_suppress_filter
 
 
 class ServerMouseListener:
@@ -32,7 +32,7 @@ class ServerMouseListener:
     It listens for mouse events on macOS systems.
     Its main purpose is to capture mouse movements and clicks. And handle some border cases like cursor reaching screen edges.
     """
-    def __init__(self, event_bus: EventBus, stream_handler: StreamHandler, filtering: bool = False):
+    def __init__(self, event_bus: EventBus, stream_handler: StreamHandler, filtering: bool = True):
 
         self.stream = stream_handler
         self.event_bus = event_bus
@@ -83,6 +83,8 @@ class ServerMouseListener:
             # reset movement history
             with self._movement_history.mutex:
                 self._movement_history.queue.clear()
+
+            self._cross_screen_event.clear()
         else:
             self._listening = False
 
@@ -145,51 +147,38 @@ class ServerMouseListener:
 
                 # Check all the previous movements to determine the direction
                 queue_data = list(self._movement_history.queue)
-                queue_size = len(queue_data)
 
-                moving_towards_left = all(queue_data[i][0] > queue_data[i+1][0] for i in range(queue_size - 1))
-                moving_towards_right = all(queue_data[i][0] < queue_data[i+1][0] for i in range(queue_size - 1))
-                moving_towards_top = all(queue_data[i][1] > queue_data[i+1][1] for i in range(queue_size - 1))
-                moving_towards_bottom = all(queue_data[i][1] < queue_data[i+1][1] for i in range(queue_size - 1))
+                edge = EdgeDetector.is_at_edge(movement_history=queue_data, x=x, y=y, screen_size=self._screen_size)
 
-
-                # Check if we are at the edges
-                at_left_edge = x <= 0
-                at_right_edge = x >= self._screen_size[0] - 1
-                at_top_edge = y <= 0
-                at_bottom_edge = y >= self._screen_size[1] - 1
-
-                mouse_event = MouseEvent(x=x,y=y, action="move")
+                mouse_event = MouseEvent(x=x,y=y, action=MouseEvent.MOVE_ACTION)
 
                 try:
                     self._cross_screen_event.set()
-                    if at_left_edge and moving_towards_left: # It enters from right edge of the client screen
+                    if edge == ScreenEdge.LEFT: # It enters from right edge of the client screen
                             # Normalize position to avoid sticking
                             mouse_event.x = 0
                             mouse_event.y = y / self._screen_size[1]
                             self.event_bus.dispatch(event_type=EventType.ACTIVE_SCREEN_CHANGED,
                                                     data={"active_screen": "left"})
                             self.stream.send(mouse_event)
-                    elif at_right_edge and moving_towards_right: # It enters from left edge of the client screen
+                    elif edge == ScreenEdge.RIGHT: # It enters from left edge of the client screen
                             mouse_event.x = 1
                             mouse_event.y = y / self._screen_size[1]
                             self.event_bus.dispatch(event_type=EventType.ACTIVE_SCREEN_CHANGED,
                                                     data={"active_screen": "right"})
                             self.stream.send(mouse_event)
-                    elif at_top_edge and moving_towards_top: # It enters from bottom edge of the client screen
+                    elif edge == ScreenEdge.TOP: # It enters from bottom edge of the client screen
                             mouse_event.x = x / self._screen_size[0]
                             mouse_event.y = 0
                             self.event_bus.dispatch(event_type=EventType.ACTIVE_SCREEN_CHANGED,
                                                     data={"active_screen": "top"})
                             self.stream.send(mouse_event)
-                    elif at_bottom_edge and moving_towards_bottom: # It enters from top edge of the client screen
+                    elif edge == ScreenEdge.BOTTOM: # It enters from top edge of the client screen
                             mouse_event.x = x / self._screen_size[0]
                             mouse_event.y = 1
                             self.event_bus.dispatch(event_type=EventType.ACTIVE_SCREEN_CHANGED,
                                                     data={"active_screen": "bottom"})
                             self.stream.send(mouse_event)
-                    else:
-                        self._cross_screen_event.clear()
                 except Exception as e:
                     self.logger.log(f"Failed to dispatch mouse event - {e}", Logger.ERROR)
                 finally:
@@ -200,7 +189,8 @@ class ServerMouseListener:
     def on_click(self, x, y, button, pressed):
         if self._listening:
             action = "press" if pressed else "release"
-            mouse_event = MouseEvent(x=x, y=y, button=button.value, action=action, is_presed=pressed)
+            mouse_event = MouseEvent(x=x/self._screen_size[0], y=y/self._screen_size[1],
+                                     button=button.value, action=action, is_presed=pressed)
             try:
                 self.stream.send(mouse_event)
             except Exception as e:
@@ -215,3 +205,185 @@ class ServerMouseListener:
             except Exception as e:
                 self.logger.log(f"Failed to dispatch mouse scroll event - {e}", Logger.ERROR)
         return True
+
+class ClientMouseController:
+    """
+    It controls the mouse on Windows systems. Its main purpose is to move the mouse cursor and perform clicks based on received events.
+    """
+
+    def __init__(self, event_bus: EventBus, stream_handler: StreamHandler):
+        self.stream = stream_handler
+        self.event_bus = event_bus
+        self._cross_screen_event = Event()
+
+        self._is_active = False
+        self._screen_size: tuple[int,int] = Screen.get_size()
+
+        # Instead of creating a listener, we just check edge cases after a mouse move event is received
+        self._movement_history = Queue(maxsize=5)
+
+        self._controller = MouseController()
+        self._pressed = False
+        self._last_press_time = -99
+        self._doubleclick_counter = 0
+
+        self.logger = Logger.get_instance()
+
+        # Register to receive mouse events from the stream
+        self.stream.register_receive_callback(self._mouse_event_callback, message_type="mouse")
+
+        event_bus.subscribe(event_type=EventType.CLIENT_ACTIVE, callback=self._on_client_active)
+        event_bus.subscribe(event_type=EventType.CLIENT_INACTIVE, callback=self._on_client_inactive)
+
+    def _on_client_active(self, data: dict):
+        """
+        Event handler for when client becomes active.
+        """
+        # Reset movement history
+        with self._movement_history.mutex:
+            self._movement_history.queue.clear()
+
+        self._is_active = True
+
+        self._cross_screen_event.clear()
+
+    def _on_client_inactive(self, data: dict):
+        """
+        Event handler for when a client becomes inactive.
+        """
+
+        self._is_active = False
+
+    def _mouse_event_callback(self, message):
+        """
+        Callback function to handle mouse events received from the stream.
+        The stream will return a ProtocolMessage object, we need to convert it to an Event object through EventMapper.
+        """
+        try:
+            event = EventMapper.get_event(message)
+            if not isinstance(event, MouseEvent):
+                self.logger.log(f"ClientMouseController: Received non-mouse event: {event}", Logger.WARNING)
+                return
+
+            if event.action == MouseEvent.MOVE_ACTION:
+                self.move_cursor(event.x, event.y, event.dx, event.dy)
+                # After handling the mouse event, check for edge cases
+                Thread(target=self._check_edge).start()
+            elif event.action == MouseEvent.CLICK_ACTION:
+                self.click(event.button, event.is_pressed)
+            elif event.action == MouseEvent.SCROLL_ACTION:
+                self.scroll(event.dx, event.dy)
+        except Exception as e:
+            self.logger.log(f"ClientMouseController: Failed to process mouse event - {e}", Logger.ERROR)
+
+    def _check_edge(self):
+        """
+        Check if the mouse cursor is at the edge of the screen and handle accordingly.
+        """
+        if self._cross_screen_event.is_set():
+            return
+
+        if self._is_active:
+            if self._movement_history.qsize() >= 2:
+
+                # Get the current cursor position
+                x, y = self._controller.position
+
+                # Check all the previous movements to determine the direction
+                queue_data = list(self._movement_history.queue)
+
+                edge = EdgeDetector.is_at_edge(movement_history=queue_data,x=x,y=y, screen_size=self._screen_size)
+
+                # If we reach an edge, dispatch event to deactivate client and send cross screen message to server
+                try:
+                    self._cross_screen_event.set()
+                    if edge:
+                        # Normalize position to avoid sticking
+                        norm_x = x / self._screen_size[0]
+                        norm_y = y / self._screen_size[1]
+                        screen_data = {"x": norm_x, "y": norm_y}
+                        command = CommandEvent(command=CommandEvent.CROSS_SCREEN, params=screen_data)
+                        # Send command event to server
+                        self.stream.send(command)
+                        # Dispatch client inactive event
+                        self.event_bus.dispatch(event_type=EventType.CLIENT_INACTIVE, data={})
+                except Exception as e:
+                    self.logger.log(f"Failed to dispatch screen event - {e}", Logger.ERROR)
+                finally:
+                    self._cross_screen_event.clear()
+
+    def move_cursor(self, x: float | int, y: float | int, dx: float | int, dy: float | int):
+        """
+        Move the mouse cursor to the specified (x, y) coordinates.
+        """
+        # Add the current position to the movement history
+        try:
+            if self._movement_history.full():
+                self._movement_history.get()
+            self._movement_history.put((x, y))
+        except Exception:
+            pass
+
+        # if dx and dy are provided, use relative movement
+        if dx > 0 or dy > 0:
+            # Convert to int for pynput
+            try:
+                dx = int(dx)
+                dy = int(dy)
+            except ValueError:
+                self.logger.log(f"Invalid dx or dy values: dx={dx}, dy={dy}", Logger.ERROR)
+                dx = 0
+                dy = 0
+
+            self._controller.move(dx=dx, dy=dy)
+        else:
+            try:
+                # Denormalize coordinates by mapping into the client screen size
+                x *= self._screen_size[0]
+                y *= self._screen_size[1]
+                x = int(x)
+                y = int(y)
+            except ValueError:
+                self.logger.log(f"Invalid x or y values: x={x}, y={y}", Logger.ERROR)
+                return
+
+            self._controller.position = (x, y)
+
+    def click(self, button: int, is_pressed: bool):
+        """
+        Perform a mouse click action.
+        """
+        current_time = time()
+        try:
+            btn = Button(button)
+        except ValueError:
+            self.logger.log(f"ClientMouseController: Invalid button value: {button}", Logger.ERROR)
+            return
+
+        if self._pressed and not is_pressed:
+            self._controller.release(btn)
+            self._pressed = False
+        elif not self._pressed and is_pressed:
+            # If we receive a press event within 200ms of the last press, treat it as a double-click
+            if (current_time - self._last_press_time) < 0.2:
+                self._controller.click(btn, 2 + self._doubleclick_counter)
+                self._doubleclick_counter = 0 if self._doubleclick_counter == 2 else 2
+                self._pressed = False
+            else:
+                self._controller.press(btn)
+                self._doubleclick_counter = 0
+                self._pressed = True
+            self._last_press_time = current_time
+
+    def scroll(self, dx: int | float, dy: int | float):
+        """
+        Perform a mouse scroll action.
+        """
+        try:
+            dx = int(dx)
+            dy = int(dy)
+        except ValueError:
+            self.logger.log(f"ClientMouseController: Invalid scroll values: dx={dx}, dy={dy}", Logger.ERROR)
+            return
+
+        self._controller.scroll(dx, dy)

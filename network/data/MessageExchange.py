@@ -84,10 +84,10 @@ class MessageExchange:
         """
         self._handlers[message_type] = handler
 
-    def send_mouse_data(self, x: float, y: float, event: str,
+    def send_mouse_data(self, x: float, y: float,event: str, dx: float, dy: float,
                         is_pressed: bool = False, source: str = None, target: str = None, **kwargs):
         """Send a mouse event message."""
-        message = self.builder.create_mouse_message(x, y, event, is_pressed, source=source, target=target, **kwargs)
+        message = self.builder.create_mouse_message(x, y, dx, dy, event, is_pressed, source=source, target=target, **kwargs)
         self._send_message(message)
 
     def send_keyboard_data(self, key: str, event: str, source: str = None, target: str = None):
@@ -151,6 +151,7 @@ class MessageExchange:
                 return
             case StreamType.COMMAND:
                 self.send_command_message(source=source, target=target, **kwargs)
+                return
             case _:
                 self.logger.log(f"Unknown stream type: {stream_type}", Logger.ERROR)
                 return

@@ -5,11 +5,10 @@ import json
 import struct
 import time
 import uuid
-from enum import Enum
 from typing import Dict, Any, Optional, List
 from dataclasses import dataclass, asdict
 
-# Messages type enum
+# Messages type
 @dataclass
 class MessageType:
     MOUSE = "mouse"
@@ -285,17 +284,19 @@ class MessageBuilder:
             is_chunk=True
         )
 
-    def create_mouse_message(self, x: float, y: float, event: str,
+    def create_mouse_message(self, x: float = 0, y: float = 0, dx: float = 0, dy: float = 0, event: str = "",
                              is_pressed: bool = False, source: str = None,
                              target: str = None, **kwargs) -> ProtocolMessage:
         """Create a mouse event message with timestamp."""
         return ProtocolMessage(
-            message_type="mouse",
+            message_type=MessageType.MOUSE,
             timestamp=time.time(),
             sequence_id=self._next_sequence_id(),
             payload={
                 "x": x,
                 "y": y,
+                "dx": dx,
+                "dy": dy,
                 "event": event,
                 "is_pressed": is_pressed,
                 **kwargs
@@ -308,7 +309,7 @@ class MessageBuilder:
                                 source: str = None, target: str = None) -> ProtocolMessage:
         """Create a keyboard event message with timestamp."""
         return ProtocolMessage(
-            message_type="keyboard",
+            message_type=MessageType.KEYBOARD,
             timestamp=time.time(),
             sequence_id=self._next_sequence_id(),
             payload={
@@ -323,7 +324,7 @@ class MessageBuilder:
                                  source: str = None, target: str = None) -> ProtocolMessage:
         """Create a clipboard message with timestamp."""
         return ProtocolMessage(
-            message_type="clipboard",
+            message_type=MessageType.CLIPBOARD,
             timestamp=time.time(),
             sequence_id=self._next_sequence_id(),
             payload={
@@ -338,7 +339,7 @@ class MessageBuilder:
                               source: str = None, target: str = None) -> ProtocolMessage:
         """Create a screen notification message with timestamp."""
         return ProtocolMessage(
-            message_type="return",
+            message_type=MessageType.SCREEN,
             timestamp=time.time(),
             sequence_id=self._next_sequence_id(),
             payload={
@@ -353,7 +354,7 @@ class MessageBuilder:
                                source: str = None, target: str = None) -> ProtocolMessage:
         """Create a command message with timestamp."""
         return ProtocolMessage(
-            message_type="command",
+            message_type=MessageType.COMMAND,
             timestamp=time.time(),
             sequence_id=self._next_sequence_id(),
             payload={
@@ -368,7 +369,7 @@ class MessageBuilder:
                             source: str = None, target: str = None) -> ProtocolMessage:
         """Create a file transfer message with timestamp."""
         return ProtocolMessage(
-            message_type="file",
+            message_type=MessageType.FILE,
             timestamp=time.time(),
             sequence_id=self._next_sequence_id(),
             payload={

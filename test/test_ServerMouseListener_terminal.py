@@ -8,7 +8,7 @@ from threading import Thread, Event as ThreadEvent
 
 from event.EventBus import ThreadSafeEventBus
 from event.Event import EventType, MouseEvent
-from input.mouse._darwin import ServerMouseListener
+from input.mouse import ServerMouseListener
 from network.stream.GenericStream import StreamHandler
 from utils.logging.logger import Logger
 
@@ -127,7 +127,7 @@ class TerminalEdgeCrossingTest:
                 self.mouse_listener = ServerMouseListener(
                     event_bus=self.event_bus,
                     stream_handler=self.stream_handler,
-                    filtering=True
+                    filtering=False
                 )
                 self.mouse_listener.start()
                 self.listener_active = True

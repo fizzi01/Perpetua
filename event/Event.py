@@ -2,6 +2,8 @@ from abc import ABC
 from enum import IntEnum
 from typing import Optional
 
+from network.protocol.message import MessageType, ProtocolMessage
+
 
 class EventType(IntEnum):
     """
@@ -28,9 +30,16 @@ class MouseEvent(Event):
     Mouse event data structure.
     """
 
-    def __init__(self, x: int, y: int, button: Optional[int] = None, action: Optional[str] = None, is_presed: bool = False):
+    MOVE_ACTION = "move"
+    CLICK_ACTION = "click"
+    RCLICK_ACTION = "rclick"
+    SCROLL_ACTION = "scroll"
+
+    def __init__(self, x: float, y: float, dx: float = 0, dy: float = 0, button: Optional[int] = None, action: Optional[str] = None, is_presed: bool = False):
         self.x = x
         self.y = y
+        self.dx = dx
+        self.dy = dy
         self.button = button
         self.action = action
 
@@ -41,6 +50,8 @@ class MouseEvent(Event):
         return {
             "x": self.x,
             "y": self.y,
+            "dx": self.dx,
+            "dy": self.dy,
             "button": self.button,
             "event": self.action,
             "is_pressed": self.is_pressed
@@ -52,6 +63,8 @@ class CommandEvent(Event):
     Command event data structure.
     """
 
+    CROSS_SCREEN = "cross_screen"
+
     def __init__(self, command: str, params: Optional[dict] = None):
         self.command = command
         self.params = params if params else {}
@@ -61,4 +74,46 @@ class CommandEvent(Event):
             "command": self.command,
             "params": self.params
         }
+
+
+class ScreenEvent(Event):
+    """
+    Screen event data structure.
+    """
+
+    def __init__(self, data: dict):
+        self.data = data # It should contain information about client cursor position
+
+    def to_dict(self) -> dict:
+        return {
+            "data": self.data
+        }
+
+class EventMapper:
+    """
+    Maps protocol messages to event objects.
+    """
+
+    @staticmethod
+    def get_event(message: ProtocolMessage) -> Optional[Event]:
+        event_type = message.message_type
+        message_payload = message.payload
+
+        if event_type == MessageType.MOUSE:
+            return MouseEvent(
+                x=message_payload.get("x"),
+                y=message_payload.get("y"),
+                dx=message_payload.get("dx"),
+                dy=message_payload.get("dy"),
+                button=message_payload.get("button"),
+                action=message_payload.get("event"),
+                is_presed=message_payload.get("is_pressed", False)
+            )
+        elif event_type == MessageType.COMMAND:
+            return CommandEvent(
+                command=message_payload.get("command"),
+                params=message_payload.get("params", {})
+            )
+        else:
+            return None
 
