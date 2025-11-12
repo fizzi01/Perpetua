@@ -1,6 +1,7 @@
 """
 Provides an object representation of a client (connected to the server).
-Information includes IP address, port, connection time, and other metadata like screen position relative to the server (center),
+Information includes IP address, port, connection time,
+and other metadata like screen position relative to the server (center),
 screen resolution, and client name. But also additional optional config parameters (future use).
 """
 from typing import Optional

@@ -21,7 +21,26 @@ class ClientConnectionHandler:
                  host: str = "0.0.0.0", port: int = 5001, wait: int = 5,
                  heartbeat_interval: int = 10, max_errors: int = 10,
                  clients: Optional[ClientsManager] = None,
+                 open_streams: list[int] = None,
                  certfile: str = None):
+        """
+        A client-side connection handler that manages connections to a server,
+        including handshake, stream management, and heartbeat.
+
+
+        Args:
+            msg_exchange (MessageExchange): Message exchange handler for communication.
+            connected_callback (Callable): Callback function when connected to server.
+            disconnected_callback (Callable): Callback function when disconnected from server.
+            host (str): Server host address.
+            port (int): Server port.
+            wait (int): Wait time between connection attempts.
+            heartbeat_interval (int): Interval for heartbeat messages.
+            max_errors (int): Maximum allowed consecutive errors before stopping.
+            clients (ClientsManager): Manager for client objects.
+            open_streams (list[int]): List of stream types to open upon connection.
+            certfile (str): Path to SSL certificate file, if using SSL.
+        """
 
         self.msg_exchange = msg_exchange if msg_exchange is not None else MessageExchange()
 
@@ -48,6 +67,8 @@ class ClientConnectionHandler:
         self._heartbeat_event = Event()
 
         self._connected = False
+        self.open_streams = open_streams if open_streams is not None \
+            else [StreamType.MOUSE, StreamType.KEYBOARD, StreamType.CLIPBOARD]
 
         self.logger = Logger.get_instance()
 
@@ -226,7 +247,7 @@ class ClientConnectionHandler:
 
         client_obj.screen_position = handshake_req.payload.get("screen_position")
 
-        requested_streams = [StreamType.MOUSE, StreamType.KEYBOARD, StreamType.CLIPBOARD]
+        requested_streams = self.open_streams
 
         # Send handshake response
         self.msg_exchange.send_handshake_message(

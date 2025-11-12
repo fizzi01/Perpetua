@@ -355,7 +355,7 @@ class MouseCaptureWindowController:
             raise RuntimeError("Window process not running")
         self.command_queue.put(command)
 
-    def get_result(self, timeout=1):
+    def get_result(self, timeout: float = 1.0):
         """Riceve un risultato dalla window"""
         try:
             return self.result_queue.get(timeout=timeout)

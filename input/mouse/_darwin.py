@@ -210,7 +210,7 @@ class ServerMouseListener:
 
 class ClientMouseController:
     """
-    It controls the mouse on Windows systems. Its main purpose is to move the mouse cursor and perform clicks based on received events.
+    It controls the mouse on macOS systems. Its main purpose is to move the mouse cursor and perform clicks based on received events.
     """
 
     def __init__(self, event_bus: EventBus, stream_handler: StreamHandler):
@@ -340,6 +340,15 @@ class ClientMouseController:
             self._controller.move(dx=dx, dy=dy)
         else:
             try:
+                if isinstance(x, float):
+                    if not (0.0 <= x <= 1.0):
+                        raise ValueError("x coordinate out of bounds")
+                elif isinstance(y, float):
+                    if not (0.0 <= y <= 1.0):
+                        raise ValueError("y coordinate out of bounds")
+                elif not isinstance(x, int) or isinstance(y, int):
+                    raise ValueError("x and y must be either float or int")
+
                 # Denormalize coordinates by mapping into the client screen size
                 x *= self._screen_size[0]
                 y *= self._screen_size[1]
