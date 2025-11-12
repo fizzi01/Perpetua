@@ -17,8 +17,10 @@ from network.stream.GenericStream import StreamHandler
 from utils.logging.logger import Logger
 from utils.screen import Screen
 
-from ._base import EdgeDetector, ScreenEdge, _no_suppress_filter
+from ._base import EdgeDetector, ScreenEdge
 
+def _no_suppress_filter(msg, data):
+    return True
 
 class ServerMouseListener:
     """

@@ -1,9 +1,6 @@
 import enum
 from typing import Callable, Optional
 
-def _no_suppress_filter(event_type, event):
-    return event
-
 class ScreenEdge(enum.Enum):
     LEFT = 1
     RIGHT = 2
