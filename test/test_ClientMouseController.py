@@ -5,12 +5,12 @@ from queue import Queue
 from threading import Event as ThreadEvent
 
 from event.EventBus import EventBus, ThreadSafeEventBus
-from event.Event import EventType, MouseEvent, CommandEvent
+from event import EventType, MouseEvent, CommandEvent
 from input.mouse import ClientMouseController
 from network.stream.GenericStream import StreamHandler
 from network.protocol.message import ProtocolMessage
 
-from utils.logging.logger import Logger
+from utils.logging import Logger
 
 Logger(stdout=print, logging=True)  # Initialize logger for tests
 

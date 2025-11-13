@@ -10,7 +10,7 @@ from network.connection.ServerConnectionServices import ServerConnectionHandler
 from network.stream.StreamObj import StreamType
 from model.ClientObj import ClientsManager, ClientObj
 from network.data.MessageExchange import MessageExchange
-from utils.logging.logger import Logger
+from utils.logging import Logger
 
 
 class TestClientConnectionHandler(unittest.TestCase):

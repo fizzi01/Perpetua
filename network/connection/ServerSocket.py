@@ -4,7 +4,7 @@ import uuid
 
 from zeroconf import ServiceInfo, Zeroconf, ServiceStateChange, ServiceBrowser
 
-from utils.logging.logger import Logger
+from utils.logging import Logger
 from utils.net import get_local_ip
 
 from config import ApplicationConfig

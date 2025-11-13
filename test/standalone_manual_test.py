@@ -17,8 +17,8 @@ from network.connection.ServerConnectionServices import ServerConnectionHandler
 from network.stream.StreamObj import StreamType
 from model.ClientObj import ClientsManager, ClientObj
 from event.EventBus import ThreadSafeEventBus
-from event.Event import EventType, MouseEvent
-from utils.logging.logger import Logger
+from event import EventType, MouseEvent
+from utils.logging import Logger
 
 
 class ManualTestRunner:

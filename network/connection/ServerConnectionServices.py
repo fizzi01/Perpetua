@@ -12,7 +12,7 @@ from typing import Optional, Callable, Any
 from model.ClientObj import ClientsManager, ClientObj
 from network.data.MessageExchange import MessageExchange
 from network.protocol.message import MessageType
-from utils.logging.logger import Logger
+from utils.logging import Logger
 
 from .ServerSocket import ServerSocket
 from .GeneralSocket import BaseSocket

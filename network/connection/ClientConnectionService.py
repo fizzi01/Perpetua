@@ -4,14 +4,14 @@ from socket import timeout, error
 from threading import Thread, Event
 from typing import Optional, Callable, Any
 
-from network.exceptions.ConnectionExceptions import ServerNotFoundException
 from model.ClientObj import ClientsManager, ClientObj
+from network.exceptions.ConnectionExceptions import ServerNotFoundException
 from network.data.MessageExchange import MessageExchange
 from network.protocol.message import MessageType
-from utils.logging.logger import Logger
+from network.stream.StreamObj import StreamType
+from utils.logging import Logger
 
 from .ClientSocket import ClientSocket
-from ..stream.StreamObj import StreamType
 
 class ClientConnectionHandler:
 
@@ -68,7 +68,7 @@ class ClientConnectionHandler:
 
         self._connected = False
         self.open_streams = open_streams if open_streams is not None \
-            else [StreamType.MOUSE, StreamType.KEYBOARD, StreamType.CLIPBOARD]
+            else [StreamType.MOUSE, StreamType.KEYBOARD, StreamType.CLIPBOARD] # In addition to the command one
 
         self.logger = Logger.get_instance()
 

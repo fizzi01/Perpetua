@@ -4,7 +4,8 @@ from typing import Any
 
 from model.ClientObj import ClientsManager
 from event.EventBus import EventBus
-from utils.logging.logger import Logger
+from utils.logging import Logger
+
 
 class StreamHandler:
     """

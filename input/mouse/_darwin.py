@@ -16,12 +16,12 @@ from AppKit import (NSPasteboard,
 from pynput.mouse import Button, Controller as MouseController
 from pynput.mouse import Listener as MouseListener
 
-from event.Event import EventType, MouseEvent, EventMapper, CommandEvent
+from event import EventType, MouseEvent, CommandEvent, EventMapper
 from event.EventBus import EventBus
 
 from network.stream.GenericStream import StreamHandler
 
-from utils.logging.logger import Logger
+from utils.logging import Logger
 from utils.screen import Screen
 
 from ._base import EdgeDetector, ScreenEdge
@@ -152,7 +152,7 @@ class ServerMouseListener:
 
                 edge = EdgeDetector.is_at_edge(movement_history=queue_data, x=x, y=y, screen_size=self._screen_size)
 
-                mouse_event = MouseEvent(x=x,y=y, action=MouseEvent.MOVE_ACTION)
+                mouse_event = MouseEvent(x=x,y=y, action=MouseEvent.POSITION_ACTION)
 
                 try:
                     self._cross_screen_event.set()
@@ -162,24 +162,32 @@ class ServerMouseListener:
                             mouse_event.y = y / self._screen_size[1]
                             self.event_bus.dispatch(event_type=EventType.ACTIVE_SCREEN_CHANGED,
                                                     data={"active_screen": "left"})
+                            # Notify client about the active screen change with a CROSS_SCREEN command
+                            self.stream.send(CommandEvent(command=CommandEvent.CROSS_SCREEN))
                             self.stream.send(mouse_event)
                     elif edge == ScreenEdge.RIGHT: # It enters from left edge of the client screen
                             mouse_event.x = 1
                             mouse_event.y = y / self._screen_size[1]
                             self.event_bus.dispatch(event_type=EventType.ACTIVE_SCREEN_CHANGED,
                                                     data={"active_screen": "right"})
+                            # Notify client about the active screen change with a CROSS_SCREEN command
+                            self.stream.send(CommandEvent(command=CommandEvent.CROSS_SCREEN))
                             self.stream.send(mouse_event)
                     elif edge == ScreenEdge.TOP: # It enters from bottom edge of the client screen
                             mouse_event.x = x / self._screen_size[0]
                             mouse_event.y = 0
                             self.event_bus.dispatch(event_type=EventType.ACTIVE_SCREEN_CHANGED,
                                                     data={"active_screen": "top"})
+                            # Notify client about the active screen change with a CROSS_SCREEN command
+                            self.stream.send(CommandEvent(command=CommandEvent.CROSS_SCREEN))
                             self.stream.send(mouse_event)
                     elif edge == ScreenEdge.BOTTOM: # It enters from top edge of the client screen
                             mouse_event.x = x / self._screen_size[0]
                             mouse_event.y = 1
                             self.event_bus.dispatch(event_type=EventType.ACTIVE_SCREEN_CHANGED,
                                                     data={"active_screen": "bottom"})
+                            # Notify client about the active screen change with a CROSS_SCREEN command
+                            self.stream.send(CommandEvent(command=CommandEvent.CROSS_SCREEN))
                             self.stream.send(mouse_event)
                 except Exception as e:
                     self.logger.log(f"Failed to dispatch mouse event - {e}", Logger.ERROR)
@@ -271,6 +279,8 @@ class ClientMouseController:
                 self.move_cursor(event.x, event.y, event.dx, event.dy)
                 # After handling the mouse event, check for edge cases
                 Thread(target=self._check_edge).start()
+            elif event.action == MouseEvent.POSITION_ACTION:
+                self.position_cursor(event.x, event.y)
             elif event.action == MouseEvent.CLICK_ACTION:
                 self.click(event.button, event.is_pressed)
             elif event.action == MouseEvent.SCROLL_ACTION:
@@ -313,6 +323,22 @@ class ClientMouseController:
                     self.logger.log(f"Failed to dispatch screen event - {e}", Logger.ERROR)
                 finally:
                     self._cross_screen_event.clear()
+
+    def position_cursor(self, x: float | int, y: float | int):
+        """
+        Position the mouse cursor to the specified (x, y) coordinates.
+        """
+        try:
+            # Denormalize coordinates by mapping into the client screen size
+            x *= self._screen_size[0]
+            y *= self._screen_size[1]
+            x = int(x)
+            y = int(y)
+        except ValueError:
+            self.logger.log(f"Invalid x or y values: x={x}, y={y}", Logger.ERROR)
+            return
+
+        self._controller.position = (x, y)
 
     def move_cursor(self, x: float | int, y: float | int, dx: float | int, dy: float | int):
         """

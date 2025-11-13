@@ -2,14 +2,15 @@ from queue import Empty
 from time import sleep
 from typing import Optional
 
-from utils.logging.logger import Logger
+from utils.logging import Logger
 from network.connection.GeneralSocket import BaseSocket
 from network.stream.GenericStream import StreamHandler
 from network.data.MessageExchange import MessageExchange, MessageExchangeConfig
 from model.ClientObj import ClientsManager, ClientObj
 
 from event.EventBus import EventBus
-from event.Event import EventType
+from event import EventType
+
 
 class UnidirectionalStreamHandler(StreamHandler):
     """

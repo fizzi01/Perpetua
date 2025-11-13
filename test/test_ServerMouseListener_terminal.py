@@ -7,10 +7,10 @@ import sys
 from threading import Thread, Event as ThreadEvent
 
 from event.EventBus import ThreadSafeEventBus
-from event.Event import EventType, MouseEvent
+from event import EventType, MouseEvent
 from input.mouse import ServerMouseListener
 from network.stream.GenericStream import StreamHandler
-from utils.logging.logger import Logger
+from utils.logging import Logger
 
 
 class TerminalStreamHandler(StreamHandler):

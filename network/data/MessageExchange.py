@@ -7,7 +7,7 @@ from typing import Callable, Dict, Optional, Any, List
 from dataclasses import dataclass
 
 from config import ApplicationConfig
-from utils.logging.logger import Logger
+from utils.logging import Logger
 from network.protocol.message import ProtocolMessage, MessageBuilder
 from network.protocol.ordering import OrderedMessageProcessor
 

@@ -15,7 +15,7 @@ from network.stream.StreamObj import StreamType
 from model.ClientObj import ClientsManager, ClientObj
 from network.data.MessageExchange import MessageExchange
 from network.protocol.message import ProtocolMessage, MessageType
-from utils.logging.logger import Logger
+from utils.logging import Logger
 
 
 class StopException(Exception):

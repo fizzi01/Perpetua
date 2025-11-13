@@ -2,7 +2,7 @@ import socket
 from typing import Optional, Dict
 from socket import timeout, error
 
-from utils.logging.logger import Logger
+from utils.logging import Logger
 from utils.override import override
 
 

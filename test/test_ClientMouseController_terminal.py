@@ -9,10 +9,11 @@ from threading import Thread, Event as ThreadEvent
 from pynput.mouse import Button, Controller
 
 from event.EventBus import ThreadSafeEventBus
-from event.Event import EventType, MouseEvent, CommandEvent, EventMapper
+from event import EventType, MouseEvent, CommandEvent, EventMapper
 from input.mouse import ClientMouseController
 from network.stream.GenericStream import StreamHandler
-from utils.logging.logger import Logger
+from utils.logging import Logger
+
 
 class TerminalStreamHandler(StreamHandler):
     """Stream handler that prints events to terminal"""

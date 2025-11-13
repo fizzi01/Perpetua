@@ -3,7 +3,7 @@ from typing import Callable, Dict, List
 
 from threading import Lock, Thread
 
-from utils.logging.logger import Logger
+from utils.logging import Logger
 
 
 class EventBus(ABC):
@@ -31,7 +31,7 @@ class EventBus(ABC):
         Asynchronously dispatch an event to all registered listeners for the given event type.
         """
 
-
+# TODO: Handle priority for subscribers
 class ThreadSafeEventBus(EventBus):
     """
     Thread-safe implementation of the EventBus.

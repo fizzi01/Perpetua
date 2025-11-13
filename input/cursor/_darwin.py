@@ -6,7 +6,9 @@ from queue import Empty
 import wx
 import time
 import threading
-import multiprocessing as mp
+
+from multiprocessing import Queue, Pipe, Process
+from multiprocessing.connection import Connection
 
 # Object-c Library
 import objc
@@ -39,12 +41,13 @@ from ApplicationServices import (
     kAXWindowsAttribute
 )
 
-from event.Event import EventType
+from event import EventType, MouseEvent
 from event.EventBus import EventBus
+from network.stream.GenericStream import StreamHandler
 
 
 class OverlayPanel(wx.Panel):
-    def __init__(self, parent,command_queue: mp.Queue, result_queue:  mp.Queue):
+    def __init__(self, parent):
         super().__init__(parent)
 
         # Layout
@@ -87,13 +90,11 @@ class OverlayPanel(wx.Panel):
 
         self.SetSizer(vbox)
 
-
         # Black background
         self.SetBackgroundColour(wx.Colour(10, 10, 10))
 
-
 class CursorHandlerWindow(wx.Frame):
-    def __init__(self, command_queue: mp.Queue, result_queue:  mp.Queue, debug: bool = True):
+    def __init__(self, command_queue: Queue, result_queue:  Queue, mouse_conn: Connection, debug: bool = True):
         super().__init__(None, title="", size=(400, 400))
 
 
@@ -101,8 +102,9 @@ class CursorHandlerWindow(wx.Frame):
         self.mouse_captured = False
         self.center_pos = None
 
-        self.command_queue = command_queue
-        self.result_queue = result_queue
+        self.command_queue: Queue = command_queue
+        self.result_queue: Queue = result_queue
+        self.mouse_conn: Connection = mouse_conn
 
         self.previous_app = None
         self.previous_app_pid = None
@@ -113,7 +115,7 @@ class CursorHandlerWindow(wx.Frame):
         self.command_thread.start()
 
         # Panel principale
-        self.panel = OverlayPanel(self, self.command_queue, self.result_queue)
+        self.panel = OverlayPanel(self)
 
         # Obtain NSApplication instance
         NSApp = NSApplication.sharedApplication()
@@ -180,6 +182,7 @@ class CursorHandlerWindow(wx.Frame):
     def ForceOverlay(self):
         try:
             self.SetSize(400, 400)
+            self.Show(True)
 
             self.previous_app = NSWorkspace.sharedWorkspace().frontmostApplication()
             self.previous_app_pid = self.previous_app.processIdentifier()
@@ -273,8 +276,9 @@ class CursorHandlerWindow(wx.Frame):
             self.reset_mouse_position()
 
             # Aggiorna UI
-            self.panel.status_text.SetLabel("Mouse Capture: ATTIVO")
-            self.panel.status_text.SetForegroundColour(wx.Colour(100, 255, 100))
+            if self._debug:
+                self.panel.status_text.SetLabel("Mouse Capture: ATTIVO")
+                self.panel.status_text.SetForegroundColour(wx.Colour(100, 255, 100))
 
     def disable_mouse_capture(self):
         if self.mouse_captured:
@@ -289,8 +293,9 @@ class CursorHandlerWindow(wx.Frame):
             Quartz.CGDisplayShowCursor(Quartz.CGMainDisplayID())
 
             # Aggiorna UI
-            self.panel.status_text.SetLabel("Mouse Capture: DISATTIVO")
-            self.panel.status_text.SetForegroundColour(wx.Colour(255, 100, 100))
+            if self._debug:
+                self.panel.status_text.SetLabel("Mouse Capture: DISATTIVO")
+                self.panel.status_text.SetForegroundColour(wx.Colour(255, 100, 100))
 
             self.HideOverlay()
 
@@ -315,7 +320,14 @@ class CursorHandlerWindow(wx.Frame):
         # Processa solo se c'è movimento
         if delta_x != 0 or delta_y != 0:
             # Aggiorna UI
-            self.panel.delta_text.SetLabel(f"Delta X: {delta_x:4d}, Delta Y: {delta_y:4d}")
+            if self._debug:
+                self.panel.delta_text.SetLabel(f"Delta X: {delta_x:4d}, Delta Y: {delta_y:4d}")
+            #timestamp = time.time()
+            #print(f"[{timestamp}] Mouse moved: ΔX={delta_x}, ΔY={delta_y}")
+            try:
+                self.mouse_conn.send((delta_x, delta_y))
+            except Exception as e:
+                pass
 
             # Resetta posizione
             wx.CallAfter(self.reset_mouse_position)
@@ -329,16 +341,17 @@ class CursorHandlerWindow(wx.Frame):
 
 class CursorHandlerProcess:
 
-    def __init__(self, command_queue, result_queue):
+    def __init__(self, command_queue, result_queue, mouse_conn: Connection):
         self.command_queue = command_queue
         self.result_queue = result_queue
+        self.mouse_conn = mouse_conn
         self.window = None
         self.app = None
         self.running = False
 
     def run(self):
         self.app = wx.App()
-        self.window = CursorHandlerWindow(self.command_queue, self.result_queue)
+        self.window = CursorHandlerWindow(self.command_queue, self.result_queue, self.mouse_conn)
 
         # Notify that the window is ready
         self.result_queue.put({'type': 'window_ready'})
@@ -351,16 +364,24 @@ class CursorHandlerWorker:
     A utility class for handling cursor visibility on macOS.
     """
 
-    def __init__(self, event_bus: EventBus):
-        self.command_queue = mp.Queue()
-        self.result_queue = mp.Queue()
+    def __init__(self, event_bus: EventBus, stream: StreamHandler):
+        self.event_bus = event_bus
+        self.stream = stream
+
+        self.command_queue = Queue()
+        self.result_queue = Queue()
+
+        # Unidirectional pipe for mouse movement
+        self.mouse_conn_rec, self.mouse_conn_send = Pipe(duplex=False)
+
         self.process = None
         self.is_running = False
+        self._moue_data_thread = None
 
         # Register to active_screen
-        event_bus.subscribe(event_type=EventType.ACTIVE_SCREEN_CHANGED, callback=self._on_active_screen_changed)
-        event_bus.subscribe(event_type=EventType.CLIENT_ACTIVE, callback=self._on_client_active)
-        event_bus.subscribe(event_type=EventType.CLIENT_INACTIVE, callback=self._on_client_inactive)
+        self.event_bus.subscribe(event_type=EventType.ACTIVE_SCREEN_CHANGED, callback=self._on_active_screen_changed)
+        self.event_bus.subscribe(event_type=EventType.CLIENT_ACTIVE, callback=self._on_client_active)
+        self.event_bus.subscribe(event_type=EventType.CLIENT_INACTIVE, callback=self._on_client_inactive)
 
     def _on_active_screen_changed(self, data):
         active_screen = data.get("active_screen")
@@ -382,9 +403,12 @@ class CursorHandlerWorker:
         if self.is_running:
             return True
 
-        self.process = mp.Process(target=CursorHandlerProcess(self.command_queue, self.result_queue).run)
+        self.process = Process(target=CursorHandlerProcess(self.command_queue, self.result_queue, self.mouse_conn_send).run)
         self.process.start()
         self.is_running = True
+
+        self._moue_data_thread = threading.Thread(target=self._mouse_data_listener, daemon=True)
+        self._moue_data_thread.start()
 
         if wait_ready:
             # Aspetta che la window sia pronta
@@ -413,7 +437,26 @@ class CursorHandlerWorker:
                 self.process.terminate()
                 self.process.join(timeout=1)
 
+        # Close queues
+        self.command_queue.close()
+        self.result_queue.close()
+
         self.is_running = False
+
+    def _mouse_data_listener(self):
+        """Thread per ascoltare i dati del mouse"""
+        mouse_event = MouseEvent(action=MouseEvent.MOVE_ACTION)
+        while self.is_running:
+            try:
+                if self.mouse_conn_rec.poll(0.001):
+                    delta_x, delta_y = self.mouse_conn_rec.recv()
+                    #timestamp = time.time()
+                    #print(f"[RECEIVER][{timestamp}] Mouse moved: ΔX={delta_x}, ΔY={delta_y}")
+                    mouse_event.dx = delta_x
+                    mouse_event.dy = delta_y
+                    self.stream.send(mouse_event)
+            except Exception as e:
+                pass
 
     def send_command(self, command):
         """Invia un comando alla window"""
@@ -455,8 +498,8 @@ class CursorHandlerWorker:
 
 
 if __name__ == "__main__":
-    event_bus = EventBus()
-    controller = CursorHandlerWorker(event_bus)
+    eb = EventBus()
+    controller = CursorHandlerWorker(eb)
     controller.start()
 
     try:

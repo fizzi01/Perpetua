@@ -4,9 +4,9 @@ from unittest.mock import Mock, MagicMock, patch, call
 from queue import Queue
 
 from model.ClientObj import ClientsManager
-from utils.logging.logger import Logger
+from utils.logging import Logger
 from event.EventBus import EventBus, ThreadSafeEventBus
-from event.Event import EventType, MouseEvent
+from event import EventType, MouseEvent
 from input.mouse import ServerMouseListener
 from network.stream.GenericStream import StreamHandler
 

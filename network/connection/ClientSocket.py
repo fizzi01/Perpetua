@@ -6,7 +6,7 @@ from typing import Optional
 
 from zeroconf import Zeroconf, ServiceStateChange, ServiceBrowser
 
-from utils.logging.logger import Logger
+from utils.logging import Logger
 
 from config import ApplicationConfig
 from .GeneralSocket import BaseSocket
