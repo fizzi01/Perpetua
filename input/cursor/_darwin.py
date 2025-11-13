@@ -39,11 +39,65 @@ from ApplicationServices import (
     kAXWindowsAttribute
 )
 
-#TODO: Add transparent panel, always on top since app starts in background. Just hide dock/menu bar + cursor and unhide on demand.
-class CursorHandlerWindow(wx.Frame):
-    def __init__(self,command_queue: mp.Queue, result_queue:  mp.Queue):
-        super().__init__(None, title="Test Mouse Capture", size=(600, 500))
+from event.Event import EventType
+from event.EventBus import EventBus
 
+
+class OverlayPanel(wx.Panel):
+    def __init__(self, parent,command_queue: mp.Queue, result_queue:  mp.Queue):
+        super().__init__(parent)
+
+        # Layout
+        vbox = wx.BoxSizer(wx.VERTICAL)
+
+        # Titolo
+        title = wx.StaticText(self, label="Test Mouse Capture Window")
+        title.SetForegroundColour(wx.WHITE)
+        title.SetFont(wx.Font(16, wx.FONTFAMILY_DEFAULT, wx.FONTSTYLE_NORMAL, wx.FONTWEIGHT_BOLD))
+        vbox.Add(title, 0, wx.ALL | wx.CENTER, 10)
+
+        # Info
+        self.info_text = wx.StaticText(self, label="Premi SPAZIO per attivare/disattivare la cattura")
+        self.info_text.SetForegroundColour(wx.Colour(200, 200, 200))
+        vbox.Add(self.info_text, 0, wx.ALL | wx.CENTER, 5)
+
+        # Stato
+        self.status_text = wx.StaticText(self, label="Mouse Capture: DISATTIVO")
+        self.status_text.SetForegroundColour(wx.Colour(255, 100, 100))
+        self.status_text.SetFont(wx.Font(12, wx.FONTFAMILY_DEFAULT, wx.FONTSTYLE_NORMAL, wx.FONTWEIGHT_BOLD))
+        vbox.Add(self.status_text, 0, wx.ALL | wx.CENTER, 10)
+
+
+        # Delta display
+        self.delta_text = wx.StaticText(self, label="Delta X: 0, Delta Y: 0")
+        self.delta_text.SetForegroundColour(wx.WHITE)
+        self.delta_text.SetFont(wx.Font(10, wx.FONTFAMILY_MODERN, wx.FONTSTYLE_NORMAL, wx.FONTWEIGHT_NORMAL))
+        vbox.Add(self.delta_text, 0, wx.ALL | wx.CENTER, 5)
+
+        # Istruzioni
+        instructions = wx.StaticText(self,
+                                     label="SPAZIO: Toggle capture\nESC: Disattiva | Q: Esci")
+        instructions.SetForegroundColour(wx.Colour(150, 150, 150))
+        vbox.Add(instructions, 0, wx.ALL | wx.CENTER, 20)
+
+        # Obtain NSApplication instance
+        NSApp = NSApplication.sharedApplication()
+        # Set activation policy to Accessory to hide the icon in the Dock
+        NSApp.setActivationPolicy_(NSApplicationActivationPolicyAccessory)
+
+        self.SetSizer(vbox)
+
+
+        # Black background
+        self.SetBackgroundColour(wx.Colour(10, 10, 10))
+
+
+class CursorHandlerWindow(wx.Frame):
+    def __init__(self, command_queue: mp.Queue, result_queue:  mp.Queue, debug: bool = True):
+        super().__init__(None, title="", size=(400, 400))
+
+
+        self._debug = debug
         self.mouse_captured = False
         self.center_pos = None
 
@@ -59,43 +113,15 @@ class CursorHandlerWindow(wx.Frame):
         self.command_thread.start()
 
         # Panel principale
-        panel = wx.Panel(self)
-        panel.SetBackgroundColour(wx.Colour(40, 40, 40))
+        self.panel = OverlayPanel(self, self.command_queue, self.result_queue)
 
-        # Layout
-        vbox = wx.BoxSizer(wx.VERTICAL)
+        # Obtain NSApplication instance
+        NSApp = NSApplication.sharedApplication()
+        # Set activation policy to Accessory to hide the icon in the Dock
+        NSApp.setActivationPolicy_(NSApplicationActivationPolicyAccessory)
 
-        # Titolo
-        title = wx.StaticText(panel, label="Test Mouse Capture Window")
-        title.SetForegroundColour(wx.WHITE)
-        title.SetFont(wx.Font(16, wx.FONTFAMILY_DEFAULT, wx.FONTSTYLE_NORMAL, wx.FONTWEIGHT_BOLD))
-        vbox.Add(title, 0, wx.ALL | wx.CENTER, 10)
-
-        # Info
-        self.info_text = wx.StaticText(panel, label="Premi SPAZIO per attivare/disattivare la cattura")
-        self.info_text.SetForegroundColour(wx.Colour(200, 200, 200))
-        vbox.Add(self.info_text, 0, wx.ALL | wx.CENTER, 5)
-
-        # Stato
-        self.status_text = wx.StaticText(panel, label="Mouse Capture: DISATTIVO")
-        self.status_text.SetForegroundColour(wx.Colour(255, 100, 100))
-        self.status_text.SetFont(wx.Font(12, wx.FONTFAMILY_DEFAULT, wx.FONTSTYLE_NORMAL, wx.FONTWEIGHT_BOLD))
-        vbox.Add(self.status_text, 0, wx.ALL | wx.CENTER, 10)
-
-
-        # Delta display
-        self.delta_text = wx.StaticText(panel, label="Delta X: 0, Delta Y: 0")
-        self.delta_text.SetForegroundColour(wx.WHITE)
-        self.delta_text.SetFont(wx.Font(10, wx.FONTFAMILY_MODERN, wx.FONTSTYLE_NORMAL, wx.FONTWEIGHT_NORMAL))
-        vbox.Add(self.delta_text, 0, wx.ALL | wx.CENTER, 5)
-
-        # Istruzioni
-        instructions = wx.StaticText(panel,
-                                     label="SPAZIO: Toggle capture\nESC: Disattiva | Q: Esci")
-        instructions.SetForegroundColour(wx.Colour(150, 150, 150))
-        vbox.Add(instructions, 0, wx.ALL | wx.CENTER, 20)
-
-        panel.SetSizer(vbox)
+        if not self._debug:
+            self.SetTransparent(0)
 
         # Eventi
         self.Bind(wx.EVT_MOTION, self.on_mouse_move)
@@ -130,11 +156,11 @@ class CursorHandlerWindow(wx.Frame):
         cmd_type = command.get('type')
 
         if cmd_type == 'enable_capture':
-            self.enable_mouse_capture()
+            wx.CallAfter(self.enable_mouse_capture)
             self.result_queue.put({'type': 'capture_enabled', 'success': True})
 
         elif cmd_type == 'disable_capture':
-            self.disable_mouse_capture()
+            wx.CallAfter(self.disable_mouse_capture)
             self.result_queue.put({'type': 'capture_disabled', 'success': True})
         elif cmd_type == 'get_stats':
             self.result_queue.put({
@@ -144,7 +170,7 @@ class CursorHandlerWindow(wx.Frame):
 
         elif cmd_type == 'set_message':
             message = command.get('message', '')
-            self.info_text.SetLabel(message)
+            self.panel.info_text.SetLabel(message)
             self.result_queue.put({'type': 'message_set', 'success': True})
 
         elif cmd_type == 'quit':
@@ -153,6 +179,8 @@ class CursorHandlerWindow(wx.Frame):
 
     def ForceOverlay(self):
         try:
+            self.SetSize(400, 400)
+
             self.previous_app = NSWorkspace.sharedWorkspace().frontmostApplication()
             self.previous_app_pid = self.previous_app.processIdentifier()
 
@@ -184,8 +212,13 @@ class CursorHandlerWindow(wx.Frame):
             ns_window = ns_view.window()
             ns_window.setLevel_(NSScreenSaverWindowLevel - 1)
             ns_window.setIgnoresMouseEvents_(False)
+            ns_window.setCollectionBehavior_(0)
 
             self.RestorePreviousApp()
+            #self.panel.Hide()
+            self.Hide()
+            # Resize to 0x0 to avoid interaction
+            self.SetSize((0, 0))
         except Exception as e:
             print(f"Error hiding overlay: {e}")
 
@@ -201,15 +234,18 @@ class CursorHandlerWindow(wx.Frame):
     def on_key_press(self, event):
         key_code = event.GetKeyCode()
 
-        if key_code == wx.WXK_SPACE:
-            if self.mouse_captured:
+        if self._debug:
+            if key_code == wx.WXK_SPACE:
+                if self.mouse_captured:
+                    self.disable_mouse_capture()
+                else:
+                    self.enable_mouse_capture()
+            elif key_code == wx.WXK_ESCAPE:
                 self.disable_mouse_capture()
+            elif key_code == ord('Q') or key_code == ord('q'):
+                self.Close()
             else:
-                self.enable_mouse_capture()
-        elif key_code == wx.WXK_ESCAPE:
-            self.disable_mouse_capture()
-        elif key_code == ord('Q') or key_code == ord('q'):
-            self.Close()
+                event.Skip()
         else:
             event.Skip()
 
@@ -237,8 +273,8 @@ class CursorHandlerWindow(wx.Frame):
             self.reset_mouse_position()
 
             # Aggiorna UI
-            self.status_text.SetLabel("Mouse Capture: ATTIVO")
-            self.status_text.SetForegroundColour(wx.Colour(100, 255, 100))
+            self.panel.status_text.SetLabel("Mouse Capture: ATTIVO")
+            self.panel.status_text.SetForegroundColour(wx.Colour(100, 255, 100))
 
     def disable_mouse_capture(self):
         if self.mouse_captured:
@@ -253,8 +289,8 @@ class CursorHandlerWindow(wx.Frame):
             Quartz.CGDisplayShowCursor(Quartz.CGMainDisplayID())
 
             # Aggiorna UI
-            self.status_text.SetLabel("Mouse Capture: DISATTIVO")
-            self.status_text.SetForegroundColour(wx.Colour(255, 100, 100))
+            self.panel.status_text.SetLabel("Mouse Capture: DISATTIVO")
+            self.panel.status_text.SetForegroundColour(wx.Colour(255, 100, 100))
 
             self.HideOverlay()
 
@@ -279,7 +315,7 @@ class CursorHandlerWindow(wx.Frame):
         # Processa solo se c'è movimento
         if delta_x != 0 or delta_y != 0:
             # Aggiorna UI
-            self.delta_text.SetLabel(f"Delta X: {delta_x:4d}, Delta Y: {delta_y:4d}")
+            self.panel.delta_text.SetLabel(f"Delta X: {delta_x:4d}, Delta Y: {delta_y:4d}")
 
             # Resetta posizione
             wx.CallAfter(self.reset_mouse_position)
@@ -315,11 +351,31 @@ class CursorHandlerWorker:
     A utility class for handling cursor visibility on macOS.
     """
 
-    def __init__(self):
+    def __init__(self, event_bus: EventBus):
         self.command_queue = mp.Queue()
         self.result_queue = mp.Queue()
         self.process = None
         self.is_running = False
+
+        # Register to active_screen
+        event_bus.subscribe(event_type=EventType.ACTIVE_SCREEN_CHANGED, callback=self._on_active_screen_changed)
+        event_bus.subscribe(event_type=EventType.CLIENT_ACTIVE, callback=self._on_client_active)
+        event_bus.subscribe(event_type=EventType.CLIENT_INACTIVE, callback=self._on_client_inactive)
+
+    def _on_active_screen_changed(self, data):
+        active_screen = data.get("active_screen")
+
+        if active_screen:
+            # Start capture cursor
+            self.enable_capture()
+        else:
+            self.disable_capture()
+
+    def _on_client_active(self, data: dict):
+        self.disable_capture()
+
+    def _on_client_inactive(self, data: dict):
+        self.enable_capture()
 
     def start(self, wait_ready=True, timeout=1):
         """Avvia il processo della window"""
@@ -399,25 +455,14 @@ class CursorHandlerWorker:
 
 
 if __name__ == "__main__":
-    controller = CursorHandlerWorker()
+    event_bus = EventBus()
+    controller = CursorHandlerWorker(event_bus)
     controller.start()
 
     try:
         # Avvia la window
         controller.start()
         print("Window avviata!")
-        # Abilita la cattura
-        print("Abilitazione cattura mouse...")
-        result = controller.enable_capture()
-        print(f"Risultato: {result}")
-
-        # Aspetta un po'
-        time.sleep(3)
-
-        # Disabilita la cattura
-        print("Disabilitazione cattura mouse...")
-        result = controller.disable_capture()
-        print(f"Risultato: {result}")
 
         # Cycle to enable again and disable
         for i in range(2):

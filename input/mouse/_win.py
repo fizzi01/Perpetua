@@ -46,7 +46,7 @@ class ServerMouseListener:
 
         self.logger = Logger.get_instance()
 
-        event_bus.subscribe(event_type=EventType.ACTIVE_SCREEN_CHANGED, callback=self._on_active_screen_changed)
+        self.event_bus.subscribe(event_type=EventType.ACTIVE_SCREEN_CHANGED, callback=self._on_active_screen_changed)
 
     def start(self):
         """
@@ -210,8 +210,8 @@ class ClientMouseController:
         # Register to receive mouse events from the stream
         self.stream.register_receive_callback(self._mouse_event_callback, message_type="mouse")
 
-        event_bus.subscribe(event_type=EventType.CLIENT_ACTIVE, callback=self._on_client_active)
-        event_bus.subscribe(event_type=EventType.CLIENT_INACTIVE, callback=self._on_client_inactive)
+        self.event_bus.subscribe(event_type=EventType.CLIENT_ACTIVE, callback=self._on_client_active)
+        self.event_bus.subscribe(event_type=EventType.CLIENT_INACTIVE, callback=self._on_client_inactive)
 
     def _on_client_active(self, data: dict):
         """
