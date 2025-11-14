@@ -77,10 +77,29 @@ class ActiveServer:
         self.cursor_handler_worker.start()
         self.mouse_listener.start()
 
+    def stop(self):
+        # Stop all components
+        self.mouse_listener.stop()
+        self.cursor_handler_worker.stop()
+        self.mouse_stream_handler.stop()
+        self.command_stream_handler.stop()
+        self.connection_handler.stop()
+
 if __name__ == "__main__":
     server = ActiveServer(host="192.168.1.62", port=5555, client_address="192.168.1.74")
     server.start()
 
     print("Server started")
 
+    # Writing exit will stop the server
+    try:
+        while True:
+            cmd = input("Type 'exit' to stop the server: ")
+            if cmd.strip().lower() == "exit":
+                break
+    except KeyboardInterrupt:
+        pass
+    print("Stopping server...")
+
+    server.stop()
 

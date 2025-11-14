@@ -40,14 +40,6 @@ class UnidirectionalStreamHandler(StreamHandler):
         if not self._main_client:
             raise ValueError(f"No main client found in ClientsManager for {self.handler_id}")
 
-        # Set message exchange transport source
-        cl_stram_socket = self._main_client.conn_socket
-        if isinstance(cl_stram_socket, BaseSocket):
-            self.msg_exchange.set_transport(send_callback=cl_stram_socket.get_stream(self.stream_type).send,
-                                            receive_callback=cl_stram_socket.get_stream(self.stream_type).recv)
-        else:
-            raise ValueError(f"Invalid connection socket for main client in {self.handler_id}")
-
         self.logger = Logger.get_instance()
 
         event_bus.subscribe(event_type=EventType.CLIENT_ACTIVE, callback=self._on_client_active)
@@ -59,6 +51,14 @@ class UnidirectionalStreamHandler(StreamHandler):
         """
         with self._rlock, self._slock: # TODO: Check if both locks are necessary
             self._is_active = True
+
+            # Set message exchange transport source
+            cl_stram_socket = self._main_client.conn_socket
+            if isinstance(cl_stram_socket, BaseSocket):
+                self.msg_exchange.set_transport(send_callback=cl_stram_socket.get_stream(self.stream_type).send,
+                                                receive_callback=cl_stram_socket.get_stream(self.stream_type).recv)
+            else:
+                raise ValueError(f"Invalid connection socket for main client in {self.handler_id}")
 
     def _on_client_inactive(self, data: dict):
         """
@@ -142,14 +142,6 @@ class BidirectionalStreamHandler(StreamHandler):
         if not self._main_client:
             raise ValueError(f"No main client found in ClientsManager for {self.handler_id}")
 
-        # Set message exchange transport source
-        cl_stram_socket = self._main_client.conn_socket
-        if isinstance(cl_stram_socket, BaseSocket):
-            self.msg_exchange.set_transport(send_callback=cl_stram_socket.get_stream(self.stream_type).send,
-                                            receive_callback=cl_stram_socket.get_stream(self.stream_type).recv)
-        else:
-            raise ValueError(f"Invalid connection socket for main client in {self.handler_id}")
-
         self.logger = Logger.get_instance()
 
         event_bus.subscribe(event_type=EventType.CLIENT_ACTIVE, callback=self._on_client_active)
@@ -161,6 +153,14 @@ class BidirectionalStreamHandler(StreamHandler):
         """
         with self._rlock, self._slock:
             self._is_active = True
+
+            # Set message exchange transport source
+            cl_stram_socket = self._main_client.conn_socket
+            if isinstance(cl_stram_socket, BaseSocket):
+                self.msg_exchange.set_transport(send_callback=cl_stram_socket.get_stream(self.stream_type).send,
+                                                receive_callback=cl_stram_socket.get_stream(self.stream_type).recv)
+            else:
+                raise ValueError(f"Invalid connection socket for main client in {self.handler_id}")
 
     def _on_client_inactive(self, data: dict):
         """

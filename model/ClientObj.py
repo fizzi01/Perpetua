@@ -14,7 +14,7 @@ class ClientObj:
                  ip_address: str,
                  ports: dict[int, int] = None,
                  connection_time: float = 0.0,
-                 is_connected: bool = True,
+                 is_connected: bool = False,
                  screen_position: str = "center",
                  screen_resolution: str = "1920x1080",
                  client_name: str = "Unknown",

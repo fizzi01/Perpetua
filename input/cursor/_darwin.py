@@ -137,12 +137,13 @@ class CursorHandlerWindow(wx.Frame):
         self.Show()
 
         # Forza il focus della window (importante per macOS)
-        self.Raise()
-        self.SetFocus()
-        self.RequestUserAttention()
+        # self.Raise()
+        # self.SetFocus()
+        # self.RequestUserAttention()
 
         # Porta la finestra in overlay
-        self.ForceOverlay()
+        #self.ForceOverlay()
+        self.HideOverlay()
 
     def _process_commands(self):
         """Processa i comandi dalla queue"""
