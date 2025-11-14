@@ -11,8 +11,8 @@ from utils.logging import Logger
 
 class CommandHandler:
     """
-    It register callback to stream to receive and handle commands.
-    It dispatches appropiate events or actions based on the received commands.
+    It registers callback to stream to receive and handle commands.
+    It dispatches appropriate events or actions based on the received commands.
     """
 
     def __init__(self, event_bus: EventBus, stream: StreamHandler):

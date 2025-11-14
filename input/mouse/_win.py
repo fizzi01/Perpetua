@@ -121,6 +121,15 @@ class ServerMouseListener:
 
         # The border check has to take in account only when we are moving forward and not backward or staying still
         if not self._listening:
+
+            # Add the current position to the movement history
+            try:
+                if self._movement_history.full():
+                    self._movement_history.get()
+                self._movement_history.put((x, y))
+            except Exception:
+                pass
+
             if self._movement_history.qsize() >= 2:
 
                 # Check all the previous movements to determine the direction
@@ -191,6 +200,52 @@ class ServerMouseListener:
             except Exception as e:
                 self.logger.log(f"Failed to dispatch mouse scroll event - {e}", Logger.ERROR)
         return True
+
+
+class ServerMouseController:
+    """
+    It controls the mouse on macOS systems for server side.
+    Its main purpose is to move the mouse cursor and perform clicks based on received events.
+    """
+
+    def __init__(self, event_bus: EventBus):
+        self.event_bus = event_bus
+
+        self._screen_size: tuple[int, int] = Screen.get_size()
+
+        self._controller = MouseController()
+        self.logger = Logger.get_instance()
+
+        # Register for active screen changed events to reposition the cursor
+        self.event_bus.subscribe(event_type=EventType.ACTIVE_SCREEN_CHANGED, callback=self._on_active_screen_changed)
+
+    def _on_active_screen_changed(self, data: dict):
+        """
+        Activate only when the active screen becomes None.
+        """
+        active_screen = data.get("active_screen")
+        if active_screen is None:
+            # Get the cursor position from data if available
+            x = data.get("x", -1)
+            y = data.get("y", -1)
+            if x > -1 and y > -1:
+                self.position_cursor(x, y)
+
+    def position_cursor(self, x: float | int, y: float | int):
+        """
+        Position the mouse cursor to the specified (x, y) coordinates.
+        """
+        try:
+            # Denormalize coordinates by mapping into the client screen size
+            x *= self._screen_size[0]
+            y *= self._screen_size[1]
+            x = int(x)
+            y = int(y)
+        except ValueError:
+            self.logger.log(f"Invalid x or y values: x={x}, y={y}", Logger.ERROR)
+            return
+
+        self._controller.position = (x, y)
 
 class ClientMouseController:
     """

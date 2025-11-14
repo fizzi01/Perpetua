@@ -225,7 +225,7 @@ class ServerConnectionHandler:
                         continue
 
                     port = addr[1]
-                    if client.ssl:
+                    if client.ssl and (self.certfile and self.keyfile):
                         stream_socket = self._ssl_wrap(stream_socket)
                         self.logger.log(f"SSL stream connection established with client {addr[0]} on port {port}.", Logger.INFO)
                     else:

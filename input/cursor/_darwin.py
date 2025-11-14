@@ -2,6 +2,7 @@
 Logic to handle cursor visibility on macOS systems.
 """
 from queue import Empty
+from typing import Optional
 
 import wx
 import time
@@ -94,7 +95,7 @@ class OverlayPanel(wx.Panel):
         self.SetBackgroundColour(wx.Colour(10, 10, 10))
 
 class CursorHandlerWindow(wx.Frame):
-    def __init__(self, command_queue: Queue, result_queue:  Queue, mouse_conn: Connection, debug: bool = True):
+    def __init__(self, command_queue: Queue, result_queue:  Queue, mouse_conn: Connection, debug: bool = False):
         super().__init__(None, title="", size=(400, 400))
 
 
@@ -341,7 +342,7 @@ class CursorHandlerWindow(wx.Frame):
 
 class CursorHandlerProcess:
 
-    def __init__(self, command_queue, result_queue, mouse_conn: Connection):
+    def __init__(self, command_queue, result_queue, mouse_conn: Connection, debug: bool = False):
         self.command_queue = command_queue
         self.result_queue = result_queue
         self.mouse_conn = mouse_conn
@@ -349,9 +350,11 @@ class CursorHandlerProcess:
         self.app = None
         self.running = False
 
+        self._debug = debug
+
     def run(self):
         self.app = wx.App()
-        self.window = CursorHandlerWindow(self.command_queue, self.result_queue, self.mouse_conn)
+        self.window = CursorHandlerWindow(command_queue=self.command_queue,result_queue=self.result_queue,mouse_conn=self.mouse_conn, debug=self._debug)
 
         # Notify that the window is ready
         self.result_queue.put({'type': 'window_ready'})
@@ -364,9 +367,11 @@ class CursorHandlerWorker:
     A utility class for handling cursor visibility on macOS.
     """
 
-    def __init__(self, event_bus: EventBus, stream: StreamHandler):
+    def __init__(self, event_bus: EventBus, stream: Optional[StreamHandler] = None, debug: bool = False):
         self.event_bus = event_bus
         self.stream = stream
+
+        self._debug = debug
 
         self.command_queue = Queue()
         self.result_queue = Queue()
@@ -403,12 +408,15 @@ class CursorHandlerWorker:
         if self.is_running:
             return True
 
-        self.process = Process(target=CursorHandlerProcess(self.command_queue, self.result_queue, self.mouse_conn_send).run)
+        self.process = Process(target=CursorHandlerProcess(command_queue=self.command_queue,
+                                                           result_queue=self.result_queue,
+                                                           mouse_conn=self.mouse_conn_send, debug=self._debug).run)
         self.process.start()
         self.is_running = True
 
-        self._moue_data_thread = threading.Thread(target=self._mouse_data_listener, daemon=True)
-        self._moue_data_thread.start()
+        if not self._debug or not self.stream:
+            self._moue_data_thread = threading.Thread(target=self._mouse_data_listener, daemon=True)
+            self._moue_data_thread.start()
 
         if wait_ready:
             # Aspetta che la window sia pronta
@@ -437,9 +445,15 @@ class CursorHandlerWorker:
                 self.process.terminate()
                 self.process.join(timeout=1)
 
+        if self._moue_data_thread:
+            self._moue_data_thread.join(timeout=timeout)
+
         # Close queues
         self.command_queue.close()
         self.result_queue.close()
+
+        self.mouse_conn_send.close()
+        self.mouse_conn_rec.close()
 
         self.is_running = False
 
@@ -455,6 +469,8 @@ class CursorHandlerWorker:
                     mouse_event.dx = delta_x
                     mouse_event.dy = delta_y
                     self.stream.send(mouse_event)
+            except EOFError:
+                break
             except Exception as e:
                 pass
 
