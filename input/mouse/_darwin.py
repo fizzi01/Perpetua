@@ -1,6 +1,7 @@
 """
 Provides mouse input support for macOS (Darwin) systems.
 """
+
 from time import time
 from queue import Queue
 from threading import Event, Thread
@@ -34,12 +35,14 @@ class ServerMouseListener:
     It listens for mouse events on macOS systems.
     Its main purpose is to capture mouse movements and clicks. And handle some border cases like cursor reaching screen edges.
     """
-    def __init__(self, event_bus: EventBus, stream_handler: StreamHandler, filtering: bool = True):
+    def __init__(self, event_bus: EventBus, stream_handler: StreamHandler, command_stream: StreamHandler, filtering: bool = True):
 
-        self.stream = stream_handler
+        self.stream = stream_handler    # Should be a mouse stream
+        self.command_stream = command_stream
         self.event_bus = event_bus
 
         self._listening = False
+        self._active_screens = {}
         self._screen_size: tuple[int,int] = Screen.get_size()
         self._cross_screen_event = Event()
 
@@ -82,12 +85,17 @@ class ServerMouseListener:
 
         if active_screen is not None:
             self._listening = True
+            self._active_screens[active_screen] = True
             # reset movement history
             with self._movement_history.mutex:
                 self._movement_history.queue.clear()
 
             self._cross_screen_event.clear()
         else:
+            # try to get client from data to remove from active screens
+            client = data.get("client")
+            if client and client in self._active_screens:
+                del self._active_screens[client]
             self._listening = False
 
     def _mouse_suppress_filter(self, event_type, event):
@@ -157,38 +165,38 @@ class ServerMouseListener:
 
                 try:
                     self._cross_screen_event.set()
-                    if edge == ScreenEdge.LEFT: # It enters from right edge of the client screen
+                    if edge == ScreenEdge.LEFT and self._active_screens.get("left", False): # It enters from right edge of the client screen
                             # Normalize position to avoid sticking
                             mouse_event.x = 0
                             mouse_event.y = y / self._screen_size[1]
                             self.event_bus.dispatch(event_type=EventType.ACTIVE_SCREEN_CHANGED,
                                                     data={"active_screen": "left"})
                             # Notify client about the active screen change with a CROSS_SCREEN command
-                            self.stream.send(CommandEvent(command=CommandEvent.CROSS_SCREEN))
+                            self.command_stream.send(CommandEvent(command=CommandEvent.CROSS_SCREEN))
                             self.stream.send(mouse_event)
-                    elif edge == ScreenEdge.RIGHT: # It enters from left edge of the client screen
+                    elif edge == ScreenEdge.RIGHT and self._active_screens.get("right", False): # It enters from left edge of the client screen
                             mouse_event.x = 1
                             mouse_event.y = y / self._screen_size[1]
                             self.event_bus.dispatch(event_type=EventType.ACTIVE_SCREEN_CHANGED,
                                                     data={"active_screen": "right"})
                             # Notify client about the active screen change with a CROSS_SCREEN command
-                            self.stream.send(CommandEvent(command=CommandEvent.CROSS_SCREEN))
+                            self.command_stream.send(CommandEvent(command=CommandEvent.CROSS_SCREEN))
                             self.stream.send(mouse_event)
-                    elif edge == ScreenEdge.TOP: # It enters from bottom edge of the client screen
+                    elif edge == ScreenEdge.TOP and self._active_screens.get("top", False): # It enters from bottom edge of the client screen
                             mouse_event.x = x / self._screen_size[0]
                             mouse_event.y = 0
                             self.event_bus.dispatch(event_type=EventType.ACTIVE_SCREEN_CHANGED,
                                                     data={"active_screen": "top"})
                             # Notify client about the active screen change with a CROSS_SCREEN command
-                            self.stream.send(CommandEvent(command=CommandEvent.CROSS_SCREEN))
+                            self.command_stream.send(CommandEvent(command=CommandEvent.CROSS_SCREEN))
                             self.stream.send(mouse_event)
-                    elif edge == ScreenEdge.BOTTOM: # It enters from top edge of the client screen
+                    elif edge == ScreenEdge.BOTTOM and self._active_screens.get("bottom",False): # It enters from top edge of the client screen
                             mouse_event.x = x / self._screen_size[0]
                             mouse_event.y = 1
                             self.event_bus.dispatch(event_type=EventType.ACTIVE_SCREEN_CHANGED,
                                                     data={"active_screen": "bottom"})
                             # Notify client about the active screen change with a CROSS_SCREEN command
-                            self.stream.send(CommandEvent(command=CommandEvent.CROSS_SCREEN))
+                            self.command_stream.send(CommandEvent(command=CommandEvent.CROSS_SCREEN))
                             self.stream.send(mouse_event)
                 except Exception as e:
                     self.logger.log(f"Failed to dispatch mouse event - {e}", Logger.ERROR)
@@ -267,8 +275,9 @@ class ClientMouseController:
     It controls the mouse on macOS systems. Its main purpose is to move the mouse cursor and perform clicks based on received events.
     """
 
-    def __init__(self, event_bus: EventBus, stream_handler: StreamHandler):
-        self.stream = stream_handler
+    def __init__(self, event_bus: EventBus, stream_handler: StreamHandler,command_stream: StreamHandler):
+        self.stream = stream_handler    # Should be a mouse stream
+        self.command_stream = command_stream # Should be a command stream
         self.event_bus = event_bus
         self._cross_screen_event = Event()
 
@@ -362,7 +371,7 @@ class ClientMouseController:
                         screen_data = {"x": norm_x, "y": norm_y}
                         command = CommandEvent(command=CommandEvent.CROSS_SCREEN, params=screen_data)
                         # Send command event to server
-                        self.stream.send(command)
+                        self.command_stream.send(command)
                         # Dispatch client inactive event
                         self.event_bus.dispatch(event_type=EventType.CLIENT_INACTIVE, data={})
                 except Exception as e:

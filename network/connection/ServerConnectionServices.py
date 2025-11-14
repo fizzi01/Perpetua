@@ -16,7 +16,7 @@ from utils.logging import Logger
 
 from .ServerSocket import ServerSocket
 from .GeneralSocket import BaseSocket
-from ..stream.StreamObj import StreamType
+from ..stream import StreamType
 
 
 class ServerConnectionHandler:
@@ -81,6 +81,7 @@ class ServerConnectionHandler:
 
     def start(self) -> bool:
         try:
+            self.initialize()
             self._running = True
             self._core_thread = Thread(target=self._core, daemon=True)
             self._core_thread.start()

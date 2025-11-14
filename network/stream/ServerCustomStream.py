@@ -18,7 +18,11 @@ class UnidirectionalStreamHandler(StreamHandler):
     """
 
     def __init__(self, stream_type: int, clients: ClientsManager, event_bus: EventBus, handler_id: Optional[str] = None,
-                 source: str = "server", sender: bool = True, instant: bool = True):
+                 source: str = "server", sender: bool = True, instant: bool = False):
+        """
+        Args:
+            instant (bool): If True, the stream receive data instantly. (if false, it receives with a specified callback for different message types)
+        """
         super().__init__(stream_type=stream_type, clients=clients, event_bus=event_bus, bidirectional=False, sender=sender)
 
         self._active_client = None
@@ -126,10 +130,10 @@ class BidirectionalStreamHandler(StreamHandler):
     """
 
     def __init__(self, stream_type: int, clients: ClientsManager, event_bus: EventBus, handler_id: Optional[str] = None,
-                 source: str = "server", instant: bool = True):
+                 source: str = "server", instant: bool = False):
         """
 
-        Attributes:
+        Args:
             instant (bool): If True, the stream receive data instantly. (if false, it receives with a specified callback for different message types)
         """
         super().__init__(stream_type=stream_type, clients=clients, event_bus=event_bus, bidirectional=True)

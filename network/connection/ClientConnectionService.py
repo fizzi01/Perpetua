@@ -8,7 +8,7 @@ from model.ClientObj import ClientsManager, ClientObj
 from network.exceptions.ConnectionExceptions import ServerNotFoundException
 from network.data.MessageExchange import MessageExchange
 from network.protocol.message import MessageType
-from network.stream.StreamObj import StreamType
+from ..stream import StreamType
 from utils.logging import Logger
 
 from .ClientSocket import ClientSocket

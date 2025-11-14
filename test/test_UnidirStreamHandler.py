@@ -5,7 +5,7 @@ from pathlib import Path
 
 from network.stream.ServerCustomStream import UnidirectionalStreamHandler
 from network.connection.ServerConnectionServices import ServerConnectionHandler
-from network.stream.StreamObj import StreamType
+from network.stream import StreamType
 from model.ClientObj import ClientsManager, ClientObj
 from event.EventBus import ThreadSafeEventBus
 from event import EventType, MouseEvent

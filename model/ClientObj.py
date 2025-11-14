@@ -52,15 +52,15 @@ class ClientsManager:
         self.clients = []
         self._is_client_main = client_mode
 
-    def update_client(self, client: 'ClientObj'):
+    def update_client(self, client: 'ClientObj') -> 'ClientsManager':
         # Update existing client info based on IP and port
         for idx, existing_client in enumerate(self.clients):
             if existing_client.ip_address == client.ip_address:
                 self.clients[idx] = client
-                return
+                return self
         raise ValueError("Client not found to update.")
 
-    def add_client(self, client: 'ClientObj'):
+    def add_client(self, client: 'ClientObj') -> 'ClientsManager':
         """
         Avoids screen_position duplication when adding a new client.
         """
@@ -68,14 +68,16 @@ class ClientsManager:
             if existing_client.screen_position == client.screen_position:
                 raise ValueError(f"Client with screen position '{client.screen_position}' already exists.")
         self.clients.append(client)
+        return self
 
-    def remove_client(self, client: Optional['ClientObj'], position: Optional[str] = None):
+    def remove_client(self, client: Optional['ClientObj'], position: Optional[str] = None) -> 'ClientsManager':
         if client:
             self.clients = [c for c in self.clients if c != client]
         elif position:
             self.clients = [c for c in self.clients if c.screen_position != position]
         else:
             raise ValueError("Either client or position must be provided to remove a client.")
+        return self
 
     def get_clients(self) -> list['ClientObj']:
         return self.clients

@@ -17,7 +17,7 @@ class CommandHandler:
 
     def __init__(self, event_bus: EventBus, stream: StreamHandler):
         self.event_bus = event_bus
-        self.stream = stream
+        self.stream = stream # StreamHandler for command stream
 
         self.logger = Logger.get_instance()
 
@@ -54,6 +54,7 @@ class CommandHandler:
             data_dict = event.params
             # Add active_screen info to event params
             data_dict["active_screen"] = None
+            data_dict["client"] = event.source
 
             self.event_bus.dispatch(    # when ServerMouseController receives this event will set the correct cursor position
                 event_type=EventType.ACTIVE_SCREEN_CHANGED,

@@ -7,7 +7,7 @@ from time import sleep
 
 from network.connection.ClientConnectionService import ClientConnectionHandler
 from network.connection.ServerConnectionServices import ServerConnectionHandler
-from network.stream.StreamObj import StreamType
+from network.stream import StreamType
 from model.ClientObj import ClientsManager, ClientObj
 from network.data.MessageExchange import MessageExchange
 from utils.logging import Logger

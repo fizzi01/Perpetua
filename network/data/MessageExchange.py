@@ -11,7 +11,7 @@ from utils.logging import Logger
 from network.protocol.message import ProtocolMessage, MessageBuilder
 from network.protocol.ordering import OrderedMessageProcessor
 
-from network.stream.StreamObj import StreamType
+from network.stream import StreamType
 
 
 @dataclass
@@ -30,7 +30,7 @@ class MessageExchange:
     Handles protocol details, chunking, ordering, and callbacks.
     """
 
-    def __init__(self, conf: MessageExchangeConfig = None, stream_type: int = None):
+    def __init__(self, conf: MessageExchangeConfig = None):
         """
         Initialize MessageExchange layer.
 
@@ -39,7 +39,6 @@ class MessageExchange:
         """
         self.config = conf or MessageExchangeConfig()
         self.builder = MessageBuilder()
-        self.stream_type = stream_type
 
         # Message handlers registry
         self._handlers: Dict[str, Callable[[ProtocolMessage], None]] = {}

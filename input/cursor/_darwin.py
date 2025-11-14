@@ -46,6 +46,8 @@ from event import EventType, MouseEvent
 from event.EventBus import EventBus
 from network.stream.GenericStream import StreamHandler
 
+from . import _base
+
 
 class OverlayPanel(wx.Panel):
     def __init__(self, parent):
@@ -362,10 +364,7 @@ class CursorHandlerProcess:
         self.app.MainLoop()
         self.result_queue.put({'type': 'process_ended'})
 
-class CursorHandlerWorker:
-    """
-    A utility class for handling cursor visibility on macOS.
-    """
+class CursorHandlerWorker(_base.CursorHandlerWorker):
 
     def __init__(self, event_bus: EventBus, stream: Optional[StreamHandler] = None, debug: bool = False):
         self.event_bus = event_bus

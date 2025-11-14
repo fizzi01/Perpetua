@@ -11,7 +11,7 @@ from utils.logging import Logger
 from config import ApplicationConfig
 from .GeneralSocket import BaseSocket
 from ..exceptions.ConnectionExceptions import ServerNotFoundException
-from ..stream.StreamObj import StreamType
+from ..stream import StreamType
 
 
 class ClientSocket(BaseSocket):

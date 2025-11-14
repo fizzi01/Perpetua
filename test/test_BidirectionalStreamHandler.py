@@ -16,7 +16,7 @@ sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 
 from network.stream.ServerCustomStream import BidirectionalStreamHandler
 from network.connection.ServerConnectionServices import ServerConnectionHandler
-from network.stream.StreamObj import StreamType
+from network.stream import StreamType
 from model.ClientObj import ClientsManager, ClientObj
 from event.EventBus import ThreadSafeEventBus
 from event import EventType, CommandEvent

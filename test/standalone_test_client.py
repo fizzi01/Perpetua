@@ -19,7 +19,7 @@ sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 
 from network.data.MessageExchange import MessageExchange
 from network.protocol.message import MessageType
-from network.stream.StreamObj import StreamType
+from network.stream import StreamType
 from utils.logging import Logger
 
 
