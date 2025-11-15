@@ -23,7 +23,8 @@ class UnidirectionalStreamHandler(StreamHandler):
         Args:
             instant (bool): If True, the stream receive data instantly. (if false, it receives with a specified callback for different message types)
         """
-        super().__init__(stream_type=stream_type, clients=clients, event_bus=event_bus, bidirectional=False, sender=sender)
+        super().__init__(stream_type=stream_type, clients=clients, event_bus=event_bus, bidirectional=False,
+                         sender=sender)
 
         self._active_client = None
         self.handler_id = handler_id if handler_id else f"UnidirectionalStreamHandler_{stream_type}"
@@ -32,20 +33,18 @@ class UnidirectionalStreamHandler(StreamHandler):
 
         # Create a MessageExchange object
         self.msg_exchange = MessageExchange(
-            conf = MessageExchangeConfig()
+            conf=MessageExchangeConfig()
         )
 
         self.logger = Logger.get_instance()
 
-        event_bus.subscribe(event_type=EventType.ACTIVE_SCREEN_CHANGED,  callback=self._on_active_screen_changed)
-
+        event_bus.subscribe(event_type=EventType.ACTIVE_SCREEN_CHANGED, callback=self._on_active_screen_changed)
 
     def register_receive_callback(self, receive_callback, message_type: str):
         """
         Register a callback function for receiving messages of a specific type.
         """
         self.msg_exchange.register_handler(message_type, receive_callback)
-
 
     def _on_active_screen_changed(self, data: dict):
         """
@@ -67,7 +66,9 @@ class UnidirectionalStreamHandler(StreamHandler):
                     self.msg_exchange.set_transport(send_callback=cl_stram_socket.get_stream(self.stream_type).send,
                                                     receive_callback=cl_stram_socket.get_stream(self.stream_type).recv)
                 else:
-                    self.logger.log(f"{self.handler_id}: No valid stream for active client {self._active_client.screen_position}", Logger.WARNING)
+                    self.logger.log(
+                        f"{self.handler_id}: No valid stream for active client {self._active_client.screen_position}",
+                        Logger.WARNING)
                     self.msg_exchange.set_transport(send_callback=None, receive_callback=None)
 
                 # Empty the send queue
@@ -75,7 +76,6 @@ class UnidirectionalStreamHandler(StreamHandler):
                     self._send_queue.queue.clear()
             else:
                 self.msg_exchange.set_transport(send_callback=None, receive_callback=None)
-
 
     def _core_sender(self):
         """
@@ -88,10 +88,14 @@ class UnidirectionalStreamHandler(StreamHandler):
                     try:
                         # Process sending queued mouse data
                         while not self._send_queue.empty():
-                            data = self._send_queue.get(timeout=self._waiting_time) # It should be a dictionary from Event.to_dict()
-                            self.msg_exchange.send_stream_type_message(stream_type=self.stream_type,**data,
+                            data = self._send_queue.get(
+                                timeout=self._waiting_time)  # It should be a dictionary from Event.to_dict()
+                            # If data is not dict call .to_dict()
+                            if not isinstance(data, dict) and hasattr(data, "to_dict"):
+                                data = data.to_dict()
+                            self.msg_exchange.send_stream_type_message(stream_type=self.stream_type,
                                                                        source=self.source,
-                                                                       target=self._active_client.screen_position)
+                                                                       target=self._active_client.screen_position, **data)
 
                     except Empty:
                         sleep(self._waiting_time)
@@ -123,7 +127,6 @@ class UnidirectionalStreamHandler(StreamHandler):
                     sleep(self._waiting_time)
 
 
-
 class BidirectionalStreamHandler(StreamHandler):
     """
     A custom stream handler for managing bidirectional streams. Server <-> Client
@@ -145,12 +148,12 @@ class BidirectionalStreamHandler(StreamHandler):
 
         # Create a MessageExchange object
         self.msg_exchange = MessageExchange(
-            conf = MessageExchangeConfig()
+            conf=MessageExchangeConfig()
         )
 
         self.logger = Logger.get_instance()
 
-        event_bus.subscribe(event_type=EventType.ACTIVE_SCREEN_CHANGED,  callback=self._on_active_screen_changed)
+        event_bus.subscribe(event_type=EventType.ACTIVE_SCREEN_CHANGED, callback=self._on_active_screen_changed)
 
     def register_receive_callback(self, receive_callback, message_type: str):
         """
@@ -200,10 +203,14 @@ class BidirectionalStreamHandler(StreamHandler):
                     try:
                         # Process sending queued mouse data
                         while not self._send_queue.empty():
-                            data = self._send_queue.get(timeout=self._waiting_time) # It should be a dictionary from Event.to_dict()
-                            self.msg_exchange.send_stream_type_message(stream_type=self.stream_type,**data,
+                            data = self._send_queue.get(
+                                timeout=self._waiting_time)  # It should be a dictionary from Event.to_dict()
+                            if not isinstance(data, dict) and hasattr(data, "to_dict"):
+                                data = data.to_dict()
+                            self.msg_exchange.send_stream_type_message(stream_type=self.stream_type,
                                                                        source=self.source,
-                                                                       target=self._active_client.screen_position)
+                                                                       target=self._active_client.screen_position,
+                                                                       **data)
                     except Empty:
                         sleep(self._waiting_time)
                         continue
@@ -232,4 +239,3 @@ class BidirectionalStreamHandler(StreamHandler):
                         sleep(self._waiting_time)
                 else:
                     sleep(self._waiting_time)
-

@@ -154,6 +154,11 @@ class ServerConnectionHandler:
                     client_socket.close()
                     continue
 
+                if client_obj.is_connected:
+                    self.logger.log(f"Client {addr[0]} is already connected. Closing new connection.", Logger.WARNING)
+                    client_socket.close()
+                    continue
+
                 # Perform handshake and update client info
                 if self._handshake(client_socket, client_addr=addr, client=client_obj):
 

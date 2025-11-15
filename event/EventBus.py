@@ -61,7 +61,7 @@ class ThreadSafeEventBus(EventBus):
             if event_type in self._subscribers:
                 self._subscribers[event_type].remove(callback)
 
-    def dispatch(self, event_type: int, workers: int = 0, blocking: bool = False, timeout: float = 0, *args, **kwargs):
+    def dispatch(self, event_type: int, workers: int = 2, blocking: bool = True, timeout: float = 0.1, *args, **kwargs):
         """
         Thread-safe dispatching of an event to all registered listeners.
         If workers > 0, callbacks are executed in parallel threads.
@@ -75,15 +75,20 @@ class ThreadSafeEventBus(EventBus):
         if workers > 1:
             # Execute callbacks in parallel using threads
             threads = []
-            for callback in listeners:
-                thread = Thread(target=self._safe_callback, args=(callback, *args), kwargs=kwargs)
-                thread.start()
-                threads.append(thread)
 
-            # Wait for all threads to complete
-            if blocking:
+            # Run a maximum of 'workers' threads at a time
+            for i in range(0, len(listeners), workers):
+                batch = listeners[i:i + workers]
+                for callback in batch:
+                    thread = Thread(target=self._safe_callback, args=(callback, *args), kwargs=kwargs)
+                    thread.start()
+                    threads.append(thread)
+
+                # Wait for the current batch to finish before starting the next
                 for thread in threads:
-                    thread.join(timeout=timeout)
+                    thread.join(timeout=timeout if blocking else 0)
+
+                threads = []  # Reset threads for the next batch
         else:
             # Execute callbacks sequentially
             for callback in listeners:

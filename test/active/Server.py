@@ -1,6 +1,7 @@
 """
 Complete server logic suite for active tests.
 """
+from event import EventType
 from network.data.MessageExchange import MessageExchange
 # ServerConnectionService needs a Clientmanager with at least a ClienObj configured to connect to.
 # We need also an EventBus to handle events and the first stream handler (command stream).
@@ -58,7 +59,9 @@ class ActiveServer:
             msg_exchange=self.message_exchange,
             host=host,
             port=port,
-            whitelist=self.clients_manager
+            whitelist=self.clients_manager,
+            connected_callback=self.on_client_connected,
+            disconnected_callback=self.on_client_disconnected,
         )
 
         # Create Command Handler
@@ -68,6 +71,14 @@ class ActiveServer:
         self.mouse_controller = ServerMouseController(event_bus=self.event_bus)
         self.mouse_listener = ServerMouseListener(event_bus=self.event_bus, stream_handler=self.mouse_stream_handler,
                                                   command_stream=self.command_stream_handler, filtering=False)
+
+    def on_client_connected(self, client: ClientObj):
+        client_pos = client.screen_position
+        self.event_bus.dispatch(event_type=EventType.CLIENT_CONNECTED, data={"client_screen": client_pos})
+
+    def on_client_disconnected(self, client: ClientObj):
+        client_pos = client.screen_position
+        self.event_bus.dispatch(event_type=EventType.CLIENT_DISCONNECTED, data={"client_screen": client_pos})
 
     def start(self):
         # Start all components
