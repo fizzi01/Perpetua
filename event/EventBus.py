@@ -101,7 +101,7 @@ class ThreadSafeEventBus(EventBus):
         try:
             callback(*args, **kwargs)
         except Exception as e:
-            self.logger.exception("Exception raised while dispatching event: %s", e)
+            self.logger.log(f"Exception raised while dispatching event - {e}", Logger.ERROR)
 
     def async_dispatch(self, event_type: int, workers: int = 0, blocking: bool = False, timeout: float = 0, *args, **kwargs):
         """

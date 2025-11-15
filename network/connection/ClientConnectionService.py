@@ -208,7 +208,9 @@ class ClientConnectionHandler:
                     # error_count = 0
                 sleep(self.wait)
             except Exception as e:
+                import traceback
                 self.logger.log(f"Unexpected error in core loop: {e}", Logger.ERROR)
+                self.logger.log(traceback.format_exc(), Logger.ERROR)
                 client_obj = self.clients.get_client(ip_address=self.host)
                 if client_obj:
                     client_obj.is_connected = False

@@ -416,7 +416,8 @@ class ClientMouseController:
         try:
             if self._movement_history.full():
                 self._movement_history.get()
-            self._movement_history.put((x, y))
+            cursor = self._controller.position
+            self._movement_history.put((cursor[0], cursor[1]))
         except Exception:
             pass
 

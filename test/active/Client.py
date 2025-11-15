@@ -43,6 +43,7 @@ class ActiveClient:
 
         self.client = ClientConnectionHandler(msg_exchange=self.message_exchange, host=server_ip, port=server_port,
                                               open_streams=self.open_streams,
+                                              clients=self.clients_manager,
                                               connected_callback=self.connected_callback,
                                               disconnected_callback=self.disconnected_callback)
 
@@ -78,7 +79,7 @@ if __name__ == '__main__':
     active_client = ActiveClient(server_ip="", server_port=5555)
     active_client.start()
 
-    print("Server started")
+    print("Client started")
     try:
         while True:
             cmd = input("Type 'exit' to stop the client: ")
@@ -86,5 +87,5 @@ if __name__ == '__main__':
                 break
     except KeyboardInterrupt:
         pass
-    print("Stopping server...")
+    print("Stopping client...")
     active_client.stop()

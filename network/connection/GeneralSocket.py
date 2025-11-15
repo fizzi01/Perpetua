@@ -106,7 +106,10 @@ class BaseSocket(socket.socket):
 
             # self.streams[next(iter(self.streams))].getpeername()
             for stream in self.streams:
-                data = self.streams[stream].recv(16, socket.MSG_DONTWAIT | socket.MSG_PEEK)
+                # put temporarly socker in not blocking mode
+                self.streams[stream].setblocking(False)
+                data = self.streams[stream].recv(16)
+                self.streams[stream].setblocking(True)
                 if len(data) == 0:
                     return False
             return True
@@ -121,4 +124,6 @@ class BaseSocket(socket.socket):
         except (timeout, error) as e:
             return False
         except Exception:
+            import traceback
+            traceback.print_exc()
             return False

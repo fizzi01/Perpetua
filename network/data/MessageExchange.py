@@ -2,9 +2,11 @@
 Layer responsible for handling message exchanges between network nodes, using protocol
 """
 import threading
+from threading import Thread
 from time import sleep, time
 from typing import Callable, Dict, Optional, Any, List
 from dataclasses import dataclass
+from socket import timeout, error
 
 from config import ApplicationConfig
 from utils.logging import Logger
@@ -60,6 +62,8 @@ class MessageExchange:
         # Transport layer callbacks
         self._send_callback: Optional[Callable[[bytes], None]] = None
         self._receive_callback: Optional[Callable[[int], bytes]] = None
+
+        self._missed_data = 0
 
         self.logger = Logger.get_instance()
 
@@ -210,6 +214,11 @@ class MessageExchange:
             if data:
                 return self._receive_data(_receive_buffer, instant=instant)
             return None
+        except ValueError as e:
+            self._missed_data += 1
+            return None # Silent
+        except (timeout, error) as e:
+            return None
         except Exception as e:
             self.logger.log(f"Error receiving message: {e}", Logger.ERROR)
             return None
@@ -223,7 +232,6 @@ class MessageExchange:
         """
         try:
             message = ProtocolMessage.from_bytes(data)
-
             # Handle chunked messages
             if message.is_chunk and not instant:
                 reconstructed = self._handle_chunk(message)
@@ -276,6 +284,10 @@ class MessageExchange:
 
     def _dispatch_message(self, message: ProtocolMessage):
         """Dispatch message to registered handler."""
+        Thread(target=self._dispatch_thread, args=(message,)).start()
+
+    def _dispatch_thread(self, message: ProtocolMessage):
+        """Dispatch message to registered thread."""
         handler = self._handlers.get(message.message_type)
         if handler:
             try:

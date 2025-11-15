@@ -27,7 +27,7 @@ class ClientSocket(BaseSocket):
         self.use_ssl = use_ssl
         self.certfile = certfile
 
-        self.use_discovery = False
+        self.use_discovery = True if len(self.host) == 0 else False
 
         self.log = Logger.get_instance().log
 
@@ -51,10 +51,10 @@ class ClientSocket(BaseSocket):
     def _discover_server(self):
         service_found = False
 
-        def on_service_state_change(zerocfg, service_type, name, state_change):
+        def on_service_state_change(zeroconf, service_type, name, state_change):
             nonlocal service_found
             if state_change == ServiceStateChange.Added and not service_found:
-                info = zerocfg.get_service_info(service_type, name)
+                info = zeroconf.get_service_info(service_type, name)
                 if info and info.properties:
                     try:
                         properties = {key.decode(): value.decode() for key, value in info.properties.items()}

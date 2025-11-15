@@ -88,9 +88,11 @@ class UnidirectionalStreamHandler(StreamHandler):
                 try:
                     while not self._send_queue.empty():
                         data = self._send_queue.get(timeout=self._waiting_time)  # It should be a dictionary from Event.to_dict()
-                        self.msg_exchange.send_stream_type_message(stream_type=self.stream_type, **data,
+                        if not isinstance(data, dict) and hasattr(data, "to_dict"):
+                            data = data.to_dict()
+                        self.msg_exchange.send_stream_type_message(stream_type=self.stream_type,
                                                                    source=self._main_client.screen_position,
-                                                                   target="server")
+                                                                   target="server", **data)
                 except Empty:
                     sleep(self._waiting_time)
                     continue
@@ -108,6 +110,7 @@ class UnidirectionalStreamHandler(StreamHandler):
                     message = self.msg_exchange.receive_message(self.instant)
                     if message:
                         self._recv_queue.put(message)
+                    sleep(self._waiting_time)
                 except Empty:
                     continue
                 except Exception as e:
@@ -137,10 +140,7 @@ class BidirectionalStreamHandler(StreamHandler):
 
         # Get main client
         # If client manager is correctly initialized, it should have only one main client
-        self._main_client: Optional[ClientObj] = self.clients.get_client()
-
-        if not self._main_client:
-            raise ValueError(f"No main client found in ClientsManager for {self.handler_id}")
+        self._main_client: Optional[ClientObj] = None
 
         self.logger = Logger.get_instance()
 
@@ -154,6 +154,10 @@ class BidirectionalStreamHandler(StreamHandler):
         with self._rlock, self._slock:
             self._is_active = True
 
+            self._main_client = self.clients.get_client()
+
+            if not self._main_client:
+                raise ValueError(f"No main client found in ClientsManager for {self.handler_id}")
             # Set message exchange transport source
             cl_stram_socket = self._main_client.conn_socket
             if isinstance(cl_stram_socket, BaseSocket):
@@ -189,9 +193,11 @@ class BidirectionalStreamHandler(StreamHandler):
                 try:
                     while not self._send_queue.empty():
                         data = self._send_queue.get(timeout=self._waiting_time)  # It should be a dictionary from Event.to_dict()
-                        self.msg_exchange.send_stream_type_message(stream_type=self.stream_type, **data,
+                        if not isinstance(data, dict) and hasattr(data, "to_dict"):
+                            data = data.to_dict()
+                        self.msg_exchange.send_stream_type_message(stream_type=self.stream_type,
                                                                    source=self._main_client.screen_position,
-                                                                   target="server")
+                                                                   target="server", **data)
                 except Empty:
                     sleep(self._waiting_time)
                     continue
@@ -209,6 +215,7 @@ class BidirectionalStreamHandler(StreamHandler):
                     message = self.msg_exchange.receive_message(self.instant)
                     if message:
                         self._recv_queue.put(message)
+                    sleep(self._waiting_time)
                 except Empty:
                     continue
                 except Exception as e:
