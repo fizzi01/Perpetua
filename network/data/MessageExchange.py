@@ -193,10 +193,22 @@ class MessageExchange:
         Args:
             instant: If True, process message immediately without ordering returning it
         """
+        _receive_buffer = bytearray()
         try:
-            data = self._receive_callback(self.config.max_chunk_size)
+            data = self._receive_callback(4)
+            _receive_buffer.extend(data)
+
+            msg_lenght = ProtocolMessage.read_lenght_prefix(data)
+            total_length = 4 + msg_lenght
+            while len(_receive_buffer) < total_length:
+                remaining = total_length - len(_receive_buffer)
+                chunk = self._receive_callback(min(remaining, self.config.max_chunk_size))
+                if not chunk:
+                    return None
+                _receive_buffer.extend(chunk)
+
             if data:
-                return self._receive_data(data, instant=instant)
+                return self._receive_data(_receive_buffer, instant=instant)
             return None
         except Exception as e:
             self.logger.log(f"Error receiving message: {e}", Logger.ERROR)

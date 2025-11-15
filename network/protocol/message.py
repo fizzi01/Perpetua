@@ -69,6 +69,21 @@ class ProtocolMessage:
         return cls(**data)
 
     @classmethod
+    def read_lenght_prefix(cls, data: bytes) -> int:
+        """
+        Read length prefix from binary data.
+
+        Args:
+            data: Binary data containing serialized ProtocolMessage
+        """
+        if len(data) < 4:
+            raise ValueError("Invalid binary data: too short for length prefix")
+
+        # Read length prefix
+        length = struct.unpack('>I', data[:4])[0]
+        return length
+
+    @classmethod
     def from_bytes(cls, data: bytes) -> 'ProtocolMessage':
         """
         Deserialize message from binary format.
