@@ -464,8 +464,6 @@ class CursorHandlerWorker(_base.CursorHandlerWorker):
             try:
                 if self.mouse_conn_rec.poll(0.5):
                     delta_x, delta_y = self.mouse_conn_rec.recv()
-                    # timestamp = time.time()
-                    # print(f"[RECEIVER][{timestamp}] Mouse moved: ΔX={delta_x}, ΔY={delta_y}")
                     mouse_event.dx = delta_x
                     mouse_event.dy = delta_y
                     self.stream.send(mouse_event)

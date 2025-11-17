@@ -94,6 +94,6 @@ class ClientsManager:
             elif screen_position:
                 if client.screen_position == screen_position:
                     return client
-            else:
-                raise ValueError("Either ip_address or screen_position must be provided to get a client.")
+            # else:
+            #     raise ValueError("Either ip_address or screen_position must be provided to get a client.")
         return None

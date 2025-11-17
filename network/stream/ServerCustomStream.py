@@ -1,5 +1,5 @@
 from queue import Empty
-from time import sleep
+from time import sleep, time
 from typing import Optional
 
 from utils.logging import Logger
@@ -39,12 +39,22 @@ class UnidirectionalStreamHandler(StreamHandler):
         self.logger = Logger.get_instance()
 
         event_bus.subscribe(event_type=EventType.ACTIVE_SCREEN_CHANGED, callback=self._on_active_screen_changed)
+        self.event_bus.subscribe(event_type=EventType.CLIENT_DISCONNECTED, callback=self._on_client_disconnected)
 
     def register_receive_callback(self, receive_callback, message_type: str):
         """
         Register a callback function for receiving messages of a specific type.
         """
         self.msg_exchange.register_handler(message_type, receive_callback)
+
+    def _on_client_disconnected(self, data: dict):
+        """
+        Event handler for when a client becomes inactive.
+        """
+        client_screen = data.get("client_screen")
+        if self._active_client and self._active_client.screen_position == client_screen:
+            self._active_client = None
+            self.msg_exchange.set_transport(send_callback=None, receive_callback=None)
 
     def _on_active_screen_changed(self, data: dict):
         """
@@ -154,12 +164,22 @@ class BidirectionalStreamHandler(StreamHandler):
         self.logger = Logger.get_instance()
 
         event_bus.subscribe(event_type=EventType.ACTIVE_SCREEN_CHANGED, callback=self._on_active_screen_changed)
+        self.event_bus.subscribe(event_type=EventType.CLIENT_DISCONNECTED, callback=self._on_client_disconnected)
 
     def register_receive_callback(self, receive_callback, message_type: str):
         """
         Register a callback function for receiving messages of a specific type.
         """
         self.msg_exchange.register_handler(message_type, receive_callback)
+
+    def _on_client_disconnected(self, data: dict):
+        """
+        Event handler for when a client becomes inactive.
+        """
+        client_screen = data.get("client_screen")
+        if self._active_client and self._active_client.screen_position == client_screen:
+            self._active_client = None
+            self.msg_exchange.set_transport(send_callback=None, receive_callback=None)
 
     def _on_active_screen_changed(self, data: dict):
         """

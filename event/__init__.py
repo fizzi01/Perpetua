@@ -39,7 +39,7 @@ class MouseEvent(Event):
     RCLICK_ACTION = "rclick"
     SCROLL_ACTION = "scroll"
 
-    def __init__(self, x: float = 0, y: float = 0, dx: float = 0, dy: float = 0, button: Optional[int] = None, action: Optional[str] = None, is_presed: bool = False):
+    def __init__(self, x: float = -1, y: float = -1, dx: float = 0, dy: float = 0, button: Optional[int] = None, action: Optional[str] = None, is_presed: bool = False):
         self.x = x
         self.y = y
         self.dx = dx

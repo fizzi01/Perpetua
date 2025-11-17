@@ -211,9 +211,9 @@ class ServerMouseListener:
 
     def on_click(self, x, y, button, pressed):
         if self._listening:
-            action = "press" if pressed else "release"
+            action = MouseEvent.CLICK_ACTION
             mouse_event = MouseEvent(x=x / self._screen_size[0], y=y / self._screen_size[1],
-                                     button=button.value, action=action, is_presed=pressed)
+                                     button=button, action=action, is_presed=pressed)
             try:
                 self.stream.send(mouse_event)
             except Exception as e:
@@ -222,7 +222,7 @@ class ServerMouseListener:
 
     def on_scroll(self, x, y, dx, dy):
         if self._listening:
-            mouse_event = MouseEvent(x=dx, y=dy, action="scroll")
+            mouse_event = MouseEvent(x=dx, y=dy, action=MouseEvent.SCROLL_ACTION)
             try:
                 self.stream.send(mouse_event)
             except Exception as e:
