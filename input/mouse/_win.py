@@ -2,10 +2,10 @@
 Provides mouse input support for Windows systems.
 """
 import multiprocessing
-from time import time
+from time import time, sleep
 from queue import Queue
 from threading import Event, Thread
-from multiprocessing import Queue as ProcQueue, Event as ProcEvent
+from multiprocessing import Queue as ProcQueue, Event as ProcEvent, Process
 
 from pynput.mouse import Button, Controller as MouseController
 from pynput.mouse import Listener as MouseListener
@@ -301,11 +301,12 @@ class ClientMouseController:
 
         self.logger = Logger.get_instance()
 
-        ctx = multiprocessing.get_context('spawn')
-        self._queue: "multiprocessing.Queue" = ctx.Queue()
-        self._stop_event: "multiprocessing.Event" = ctx.Event()
-        self._worker_process: multiprocessing.Process = ctx.Process(
-            target=ClientMouseController._run_worker, args=(self._queue, self._stop_event, self._screen_size)
+        self._queue: "multiprocessing.Queue" = ProcQueue()
+        self._stop_event: "multiprocessing.Event" = ProcEvent()
+        self._start_event: "multiprocessing.Event" = ProcEvent()
+        self._worker_process: multiprocessing.Process = Process(
+            target=ClientMouseController._run_worker,
+            args=(self._queue,  self._stop_event,self._start_event, self._screen_size)
         )
 
         self._worker_started = False
@@ -321,8 +322,17 @@ class ClientMouseController:
         Starts the mouse controller worker process.
         """
         if not self._worker_started:
+            self._start_event.clear()
             self._worker_process.start()
-            self._worker_started = True
+            sleep(0.5)
+            # Check if start_event is clear
+            if self._start_event.is_set():
+                self._start_event.clear()
+                self._worker_started = True
+            else:
+
+                self.logger.log(f"Failed to start worker process - {self._start_event}", Logger.ERROR)
+                return
             self.logger.log("Client mouse controller worker process started.", Logger.DEBUG)
 
     def stop(self):
@@ -336,10 +346,11 @@ class ClientMouseController:
             self.logger.log("Client mouse controller worker process stopped.", Logger.DEBUG)
 
     @staticmethod
-    def _run_worker(queue: ProcQueue, stop_event: ProcEvent, screen_size: tuple[int, int]):
+    def _run_worker(queue, stop_event, start_event, screen_size: tuple[int, int]):
         """
         Worker process to handle mouse events.
         """
+        start_event.set()
         controller = MouseController()
         pressed = False
         last_press_time = -99
@@ -398,7 +409,6 @@ class ClientMouseController:
             self._queue.put(message)
         except Exception as e:
             self.logger.log(f"ClientMouseController: Failed to process mouse event - {e}", Logger.ERROR)
-
 
     def _check_edge(self):
         """
@@ -462,13 +472,14 @@ class ClientMouseController:
         controller.position = (x, y)
 
     @staticmethod
-    def move_cursor(x: float | int, y: float | int, dx: float | int, dy: float | int, controller: MouseController, screen_size: tuple[int, int]):
+    def move_cursor(x: float | int, y: float | int, dx: float | int, dy: float | int, controller: MouseController,
+                    screen_size: tuple[int, int]):
         """
         Move the mouse cursor to the specified (x, y) coordinates.
         """
 
         # if dx and dy are provided, use relative movement
-        if dx > 0 or dy > 0:
+        if x == -1 and y == -1:
             # Convert to int for pynput
             try:
                 dx = int(dx)
@@ -491,7 +502,8 @@ class ClientMouseController:
             controller.position = (x, y)
 
     @staticmethod
-    def click(button: int, is_pressed: bool, controller: MouseController, last_press_time: float, doubleclick_counter: int, pressed: bool):
+    def click(button: int, is_pressed: bool, controller: MouseController, last_press_time: float,
+              doubleclick_counter: int, pressed: bool):
         """
         Perform a mouse click action.
         """
