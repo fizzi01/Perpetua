@@ -339,7 +339,7 @@ class ClientMouseController:
             if event.action == MouseEvent.MOVE_ACTION:
                 self.move_cursor(event.x, event.y, event.dx, event.dy)
                 # After handling the mouse event, check for edge cases
-                Thread(target=self._check_edge).start()
+                #self._check_edge()
             elif event.action == MouseEvent.POSITION_ACTION:
                 self.position_cursor(event.x, event.y)
             elif event.action == MouseEvent.CLICK_ACTION:

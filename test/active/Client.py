@@ -44,6 +44,7 @@ class ActiveClient:
         self.client = ClientConnectionHandler(msg_exchange=self.message_exchange, host=server_ip, port=server_port,
                                               open_streams=self.open_streams,
                                               clients=self.clients_manager,
+                                              wait=1,
                                               connected_callback=self.connected_callback,
                                               disconnected_callback=self.disconnected_callback)
 

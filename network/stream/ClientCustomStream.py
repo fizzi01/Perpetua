@@ -49,23 +49,23 @@ class UnidirectionalStreamHandler(StreamHandler):
         """
         Event handler for when a client becomes active.
         """
-        with self._rlock, self._slock: # TODO: Check if both locks are necessary
-            self._is_active = True
+        # with self._rlock, self._slock: # TODO: Check if both locks are necessary
+        self._is_active = True
 
-            # Set message exchange transport source
-            cl_stram_socket = self._main_client.conn_socket
-            if isinstance(cl_stram_socket, BaseSocket):
-                self.msg_exchange.set_transport(send_callback=cl_stram_socket.get_stream(self.stream_type).send,
-                                                receive_callback=cl_stram_socket.get_stream(self.stream_type).recv)
-            else:
-                raise ValueError(f"Invalid connection socket for main client in {self.handler_id}")
+        # Set message exchange transport source
+        cl_stram_socket = self._main_client.conn_socket
+        if isinstance(cl_stram_socket, BaseSocket):
+            self.msg_exchange.set_transport(send_callback=cl_stram_socket.get_stream(self.stream_type).send, #type: ignore
+                                            receive_callback=cl_stram_socket.get_stream(self.stream_type).recv)
+        else:
+            raise ValueError(f"Invalid connection socket for main client in {self.handler_id}")
 
     def _on_client_inactive(self, data: dict):
         """
         Event handler for when a client becomes inactive.
         """
-        with self._rlock, self._slock: # TODO: Check if both locks are necessary
-            self._is_active = False
+        # with self._rlock, self._slock: # TODO: Check if both locks are necessary
+        self._is_active = False
 
     def register_receive_callback(self, receive_callback, message_type: str):
         """
@@ -79,42 +79,42 @@ class UnidirectionalStreamHandler(StreamHandler):
         Core sender loop for sending messages to the server
         """
         while self._active:
-            with self._slock:
+            # with self._slock:
                 
-                if self._active_only and not self._is_active:
-                    sleep(self._waiting_time)
-                    continue
-                    
-                try:
-                    while not self._send_queue.empty():
-                        data = self._send_queue.get(timeout=self._waiting_time)  # It should be a dictionary from Event.to_dict()
-                        if not isinstance(data, dict) and hasattr(data, "to_dict"):
-                            data = data.to_dict()
-                        self.msg_exchange.send_stream_type_message(stream_type=self.stream_type,
-                                                                   source=self._main_client.screen_position,
-                                                                   target="server", **data)
-                except Empty:
-                    sleep(self._waiting_time)
-                    continue
-                except Exception as e:
-                    self.logger.log(f"Error in {self.handler_id} core loop: {e}", Logger.ERROR)
-                    sleep(self._waiting_time)
+            if self._active_only and not self._is_active:
+                sleep(self._waiting_time)
+                continue
+
+            try:
+                while not self._send_queue.empty():
+                    data = self._send_queue.get(timeout=self._waiting_time)  # It should be a dictionary from Event.to_dict()
+                    if not isinstance(data, dict) and hasattr(data, "to_dict"):
+                        data = data.to_dict()
+                    self.msg_exchange.send_stream_type_message(stream_type=self.stream_type,
+                                                               source=self._main_client.screen_position,
+                                                               target="server", **data)
+            except Empty:
+                sleep(self._waiting_time)
+                continue
+            except Exception as e:
+                self.logger.log(f"Error in {self.handler_id} core loop: {e}", Logger.ERROR)
+                sleep(self._waiting_time)
 
     def _core_receiver(self):
         """
         Core receiver loop for handling incoming messages from the server
         """
         while self._active:
-            with self._rlock:
-                try:
-                    message = self.msg_exchange.receive_message(self.instant)
-                    if message:
-                        self._recv_queue.put(message)
-                    sleep(self._waiting_time)
-                except Empty:
-                    continue
-                except Exception as e:
-                    self.logger.log(f"Error in {self.handler_id} core receiver loop: {e}", Logger.ERROR)
+            # with self._rlock:
+            try:
+                message = self.msg_exchange.receive_message(self.instant)
+                if message:
+                    self._recv_queue.put(message)
+                sleep(self._waiting_time)
+            except Empty:
+                continue
+            except Exception as e:
+                self.logger.log(f"Error in {self.handler_id} core receiver loop: {e}", Logger.ERROR)
 
 
 
@@ -151,27 +151,27 @@ class BidirectionalStreamHandler(StreamHandler):
         """
         Event handler for when a client becomes active.
         """
-        with self._rlock, self._slock:
-            self._is_active = True
+        # with self._rlock, self._slock:
+        self._is_active = True
 
-            self._main_client = self.clients.get_client()
+        self._main_client = self.clients.get_client()
 
-            if not self._main_client:
-                raise ValueError(f"No main client found in ClientsManager for {self.handler_id}")
-            # Set message exchange transport source
-            cl_stram_socket = self._main_client.conn_socket
-            if isinstance(cl_stram_socket, BaseSocket):
-                self.msg_exchange.set_transport(send_callback=cl_stram_socket.get_stream(self.stream_type).send,
-                                                receive_callback=cl_stram_socket.get_stream(self.stream_type).recv)
-            else:
-                raise ValueError(f"Invalid connection socket for main client in {self.handler_id}")
+        if not self._main_client:
+            raise ValueError(f"No main client found in ClientsManager for {self.handler_id}")
+        # Set message exchange transport source
+        cl_stram_socket = self._main_client.conn_socket
+        if isinstance(cl_stram_socket, BaseSocket):
+            self.msg_exchange.set_transport(send_callback=cl_stram_socket.get_stream(self.stream_type).send, #type: ignore
+                                            receive_callback=cl_stram_socket.get_stream(self.stream_type).recv)
+        else:
+            raise ValueError(f"Invalid connection socket for main client in {self.handler_id}")
 
     def _on_client_inactive(self, data: dict):
         """
         Event handler for when a client becomes inactive.
         """
-        with self._rlock, self._slock:
-            self._is_active = False
+        # with self._rlock, self._slock:
+        self._is_active = False
 
     def register_receive_callback(self, receive_callback, message_type: str):
         """
@@ -185,38 +185,38 @@ class BidirectionalStreamHandler(StreamHandler):
         Core sender loop for sending messages to the server
         """
         while self._active:
-            with self._slock:
-                if self._active_only and not self._is_active:
-                    sleep(self._waiting_time)
-                    continue
-                    
-                try:
-                    while not self._send_queue.empty():
-                        data = self._send_queue.get(timeout=self._waiting_time)  # It should be a dictionary from Event.to_dict()
-                        if not isinstance(data, dict) and hasattr(data, "to_dict"):
-                            data = data.to_dict()
-                        self.msg_exchange.send_stream_type_message(stream_type=self.stream_type,
-                                                                   source=self._main_client.screen_position,
-                                                                   target="server", **data)
-                except Empty:
-                    sleep(self._waiting_time)
-                    continue
-                except Exception as e:
-                    self.logger.log(f"Error in {self.handler_id} core loop: {e}", Logger.ERROR)
-                    sleep(self._waiting_time)
+            # with self._slock:
+            if self._active_only and not self._is_active:
+                sleep(self._waiting_time)
+                continue
+
+            try:
+                while not self._send_queue.empty():
+                    data = self._send_queue.get(timeout=self._waiting_time)  # It should be a dictionary from Event.to_dict()
+                    if not isinstance(data, dict) and hasattr(data, "to_dict"):
+                        data = data.to_dict()
+                    self.msg_exchange.send_stream_type_message(stream_type=self.stream_type,
+                                                               source=self._main_client.screen_position,
+                                                               target="server", **data)
+            except Empty:
+                sleep(self._waiting_time)
+                continue
+            except Exception as e:
+                self.logger.log(f"Error in {self.handler_id} core loop: {e}", Logger.ERROR)
+                sleep(self._waiting_time)
 
     def _core_receiver(self):
         """
         Core receiver loop for handling incoming messages from the server
         """
         while self._active:
-            with self._rlock:
-                try:
-                    message = self.msg_exchange.receive_message(self.instant)
-                    if message:
-                        self._recv_queue.put(message)
-                    sleep(self._waiting_time)
-                except Empty:
-                    continue
-                except Exception as e:
-                    self.logger.log(f"Error in {self.handler_id} core receiver loop: {e}", Logger.ERROR)
+            # with self._rlock:
+            try:
+                message = self.msg_exchange.receive_message(self.instant)
+                if message:
+                    self._recv_queue.put(message)
+                sleep(self._waiting_time)
+            except Empty:
+                continue
+            except Exception as e:
+                self.logger.log(f"Error in {self.handler_id} core receiver loop: {e}", Logger.ERROR)

@@ -415,7 +415,7 @@ class CursorHandlerWorker(_base.CursorHandlerWorker):
         self.is_running = True
 
         if self.stream is not None:
-            self._moue_data_thread = threading.Thread(target=self._mouse_data_listener, daemon=True)
+            self._moue_data_thread = threading.Thread(target=self._mouse_data_listener)
             self._moue_data_thread.start()
 
         if wait_ready:
@@ -462,7 +462,7 @@ class CursorHandlerWorker(_base.CursorHandlerWorker):
         mouse_event = MouseEvent(action=MouseEvent.MOVE_ACTION)
         while self.is_running:
             try:
-                if self.mouse_conn_rec.poll(0.001):
+                if self.mouse_conn_rec.poll(0.5):
                     delta_x, delta_y = self.mouse_conn_rec.recv()
                     # timestamp = time.time()
                     # print(f"[RECEIVER][{timestamp}] Mouse moved: ΔX={delta_x}, ΔY={delta_y}")

@@ -59,6 +59,7 @@ class ActiveServer:
             msg_exchange=self.message_exchange,
             host=host,
             port=port,
+            wait=1,
             whitelist=self.clients_manager,
             connected_callback=self.on_client_connected,
             disconnected_callback=self.on_client_disconnected,
