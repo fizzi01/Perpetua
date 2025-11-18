@@ -2,9 +2,10 @@
 Provides mouse input support for macOS (Darwin) systems.
 """
 
-from time import time
+from time import time, sleep
 from queue import Queue
-from threading import Event, Thread
+from threading import Event
+from multiprocessing import Queue as ProcQueue, Event as ProcEvent, Process
 
 import Quartz
 from AppKit import (NSPasteboard,
@@ -25,7 +26,7 @@ from network.stream.GenericStream import StreamHandler
 from utils.logging import Logger
 from utils.screen import Screen
 
-from ._base import EdgeDetector, ScreenEdge
+from ._base import EdgeDetector, ScreenEdge, ButtonMapping
 
 def _no_suppress_filter(event_type, event):
     return event
@@ -218,11 +219,10 @@ class ServerMouseListener:
 
         return True
 
-    def on_click(self, x, y, button, pressed):
+    def on_click(self, x, y, button: Button, pressed):
         if self._listening:
-            action = MouseEvent.CLICK_ACTION
             mouse_event = MouseEvent(x=x/self._screen_size[0], y=y/self._screen_size[1],
-                                     button=button, action=action, is_presed=pressed)
+                                     button=ButtonMapping[button.name].value, action=MouseEvent.CLICK_ACTION, is_presed=pressed)
             try:
                 self.stream.send(mouse_event)
             except Exception as e:
@@ -285,17 +285,17 @@ class ServerMouseController:
 
 class ClientMouseController:
     """
-    It controls the mouse on macOS systems. Its main purpose is to move the mouse cursor and perform clicks based on received events.
+    It controls the mouse on Windows systems. Its main purpose is to move the mouse cursor and perform clicks based on received events.
     """
 
-    def __init__(self, event_bus: EventBus, stream_handler: StreamHandler,command_stream: StreamHandler):
-        self.stream = stream_handler    # Should be a mouse stream
-        self.command_stream = command_stream # Should be a command stream
+    def __init__(self, event_bus: EventBus, stream_handler: StreamHandler, command_stream: StreamHandler):
+        self.stream = stream_handler  # Should be a mouse stream
+        self.command_stream = command_stream  # Should be a command stream
         self.event_bus = event_bus
         self._cross_screen_event = Event()
 
         self._is_active = False
-        self._screen_size: tuple[int,int] = Screen.get_size()
+        self._screen_size: tuple[int, int] = Screen.get_size()
 
         # Instead of creating a listener, we just check edge cases after a mouse move event is received
         self._movement_history = Queue(maxsize=5)
@@ -307,11 +307,79 @@ class ClientMouseController:
 
         self.logger = Logger.get_instance()
 
+        self._queue = ProcQueue()
+        self._stop_event = ProcEvent()
+        self._start_event = ProcEvent()
+        self._worker_process = Process(
+            target=ClientMouseController._run_worker,
+            args=(self._queue,  self._stop_event,self._start_event, self._screen_size)
+        )
+
+        self._worker_started = False
+
         # Register to receive mouse events from the stream
         self.stream.register_receive_callback(self._mouse_event_callback, message_type="mouse")
 
         self.event_bus.subscribe(event_type=EventType.CLIENT_ACTIVE, callback=self._on_client_active)
         self.event_bus.subscribe(event_type=EventType.CLIENT_INACTIVE, callback=self._on_client_inactive)
+
+    def start(self):
+        """
+        Starts the mouse controller worker process.
+        """
+        if not self._worker_started:
+            self._start_event.clear()
+            self._worker_process.start()
+            sleep(0.2)
+            # Check if start_event is clear
+            if self._start_event.is_set():
+                self._start_event.clear()
+                self._worker_started = True
+            else:
+
+                self.logger.log(f"Failed to start worker process - {self._start_event}", Logger.ERROR)
+                return
+            self.logger.log("Client mouse controller worker process started.", Logger.DEBUG)
+
+    def stop(self):
+        """
+        Stops the mouse controller worker process.
+        """
+        if self._worker_started:
+            self._stop_event.set()
+            self._worker_process.join(timeout=1)
+            self._worker_started = False
+            self.logger.log("Client mouse controller worker process stopped.", Logger.DEBUG)
+
+    @staticmethod
+    def _run_worker(queue, stop_event, start_event, screen_size: tuple[int, int]):
+        """
+        Worker process to handle mouse events.
+        """
+        start_event.set()
+        controller = MouseController()
+        pressed = False
+        last_press_time = -99
+        doubleclick_counter = 0
+
+        while not stop_event.is_set():
+            try:
+                message = queue.get(timeout=0.1)
+                event = EventMapper.get_event(message)
+                if not isinstance(event, MouseEvent):
+                    continue
+
+                if event.action == MouseEvent.MOVE_ACTION:
+                    ClientMouseController.move_cursor(event.x, event.y, event.dx, event.dy, controller, screen_size)
+                elif event.action == MouseEvent.POSITION_ACTION:
+                    ClientMouseController.position_cursor(event.x, event.y, screen_size, controller)
+                elif event.action == MouseEvent.CLICK_ACTION:
+                    pressed, last_press_time, doubleclick_counter = ClientMouseController.click(
+                        event.button, event.is_pressed, controller, last_press_time, doubleclick_counter, pressed)
+                elif event.action == MouseEvent.SCROLL_ACTION:
+                    ClientMouseController.scroll(event.dx, event.dy, controller)
+            except Exception:
+                continue
 
     def _on_client_active(self, data: dict):
         """
@@ -338,21 +406,13 @@ class ClientMouseController:
         The stream will return a ProtocolMessage object, we need to convert it to an Event object through EventMapper.
         """
         try:
-            event = EventMapper.get_event(message)
-            if not isinstance(event, MouseEvent):
-                self.logger.log(f"ClientMouseController: Received non-mouse event: {event}", Logger.WARNING)
-                return
+            if not self._worker_started:
+                try:
+                    self.start()
+                except Exception as e:
+                    pass
 
-            if event.action == MouseEvent.MOVE_ACTION:
-                self.move_cursor(event.x, event.y, event.dx, event.dy)
-                # After handling the mouse event, check for edge cases
-                Thread(target=self._check_edge).start()
-            elif event.action == MouseEvent.POSITION_ACTION:
-                self.position_cursor(event.x, event.y)
-            elif event.action == MouseEvent.CLICK_ACTION:
-                self.click(event.button, event.is_pressed)
-            elif event.action == MouseEvent.SCROLL_ACTION:
-                self.scroll(event.dx, event.dy)
+            self._queue.put(message)
         except Exception as e:
             self.logger.log(f"ClientMouseController: Failed to process mouse event - {e}", Logger.ERROR)
 
@@ -363,6 +423,15 @@ class ClientMouseController:
         if self._cross_screen_event.is_set():
             return
 
+        # Add the current position to the movement history
+        try:
+            if self._movement_history.full():
+                self._movement_history.get()
+            cursor = self._controller.position
+            self._movement_history.put((cursor[0], cursor[1]))
+        except Exception:
+            pass
+
         if self._is_active:
             if self._movement_history.qsize() >= 2:
 
@@ -372,7 +441,7 @@ class ClientMouseController:
                 # Check all the previous movements to determine the direction
                 queue_data = list(self._movement_history.queue)
 
-                edge = EdgeDetector.is_at_edge(movement_history=queue_data,x=x,y=y, screen_size=self._screen_size)
+                edge = EdgeDetector.is_at_edge(movement_history=queue_data, x=x, y=y, screen_size=self._screen_size)
 
                 # If we reach an edge, dispatch event to deactivate client and send cross screen message to server
                 try:
@@ -392,96 +461,90 @@ class ClientMouseController:
                 finally:
                     self._cross_screen_event.clear()
 
-    def position_cursor(self, x: float | int, y: float | int):
+    @staticmethod
+    def position_cursor(x: float | int, y: float | int, screen_size: tuple[int, int], controller: MouseController):
         """
         Position the mouse cursor to the specified (x, y) coordinates.
         """
         try:
             # Denormalize coordinates by mapping into the client screen size
-            x *= self._screen_size[0]
-            y *= self._screen_size[1]
+            x *= screen_size[0]
+            y *= screen_size[1]
             x = int(x)
             y = int(y)
         except ValueError:
-            self.logger.log(f"Invalid x or y values: x={x}, y={y}", Logger.ERROR)
             return
 
-        self._controller.position = (x, y)
+        controller.position = (x, y)
 
-    def move_cursor(self, x: float | int, y: float | int, dx: float | int, dy: float | int):
+    @staticmethod
+    def move_cursor(x: float | int, y: float | int, dx: float | int, dy: float | int, controller: MouseController,
+                    screen_size: tuple[int, int]):
         """
         Move the mouse cursor to the specified (x, y) coordinates.
         """
-        # Add the current position to the movement history
-        try:
-            if self._movement_history.full():
-                self._movement_history.get()
-            cursor = self._controller.position
-            self._movement_history.put((cursor[0], cursor[1]))
-        except Exception:
-            pass
 
         # if dx and dy are provided, use relative movement
-        if dx > 0 or dy > 0:
+        if x == -1 and y == -1:
             # Convert to int for pynput
             try:
                 dx = int(dx)
                 dy = int(dy)
             except ValueError:
-                self.logger.log(f"Invalid dx or dy values: dx={dx}, dy={dy}", Logger.ERROR)
                 dx = 0
                 dy = 0
 
-            self._controller.move(dx=dx, dy=dy)
+            controller.move(dx=dx, dy=dy)
         else:
             try:
-                if isinstance(x, float):
-                    if not (0.0 <= x <= 1.0):
-                        raise ValueError("x coordinate out of bounds")
-                elif isinstance(y, float):
-                    if not (0.0 <= y <= 1.0):
-                        raise ValueError("y coordinate out of bounds")
-                elif not isinstance(x, int) or isinstance(y, int):
-                    raise ValueError("x and y must be either float or int")
-
                 # Denormalize coordinates by mapping into the client screen size
-                x *= self._screen_size[0]
-                y *= self._screen_size[1]
+                x *= screen_size[0]
+                y *= screen_size[1]
                 x = int(x)
                 y = int(y)
             except ValueError:
-                self.logger.log(f"Invalid x or y values: x={x}, y={y}", Logger.ERROR)
                 return
 
-            self._controller.position = (x, y)
+            controller.position = (x, y)
 
-    def click(self, button: int, is_pressed: bool):
+    @staticmethod
+    def click(button: int, is_pressed: bool, controller: MouseController, last_press_time: float,
+              doubleclick_counter: int, pressed: bool):
         """
         Perform a mouse click action.
         """
         current_time = time()
         try:
-            btn = Button(button)
+            #Get button name from button value
+            name = ButtonMapping(button).name
+            btn = Button[name]
         except ValueError:
-            self.logger.log(f"ClientMouseController: Invalid button value: {button}", Logger.ERROR)
-            return
+            return pressed, last_press_time, doubleclick_counter
 
-        if self._pressed and not is_pressed:
-            self._controller.release(btn)
-            self._pressed = False
-        elif not self._pressed and is_pressed:
+        ret_pressed = pressed
+        ret_last_press_time = last_press_time
+        ret_doubleclick_counter = doubleclick_counter
+
+        if pressed and not is_pressed:
+            controller.release(btn)
+            ret_pressed = False
+        elif not pressed and is_pressed:
             # If we receive a press event within 200ms of the last press, treat it as a double-click
-            if (current_time - self._last_press_time) < 0.2:
-                self._controller.click(btn, 2 + self._doubleclick_counter)
-                self._doubleclick_counter = 0 if self._doubleclick_counter == 2 else 2
-                self._pressed = False
+            if (current_time - last_press_time) < 0.2:
+                controller.click(btn, 2 + doubleclick_counter)
+                ret_doubleclick_counter = 0 if doubleclick_counter == 2 else 2
+                ret_pressed = False
             else:
-                self._controller.press(btn)
-                self._doubleclick_counter = 0
-                self._pressed = True
-            self._last_press_time = current_time
+                controller.press(btn)
+                ret_doubleclick_counter = 0
+                ret_pressed = True
 
-    def scroll(self, dx: int | float, dy: int | float):
+            ret_last_press_time = current_time
+
+        return ret_pressed, ret_last_press_time, ret_doubleclick_counter
+
+    @staticmethod
+    def scroll(dx: int | float, dy: int | float, controller: MouseController):
         """
         Perform a mouse scroll action.
         """
@@ -489,7 +552,6 @@ class ClientMouseController:
             dx = int(dx)
             dy = int(dy)
         except ValueError:
-            self.logger.log(f"ClientMouseController: Invalid scroll values: dx={dx}, dy={dy}", Logger.ERROR)
             return
 
-        self._controller.scroll(dx, dy)
+        controller.scroll(dx, dy)

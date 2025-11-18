@@ -24,7 +24,7 @@ from input.cursor import CursorHandlerWorker
 from input.mouse import ServerMouseListener, ServerMouseController
 
 from utils.logging import Logger
-Logger(logging=True, stdout=print)
+Logger(logging=False, stdout=print)
 
 class ActiveServer:
     def __init__(self, host: str, port: int, client_address: str):

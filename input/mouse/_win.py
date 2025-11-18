@@ -4,7 +4,7 @@ Provides mouse input support for Windows systems.
 import multiprocessing
 from time import time, sleep
 from queue import Queue
-from threading import Event, Thread
+from threading import Event
 from multiprocessing import Queue as ProcQueue, Event as ProcEvent, Process
 
 from pynput.mouse import Button, Controller as MouseController
@@ -18,7 +18,7 @@ from network.stream.GenericStream import StreamHandler
 from utils.logging import Logger
 from utils.screen import Screen
 
-from ._base import EdgeDetector, ScreenEdge
+from ._base import EdgeDetector, ScreenEdge, ButtonMapping
 
 
 def _no_suppress_filter(msg, data):
@@ -210,11 +210,11 @@ class ServerMouseListener:
 
         return True
 
-    def on_click(self, x, y, button, pressed):
+    def on_click(self, x, y, button: Button, pressed):
         if self._listening:
-            action = MouseEvent.CLICK_ACTION
             mouse_event = MouseEvent(x=x / self._screen_size[0], y=y / self._screen_size[1],
-                                     button=button, action=action, is_presed=pressed)
+                                     button=ButtonMapping[button.name].value, action=MouseEvent.CLICK_ACTION,
+                                     is_presed=pressed)
             try:
                 self.stream.send(mouse_event)
             except Exception as e:
@@ -301,10 +301,10 @@ class ClientMouseController:
 
         self.logger = Logger.get_instance()
 
-        self._queue: "multiprocessing.Queue" = ProcQueue()
-        self._stop_event: "multiprocessing.Event" = ProcEvent()
-        self._start_event: "multiprocessing.Event" = ProcEvent()
-        self._worker_process: multiprocessing.Process = Process(
+        self._queue = ProcQueue()
+        self._stop_event = ProcEvent()
+        self._start_event = ProcEvent()
+        self._worker_process = Process(
             target=ClientMouseController._run_worker,
             args=(self._queue,  self._stop_event,self._start_event, self._screen_size)
         )
@@ -509,9 +509,11 @@ class ClientMouseController:
         """
         current_time = time()
         try:
-            btn = Button(button)
+            # Get button name from button value
+            name = ButtonMapping(button).name
+            btn = Button[name]
         except ValueError:
-            return
+            return pressed, last_press_time, doubleclick_counter
 
         ret_pressed = pressed
         ret_last_press_time = last_press_time

@@ -139,25 +139,24 @@ class MessageExchange:
     def send_stream_type_message(self, stream_type: int, source: str = None, target: str = None, **kwargs):
         """Send stream type message."""
 
-        match stream_type:
-            case StreamType.MOUSE:
-                self.send_mouse_data(source=source, target=target, **kwargs)
-                return
-            case StreamType.KEYBOARD:
-                self.send_keyboard_data(source=source, target=target, **kwargs)
-                return
-            case StreamType.CLIPBOARD:
-                self.send_clipboard_data(source=source, target=target, **kwargs)
-                return
-            case StreamType.FILE:
-                self.send_file_data(source=source, target=target, **kwargs)
-                return
-            case StreamType.COMMAND:
-                self.send_command_message(source=source, target=target, **kwargs)
-                return
-            case _:
-                self.logger.log(f"Unknown stream type: {stream_type}", Logger.ERROR)
-                return
+        if stream_type == StreamType.MOUSE:
+            self.send_mouse_data(source=source, target=target, **kwargs)
+            return
+        elif stream_type == StreamType.KEYBOARD:
+            self.send_keyboard_data(source=source, target=target, **kwargs)
+            return
+        elif stream_type == StreamType.CLIPBOARD:
+            self.send_clipboard_data(source=source, target=target, **kwargs)
+            return
+        elif stream_type == StreamType.FILE:
+            self.send_file_data(source=source, target=target, **kwargs)
+            return
+        elif stream_type == StreamType.COMMAND:
+            self.send_command_message(source=source, target=target, **kwargs)
+            return
+        else:
+            self.logger.log(f"Unknown stream type: {stream_type}", Logger.ERROR)
+            return
 
     def send_custom_message(self, message_type: str, payload: Dict[str, Any],source: str = None, target: str = None):
         """Send a custom message with arbitrary payload."""
@@ -308,6 +307,7 @@ class MessageExchange:
 
 # Esempio di utilizzo
 if __name__ == "__main__":
+    Logger(stdout=print,logging=True)
     # Configurazione
     config = MessageExchangeConfig(
         max_delay_tolerance=0.1,
@@ -340,7 +340,7 @@ if __name__ == "__main__":
     exchange.register_handler("clipboard", handle_clipboard)
 
     # Invia messaggi
-    exchange.send_mouse_data(100, 200, "click", is_pressed=True)
+    exchange.send_mouse_data(100, 200, "click", is_pressed=True, dx=0, dy=0)
     exchange.send_keyboard_data("A", "press")
 
     # Simula ricezione dati
@@ -351,7 +351,7 @@ if __name__ == "__main__":
     exchange._receive_data(raw_keyboard_data)
 
     # Test clipboard with more than max_chunk_size to trigger chunking
-    large_content = "A" * 5000  # 5000 bytes of data
+    large_content = "A" * 500000  # 5000 bytes of data
     exchange.send_clipboard_data(large_content)
 
     # Simula ricezione dei chunk

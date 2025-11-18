@@ -9,4 +9,3 @@ ServerMouseController = _mouse_module.ServerMouseController
 ClientMouseController = _mouse_module.ClientMouseController
 # ---
 del _mouse_module
-

@@ -1,6 +1,26 @@
 import enum
 from typing import Callable, Optional
 
+class ButtonMapping(enum.Enum):
+    """The various buttons.
+
+    The actual values for these items differ between platforms. Some
+    platforms may have additional buttons, but these are guaranteed to be
+    present everywhere and we remap them to these values.
+    """
+    #: An unknown button was pressed
+    unknown = 0
+
+    #: The left button
+    left = 1
+
+    #: The middle button
+    middle = 2
+
+    #: The right button
+    right = 3
+
+
 class ScreenEdge(enum.Enum):
     LEFT = 1
     RIGHT = 2
