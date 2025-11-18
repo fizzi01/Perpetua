@@ -6,6 +6,8 @@ from time import time, sleep
 from queue import Queue
 from threading import Event
 from multiprocessing import Queue as ProcQueue, Event as ProcEvent, Process
+from concurrent.futures import ProcessPoolExecutor, ThreadPoolExecutor
+
 
 from pynput.mouse import Button, Controller as MouseController
 from pynput.mouse import Listener as MouseListener
@@ -306,7 +308,7 @@ class ClientMouseController:
         self._start_event = ProcEvent()
         self._worker_process = Process(
             target=ClientMouseController._run_worker,
-            args=(self._queue,  self._stop_event,self._start_event, self._screen_size)
+            args=(self._queue, self._stop_event, self._start_event, self._screen_size)
         )
 
         self._worker_started = False
@@ -356,24 +358,30 @@ class ClientMouseController:
         last_press_time = -99
         doubleclick_counter = 0
 
-        while not stop_event.is_set():
-            try:
-                message = queue.get(timeout=0.1)
-                event = EventMapper.get_event(message)
-                if not isinstance(event, MouseEvent):
-                    continue
+        with ThreadPoolExecutor(max_workers=1) as executor:
+            while not stop_event.is_set():
+                try:
+                    message = queue.get(timeout=0.1)
+                    curtime = time()
+                    print(f"Mouse Time passed: {curtime - message.timestamp:.4f}")
+                    event = EventMapper.get_event(message)
+                    if not isinstance(event, MouseEvent):
+                        continue
 
-                if event.action == MouseEvent.MOVE_ACTION:
-                    ClientMouseController.move_cursor(event.x, event.y, event.dx, event.dy, controller, screen_size)
-                elif event.action == MouseEvent.POSITION_ACTION:
-                    ClientMouseController.position_cursor(event.x, event.y, screen_size, controller)
-                elif event.action == MouseEvent.CLICK_ACTION:
-                    pressed, last_press_time, doubleclick_counter = ClientMouseController.click(
-                        event.button, event.is_pressed, controller, last_press_time, doubleclick_counter, pressed)
-                elif event.action == MouseEvent.SCROLL_ACTION:
-                    ClientMouseController.scroll(event.dx, event.dy, controller)
-            except Exception:
-                continue
+                    if event.action == MouseEvent.MOVE_ACTION:
+                        executor.submit(ClientMouseController.move_cursor, event.x, event.y, event.dx, event.dy, screen_size)
+                    elif event.action == MouseEvent.POSITION_ACTION:
+                        executor.submit(
+                            ClientMouseController.position_cursor,event.x, event.y, screen_size)
+                    elif event.action == MouseEvent.CLICK_ACTION:
+                        pressed, last_press_time, doubleclick_counter = ClientMouseController.click(
+                            event.button, event.is_pressed, controller, last_press_time, doubleclick_counter, pressed)
+                    elif event.action == MouseEvent.SCROLL_ACTION:
+                        executor.submit(ClientMouseController.scroll,event.dx, event.dy)
+                except KeyboardInterrupt:
+                    break
+                except Exception:
+                    continue
 
     def _on_client_active(self, data: dict):
         """
@@ -407,6 +415,8 @@ class ClientMouseController:
                     pass
 
             self._queue.put(message)
+            cur_time = time()
+            print(f"Post-dispatch delay: {cur_time - message.timestamp:.4f}s")
         except Exception as e:
             self.logger.log(f"ClientMouseController: Failed to process mouse event - {e}", Logger.ERROR)
 
@@ -456,10 +466,11 @@ class ClientMouseController:
                     self._cross_screen_event.clear()
 
     @staticmethod
-    def position_cursor(x: float | int, y: float | int, screen_size: tuple[int, int], controller: MouseController):
+    def position_cursor(x: float | int, y: float | int, screen_size: tuple[int, int]):
         """
         Position the mouse cursor to the specified (x, y) coordinates.
         """
+        controller = MouseController()
         try:
             # Denormalize coordinates by mapping into the client screen size
             x *= screen_size[0]
@@ -472,12 +483,12 @@ class ClientMouseController:
         controller.position = (x, y)
 
     @staticmethod
-    def move_cursor(x: float | int, y: float | int, dx: float | int, dy: float | int, controller: MouseController,
+    def move_cursor(x: float | int, y: float | int, dx: float | int, dy: float | int,
                     screen_size: tuple[int, int]):
         """
         Move the mouse cursor to the specified (x, y) coordinates.
         """
-
+        controller = MouseController()
         # if dx and dy are provided, use relative movement
         if x == -1 and y == -1:
             # Convert to int for pynput
@@ -538,10 +549,11 @@ class ClientMouseController:
         return ret_pressed, ret_last_press_time, ret_doubleclick_counter
 
     @staticmethod
-    def scroll(dx: int | float, dy: int | float, controller: MouseController):
+    def scroll(dx: int | float, dy: int | float):
         """
         Perform a mouse scroll action.
         """
+        controller = MouseController()
         try:
             dx = int(dx)
             dy = int(dy)

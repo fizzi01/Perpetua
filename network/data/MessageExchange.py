@@ -21,7 +21,7 @@ class MessageExchangeConfig:
     """Configuration for MessageExchange layer."""
     max_delay_tolerance: float = ApplicationConfig.max_delay_tolerance
     max_chunk_size: int = ApplicationConfig.max_chunk_size  # bytes
-    enable_ordering: bool = True
+    enable_ordering: bool = False
     auto_chunk: bool = ApplicationConfig.auto_chunk
     parallel_processors: int = ApplicationConfig.parallel_processors
 
@@ -197,8 +197,10 @@ class MessageExchange:
             instant: If True, process message immediately without ordering returning it
         """
         _receive_buffer = bytearray()
+
         try:
             data = self._receive_callback(4)
+            stime = -time()
             _receive_buffer.extend(data)
 
             msg_lenght = ProtocolMessage.read_lenght_prefix(data)
@@ -211,6 +213,8 @@ class MessageExchange:
                 _receive_buffer.extend(chunk)
 
             if data:
+                stime += time()
+                print(f"Complete message delay: {stime:.4f}s")
                 return self._receive_data(_receive_buffer, instant=instant)
             return None
         except ValueError as e:
@@ -231,6 +235,8 @@ class MessageExchange:
         """
         try:
             message = ProtocolMessage.from_bytes(data)
+            # Debug TODO: To remove
+            message.timestamp = time()
             # Handle chunked messages
             if message.is_chunk and not instant:
                 reconstructed = self._handle_chunk(message)
@@ -283,11 +289,14 @@ class MessageExchange:
 
     def _dispatch_message(self, message: ProtocolMessage):
         """Dispatch message to registered handler."""
-        Thread(target=self._dispatch_thread, args=(message,)).start()
+        #Thread(target=self._dispatch_thread, args=(message,)).start()
+        self._dispatch_thread(message)
 
     def _dispatch_thread(self, message: ProtocolMessage):
         """Dispatch message to registered thread."""
         handler = self._handlers.get(message.message_type)
+        curtime=time()
+        print(f"Pre-dispatch delay: {curtime - message.timestamp:.4f}s")
         if handler:
             try:
                 handler(message)

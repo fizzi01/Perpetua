@@ -61,7 +61,6 @@ class ActiveClient:
         self.mouse_stream_handler.start()
         self.command_stream_handler.start()
 
-
     def disconnected_callback(self, client):
         self.event_bus.dispatch(event_type=EventType.CLIENT_INACTIVE, data={})
 
@@ -70,11 +69,13 @@ class ActiveClient:
 
     def start(self):
         self.client.start()
+        self.mouse_controller.start()
 
     def stop(self):
         self.client.stop()
         self.mouse_stream_handler.stop()
         self.command_stream_handler.stop()
+        self.mouse_controller.stop()
 
 if __name__ == '__main__':
     active_client = ActiveClient(server_ip="", server_port=5555)
