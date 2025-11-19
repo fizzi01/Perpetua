@@ -94,50 +94,60 @@ class MessageExchange:
     @staticmethod
     def _receive_loop(receive_callback, message_queue, stop_event,
                       config, chunk_buffer):
-        """Loop di ricezione eseguito in un thread separato."""
+        """Loop di ricezione con buffer intelligente per messaggi frammentati."""
+        persistent_buffer = bytearray()
+
         while not stop_event.is_set():
             try:
-                _receive_buffer = bytearray()
-
-                # Ricevi lunghezza del messaggio
-                data = receive_callback(6)
-                if not data:
+                # Ricevi nuovi dati e aggiungili al buffer persistente
+                new_data = receive_callback(config.max_chunk_size)
+                if not new_data:
                     continue
 
-                _receive_buffer.extend(data)
-                msg_length = ProtocolMessage.read_lenght_prefix(data)
-                total_length = 6 + msg_length
+                persistent_buffer.extend(new_data)
 
-                # Ricevi il resto del messaggio
-                while len(_receive_buffer) < total_length:
-                    remaining = total_length - len(_receive_buffer)
-                    chunk = receive_callback(min(remaining, config.max_chunk_size))
-                    if not chunk:
+                # Estrai tutti i messaggi completi dal buffer
+                while len(persistent_buffer) >= 6:
+                    # Leggi il prefisso per ottenere la lunghezza
+                    try:
+                        msg_length = ProtocolMessage.read_lenght_prefix(
+                            bytes(persistent_buffer[:6])
+                        )
+                    except ValueError:
+                        # Prefisso invalido, rimuovi primo byte e riprova
+                        persistent_buffer.pop(0)
+                        continue
+
+                    total_length = 6 + msg_length
+
+                    # Verifica se abbiamo il messaggio completo
+                    if len(persistent_buffer) < total_length:
+                        # Messaggio incompleto, attendi più dati
                         break
-                    _receive_buffer.extend(chunk)
 
-                if len(_receive_buffer) == total_length:
-                    message = ProtocolMessage.from_bytes(_receive_buffer)
-                    message.timestamp = time()
+                    # Estrai il messaggio completo
+                    message_data = bytes(persistent_buffer[:total_length])
+                    persistent_buffer = persistent_buffer[total_length:]
 
-                    if message.is_chunk:
-                        reconstructed = MessageExchange._handle_chunk_static(message, chunk_buffer)
-                        if reconstructed:
-                            try:
+                    # Processa il messaggio
+                    try:
+                        message = ProtocolMessage.from_bytes(message_data)
+                        message.timestamp = time()
+
+                        if message.is_chunk:
+                            reconstructed = MessageExchange._handle_chunk_static(
+                                message, chunk_buffer
+                            )
+                            if reconstructed:
                                 message_queue.put(reconstructed, timeout=0.01)
-                            except:
-                                pass
-                    else:
-                        try:
+                        else:
                             message_queue.put(message, timeout=0.01)
-                        except:
-                            pass
+                    except:
+                        pass
 
             except (timeout, error):
                 continue
-            except Exception as e:
-                import traceback
-                traceback.print_exc()
+            except Exception:
                 continue
 
     @staticmethod
@@ -307,7 +317,7 @@ class MessageExchange:
 
             if data:
                 stime += time()
-                print(f"Complete message delay: {stime:.4f}s")
+                print(f"Complete message delay: {stime:.7f}s")
                 return self._receive_data(_receive_buffer, instant=instant)
             return None
         except ValueError as e:
