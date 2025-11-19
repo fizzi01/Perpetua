@@ -409,7 +409,7 @@ class MessageExchange:
         """Dispatch message to registered handler."""
         handler = self._handlers.get(message.message_type)
         curtime=time()
-        print(f"Pre-dispatch delay: {curtime - message.timestamp:.4f}s")
+        print(f"Pre-dispatch delay: {curtime - message.timestamp:.7f}s")
         if handler:
             try:
                 handler(message)
@@ -497,9 +497,9 @@ if __name__ == "__main__":
         content_len = len(msg.payload.get('content', ''))
         print(f"Clipboard event received, length: {content_len}")
 
-    server_exchange.register_handler("mouse", handle_mouse)
-    server_exchange.register_handler("keyboard", handle_keyboard)
-    server_exchange.register_handler("clipboard", handle_clipboard)
+    server_exchange.register_handler("mouse", lambda msg: handle_mouse(msg))
+    server_exchange.register_handler("keyboard", lambda msg: handle_keyboard(msg))
+    server_exchange.register_handler("clipboard", lambda msg: handle_clipboard(msg))
 
     # Avvia ricezione parallela sul server
     server_exchange.start()

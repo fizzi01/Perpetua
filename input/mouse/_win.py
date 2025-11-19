@@ -314,10 +314,10 @@ class ClientMouseController:
         self._worker_started = False
 
         # Register to receive mouse events from the stream
-        self.stream.register_receive_callback(self._mouse_event_callback, message_type="mouse")
+        self.stream.register_receive_callback(lambda message: self._mouse_event_callback(message), message_type="mouse")
 
-        self.event_bus.subscribe(event_type=EventType.CLIENT_ACTIVE, callback=self._on_client_active)
-        self.event_bus.subscribe(event_type=EventType.CLIENT_INACTIVE, callback=self._on_client_inactive)
+        self.event_bus.subscribe(event_type=EventType.CLIENT_ACTIVE, callback=lambda data: self._on_client_active(data))
+        self.event_bus.subscribe(event_type=EventType.CLIENT_INACTIVE, callback=lambda data: self._on_client_inactive(data))
 
     def start(self):
         """
