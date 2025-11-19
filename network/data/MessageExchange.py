@@ -100,13 +100,13 @@ class MessageExchange:
                 _receive_buffer = bytearray()
 
                 # Ricevi lunghezza del messaggio
-                data = receive_callback(4)
+                data = receive_callback(6)
                 if not data:
                     continue
 
                 _receive_buffer.extend(data)
                 msg_length = ProtocolMessage.read_lenght_prefix(data)
-                total_length = 4 + msg_length
+                total_length = 6 + msg_length
 
                 # Ricevi il resto del messaggio
                 while len(_receive_buffer) < total_length:
@@ -124,18 +124,20 @@ class MessageExchange:
                         reconstructed = MessageExchange._handle_chunk_static(message, chunk_buffer)
                         if reconstructed:
                             try:
-                                message_queue.put(reconstructed, timeout=0.1)
+                                message_queue.put(reconstructed, timeout=0.01)
                             except:
                                 pass
                     else:
                         try:
-                            message_queue.put(message, timeout=0.1)
+                            message_queue.put(message, timeout=0.01)
                         except:
                             pass
 
             except (timeout, error):
                 continue
-            except Exception:
+            except Exception as e:
+                import traceback
+                traceback.print_exc()
                 continue
 
     @staticmethod
@@ -290,12 +292,12 @@ class MessageExchange:
         _receive_buffer = bytearray()
 
         try:
-            data = self._receive_callback(4)
+            data = self._receive_callback(6)
             stime = -time()
             _receive_buffer.extend(data)
 
             msg_lenght = ProtocolMessage.read_lenght_prefix(data)
-            total_length = 4 + msg_lenght
+            total_length = 6 + msg_lenght
             while len(_receive_buffer) < total_length:
                 remaining = total_length - len(_receive_buffer)
                 chunk = self._receive_callback(min(remaining, self.config.max_chunk_size))

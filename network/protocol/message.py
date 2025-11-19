@@ -60,7 +60,7 @@ class ProtocolMessage:
 
         # Add length prefix for proper framing
         length = len(json_bytes)
-        return struct.pack('>I', length) + json_bytes
+        return struct.pack('!Icc', length,  b"P",  b"Y") + json_bytes
 
     @classmethod
     def from_json(cls, json_str: str) -> 'ProtocolMessage':
@@ -76,11 +76,14 @@ class ProtocolMessage:
         Args:
             data: Binary data containing serialized ProtocolMessage
         """
-        if len(data) < 4:
+        if len(data) < 6:
             raise ValueError("Invalid binary data: too short for length prefix")
 
         # Read length prefix
-        length = struct.unpack('>I', data[:4])[0]
+        length, p, y = struct.unpack('!Icc',  data)
+        if p != b"P" or y != b"Y":
+            print(data)
+            raise ValueError("Invalid binary data: not a protocol message")
         return length
 
     @classmethod
@@ -94,17 +97,17 @@ class ProtocolMessage:
         Returns:
             Deserialized ProtocolMessage
         """
-        if len(data) < 4:
+        if len(data) < 6:
             raise ValueError("Invalid binary data: too short for length prefix")
 
         # Read length prefix
-        length = struct.unpack('>I', data[:4])[0]
+        length, _, _ = struct.unpack('!Icc', data[:6])
 
-        if len(data) < 4 + length:
+        if len(data) < 6 + length:
             raise ValueError("Invalid binary data: incomplete message")
 
         # Extract JSON bytes
-        json_bytes = data[4:4 + length]
+        json_bytes = data[6:6 + length]
         json_str = json_bytes.decode('utf-8')
 
         # Parse JSON and create object
