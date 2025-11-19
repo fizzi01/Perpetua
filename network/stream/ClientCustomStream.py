@@ -45,6 +45,11 @@ class UnidirectionalStreamHandler(StreamHandler):
         event_bus.subscribe(event_type=EventType.CLIENT_ACTIVE, callback=self._on_client_active)
         event_bus.subscribe(event_type=EventType.CLIENT_INACTIVE, callback=self._on_client_inactive)
 
+    def stop(self):
+        super().stop()
+
+        self.msg_exchange.stop()
+
     def _on_client_active(self, data: dict):
         """
         Event handler for when a client becomes active.
@@ -57,6 +62,9 @@ class UnidirectionalStreamHandler(StreamHandler):
         if isinstance(cl_stram_socket, BaseSocket):
             self.msg_exchange.set_transport(send_callback=cl_stram_socket.get_stream(self.stream_type).send, #type: ignore
                                             receive_callback=cl_stram_socket.get_stream(self.stream_type).recv)
+            # Start msg exchange listener if we are in receiving mode
+            if self._bidirectional or not self._sender:
+                self.msg_exchange.start()
         else:
             raise ValueError(f"Invalid connection socket for main client in {self.handler_id}")
 
@@ -66,6 +74,9 @@ class UnidirectionalStreamHandler(StreamHandler):
         """
         # with self._rlock, self._slock: # TODO: Check if both locks are necessary
         self._is_active = False
+        # Stop msg exchange listener if we are in receiving mode
+        if self._bidirectional or not self._sender:
+            self.msg_exchange.stop(listener=True)
 
     def register_receive_callback(self, receive_callback, message_type: str):
         """
@@ -107,10 +118,12 @@ class UnidirectionalStreamHandler(StreamHandler):
         while self._active:
             # with self._rlock:
             try:
-                message = self.msg_exchange.receive_message(self.instant)
-                if message:
-                    self._recv_queue.put(message)
-                sleep(self._waiting_time)
+                # Process incoming messages
+                # msg = self.msg_exchange.receive_message(self.instant)
+                msg = self.msg_exchange.get_received_message(timeout=0.1)
+                if msg:
+                    # self._recv_queue.put(msg)
+                    self.msg_exchange.dispatch_thread(msg)
             except Empty:
                 continue
             except Exception as e:
@@ -147,6 +160,11 @@ class BidirectionalStreamHandler(StreamHandler):
         event_bus.subscribe(event_type=EventType.CLIENT_ACTIVE, callback=self._on_client_active)
         event_bus.subscribe(event_type=EventType.CLIENT_INACTIVE, callback=self._on_client_inactive)
 
+    def stop(self):
+        super().stop()
+
+        self.msg_exchange.stop()
+
     def _on_client_active(self, data: dict):
         """
         Event handler for when a client becomes active.
@@ -163,6 +181,9 @@ class BidirectionalStreamHandler(StreamHandler):
         if isinstance(cl_stram_socket, BaseSocket):
             self.msg_exchange.set_transport(send_callback=cl_stram_socket.get_stream(self.stream_type).send, #type: ignore
                                             receive_callback=cl_stram_socket.get_stream(self.stream_type).recv)
+            # Start msg exchange listener if we are in receiving mode
+            if self._bidirectional or not self._sender:
+                self.msg_exchange.start()
         else:
             raise ValueError(f"Invalid connection socket for main client in {self.handler_id}")
 
@@ -172,6 +193,10 @@ class BidirectionalStreamHandler(StreamHandler):
         """
         # with self._rlock, self._slock:
         self._is_active = False
+
+        # Stop msg exchange listener if we are in receiving mode
+        if self._bidirectional or not self._sender:
+            self.msg_exchange.stop(listener=True)
 
     def register_receive_callback(self, receive_callback, message_type: str):
         """
@@ -212,10 +237,12 @@ class BidirectionalStreamHandler(StreamHandler):
         while self._active:
             # with self._rlock:
             try:
-                message = self.msg_exchange.receive_message(self.instant)
-                if message:
-                    self._recv_queue.put(message)
-                sleep(self._waiting_time)
+                # Process incoming messages
+                # msg = self.msg_exchange.receive_message(self.instant)
+                msg = self.msg_exchange.get_received_message(timeout=0.1)
+                if msg:
+                    # self._recv_queue.put(msg)
+                    self.msg_exchange.dispatch_thread(msg)
             except Empty:
                 continue
             except Exception as e:

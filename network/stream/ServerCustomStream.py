@@ -41,6 +41,11 @@ class UnidirectionalStreamHandler(StreamHandler):
         event_bus.subscribe(event_type=EventType.ACTIVE_SCREEN_CHANGED, callback=self._on_active_screen_changed)
         self.event_bus.subscribe(event_type=EventType.CLIENT_DISCONNECTED, callback=self._on_client_disconnected)
 
+    def stop(self):
+        super().stop()
+
+        self.msg_exchange.stop()
+
     def register_receive_callback(self, receive_callback, message_type: str):
         """
         Register a callback function for receiving messages of a specific type.
@@ -75,17 +80,26 @@ class UnidirectionalStreamHandler(StreamHandler):
             if isinstance(cl_stram_socket, BaseSocket):
                 self.msg_exchange.set_transport(send_callback=cl_stram_socket.get_stream(self.stream_type).send, #type: ignore
                                                 receive_callback=cl_stram_socket.get_stream(self.stream_type).recv)
+                # Start msg exchange listener if we are in receiving mode
+                if self._bidirectional or not self._sender:
+                    self.msg_exchange.start()
             else:
                 self.logger.log(
                     f"{self.handler_id}: No valid stream for active client {self._active_client.screen_position}",
                     Logger.WARNING)
                 self.msg_exchange.set_transport(send_callback=None, receive_callback=None)
+                # Stop msg exchange listener if we are in receiving mode
+                if self._bidirectional or not self._sender:
+                    self.msg_exchange.stop(listener=True)
 
             # Empty the send queue
             with self._send_queue.mutex:
                 self._send_queue.queue.clear()
         else:
             self.msg_exchange.set_transport(send_callback=None, receive_callback=None)
+            # Stop msg exchange listener if we are in receiving mode
+            if self._bidirectional or not self._sender:
+                self.msg_exchange.stop(listener=True)
 
     def _core_sender(self):
         """
@@ -97,15 +111,14 @@ class UnidirectionalStreamHandler(StreamHandler):
             if self._active_client and self._active_client.is_connected:
                 try:
                     # Process sending queued mouse data
-                    while not self._send_queue.empty():
-                        data = self._send_queue.get(
-                            timeout=self._waiting_time)  # It should be a dictionary from Event.to_dict()
-                        # If data is not dict call .to_dict()
-                        if not isinstance(data, dict) and hasattr(data, "to_dict"):
-                            data = data.to_dict()
-                        self.msg_exchange.send_stream_type_message(stream_type=self.stream_type,
-                                                                   source=self.source,
-                                                                   target=self._active_client.screen_position, **data)
+                    data = self._send_queue.get(
+                        timeout=1)  # It should be a dictionary from Event.to_dict()
+                    # If data is not dict call .to_dict()
+                    if not isinstance(data, dict) and hasattr(data, "to_dict"):
+                        data = data.to_dict()
+                    self.msg_exchange.send_stream_type_message(stream_type=self.stream_type,
+                                                               source=self.source,
+                                                               target=self._active_client.screen_position, **data)
 
                 except Empty:
                     sleep(self._waiting_time)
@@ -126,9 +139,11 @@ class UnidirectionalStreamHandler(StreamHandler):
             if self._active_client and self._active_client.is_connected:
                 try:
                     # Process incoming messages
-                    msg = self.msg_exchange.receive_message(self.instant)
+                    # msg = self.msg_exchange.receive_message(self.instant)
+                    msg = self.msg_exchange.get_received_message(timeout=0.1)
                     if msg:
-                        self._recv_queue.put(msg)
+                        # self._recv_queue.put(msg)
+                        self.msg_exchange.dispatch_thread(msg)
 
                 except Exception as e:
                     self.logger.log(f"Error in {self.handler_id} core receiver loop: {e}", Logger.ERROR)
@@ -166,6 +181,11 @@ class BidirectionalStreamHandler(StreamHandler):
         event_bus.subscribe(event_type=EventType.ACTIVE_SCREEN_CHANGED, callback=self._on_active_screen_changed)
         self.event_bus.subscribe(event_type=EventType.CLIENT_DISCONNECTED, callback=self._on_client_disconnected)
 
+    def stop(self):
+        super().stop()
+
+        self.msg_exchange.stop()
+
     def register_receive_callback(self, receive_callback, message_type: str):
         """
         Register a callback function for receiving messages of a specific type.
@@ -199,17 +219,26 @@ class BidirectionalStreamHandler(StreamHandler):
             if isinstance(cl_stram_socket, BaseSocket):
                 self.msg_exchange.set_transport(send_callback=cl_stram_socket.get_stream(self.stream_type).send, #type: ignore
                                                 receive_callback=cl_stram_socket.get_stream(self.stream_type).recv)
+                # Start msg exchange listener if we are in receiving mode
+                if self._bidirectional or not self._sender:
+                    self.msg_exchange.start()
             else:
                 self.logger.log(
                     f"{self.handler_id}: No valid stream for active client {self._active_client.screen_position}",
                     Logger.WARNING)
                 self.msg_exchange.set_transport(send_callback=None, receive_callback=None)
+                # Stop msg exchange listener if we are in receiving mode
+                if self._bidirectional or not self._sender:
+                    self.msg_exchange.stop(listener=True)
 
             # Empty the send queue
             with self._send_queue.mutex:
                 self._send_queue.queue.clear()
         else:
             self.msg_exchange.set_transport(send_callback=None, receive_callback=None)
+            # Stop msg exchange listener if we are in receiving mode
+            if self._bidirectional or not self._sender:
+                self.msg_exchange.stop(listener=True)
 
     def _core_sender(self):
         """
@@ -249,9 +278,11 @@ class BidirectionalStreamHandler(StreamHandler):
             if self._active_client and self._active_client.is_connected:
                 try:
                     # Process incoming messages
-                    msg = self.msg_exchange.receive_message(self.instant)
+                    # msg = self.msg_exchange.receive_message(self.instant)
+                    msg = self.msg_exchange.get_received_message(timeout=0.1)
                     if msg:
-                        self._recv_queue.put(msg)
+                        # self._recv_queue.put(msg)
+                        self.msg_exchange.dispatch_thread(msg)
 
                 except Exception as e:
                     self.logger.log(f"Error in {self.handler_id} core receiver loop: {e}", Logger.ERROR)

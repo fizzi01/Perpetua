@@ -1,12 +1,14 @@
 """
 Layer responsible for handling message exchanges between network nodes, using protocol
 """
-import threading
-from threading import Thread
+
 from time import sleep, time
 from typing import Callable, Dict, Optional, Any, List
 from dataclasses import dataclass
 from socket import timeout, error
+
+from threading import Thread, Event, Lock
+from queue import Empty, Queue
 
 from config import ApplicationConfig
 from utils.logging import Logger
@@ -55,9 +57,15 @@ class MessageExchange:
             )
             self.processor.start()
 
+        # Receive process and queue
+        self._receive_queue: Optional[Queue] = None
+        self._receive_thread: Optional[Thread] = None
+        self._stop_event: Optional[Event] = None
+        self._shared_chunk_buffer: Dict = {}
+
         # Chunk reassembly buffer
         self._chunk_buffer: Dict[str, list] = {}
-        self._buffer_lock = threading.Lock()
+        self._buffer_lock = Lock()
 
         # Transport layer callbacks
         self._send_callback: Optional[Callable[[bytes], None]] = None
@@ -66,6 +74,89 @@ class MessageExchange:
         self._missed_data = 0
 
         self.logger = Logger.get_instance()
+
+    def start(self):
+        """Start listening thread for incoming messages."""
+        if not self._receive_callback:
+            raise RuntimeError("Transport layer not configured. Call set_transport() first.")
+
+        self._receive_queue = Queue(maxsize=10000)
+        self._stop_event = Event()
+
+        self._receive_thread = Thread(
+            target=self._receive_loop,
+            args=(self._receive_callback, self._receive_queue, self._stop_event,
+                  self.config, self._shared_chunk_buffer),
+            daemon=True
+        )
+        self._receive_thread.start()
+
+    @staticmethod
+    def _receive_loop(receive_callback, message_queue, stop_event,
+                      config, chunk_buffer):
+        """Loop di ricezione eseguito in un thread separato."""
+        while not stop_event.is_set():
+            try:
+                _receive_buffer = bytearray()
+
+                # Ricevi lunghezza del messaggio
+                data = receive_callback(4)
+                if not data:
+                    continue
+
+                _receive_buffer.extend(data)
+                msg_length = ProtocolMessage.read_lenght_prefix(data)
+                total_length = 4 + msg_length
+
+                # Ricevi il resto del messaggio
+                while len(_receive_buffer) < total_length:
+                    remaining = total_length - len(_receive_buffer)
+                    chunk = receive_callback(min(remaining, config.max_chunk_size))
+                    if not chunk:
+                        break
+                    _receive_buffer.extend(chunk)
+
+                if len(_receive_buffer) == total_length:
+                    message = ProtocolMessage.from_bytes(_receive_buffer)
+                    message.timestamp = time()
+
+                    if message.is_chunk:
+                        reconstructed = MessageExchange._handle_chunk_static(message, chunk_buffer)
+                        if reconstructed:
+                            try:
+                                message_queue.put(reconstructed, timeout=0.1)
+                            except:
+                                pass
+                    else:
+                        try:
+                            message_queue.put(message, timeout=0.1)
+                        except:
+                            pass
+
+            except (timeout, error):
+                continue
+            except Exception:
+                continue
+
+    @staticmethod
+    def _handle_chunk_static(chunk: ProtocolMessage, chunk_buffer: Dict) -> Optional[ProtocolMessage]:
+        """Gestisce chunk in modo thread-safe per multiprocessing."""
+        message_id = chunk.message_id
+
+        if message_id not in chunk_buffer:
+            chunk_buffer[message_id] = [None] * chunk.total_chunks
+
+        chunks_list = chunk_buffer[message_id]
+        chunks_list[chunk.chunk_index] = chunk.to_bytes()
+        chunk_buffer[message_id] = chunks_list
+
+        # Verifica se tutti i chunk sono arrivati
+        if all(c is not None for c in chunks_list):
+            chunks = [ProtocolMessage.from_bytes(c) for c in chunks_list]
+            del chunk_buffer[message_id]
+            return MessageBuilder().reconstruct_from_chunks(chunks)
+
+        return None
 
     def set_transport(self, send_callback: Optional[Callable[[bytes], None]] = None, receive_callback: Optional[Callable[[int], bytes]] = None):
         """
@@ -226,6 +317,28 @@ class MessageExchange:
             self.logger.log(f"Error receiving message: {e}", Logger.ERROR)
             return None
 
+    def get_received_message(self, timeout: float = 0) -> Optional[ProtocolMessage]:
+        """
+        Preleva un messaggio dalla coda di ricezione se disponibile.
+        I chunk sono già gestiti nel processo di ricezione.
+
+        Args:
+            timeout: Tempo di attesa in secondi (0 = non bloccante)
+
+        Returns:
+            Messaggio ricevuto o None se la coda è vuota
+        """
+        if not self._receive_queue:
+            return None
+
+        try:
+            mex = self._receive_queue.get(
+                timeout=timeout if timeout > 0 else None
+            )
+            return mex
+        except Empty:
+            return None
+
     def _receive_data(self, data: bytes, instant: bool = False):
         """
         Receive raw bytes from transport layer and process them.
@@ -290,10 +403,10 @@ class MessageExchange:
     def _dispatch_message(self, message: ProtocolMessage):
         """Dispatch message to registered handler."""
         #Thread(target=self._dispatch_thread, args=(message,)).start()
-        self._dispatch_thread(message)
+        self.dispatch_thread(message)
 
-    def _dispatch_thread(self, message: ProtocolMessage):
-        """Dispatch message to registered thread."""
+    def dispatch_thread(self, message: ProtocolMessage):
+        """Dispatch message to registered handler."""
         handler = self._handlers.get(message.message_type)
         curtime=time()
         print(f"Pre-dispatch delay: {curtime - message.timestamp:.4f}s")
@@ -305,36 +418,75 @@ class MessageExchange:
         else:
             self.logger.log(f"No handler registered for message type: {message.message_type}", Logger.ERROR)
 
-    def stop(self):
+    def stop(self, listener: bool = False, timeout: float = 0):
         """Cleanup and shutdown the message exchange layer."""
-        if self.processor:
-            self.processor.stop()
+        if self._stop_event:
+            self._stop_event.set()
+        if self._receive_thread:
+            self._receive_thread.join(timeout=timeout)
 
-        with self._buffer_lock:
+        if not listener:
+            if self.processor:
+                self.processor.stop()
+
             self._chunk_buffer.clear()
 
 
 # Esempio di utilizzo
 if __name__ == "__main__":
-    Logger(stdout=print,logging=True)
+    import socket
+    from threading import Thread
+
+    Logger(stdout=print, logging=True)
+
     # Configurazione
     config = MessageExchangeConfig(
         max_delay_tolerance=0.1,
         max_chunk_size=1024,
-        enable_ordering=True,
+        enable_ordering=False,
         parallel_processors=2,
     )
 
-    # Inizializza exchange
-    exchange = MessageExchange(config)
+    # Setup socket server e client
+    server_socket = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+    server_socket.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
+    server_socket.bind(('127.0.0.1', 0))
+    server_socket.listen(1)
+    server_port = server_socket.getsockname()[1]
 
-    # Simula transport layer
-    def mock_send(data: bytes):
-        print(f"Sending {len(data)} bytes")
+    # Client socket
+    client_socket = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+    client_socket.connect(('127.0.0.1', server_port))
 
-    exchange.set_transport(mock_send)
+    # Accept connection
+    conn, addr = server_socket.accept()
+    print(f"Connection established: {addr}")
 
-    # Registra handlers
+    # Inizializza exchange per server (riceve)
+    server_exchange = MessageExchange(config)
+
+    # Transport callbacks per server
+    def server_send(data: bytes):
+        conn.sendall(data)
+
+    def server_receive(size: int) -> bytes:
+        return conn.recv(size)
+
+    server_exchange.set_transport(server_send, server_receive)
+
+    # Inizializza exchange per client (invia)
+    client_exchange = MessageExchange(config)
+
+    # Transport callbacks per client
+    def client_send(data: bytes):
+        client_socket.sendall(data)
+
+    def client_receive(size: int) -> bytes:
+        return client_socket.recv(size)
+
+    client_exchange.set_transport(client_send, client_receive)
+
+    # Registra handlers sul server
     def handle_mouse(msg: ProtocolMessage):
         print(f"Mouse event: {msg.payload}")
 
@@ -342,54 +494,59 @@ if __name__ == "__main__":
         print(f"Keyboard event: {msg.payload}")
 
     def handle_clipboard(msg: ProtocolMessage):
-        print(f"Clipboard event: {msg.payload}, length: {len(msg.payload.get('content', ''))}")
+        content_len = len(msg.payload.get('content', ''))
+        print(f"Clipboard event received, length: {content_len}")
 
-    exchange.register_handler("mouse", handle_mouse)
-    exchange.register_handler("keyboard", handle_keyboard)
-    exchange.register_handler("clipboard", handle_clipboard)
+    server_exchange.register_handler("mouse", handle_mouse)
+    server_exchange.register_handler("keyboard", handle_keyboard)
+    server_exchange.register_handler("clipboard", handle_clipboard)
 
-    # Invia messaggi
-    exchange.send_mouse_data(100, 200, "click", is_pressed=True, dx=0, dy=0)
-    exchange.send_keyboard_data("A", "press")
+    # Avvia ricezione parallela sul server
+    server_exchange.start()
 
-    # Simula ricezione dati
-    raw_mouse_data = exchange.builder.create_mouse_message(150, 250, "move").to_bytes()
-    exchange._receive_data(raw_mouse_data)
+    # Thread per processare messaggi ricevuti
+    def process_messages():
+        while True:
+            message = server_exchange.get_received_message(timeout=0.1)
+            if message:
+                server_exchange.dispatch_thread(message)
+            if not message:
+                sleep(0.01)
 
-    raw_keyboard_data = exchange.builder.create_keyboard_message("B", "release").to_bytes()
-    exchange._receive_data(raw_keyboard_data)
+    receive_thread = Thread(target=process_messages, daemon=True)
+    receive_thread.start()
 
-    # Test clipboard with more than max_chunk_size to trigger chunking
-    large_content = "A" * 500000  # 5000 bytes of data
-    exchange.send_clipboard_data(large_content)
+    # Test invio messaggi dal client
+    print("\n=== Test 1: Simple messages ===")
+    client_exchange.send_mouse_data(100, 200, "click", is_pressed=True, dx=0, dy=0)
+    client_exchange.send_keyboard_data("A", "press")
+    sleep(0.5)
 
-    # Simula ricezione dei chunk
-    chunks = exchange.builder.create_chunked_message(
-        exchange.builder.create_clipboard_message(large_content),
-        config.max_chunk_size,
-    )
-    for chunk in chunks:
-        exchange._receive_data(chunk.to_bytes())
+    print("\n=== Test 2: Large clipboard (chunked) ===")
+    large_content = "A" * 500000
+    client_exchange.send_clipboard_data(large_content)
+    sleep(2)
 
-    # Test out of order delivery
-    out_of_order_chunks = exchange.builder.create_chunked_message(
-        exchange.builder.create_clipboard_message("Out of order test " * 300),
-        config.max_chunk_size,
-    )
-    # Invia i chunk in ordine inverso
-    for chunk in reversed(out_of_order_chunks):
-        exchange._receive_data(chunk.to_bytes())
-
-    # Test out of order with numbers from 1 to 1000
-    out_of_order_numbers = exchange.builder.create_chunked_message(
-        exchange.builder.create_clipboard_message("".join(str(i) + " " for i in range(1, 1001))),
-        config.max_chunk_size,
-    )
-
-    # Invia i chunk in ordine inverso
-    for chunk in reversed(out_of_order_numbers):
-        exchange._receive_data(chunk.to_bytes())
-
+    print("\n=== Test 3: Multiple messages rapid fire ===")
+    for i in range(2000):
+        client_exchange.send_mouse_data(i * 10, i * 20, "move", dx=1, dy=1)
     sleep(1)
+
+    print("\n=== Test 4: Out of order chunked message ===")
+    out_of_order_content = "Out of order test " * 300
+    client_exchange.send_clipboard_data(out_of_order_content)
+    sleep(2)
+
+    print("\n=== Test 5: Numbers sequence ===")
+    numbers_content = "".join(str(i) + " " for i in range(1, 1001))
+    client_exchange.send_clipboard_data(numbers_content)
+    sleep(2)
+
     # Cleanup
-    exchange.stop()
+    print("\n=== Cleanup ===")
+    server_exchange.stop()
+    client_exchange.stop()
+    conn.close()
+    client_socket.close()
+    server_socket.close()
+    print("Test completed")

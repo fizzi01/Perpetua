@@ -1,5 +1,6 @@
 from abc import ABC
 from enum import IntEnum
+from time import time
 from typing import Optional
 
 from network.protocol.message import ProtocolMessage, MessageType
@@ -48,6 +49,7 @@ class MouseEvent(Event):
         self.action = action
 
         self.is_pressed = is_presed
+        self.timestamp = time()
 
     # When passing mouse event data as function parameter it should be converted to dictionary
     def to_dict(self) -> dict:

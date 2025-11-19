@@ -213,7 +213,8 @@ class MessageBuilder:
 
         return chunks
 
-    def reconstruct_from_chunks(self, chunks: List[ProtocolMessage]) -> ProtocolMessage:
+    @staticmethod
+    def reconstruct_from_chunks(chunks: List[ProtocolMessage]) -> ProtocolMessage:
         """
         Reconstruct original message from ProtocolMessage chunks.
 

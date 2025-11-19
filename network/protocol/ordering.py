@@ -242,10 +242,12 @@ class OrderedMessageProcessor:
 
                 # Dynamic sleep based on activity
                 if ready_messages:
-                    time.sleep(0.001)
+                    time.sleep(0.0001)
                 else:
                     time.sleep(0.01)
 
+            except KeyboardInterrupt:
+                break
             except Exception as e:
                 print(f"OrderedMessageWorker {worker_id} error: {e}")
-                time.sleep(0.1)
+                time.sleep(0.01)
