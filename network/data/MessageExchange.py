@@ -94,58 +94,82 @@ class MessageExchange:
     @staticmethod
     def _receive_loop(receive_callback, message_queue, stop_event,
                       config, chunk_buffer):
-        """Loop di ricezione con buffer intelligente per messaggi frammentati."""
+        """Loop di ricezione ottimizzato con buffer intelligente per messaggi frammentati."""
         persistent_buffer = bytearray()
+        prefix_len = ProtocolMessage.prefix_lenght
+        max_msg_size = config.max_chunk_size * 100
 
         while not stop_event.is_set():
             try:
-                # Ricevi nuovi dati e aggiungili al buffer persistente
+                # Ricevi nuovi dati con buffer size ottimale
                 new_data = receive_callback(config.max_chunk_size)
                 if not new_data:
+                    sleep(0.0001)  # Breve pausa per evitare busy waiting
                     continue
 
                 persistent_buffer.extend(new_data)
+                buffer_len = len(persistent_buffer)
+                offset = 0
 
-                # Estrai tutti i messaggi completi dal buffer
-                while len(persistent_buffer) >= 6:
-                    # Leggi il prefisso per ottenere la lunghezza
+                # Processa tutti i messaggi completi nel buffer
+                while offset + prefix_len <= buffer_len:
                     try:
+                        # Verifica marker "PY" prima di leggere il prefisso
+                        if persistent_buffer[offset + 4:offset + 6] != b'PY':
+                            # Cerca il prossimo marker valido
+                            next_marker = persistent_buffer.find(b'PY', offset + 1)
+                            if next_marker == -1 or next_marker < 4:
+                                # Nessun marker trovato, mantieni ultimi 5 byte
+                                persistent_buffer = persistent_buffer[-5:] if buffer_len > 5 else bytearray()
+                                break
+                            offset = next_marker - 4
+                            continue
+
+                        # Leggi lunghezza messaggio
                         msg_length = ProtocolMessage.read_lenght_prefix(
-                            bytes(persistent_buffer[:6])
+                            bytes(persistent_buffer[offset:offset + prefix_len])
                         )
-                    except ValueError:
-                        # Prefisso invalido, rimuovi primo byte e riprova
-                        persistent_buffer.pop(0)
-                        continue
 
-                    total_length = 6 + msg_length
+                        if msg_length > max_msg_size:
+                            # Messaggio troppo grande, cerca prossimo marker
+                            offset += 1
+                            continue
 
-                    # Verifica se abbiamo il messaggio completo
-                    if len(persistent_buffer) < total_length:
-                        # Messaggio incompleto, attendi più dati
-                        break
+                        total_length = prefix_len + msg_length
 
-                    # Estrai il messaggio completo
-                    message_data = bytes(persistent_buffer[:total_length])
-                    persistent_buffer = persistent_buffer[total_length:]
+                        # Verifica se abbiamo il messaggio completo
+                        if offset + total_length > buffer_len:
+                            # Messaggio incompleto, mantieni da offset in poi
+                            break
 
-                    # Processa il messaggio
-                    try:
+                        # Estrai e processa il messaggio completo
+                        message_data = bytes(persistent_buffer[offset:offset + total_length])
                         message = ProtocolMessage.from_bytes(message_data)
                         message.timestamp = time()
 
+                        # Gestione chunk/messaggio normale
                         if message.is_chunk:
                             reconstructed = MessageExchange._handle_chunk_static(
                                 message, chunk_buffer
                             )
                             if reconstructed:
-                                message_queue.put(reconstructed, timeout=0.01)
+                                message_queue.put(reconstructed, block=False)
                         else:
-                            message_queue.put(message, timeout=0.01)
-                    except:
-                        pass
+                            message_queue.put(message, block=False)
+
+                        offset += total_length
+
+                    except ValueError:
+                        # Prefisso invalido, avanza di 1 byte
+                        offset += 1
+                        continue
+
+                # Rimuovi dati processati dal buffer
+                if offset > 0:
+                    persistent_buffer = persistent_buffer[offset:]
 
             except (timeout, error):
+                sleep(0.001)
                 continue
             except Exception:
                 continue
@@ -302,12 +326,12 @@ class MessageExchange:
         _receive_buffer = bytearray()
 
         try:
-            data = self._receive_callback(6)
+            data = self._receive_callback(ProtocolMessage.prefix_lenght)
             stime = -time()
             _receive_buffer.extend(data)
 
             msg_lenght = ProtocolMessage.read_lenght_prefix(data)
-            total_length = 6 + msg_lenght
+            total_length = ProtocolMessage.prefix_lenght + msg_lenght
             while len(_receive_buffer) < total_length:
                 remaining = total_length - len(_receive_buffer)
                 chunk = self._receive_callback(min(remaining, self.config.max_chunk_size))

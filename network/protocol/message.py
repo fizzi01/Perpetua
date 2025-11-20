@@ -35,6 +35,9 @@ class ProtocolMessage:
     chunk_index: Optional[int] = None
     total_chunks: Optional[int] = None
     is_chunk: bool = False
+    
+    _prefix_format = "!Icc"
+    prefix_lenght = struct.calcsize(_prefix_format)
 
     def to_dict(self) -> Dict[str, Any]:
         """Convert message to dictionary for serialization."""
@@ -60,7 +63,7 @@ class ProtocolMessage:
 
         # Add length prefix for proper framing
         length = len(json_bytes)
-        return struct.pack('!Icc', length,  b"P",  b"Y") + json_bytes
+        return struct.pack(self._prefix_format, length,  b"P",  b"Y") + json_bytes
 
     @classmethod
     def from_json(cls, json_str: str) -> 'ProtocolMessage':
@@ -76,11 +79,11 @@ class ProtocolMessage:
         Args:
             data: Binary data containing serialized ProtocolMessage
         """
-        if len(data) < 6:
+        if len(data) < cls.prefix_lenght:
             raise ValueError("Invalid binary data: too short for length prefix")
 
         # Read length prefix
-        length, p, y = struct.unpack('!Icc',  data)
+        length, p, y = struct.unpack(cls._prefix_format,  data)
         if p != b"P" or y != b"Y":
             print(data)
             raise ValueError("Invalid binary data: not a protocol message")
@@ -97,17 +100,17 @@ class ProtocolMessage:
         Returns:
             Deserialized ProtocolMessage
         """
-        if len(data) < 6:
+        if len(data) < cls.prefix_lenght:
             raise ValueError("Invalid binary data: too short for length prefix")
 
         # Read length prefix
-        length, _, _ = struct.unpack('!Icc', data[:6])
+        length, _, _ = struct.unpack(cls._prefix_format, data[:cls.prefix_lenght])
 
-        if len(data) < 6 + length:
+        if len(data) < cls.prefix_lenght + length:
             raise ValueError("Invalid binary data: incomplete message")
 
         # Extract JSON bytes
-        json_bytes = data[6:6 + length]
+        json_bytes = data[cls.prefix_lenght:cls.prefix_lenght + length]
         json_str = json_bytes.decode('utf-8')
 
         # Parse JSON and create object
