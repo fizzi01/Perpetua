@@ -77,7 +77,7 @@ class MessageExchange:
                 # Ricevi nuovi dati in modo non bloccante
                 new_data = await self._receive_callback(self.config.receive_buffer_size)
                 if not new_data:
-                    await asyncio.sleep(0.001)  # Breve pausa per evitare busy waiting
+                    await asyncio.sleep(0.0001)  # Breve pausa per evitare busy waiting
                     continue
 
                 persistent_buffer.extend(new_data)
@@ -106,7 +106,6 @@ class MessageExchange:
                         if msg_length > max_msg_size:
                             # Messaggio troppo grande, cerca prossimo marker
                             offset += 1
-                            await asyncio.sleep(0.00001)
                             continue
 
                         total_length = prefix_len + msg_length
@@ -130,7 +129,6 @@ class MessageExchange:
                             await self._message_queue.put(message)
 
                         offset += total_length
-                        await asyncio.sleep(0.00001)
 
                     except ValueError:
                         # Prefisso invalido, avanza di 1 byte
