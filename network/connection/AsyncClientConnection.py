@@ -63,9 +63,6 @@ class AsyncClientConnection:
             if reader:
                 reader.feed_eof()
 
-        self.readers.clear()
-        self.writers.clear()
-
     async def wait_closed(self):
         """Wait for all streams to close"""
         tasks = []
@@ -80,4 +77,7 @@ class AsyncClientConnection:
 
         if tasks:
             await asyncio.gather(*tasks, return_exceptions=True)
+
+            self.readers.clear()
+            self.writers.clear()
 
