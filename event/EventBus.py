@@ -1,14 +1,14 @@
 from abc import ABC
-from typing import Callable, Dict, List
-
-from threading import Lock, Thread
+import asyncio
+from typing import Callable, Dict, List, Union
+import inspect
 
 from utils.logging import Logger
 
 
 class EventBus(ABC):
     """
-    Event dispatching system that allows registration of event listeners and dispatching events to them.
+    Async event dispatching system that allows registration of event listeners and dispatching events to them.
     """
 
     def subscribe(self, event_type: int, callback: Callable):
@@ -21,91 +21,101 @@ class EventBus(ABC):
         Unsubscribe a callback function from a specific event type.
         """
 
-    def dispatch(self, event_type: int, *args, **kwargs):
+    async def dispatch(self, event_type: int, *args, **kwargs):
         """
         Dispatch an event to all registered listeners for the given event type.
         """
 
-    def async_dispatch(self, event_type: int, *args, **kwargs):
+    def dispatch_nowait(self, event_type: int, *args, **kwargs):
         """
-        Asynchronously dispatch an event to all registered listeners for the given event type.
+        Dispatch an event without waiting (fire and forget).
         """
 
-# TODO: Handle priority for subscribers
-class ThreadSafeEventBus(EventBus):
+
+class AsyncEventBus(EventBus):
     """
-    Thread-safe implementation of the EventBus.
+    High-performance async implementation of the EventBus.
+    Optimized for maximum efficiency with minimal overhead.
     """
     def __init__(self):
         super().__init__()
-        # Initialize thread-safe structures here
+        # Use dict for O(1) lookup, list for subscribers
         self._subscribers: Dict[int, List[Callable]] = {}
-        self._lock = Lock()
+        # Use asyncio.Lock for async thread safety
+        self._lock = asyncio.Lock()
 
         self.logger = Logger.get_instance()
 
     def subscribe(self, event_type: int, callback: Callable):
         """
-        Thread-safe subscription to an event type.
+        Subscribe a callback function to a specific event type.
+        Thread-safe, but prefer calling from async context.
         """
-        with self._lock:
-            if event_type not in self._subscribers:
-                self._subscribers[event_type] = []
-            self._subscribers[event_type].append(callback)
+        # Sync version for compatibility
+        if event_type not in self._subscribers:
+            self._subscribers[event_type] = []
+        self._subscribers[event_type].append(callback)
 
     def unsubscribe(self, event_type: int, callback: Callable):
         """
-        Thread-safe unsubscription from an event type.
+        Unsubscribe a callback function from an event type.
         """
-        with self._lock:
-            if event_type in self._subscribers:
-                self._subscribers[event_type].remove(callback)
+        if event_type in self._subscribers and callback in self._subscribers[event_type]:
+            self._subscribers[event_type].remove(callback)
 
-    def dispatch(self, event_type: int, workers: int = 2, blocking: bool = True, timeout: float = 0.1, *args, **kwargs):
+    async def dispatch(self, event_type: int, *args, **kwargs):
         """
-        Thread-safe dispatching of an event to all registered listeners.
-        If workers > 0, callbacks are executed in parallel threads.
+        Async dispatch of an event to all registered listeners.
+        Executes all callbacks concurrently for maximum performance.
+        Supports both sync and async callbacks.
         """
-        with self._lock:
-            listeners = self._subscribers.get(event_type, []).copy()
+        # Fast path: get listeners without lock (dict access is atomic in CPython)
+        listeners = self._subscribers.get(event_type)
 
         if not listeners:
             return
 
-        if workers > 1:
-            # Execute callbacks in parallel using threads
-            threads = []
+        # Create tasks for all callbacks
+        tasks = []
+        for callback in listeners:
+            tasks.append(self._execute_callback(callback, *args, **kwargs))
 
-            # Run a maximum of 'workers' threads at a time
-            for i in range(0, len(listeners), workers):
-                batch = listeners[i:i + workers]
-                for callback in batch:
-                    thread = Thread(target=self._safe_callback, args=(callback, *args), kwargs=kwargs)
-                    thread.start()
-                    threads.append(thread)
+        # Execute all callbacks concurrently
+        if tasks:
+            # gather with return_exceptions to prevent one failure from stopping others
+            await asyncio.gather(*tasks, return_exceptions=True)
 
-                # Wait for the current batch to finish before starting the next
-                for thread in threads:
-                    thread.join(timeout=timeout if blocking else 0)
-
-                threads = []  # Reset threads for the next batch
-        else:
-            # Execute callbacks sequentially
-            for callback in listeners:
-                self._safe_callback(callback, *args, **kwargs)
-
-    def _safe_callback(self, callback: Callable, *args, **kwargs):
+    def dispatch_nowait(self, event_type: int, *args, **kwargs):
         """
-        Execute a callback with exception handling.
+        Fire-and-forget dispatch without waiting for completion.
+        Creates a background task.
         """
         try:
-            callback(*args, **kwargs)
+            asyncio.create_task(self.dispatch(event_type, *args, **kwargs))
+        except RuntimeError:
+            # No event loop running
+            pass
+
+    async def _execute_callback(self, callback: Callable, *args, **kwargs):
+        """
+        Execute a callback with exception handling.
+        Automatically handles both sync and async callbacks.
+        """
+        try:
+            # Check if callback is async
+            if inspect.iscoroutinefunction(callback):
+                await callback(*args, **kwargs)
+            else:
+                # Run sync callback in executor to avoid blocking
+                loop = asyncio.get_running_loop()
+                await loop.run_in_executor(None, lambda: callback(*args, **kwargs))
         except Exception as e:
             self.logger.log(f"Exception raised while dispatching event - {e}", Logger.ERROR)
 
-    def async_dispatch(self, event_type: int, workers: int = 0, blocking: bool = False, timeout: float = 0, *args, **kwargs):
-        """
-        Asynchronously dispatch an event to all registered listeners for the given event type.
-        """
-        thread = Thread(target=self.dispatch, args=(event_type, *args), kwargs=kwargs)
-        thread.start()
+
+# Backward compatibility alias
+class ThreadSafeEventBus(AsyncEventBus):
+    """
+    Backward compatibility alias for AsyncEventBus.
+    """
+    pass

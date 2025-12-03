@@ -7,6 +7,7 @@ import ssl
 from typing import Optional, Callable, Any
 
 from model.ClientObj import ClientsManager, ClientObj
+from network.connection.AsyncClientConnection import AsyncClientConnection
 from network.exceptions.ConnectionExceptions import ServerNotFoundException
 from network.data.MessageExchange import MessageExchange, MessageExchangeConfig
 from network.protocol.message import MessageType
@@ -178,6 +179,12 @@ class AsyncClientConnectionHandler:
                     if await self._connect():
                         self.logger.log("Connection established, performing handshake...", Logger.INFO)
 
+                        # Set first client connection socket
+                        client = self.clients.get_client()
+                        client.conn_socket = AsyncClientConnection(("",0)) #TODO: Better initialization
+                        client.conn_socket.add_stream(StreamType.COMMAND, self._command_reader, self._command_writer)
+                        self.clients.update_client(client)
+
                         # Perform handshake
                         if await self._handshake():
                             self._connected = True
@@ -188,6 +195,8 @@ class AsyncClientConnectionHandler:
                             # Update client status
                             self._client_obj.is_connected = True
                             self.clients.update_client(self._client_obj)
+
+                            await self._msg_exchange.stop() # Stop to enable stream handlers
 
                             # Call connected callback
                             if self.connected_callback:
@@ -277,7 +286,8 @@ class AsyncClientConnectionHandler:
             # Create MessageExchange for this client
             config = MessageExchangeConfig(
                 max_chunk_size=4096,
-                auto_chunk=True
+                auto_chunk=True,
+                auto_dispatch=False,  # We want to control message handling manually
             )
             self._msg_exchange = MessageExchange(config)
 
@@ -337,6 +347,15 @@ class AsyncClientConnectionHandler:
                 if not success:
                     self.logger.log("Failed to open additional streams", Logger.ERROR)
                     return False
+
+                # Add additional streams to client connection socket
+                for stream_type in self.open_streams:
+                    reader = self._stream_readers.get(stream_type)
+                    writer = self._stream_writers.get(stream_type)
+                    if reader and writer:
+                        client = self.clients.get_client()
+                        client.conn_socket.add_stream(stream_type, reader, writer)
+                        self.clients.update_client(client)
 
             self.logger.log("Handshake completed successfully", Logger.INFO)
             return True

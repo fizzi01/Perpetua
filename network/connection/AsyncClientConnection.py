@@ -3,6 +3,7 @@ Async-compatible connection wrapper for client streams.
 Replaces BaseSocket for asyncio-based connections.
 """
 import asyncio
+from _compression import BaseStream
 from typing import Dict, Optional, Tuple
 
 
@@ -31,6 +32,11 @@ class AsyncClientConnection:
     def get_writer(self, stream_type: int) -> Optional[asyncio.StreamWriter]:
         """Get writer for stream type"""
         return self.writers.get(stream_type)
+
+
+    def get_stream(self, stream_type: int) -> tuple[Optional[asyncio.StreamReader], Optional[asyncio.StreamWriter]]:
+        """Get both reader and writer for stream type"""
+        return self.readers.get(stream_type), self.writers.get(stream_type)
 
     def has_stream(self, stream_type: int) -> bool:
         """Check if stream type exists"""

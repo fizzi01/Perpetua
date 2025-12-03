@@ -57,6 +57,7 @@ class AsyncServerConnectionHandler:
         self._running = False
         self._heartbeat_task = None
         self._client_tasks = {}  # Task di gestione per ogni client
+        self._pending_streams = {}  # {ip_address: {stream_type: Future}}
 
         self.logger = Logger.get_instance()
 
@@ -135,7 +136,7 @@ class AsyncServerConnectionHandler:
         self.logger.log("AsyncServer stopped.", Logger.INFO)
 
     async def _handle_client(self, reader: asyncio.StreamReader, writer: asyncio.StreamWriter):
-        """Gestisce una nuova connessione client"""
+        """Gestisce una nuova connessione client (handshake o stream aggiuntivo)"""
         addr = writer.get_extra_info('peername')
         self.logger.log(f"Accepted connection from {addr}", Logger.INFO)
 
@@ -147,6 +148,27 @@ class AsyncServerConnectionHandler:
                 await writer.wait_closed()
                 return
 
+            # Controlla se è uno stream aggiuntivo in attesa
+            if addr[0] in self._pending_streams and self._pending_streams[addr[0]]:
+                # Questa è una connessione per uno stream aggiuntivo
+                # Prendi il primo stream type in attesa
+                pending = self._pending_streams[addr[0]]
+                if pending:
+                    stream_type = next(iter(pending.keys()))
+                    future = pending[stream_type]
+
+                    if not future.done():
+                        future.set_result((reader, writer))
+                        self.logger.log(f"Stream {stream_type} accepted from {addr[0]}", Logger.DEBUG)
+                    else:
+                        self.logger.log(f"Future already done for stream {stream_type} from {addr[0]}", Logger.WARNING)
+                        writer.close()
+                        await writer.wait_closed()
+
+                    del pending[stream_type]
+                    return
+
+            # Altrimenti è una connessione di handshake
             if client_obj.is_connected:
                 self.logger.log(f"Client {addr[0]} is already connected. Closing new connection.", Logger.WARNING)
                 writer.close()
@@ -195,7 +217,8 @@ class AsyncServerConnectionHandler:
 
             config = MessageExchangeConfig(
                 max_chunk_size=4096,
-                auto_chunk=True
+                auto_chunk=True,
+                auto_dispatch=False, # We want to control message handling manually
             )
             client_msg_exchange = MessageExchange(config)
 
@@ -250,11 +273,20 @@ class AsyncServerConnectionHandler:
                 if requested_streams:
                     self.logger.log(f"Client {client.ip_address} requested {len(requested_streams)} additional streams", Logger.DEBUG)
 
+                    # Prepara i future per gli stream in arrivo
+                    if client.ip_address not in self._pending_streams:
+                        self._pending_streams[client.ip_address] = {}
+
                     for stream_type in requested_streams:
                         try:
-                            # Accetta connessione per stream aggiuntivo
+                            # Crea un future per questo stream
+                            stream_future = asyncio.Future()
+                            self._pending_streams[client.ip_address][stream_type] = stream_future
+
+                            # Attendi che il client si connetta per questo stream
+                            # Il future verrà risolto in _handle_client quando arriva la connessione
                             stream_reader, stream_writer = await asyncio.wait_for(
-                                self._accept_stream_connection(client.ip_address),
+                                stream_future,
                                 timeout=10.0
                             )
 
@@ -271,8 +303,27 @@ class AsyncServerConnectionHandler:
 
                         except asyncio.TimeoutError:
                             self.logger.log(f"Timeout waiting for stream {stream_type} from client {client.ip_address}", Logger.WARNING)
+                            # Pulisci i pending streams
+                            if client.ip_address in self._pending_streams:
+                                self._pending_streams[client.ip_address].pop(stream_type, None)
+                                if not self._pending_streams[client.ip_address]:
+                                    del self._pending_streams[client.ip_address]
                             await client_msg_exchange.stop()
                             return False
+                        except Exception as e:
+                            import traceback
+                            self.logger.log(f"Error accepting stream {stream_type}: {e}", Logger.ERROR)
+                            # Pulisci i pending streams
+                            if client.ip_address in self._pending_streams:
+                                self._pending_streams[client.ip_address].pop(stream_type, None)
+                                if not self._pending_streams[client.ip_address]:
+                                    del self._pending_streams[client.ip_address]
+                            await client_msg_exchange.stop()
+                            return False
+
+                    # Pulisci i pending streams per questo client
+                    if client.ip_address in self._pending_streams:
+                        del self._pending_streams[client.ip_address]
 
                 # Cleanup temporaneo del msg_exchange (il client ne avrà uno proprio)
                 await client_msg_exchange.stop()
@@ -293,39 +344,6 @@ class AsyncServerConnectionHandler:
             self.logger.log(traceback.format_exc(), Logger.ERROR)
             return False
 
-    async def _accept_stream_connection(self, expected_ip: str) -> tuple:
-        """
-        Accetta una connessione stream verificando che provenga dall'IP atteso.
-
-        Returns:
-            Tupla (StreamReader, StreamWriter)
-        """
-        # Crea un evento per sincronizzare l'accettazione
-        connection_future = asyncio.Future()
-
-        async def stream_handler(reader, writer):
-            addr = writer.get_extra_info('peername')
-            if addr[0] == expected_ip:
-                if not connection_future.done():
-                    connection_future.set_result((reader, writer))
-            else:
-                self.logger.log(f"Rejected stream connection from {addr[0]} (expected {expected_ip})", Logger.WARNING)
-                writer.close()
-                await writer.wait_closed()
-
-        # Crea un server temporaneo per accettare lo stream
-        temp_server = await asyncio.start_server(stream_handler, self.host, 0)
-        temp_port = temp_server.sockets[0].getsockname()[1]
-
-        self.logger.log(f"Waiting for stream connection on port {temp_port} from {expected_ip}", Logger.DEBUG)
-
-        try:
-            # Attendi la connessione
-            result = await connection_future
-            return result
-        finally:
-            temp_server.close()
-            await temp_server.wait_closed()
 
     async def _heartbeat_loop(self):
         """Loop di heartbeat per verificare le connessioni e aggiornare metriche"""

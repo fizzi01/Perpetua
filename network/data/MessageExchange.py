@@ -19,6 +19,7 @@ class MessageExchangeConfig:
     max_delay_tolerance: float = ApplicationConfig.max_delay_tolerance
     max_chunk_size: int = ApplicationConfig.max_chunk_size  # bytes
     auto_chunk: bool = ApplicationConfig.auto_chunk
+    auto_dispatch: bool = True
     receive_buffer_size: int = 65536  # bytes for asyncio receive buffer
 
 
@@ -77,7 +78,7 @@ class MessageExchange:
                 # Ricevi nuovi dati in modo non bloccante
                 new_data = await self._receive_callback(self.config.receive_buffer_size)
                 if not new_data:
-                    await asyncio.sleep(0.0001)  # Breve pausa per evitare busy waiting
+                    await asyncio.sleep(0)  # Breve pausa per evitare busy waiting
                     continue
 
                 persistent_buffer.extend(new_data)
@@ -94,6 +95,7 @@ class MessageExchange:
                             if next_marker == -1 or next_marker < 4:
                                 # Nessun marker trovato, mantieni ultimi 5 byte
                                 persistent_buffer = persistent_buffer[-5:] if buffer_len > 5 else bytearray()
+                                await asyncio.sleep(0)
                                 break
                             offset = next_marker - 4
                             continue
@@ -106,6 +108,7 @@ class MessageExchange:
                         if msg_length > max_msg_size:
                             # Messaggio troppo grande, cerca prossimo marker
                             offset += 1
+                            # await asyncio.sleep(0)
                             continue
 
                         total_length = prefix_len + msg_length
@@ -113,6 +116,7 @@ class MessageExchange:
                         # Verifica se abbiamo il messaggio completo
                         if offset + total_length > buffer_len:
                             # Messaggio incompleto, mantieni da offset in poi
+                            await asyncio.sleep(0)
                             break
 
                         # Estrai e processa il messaggio completo
@@ -124,11 +128,18 @@ class MessageExchange:
                         if message.is_chunk:
                             reconstructed = await self._handle_chunk(message)
                             if reconstructed:
-                                await self._message_queue.put(reconstructed)
+                                if self.config.auto_dispatch:
+                                    await self.dispatch_message(reconstructed)
+                                else:
+                                    await self._message_queue.put(reconstructed)
                         else:
-                            await self._message_queue.put(message)
+                            if self.config.auto_dispatch:
+                                await self.dispatch_message(message)
+                            else:
+                                await self._message_queue.put(message)
 
                         offset += total_length
+                        # await asyncio.sleep(0)
 
                     except ValueError:
                         # Prefisso invalido, avanza di 1 byte
@@ -143,7 +154,7 @@ class MessageExchange:
                 break
             except Exception as e:
                 self.logger.log(f"Error in receive loop: {e}", Logger.ERROR)
-                await asyncio.sleep(0.001)
+                await asyncio.sleep(0)
                 continue
 
 
