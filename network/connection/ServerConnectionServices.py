@@ -10,7 +10,7 @@ from threading import Thread, Event
 from typing import Optional, Callable, Any
 
 from model.ClientObj import ClientsManager, ClientObj
-from network.data.MessageExchange import MessageExchange
+from network.data.MessageExchange import MessageExchange, MessageExchangeConfig
 from network.protocol.message import MessageType
 from utils.logging import Logger
 
@@ -43,7 +43,7 @@ class ServerConnectionHandler:
                  connected_callback: Optional[Callable[['ClientObj'], Any]] = None,
                  disconnected_callback: Optional[Callable[['ClientObj'], Any]] = None,
                  host: str = "0.0.0.0", port: int = 5001, wait: int = 5,
-                 heartbeat_interval: int = 10, max_errors: int = 10,
+                 heartbeat_interval: int = 2, max_errors: int = 10,
                  whitelist: Optional[ClientsManager] = None,
                  certfile: str = None, keyfile: str = None):
         self.msg_exchange = msg_exchange if msg_exchange is not None else MessageExchange()
@@ -219,12 +219,14 @@ class ServerConnectionHandler:
                 requested_streams = response.payload.get("streams", [])
 
                 # Create BaseSocket to manage multiple streams
+                client_socket.setblocking(True)
                 client.conn_socket = BaseSocket(client_addr).put_stream(StreamType.COMMAND, client_socket)
 
                 # Server starts to accept connections only for this client
                 connected_streams = 0
                 while connected_streams < len(requested_streams):
                     stream_socket, addr = self.socket_server.accept()
+                    stream_socket.setblocking(True)
                     if addr[0] != client.ip_address:
                         self.logger.log(f"Unexpected connection from {addr[0]} during handshake. Expected {client.ip_address}. Closing.", Logger.WARNING)
                         stream_socket.close()

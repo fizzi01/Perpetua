@@ -28,7 +28,7 @@ class UnidirectionalStreamHandler(StreamHandler):
 
         # Create a MessageExchange object
         self.msg_exchange = MessageExchange(
-            conf=MessageExchangeConfig()
+            conf=MessageExchangeConfig(auto_dispatch=True)
         )
 
         # Get main client
@@ -137,7 +137,7 @@ class BidirectionalStreamHandler(StreamHandler):
 
         # Create a MessageExchange object
         self.msg_exchange = MessageExchange(
-            conf=MessageExchangeConfig()
+            conf=MessageExchangeConfig(auto_dispatch=True)
         )
 
         # Get main client

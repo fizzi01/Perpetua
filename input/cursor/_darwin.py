@@ -2,6 +2,7 @@
 Logic to handle cursor visibility on macOS systems.
 """
 from queue import Empty
+from time import time
 from typing import Optional
 
 import wx
@@ -42,11 +43,12 @@ from ApplicationServices import (
     kAXWindowsAttribute
 )
 
+import asyncio
 from event import EventType, MouseEvent
 from event.EventBus import EventBus
 from network.stream.GenericStream import StreamHandler
 
-from . import _base
+from input.cursor import _base
 
 
 class OverlayPanel(wx.Panel):
@@ -151,37 +153,33 @@ class CursorHandlerWindow(wx.Frame):
             while self._running:
                 try:
                     command = self.command_queue.get(timeout=0.2)
-                    self._execute_command(command)
+                    cmd_type = command.get('type')
+
+                    if cmd_type == 'enable_capture':
+                        wx.CallAfter(self.enable_mouse_capture)
+                        self.result_queue.put({'type': 'capture_enabled', 'success': True})
+
+                    elif cmd_type == 'disable_capture':
+                        wx.CallAfter(self.disable_mouse_capture)
+                        self.result_queue.put({'type': 'capture_disabled', 'success': True})
+                    elif cmd_type == 'get_stats':
+                        self.result_queue.put({
+                            'type': 'stats',
+                            'is_captured': self.mouse_captured,
+                        })
+
+                    elif cmd_type == 'set_message':
+                        message = command.get('message', '')
+                        self.panel.info_text.SetLabel(message)
+                        self.result_queue.put({'type': 'message_set', 'success': True})
+
+                    elif cmd_type == 'quit':
+                        self._running = False
+                        self.Close()
                 except Empty:
                     continue
         except Exception as e:
             print(f"Error processing commands: {e}")
-
-    def _execute_command(self, command):
-        """Esegue un comando ricevuto"""
-        cmd_type = command.get('type')
-
-        if cmd_type == 'enable_capture':
-            wx.CallAfter(self.enable_mouse_capture)
-            self.result_queue.put({'type': 'capture_enabled', 'success': True})
-
-        elif cmd_type == 'disable_capture':
-            wx.CallAfter(self.disable_mouse_capture)
-            self.result_queue.put({'type': 'capture_disabled', 'success': True})
-        elif cmd_type == 'get_stats':
-            self.result_queue.put({
-                'type': 'stats',
-                'is_captured': self.mouse_captured,
-            })
-
-        elif cmd_type == 'set_message':
-            message = command.get('message', '')
-            self.panel.info_text.SetLabel(message)
-            self.result_queue.put({'type': 'message_set', 'success': True})
-
-        elif cmd_type == 'quit':
-            self._running = False
-            self.Close()
 
     def ForceOverlay(self):
         try:
@@ -381,27 +379,31 @@ class CursorHandlerWorker(_base.CursorHandlerWorker):
 
         self.process = None
         self.is_running = False
-        self._moue_data_thread = None
+        self._mouse_data_task = None  # Async task instead of thread
 
-        # Register to active_screen
+        self._active_client = None
+
+        # Register to active_screen with async callbacks
         self.event_bus.subscribe(event_type=EventType.ACTIVE_SCREEN_CHANGED, callback=self._on_active_screen_changed)
-        self.event_bus.subscribe(event_type=EventType.CLIENT_ACTIVE, callback=self._on_client_active)
-        self.event_bus.subscribe(event_type=EventType.CLIENT_INACTIVE, callback=self._on_client_inactive)
+        self.event_bus.subscribe(event_type=EventType.CLIENT_DISCONNECTED, callback=self._on_client_inactive)
 
-    def _on_active_screen_changed(self, data):
+    async def _on_active_screen_changed(self, data):
+        """Async callback for active screen changed"""
         active_screen = data.get("active_screen")
 
         if active_screen:
             # Start capture cursor
-            self.enable_capture()
+            await asyncio.get_event_loop().run_in_executor(None, self.enable_capture)
+            self._active_client = active_screen
         else:
-            self.disable_capture()
+            await asyncio.get_event_loop().run_in_executor(None, self.disable_capture)
+            self._active_client = None
 
-    def _on_client_active(self, data: dict):
-        self.disable_capture()
-
-    def _on_client_inactive(self, data: dict):
-        self.enable_capture()
+    async def _on_client_inactive(self, data: dict):
+        """Async callback for client inactive"""
+        if self._active_client and data.get("client_screen") == self._active_client:
+            self._active_client = None
+            await asyncio.get_event_loop().run_in_executor(None, self.disable_capture)
 
     def start(self, wait_ready=True, timeout=1):
         """Avvia il processo della window"""
@@ -415,8 +417,13 @@ class CursorHandlerWorker(_base.CursorHandlerWorker):
         self.is_running = True
 
         if self.stream is not None:
-            self._moue_data_thread = threading.Thread(target=self._mouse_data_listener)
-            self._moue_data_thread.start()
+            # Start async task for mouse data listener
+            try:
+                loop = asyncio.get_running_loop()
+                self._mouse_data_task = loop.create_task(self._mouse_data_listener())
+            except RuntimeError:
+                # No event loop running, will start manually
+                pass
 
         if wait_ready:
             # Aspetta che la window sia pronta
@@ -432,21 +439,29 @@ class CursorHandlerWorker(_base.CursorHandlerWorker):
 
         return True
 
-    def stop(self, timeout=2):
-        """Ferma il processo della window"""
+    async def stop(self, timeout=2):
+        """Ferma il processo della window e cleanup async task"""
         if not self.is_running:
             return
+
+        # Cancel async task if running
+        if self._mouse_data_task:
+            self._mouse_data_task.cancel()
+            try:
+                await self._mouse_data_task
+            except asyncio.CancelledError:
+                pass
+            self._mouse_data_task = None
 
         self.send_command({'type': 'quit'})
 
         if self.process:
-            self.process.join(timeout=timeout)
+            # Run process join in executor to avoid blocking
+            loop = asyncio.get_running_loop()
+            await loop.run_in_executor(None, self.process.join, timeout)
             if self.process.is_alive():
                 self.process.terminate()
-                self.process.join(timeout=1)
-
-        if self._moue_data_thread:
-            self._moue_data_thread.join(timeout=timeout)
+                await loop.run_in_executor(None, self.process.join, 1)
 
         # Close queues
         self.command_queue.close()
@@ -457,20 +472,36 @@ class CursorHandlerWorker(_base.CursorHandlerWorker):
 
         self.is_running = False
 
-    def _mouse_data_listener(self):
-        """Thread per ascoltare i dati del mouse"""
-        mouse_event = MouseEvent(action=MouseEvent.MOVE_ACTION)
+    async def _mouse_data_listener(self):
+        """
+        Async coroutine per ascoltare i dati del mouse dal processo di cattura.
+        Legge dal pipe in modo non-bloccante usando executor.
+        """
+        loop = asyncio.get_running_loop()
+
         while self.is_running:
             try:
-                if self.mouse_conn_rec.poll(0.5):
-                    delta_x, delta_y = self.mouse_conn_rec.recv()
+                # Poll non-bloccante
+                has_data = await loop.run_in_executor(None, self.mouse_conn_rec.poll, 0.01)
+
+                if has_data:
+                    # Leggi dal pipe in executor
+                    delta_x, delta_y = await loop.run_in_executor(None, self.mouse_conn_rec.recv)
+
+                    mouse_event = MouseEvent(action=MouseEvent.MOVE_ACTION)
                     mouse_event.dx = delta_x
                     mouse_event.dy = delta_y
-                    self.stream.send(mouse_event)
+
+                    # Invio async via stream
+                    await self.stream.send(mouse_event)
+                else:
+                    # Piccolo sleep per evitare busy waiting
+                    await asyncio.sleep(0.001)
+
             except EOFError:
                 break
             except Exception as e:
-                pass
+                await asyncio.sleep(0.01)
 
     def send_command(self, command):
         """Invia un comando alla window"""
@@ -511,7 +542,7 @@ class CursorHandlerWorker(_base.CursorHandlerWorker):
         return self.get_result()
 
 
-if __name__ == "__main__":
+async def __main():
     eb = EventBus()
     controller = CursorHandlerWorker(eb)
     controller.start()
@@ -539,5 +570,8 @@ if __name__ == "__main__":
     finally:
         # Ferma la window
         print("Chiusura window...")
-        controller.stop()
+        await controller.stop()
         print("Test completato!")
+
+if __name__ == "__main__":
+    asyncio.run(__main())

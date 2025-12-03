@@ -59,7 +59,7 @@ class BaseSocket(socket.socket):
 
         try:
             if stream and self.streams[stream]:
-                self.streams[stream].send(data)
+                self.streams[stream].sendall(data)
         except EOFError:
             pass
 

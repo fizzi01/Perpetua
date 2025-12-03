@@ -1,11 +1,15 @@
+"""
+Complete client logic suite for active tests.
+Fully async implementation using AsyncEventBus and async connection handlers.
+"""
+import asyncio
 from event import EventType
 from model.ClientObj import ClientObj, ClientsManager
-from event.EventBus import ThreadSafeEventBus
+from event.EventBus import AsyncEventBus  # Changed to AsyncEventBus
 
 from command import CommandHandler
 
-from network.connection.ClientConnectionService import ClientConnectionHandler
-from network.data.MessageExchange import MessageExchange
+from network.connection.AsyncClientConnectionService import AsyncClientConnectionHandler  # Changed to async
 from network.stream.ClientCustomStream import UnidirectionalStreamHandler, BidirectionalStreamHandler
 from network.stream import StreamType
 
@@ -20,74 +24,113 @@ class ActiveClient:
         self.clients_manager = ClientsManager(client_mode=True)
         self.clients_manager.add_client(ClientObj(ip_address=server_ip, ssl=False))
 
-        # Create EventBus
-        self.event_bus = ThreadSafeEventBus()
+        # Create AsyncEventBus
+        self.event_bus = AsyncEventBus()
 
-        self.message_exchange = MessageExchange()
+        # Create Stream Handlers (no more instant parameter - always async)
+        self.command_stream_handler = BidirectionalStreamHandler(
+            stream_type=StreamType.COMMAND,
+            clients=self.clients_manager,
+            event_bus=self.event_bus,
+            handler_id="ClientCommandStreamHandler"
+        )
 
-        # Create Stream Handlers
-        self.command_stream_handler = BidirectionalStreamHandler(stream_type=StreamType.COMMAND,
-                                                                 clients=self.clients_manager,
-                                                                 event_bus=self.event_bus,
-                                                                 handler_id="ClientCommandStreamHandler",
-                                                                 instant=False) #False because we use async callbacks
-
-        self.mouse_stream_handler = UnidirectionalStreamHandler(stream_type=StreamType.MOUSE,
-                                                             clients=self.clients_manager,
-                                                             event_bus=self.event_bus,
-                                                             handler_id="ClientMouseStreamHandler",
-                                                             sender=False, instant=False,
-                                                                active_only=True) # Mouse data is received from server
+        self.mouse_stream_handler = UnidirectionalStreamHandler(
+            stream_type=StreamType.MOUSE,
+            clients=self.clients_manager,
+            event_bus=self.event_bus,
+            handler_id="ClientMouseStreamHandler",
+            sender=False,  # Mouse data is received from server
+            active_only=True
+        )
 
         self.open_streams = [StreamType.MOUSE]
 
-        self.client = ClientConnectionHandler(msg_exchange=self.message_exchange, host=server_ip, port=server_port,
-                                              open_streams=self.open_streams,
-                                              clients=self.clients_manager,
-                                              wait=1,
-                                              connected_callback=self.connected_callback,
-                                              disconnected_callback=self.disconnected_callback)
+        # Create Async Client Connection Handler
+        self.client = AsyncClientConnectionHandler(
+            host=server_ip,
+            port=server_port,
+            heartbeat_interval=30,
+            open_streams=self.open_streams,
+            connected_callback=self.connected_callback,
+            disconnected_callback=self.disconnected_callback
+        )
 
         # Create Command Handler
-        self.command_handler = CommandHandler(event_bus=self.event_bus, stream=self.command_stream_handler)
+        self.command_handler = CommandHandler(
+            event_bus=self.event_bus,
+            stream=self.command_stream_handler
+        )
 
         # Create Mouse Controller
-        self.mouse_controller = ClientMouseController(event_bus=self.event_bus, stream_handler=self.mouse_stream_handler,
-                                                      command_stream=self.command_stream_handler)
+        self.mouse_controller = ClientMouseController(
+            event_bus=self.event_bus,
+            stream_handler=self.mouse_stream_handler,
+            command_stream=self.command_stream_handler
+        )
 
-    def connected_callback(self, client):
-        self.event_bus.dispatch(event_type=EventType.CLIENT_ACTIVE, data={})
+    async def connected_callback(self, client):
+        """Async callback for connection"""
+        await self.event_bus.dispatch(
+            event_type=EventType.CLIENT_ACTIVE,
+            data={}
+        )
 
-        self.mouse_stream_handler.start()
-        self.command_stream_handler.start()
+        await self.mouse_stream_handler.start()
+        await self.command_stream_handler.start()
 
-    def disconnected_callback(self, client):
-        self.event_bus.dispatch(event_type=EventType.CLIENT_INACTIVE, data={})
+    async def disconnected_callback(self, client):
+        """Async callback for disconnection"""
+        await self.event_bus.dispatch(
+            event_type=EventType.CLIENT_INACTIVE,
+            data={}
+        )
 
-        self.mouse_stream_handler.stop()
-        self.command_stream_handler.stop()
+        await self.mouse_stream_handler.stop()
+        await self.command_stream_handler.stop()
 
-    def start(self):
-        self.client.start()
-        self.mouse_controller.start()
+    async def start(self):
+        """Start client asynchronously"""
+        # Connect to server
+        await self.client.start()
 
-    def stop(self):
-        self.client.stop()
-        self.mouse_stream_handler.stop()
-        self.command_stream_handler.stop()
-        self.mouse_controller.stop()
+        # Start mouse controller
+        await self.mouse_controller.start()
 
-if __name__ == '__main__':
-    active_client = ActiveClient(server_ip="", server_port=5555)
-    active_client.start()
+    async def stop(self):
+        """Stop client asynchronously"""
+        # Stop mouse controller
+        await self.mouse_controller.stop()
+
+        # Stop stream handlers
+        await self.mouse_stream_handler.stop()
+        await self.command_stream_handler.stop()
+
+        # Disconnect from server
+        await self.client.stop()
+
+
+async def main():
+    """Async main function"""
+    active_client = ActiveClient(server_ip="192.168.1.62", server_port=5555)
+    await active_client.start()
 
     print("Client started")
+    print("Press Ctrl+C to stop")
+
     try:
+        # Run indefinitely until interrupted
         while True:
-            cmd = input("Type 'exit' to stop the client: ")
-            if cmd.strip().lower() == "exit":
-                break
+            await asyncio.sleep(1)
     except KeyboardInterrupt:
-        pass
+        print("\nKeyboard interrupt received")
+
     print("Stopping client...")
-    active_client.stop()
+    await active_client.stop()
+
+
+if __name__ == '__main__':
+    try:
+        asyncio.run(main())
+    except KeyboardInterrupt:
+        print("\nClient shutdown complete")

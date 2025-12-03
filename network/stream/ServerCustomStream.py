@@ -32,7 +32,7 @@ class UnidirectionalStreamHandler(StreamHandler):
 
         # Create a MessageExchange object
         self.msg_exchange = MessageExchange(
-            conf=MessageExchangeConfig()
+            conf=MessageExchangeConfig(auto_dispatch=True)
         )
 
         self.logger = Logger.get_instance()
@@ -158,7 +158,7 @@ class BidirectionalStreamHandler(StreamHandler):
 
         # Create a MessageExchange object
         self.msg_exchange = MessageExchange(
-            conf=MessageExchangeConfig()
+            conf=MessageExchangeConfig(auto_dispatch=True)
         )
 
         self.logger = Logger.get_instance()
