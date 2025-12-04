@@ -123,16 +123,16 @@ class EdgeDetector:
 
         # If we reach the bottom edge, we need to set y to 1 (top of the server screen)
         if edge == ScreenEdge.BOTTOM and screen == "top":
-            return x / screen_size[0], 1.0
+            return x / screen_size[0], 0.0
         # If we reach the top edge, we need to set y to 0 (bottom of the server screen)
         elif edge == ScreenEdge.TOP and screen == "bottom":
-            return x / screen_size[0], 0.0
+            return x / screen_size[0], 1.0
         # If we reach the left edge, we need to set x to 1 (right of the server screen)
         elif edge == ScreenEdge.LEFT and screen == "right":
-            return 1.0, y / screen_size[1]
+            return 0.0, y / screen_size[1]
         # If we reach the right edge, we need to set x to 0 (left of the server screen)
         elif edge == ScreenEdge.RIGHT and screen == "left":
-            return 0.0, y / screen_size[1]
+            return 1.0, y / screen_size[1]
         else:
             return -1, -1
 
@@ -627,6 +627,8 @@ class BaseClientMouseController:
                 screen_data = {"x": x, "y": y}
                 command = CommandEvent(command=CommandEvent.CROSS_SCREEN, params=screen_data)
 
+                # Clear movement history to avoid multiple detections
+                self._movement_history.clear()
                 # Send command and dispatch event
                 await self.command_stream.send(command)
                 await self.event_bus.dispatch(event_type=EventType.CLIENT_INACTIVE, data={})
