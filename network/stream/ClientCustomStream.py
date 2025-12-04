@@ -28,7 +28,8 @@ class UnidirectionalStreamHandler(StreamHandler):
 
         # Create a MessageExchange object
         self.msg_exchange = MessageExchange(
-            conf=MessageExchangeConfig(auto_dispatch=True)
+            conf=MessageExchangeConfig(auto_dispatch=True),
+            id=self.handler_id
         )
 
         # Get main client
@@ -52,6 +53,9 @@ class UnidirectionalStreamHandler(StreamHandler):
         """
         Async event handler for when a client becomes active.
         """
+        self.logger.log(f"{self.handler_id} - Client is active", Logger.DEBUG)
+        if self._active:
+            return
         self._is_active = True
 
         # Set message exchange transport source
@@ -137,14 +141,15 @@ class BidirectionalStreamHandler(StreamHandler):
 
         # Create a MessageExchange object
         self.msg_exchange = MessageExchange(
-            conf=MessageExchangeConfig(auto_dispatch=True)
+            conf=MessageExchangeConfig(auto_dispatch=True),
+            id=self.handler_id
         )
 
         # Get main client
         # If client manager is correctly initialized, it should have only one main client
         self._main_client: Optional[ClientObj] = None
 
-        self.logger = Logger.get_instance()
+        self.logger = Logger()
 
         # Subscribe with async callbacks
         event_bus.subscribe(event_type=EventType.CLIENT_ACTIVE, callback=self._on_client_active)
@@ -158,6 +163,10 @@ class BidirectionalStreamHandler(StreamHandler):
         """
         Async event handler for when a client becomes active.
         """
+        if self._active:
+            return
+
+        self.logger.log(f"{self.handler_id} - Client is active", Logger.DEBUG)
         self._is_active = True
 
         self._main_client = self.clients.get_client()

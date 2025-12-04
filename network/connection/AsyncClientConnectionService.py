@@ -197,8 +197,6 @@ class AsyncClientConnectionHandler:
                             self._client_obj.is_connected = True
                             self.clients.update_client(self._client_obj)
 
-                            await self._msg_exchange.stop() # Stop to enable stream handlers
-
                             # Call connected callback
                             if self.connected_callback:
                                 try:
@@ -362,6 +360,7 @@ class AsyncClientConnectionHandler:
                         self.clients.update_client(client)
 
             self.logger.log("Handshake completed successfully", Logger.INFO)
+            await self._msg_exchange.stop()
             return True
 
         except asyncio.TimeoutError:

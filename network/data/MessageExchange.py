@@ -29,13 +29,14 @@ class MessageExchange:
     Handles protocol details, chunking, ordering, and callbacks using asyncio.
     """
 
-    def __init__(self, conf: MessageExchangeConfig = None):
+    def __init__(self, conf: MessageExchangeConfig = None, id = "MessageExchange"):
         """
         Initialize MessageExchange layer.
 
         Args:
             conf: Configuration object for the exchange layer
         """
+        self._id = id
         self.config = conf or MessageExchangeConfig()
         self.builder = MessageBuilder()
 
@@ -158,7 +159,7 @@ class MessageExchange:
                     self.logger.log(f"Connection error in receive loop: {e}", Logger.ERROR)
                     self._running = False
                     break
-                self.logger.log(f"Error in receive loop: {e}", Logger.ERROR)
+                self.logger.log(f"Error in receive loop {self._id}: {e}", Logger.ERROR)
                 await asyncio.sleep(0)
                 continue
 
@@ -348,7 +349,7 @@ class MessageExchange:
             except Exception as e:
                 self.logger.log(f"Error in message handler for {message.message_type}: {e}", Logger.ERROR)
         else:
-            self.logger.log(f"No handler registered for message type: {message.message_type}", Logger.ERROR)
+            self.logger.log(f"No handler registered for message type: {message.message_type}", Logger.DEBUG)
 
     async def stop(self):
         """Cleanup and shutdown the message exchange layer."""
