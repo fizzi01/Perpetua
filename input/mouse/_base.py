@@ -104,6 +104,39 @@ class EdgeDetector:
         if edge and edge in callbacks:
             callbacks[edge]()
 
+    @staticmethod
+    def get_crossing_coords(x: float | int, y: float | int, screen_size: tuple, edge: ScreenEdge) -> tuple[float, float]:
+        """
+        Get the coordinates when crossing back from client to server.
+        Coords will be the opposite of the real one (so opposite to the edge reached).
+
+        Args:
+            x (float | int): Current x position of the cursor.
+            y (float | int): Current y position of the cursor.
+            screen_size (tuple): A tuple representing the screen size (width, height).
+            edge (ScreenEdge): The edge that was reached.
+        Returns:
+            tuple[float, float]: The normalized crossing coordinates.
+        """
+
+        # If we reach the bottom edge, we need to set y to 1 (top of the server screen)
+        if edge == ScreenEdge.BOTTOM:
+            return x / screen_size[0], 1.0
+        # If we reach the top edge, we need to set y to 0 (bottom of the server screen)
+        elif edge == ScreenEdge.TOP:
+            return x / screen_size[0], 0.0
+        # If we reach the left edge, we need to set x to 1 (right of the server screen)
+        elif edge == ScreenEdge.LEFT:
+            return 1.0, y / screen_size[1]
+        # If we reach the right edge, we need to set x to 0 (left of the server screen)
+        elif edge == ScreenEdge.RIGHT:
+            return 0.0, y / screen_size[1]
+        else:
+            return x / screen_size[0], y / screen_size[1]
+
+
+
+
 class BaseServerMouseListener(ABC):
     """
     It listens for mouse events on macOS systems.
@@ -362,7 +395,7 @@ class BaseServerMouseController(ABC):
         self._screen_size: tuple[int, int] = Screen.get_size()
 
         self._controller = MouseController()
-        self.logger = Logger.get_instance()
+        self.logger = Logger()
 
         # Register for active screen changed events to reposition the cursor
         self.event_bus.subscribe(event_type=EventType.ACTIVE_SCREEN_CHANGED, callback=self._on_active_screen_changed)
@@ -581,12 +614,10 @@ class BaseClientMouseController:
         # If we reach an edge, dispatch event to deactivate client and send cross screen message to server
         if edge:
             try:
+                x, y = EdgeDetector.get_crossing_coords(x=x, y=y, screen_size=self._screen_size, edge=edge)
                 self._cross_screen_event.set()
 
-                # Normalize position to avoid sticking
-                norm_x = x / self._screen_size[0]
-                norm_y = y / self._screen_size[1]
-                screen_data = {"x": norm_x, "y": norm_y}
+                screen_data = {"x": x, "y": y}
                 command = CommandEvent(command=CommandEvent.CROSS_SCREEN, params=screen_data)
 
                 # Send command and dispatch event

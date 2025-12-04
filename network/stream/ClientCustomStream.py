@@ -36,7 +36,7 @@ class UnidirectionalStreamHandler(StreamHandler):
         # If client manager is correctly initialized, it should have only one main client
         self._main_client: Optional[ClientObj] = self.clients.get_client()
 
-        if not self._main_client:
+        if self._main_client is None:
             raise ValueError(f"No main client found in ClientsManager for {self.handler_id}")
 
         self.logger = Logger.get_instance()
@@ -171,7 +171,7 @@ class BidirectionalStreamHandler(StreamHandler):
 
         self._main_client = self.clients.get_client()
 
-        if not self._main_client:
+        if self._main_client is None:
             raise ValueError(f"No main client found in ClientsManager for {self.handler_id}")
         # Set message exchange transport source
         cl_stram_socket = self._main_client.conn_socket

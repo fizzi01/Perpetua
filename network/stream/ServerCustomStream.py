@@ -57,7 +57,7 @@ class UnidirectionalStreamHandler(StreamHandler):
         Async event handler for when a client becomes inactive.
         """
         client_screen = data.get("client_screen")
-        if self._active_client and self._active_client.screen_position == client_screen:
+        if self._active_client is not None and self._active_client.screen_position == client_screen:
             self._active_client = None
             self.msg_exchange.set_transport(send_callback=None, receive_callback=None)
 
@@ -72,7 +72,7 @@ class UnidirectionalStreamHandler(StreamHandler):
         self._active_client: Optional[ClientObj] = self.clients.get_client(screen_position=active_screen)
 
         # Set message exchange active client
-        if self._active_client:
+        if self._active_client is not None:
             # Try to get corresponding stream socket
             cl_stram_socket = self._active_client.conn_socket
             if isinstance(cl_stram_socket, AsyncClientConnection):
@@ -114,7 +114,7 @@ class UnidirectionalStreamHandler(StreamHandler):
         Core async loop for handling stream sending with optimized batching.
         """
         while self._active:
-            if self._active_client and self._active_client.is_connected:
+            if self._active_client is not None and self._active_client.is_connected:
                 try:
                     # Process sending queued data
                     data = await self._send_queue.get()
@@ -189,7 +189,7 @@ class BidirectionalStreamHandler(StreamHandler):
         Async event handler for when a client becomes inactive.
         """
         client_screen = data.get("client_screen")
-        if self._active_client and self._active_client.screen_position == client_screen:
+        if self._active_client is not None and self._active_client.screen_position == client_screen:
             self._active_client = None
             self.msg_exchange.set_transport(send_callback=None, receive_callback=None)
 
@@ -204,7 +204,7 @@ class BidirectionalStreamHandler(StreamHandler):
         self._active_client: Optional[ClientObj] = self.clients.get_client(screen_position=active_screen)
 
         # Set message exchange active client
-        if self._active_client:
+        if self._active_client is not None:
             # Try to get corresponding stream socket
             cl_stram_socket = self._active_client.conn_socket
             if isinstance(cl_stram_socket, AsyncClientConnection):
@@ -246,7 +246,7 @@ class BidirectionalStreamHandler(StreamHandler):
         Core async loop for handling stream sending with optimized batching.
         """
         while self._active:
-            if self._active_client and self._active_client.is_connected:
+            if self._active_client is not None and self._active_client.is_connected:
                 try:
                     # Process sending queued data
                     data = await self._send_queue.get()
