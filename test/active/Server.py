@@ -66,7 +66,7 @@ class ActiveServer:
             disconnected_callback=self.on_client_disconnected,
             host=host,
             port=port,
-            heartbeat_interval=30,
+            heartbeat_interval=1,
             whitelist=self.clients_manager
         )
 
@@ -144,7 +144,7 @@ class ActiveServer:
 
 async def main():
     """Async main function"""
-    server = ActiveServer(host="192.168.1.59", port=5555, client_address="192.168.1.74")
+    server = ActiveServer(host="192.168.1.62", port=5555, client_address="192.168.1.74")
     if not await server.start():
         print("Failed to start server")
         return
@@ -155,8 +155,8 @@ async def main():
     # Keep server running
     try:
         # Run indefinitely until interrupted
-        while input("Write exit to interrupt:\t") != "exit":
-            await asyncio.sleep(1)
+        while True:
+            await asyncio.sleep(0)
     except KeyboardInterrupt:
         print("\nKeyboard interrupt received")
     finally:

@@ -1,6 +1,7 @@
 import asyncio
 import enum
 from abc import ABC
+from collections import deque
 from typing import Callable, Optional
 from time import time
 from queue import Queue
@@ -341,7 +342,7 @@ class BaseServerMouseListener(ABC):
 
     def on_scroll(self, x, y, dx, dy):
         if self._listening:
-            mouse_event = MouseEvent(x=dx, y=dy, action=MouseEvent.SCROLL_ACTION)
+            mouse_event = MouseEvent(dx=dx, dy=dy, action=MouseEvent.SCROLL_ACTION)
             try:
                 # Schedule async send
                 self._schedule_async(self.stream.send(mouse_event))
@@ -411,7 +412,8 @@ class BaseClientMouseController:
         self._screen_size: tuple[int, int] = Screen.get_size()
 
         # Instead of creating a listener, we just check edge cases after a mouse move event is received
-        self._movement_history = Queue(maxsize=5)
+        # Using deque for better performance and async compatibility
+        self._movement_history = deque(maxlen=5)
 
         self._controller = MouseController()
         self._pressed = False
@@ -491,12 +493,16 @@ class BaseClientMouseController:
                         self._move_cursor,
                         event.x, event.y, event.dx, event.dy
                     )
+                    # Check for edge crossing after movement
+                    await self._check_edge()
                 elif event.action == MouseEvent.POSITION_ACTION:
                     await loop.run_in_executor(
                         None,
                         self._position_cursor,
                         event.x, event.y
                     )
+                    # Check for edge crossing after positioning
+                    await self._check_edge()
                 elif event.action == MouseEvent.CLICK_ACTION:
                     # Click is fast enough to run directly
                     self._click(event.button, event.is_pressed)
@@ -520,8 +526,7 @@ class BaseClientMouseController:
         Async event handler for when client becomes active.
         """
         # Reset movement history
-        with self._movement_history.mutex:
-            self._movement_history.queue.clear()
+        self._movement_history.clear()
 
         self._is_active = True
         self._cross_screen_event.clear()
@@ -550,65 +555,48 @@ class BaseClientMouseController:
         except Exception as e:
             self.logger.log(f"ClientMouseController: Failed to process mouse event - {e}", Logger.ERROR)
 
-    def _check_edge(self):
+    async def _check_edge(self):
         """
         Check if the mouse cursor is at the edge of the screen and handle accordingly.
-        This is called after cursor movement.
+        This is called after cursor movement. Optimized for maximum speed.
         """
-        if self._cross_screen_event.is_set():
+        if self._cross_screen_event.is_set() or not self._is_active:
             return
 
-        # Add the current position to the movement history
-        try:
-            if self._movement_history.full():
-                self._movement_history.get()
-            cursor = self._controller.position
-            self._movement_history.put((cursor[0], cursor[1]))
-        except Exception:
-            pass
+        # Get the current cursor position
+        x, y = self._controller.position
 
-        if self._is_active:
-            if self._movement_history.qsize() >= 2:
+        # Add the current position to the movement history (deque is thread-safe for append)
+        self._movement_history.append((x, y))
 
-                # Get the current cursor position
-                x, y = self._controller.position
+        # Need at least 2 positions to determine direction
+        if len(self._movement_history) < 2:
+            return
 
-                # Check all the previous movements to determine the direction
-                queue_data = list(self._movement_history.queue)
+        # Convert deque to list for edge detection (fast operation)
+        queue_data = list(self._movement_history)
 
-                edge = EdgeDetector.is_at_edge(movement_history=queue_data, x=x, y=y, screen_size=self._screen_size)
+        edge = EdgeDetector.is_at_edge(movement_history=queue_data, x=x, y=y, screen_size=self._screen_size)
 
-                # If we reach an edge, dispatch event to deactivate client and send cross screen message to server
-                try:
-                    self._cross_screen_event.set()
-                    if edge:
-                        # Normalize position to avoid sticking
-                        norm_x = x / self._screen_size[0]
-                        norm_y = y / self._screen_size[1]
-                        screen_data = {"x": norm_x, "y": norm_y}
-                        command = CommandEvent(command=CommandEvent.CROSS_SCREEN, params=screen_data)
-
-                        # Schedule async operations
-                        self._schedule_async_op(command, screen_data)
-                except Exception as e:
-                    self.logger.log(f"Failed to dispatch screen event - {e}", Logger.ERROR)
-                finally:
-                    self._cross_screen_event.clear()
-
-    def _schedule_async_op(self, command, screen_data):
-        """Schedule async operations from sync context"""
-        async def send_cross_screen():
-            await self.command_stream.send(command)
-            await self.event_bus.dispatch(event_type=EventType.CLIENT_INACTIVE, data={})
-
-        try:
-            loop = asyncio.get_running_loop()
-            asyncio.run_coroutine_threadsafe(send_cross_screen(), loop)
-        except RuntimeError:
+        # If we reach an edge, dispatch event to deactivate client and send cross screen message to server
+        if edge:
             try:
-                asyncio.create_task(send_cross_screen())
-            except RuntimeError:
-                self.logger.log("No event loop for cross-screen", Logger.WARNING)
+                self._cross_screen_event.set()
+
+                # Normalize position to avoid sticking
+                norm_x = x / self._screen_size[0]
+                norm_y = y / self._screen_size[1]
+                screen_data = {"x": norm_x, "y": norm_y}
+                command = CommandEvent(command=CommandEvent.CROSS_SCREEN, params=screen_data)
+
+                # Send command and dispatch event
+                await self.command_stream.send(command)
+                await self.event_bus.dispatch(event_type=EventType.CLIENT_INACTIVE, data={})
+            except Exception as e:
+                self.logger.log(f"Failed to dispatch screen event - {e}", Logger.ERROR)
+            finally:
+                self._cross_screen_event.clear()
+
 
     def _position_cursor(self, x: float | int, y: float | int):
         """
