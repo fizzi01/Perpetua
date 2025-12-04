@@ -151,7 +151,7 @@ class BaseServerMouseListener(ABC):
         self.event_bus.subscribe(event_type=EventType.CLIENT_CONNECTED, callback=self._on_client_connected)
         self.event_bus.subscribe(event_type=EventType.CLIENT_DISCONNECTED, callback=self._on_client_disconnected)
 
-    def start(self):
+    def start(self) -> bool:
         """
         Starts the mouse listener.
         """
@@ -164,14 +164,16 @@ class BaseServerMouseListener(ABC):
 
         self._listener.start()
         self.logger.log("Server mouse listener started.", Logger.DEBUG)
+        return True
 
-    def stop(self):
+    def stop(self) -> bool:
         """
         Stops the mouse listener.
         """
         if self.is_alive():
             self._listener.stop()
         self.logger.log("Server mouse listener stopped.", Logger.DEBUG)
+        return True
 
     def is_alive(self):
         return self._listener.is_alive()

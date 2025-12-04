@@ -3,7 +3,6 @@ Async-compatible connection wrapper for client streams.
 Replaces BaseSocket for asyncio-based connections.
 """
 import asyncio
-from _compression import BaseStream
 from typing import Dict, Optional, Tuple
 
 
@@ -49,7 +48,7 @@ class AsyncClientConnection:
         Returns:
             True if at least one stream is open
         """
-        if not self.writers:
+        if not self.writers and not self.readers:
             return False
 
         # Check if any writer is not closing

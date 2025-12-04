@@ -108,13 +108,13 @@ class AsyncEventBus(EventBus):
             else:
                 # Run sync callback in executor to avoid blocking
                 loop = asyncio.get_running_loop()
-                await loop.run_in_executor(None, lambda: callback(*args, **kwargs))
+                await loop.run_in_executor(None, lambda: callback(*args, **kwargs)) #type: ignore
         except Exception as e:
             self.logger.log(f"Exception raised while dispatching event - {e}", Logger.ERROR)
 
 
 # Backward compatibility alias
-class ThreadSafeEventBus(AsyncEventBus):
+class ThreadSafeEventBus(EventBus):
     """
     Backward compatibility alias for AsyncEventBus.
     """

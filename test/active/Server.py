@@ -24,7 +24,8 @@ from input.cursor import CursorHandlerWorker
 from input.mouse import ServerMouseListener, ServerMouseController
 
 from utils.logging import Logger
-Logger(logging=False, stdout=print)
+
+Logger().set_level(Logger.DEBUG)  # Set log level to reduce output during tests
 
 class ActiveServer:
     def __init__(self, host: str, port: int, client_address: str):
@@ -100,47 +101,53 @@ class ActiveServer:
             data={"client_screen": client_pos}
         )
 
-    async def start(self):
+    async def start(self) -> bool:
         """Start all components asynchronously"""
         # Start async connection handler
-        await self.connection_handler.start()
+        if not await self.connection_handler.start():
+            return False
 
         # Start stream handlers
-        await self.command_stream_handler.start()
-        await self.mouse_stream_handler.start()
+        if not await self.command_stream_handler.start():
+            await self.stop()
+            return False
+
+        if not await self.mouse_stream_handler.start():
+            await self.stop()
+            return False
 
         # Start cursor handler worker (sync method)
-        self.cursor_handler_worker.start()
+        if not self.cursor_handler_worker.start():
+            await self.stop()
+            return False
 
         # Start mouse listener (sync method - pynput thread)
-        self.mouse_listener.start()
+        if not self.mouse_listener.start():
+            await self.stop()
+            return False
+
+        return True
 
     async def stop(self):
         """Stop all components asynchronously"""
         # Stop connection handler
         await self.connection_handler.stop()
-        print("server stopped")
-
         # Stop mouse listener
         self.mouse_listener.stop()
-        print("mouse listener stopped")
-
         # Stop cursor handler
         await self.cursor_handler_worker.stop()
-        print("cursor handler stopped")
-
         # Stop stream handlers
         await self.mouse_stream_handler.stop()
-        print("mouse stream handler stopped")
-
         await self.command_stream_handler.stop()
-        print("command stream handler stopped")
+
 
 
 async def main():
     """Async main function"""
-    server = ActiveServer(host="192.168.1.62", port=5555, client_address="192.168.1.74")
-    await server.start()
+    server = ActiveServer(host="192.168.1.59", port=5555, client_address="192.168.1.74")
+    if not await server.start():
+        print("Failed to start server")
+        return
 
     print("Server started")
     print("Type 'exit' in another terminal or press Ctrl+C to stop")
@@ -148,13 +155,13 @@ async def main():
     # Keep server running
     try:
         # Run indefinitely until interrupted
-        while True:
+        while input("Write exit to interrupt:\t") != "exit":
             await asyncio.sleep(1)
     except KeyboardInterrupt:
         print("\nKeyboard interrupt received")
-
-    print("Stopping server...")
-    await server.stop()
+    finally:
+        print("Stopping server...")
+        await server.stop()
 
 
 if __name__ == "__main__":

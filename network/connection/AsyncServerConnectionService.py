@@ -80,9 +80,9 @@ class AsyncServerConnectionHandler:
 
             return True
         except Exception as e:
-            self.logger.log(f"Failed to start async server: {e}", Logger.ERROR)
-            import traceback
-            self.logger.log(traceback.format_exc(), Logger.ERROR)
+            self.logger.log(f"Failed to start async server => {e}", Logger.CRITICAL)
+            # import traceback
+            # self.logger.log(traceback.format_exc(), Logger.ERROR)
             self._running = False
             return False
 

@@ -40,7 +40,7 @@ class StreamHandler:
         """
         raise NotImplementedError
 
-    async def start(self):
+    async def start(self) -> bool:
         """
         Starts the stream handler.
         """
@@ -49,8 +49,9 @@ class StreamHandler:
             self._sender_task = asyncio.create_task(self._core_sender())
 
         self.logger.log(f"StreamHandler for {self.stream_type} started.", Logger.DEBUG)
+        return True
 
-    async def stop(self):
+    async def stop(self) -> bool:
         """
         Stops the stream handler.
         """
@@ -66,8 +67,10 @@ class StreamHandler:
                     self.logger.log(f"StreamHandler for {self.stream_type} sender task did not stop in time", Logger.WARNING)
             except Exception as e:
                 self.logger.log(f"Error stopping StreamHandler for {self.stream_type}: {e}", Logger.ERROR)
+                return False
 
         self.logger.log(f"StreamHandler for {self.stream_type} stopped.", Logger.DEBUG)
+        return True
 
     async def send(self, data: Any):
         """

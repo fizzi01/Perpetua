@@ -49,6 +49,7 @@ from event.EventBus import EventBus
 from network.stream.GenericStream import StreamHandler
 
 from input.cursor import _base
+from utils.logging import Logger
 
 
 class OverlayPanel(wx.Panel):
@@ -382,6 +383,8 @@ class CursorHandlerWorker(_base.CursorHandlerWorker):
 
         self._active_client = None
 
+        self.logger = Logger()
+
         # Register to active_screen with async callbacks
         self.event_bus.subscribe(event_type=EventType.ACTIVE_SCREEN_CHANGED, callback=self._on_active_screen_changed)
         self.event_bus.subscribe(event_type=EventType.CLIENT_DISCONNECTED, callback=self._on_client_inactive)
@@ -431,11 +434,13 @@ class CursorHandlerWorker(_base.CursorHandlerWorker):
                 try:
                     result = self.result_queue.get(timeout=0.1)
                     if result.get('type') == 'window_ready':
+                        self.logger.log("CursorHandlerWorker started", Logger.DEBUG)
                         return True
                 except Empty:
                     continue
             raise TimeoutError("Window not ready in time")
 
+        self.logger.log("CursorHandlerWorker started (without checks)", Logger.DEBUG)
         return True
 
     async def stop(self, timeout=2):
@@ -470,6 +475,8 @@ class CursorHandlerWorker(_base.CursorHandlerWorker):
         self.mouse_conn_rec.close()
 
         self.is_running = False
+
+        self.logger.log("CursorHandlerWorker stopped", Logger.DEBUG)
 
     async def _mouse_data_listener(self):
         """
