@@ -376,7 +376,6 @@ class CursorHandlerWorker(_base.CursorHandlerWorker):
 
         # Unidirectional pipe for mouse movement
         self.mouse_conn_rec, self.mouse_conn_send = Pipe(duplex=False)
-
         self.process = None
         self.is_running = False
         self._mouse_data_task = None  # Async task instead of thread
@@ -393,17 +392,17 @@ class CursorHandlerWorker(_base.CursorHandlerWorker):
 
         if active_screen:
             # Start capture cursor
-            await asyncio.get_event_loop().run_in_executor(None, self.enable_capture)
+            await asyncio.get_event_loop().run_in_executor(None, self.enable_capture) #type: ignore
             self._active_client = active_screen
         else:
-            await asyncio.get_event_loop().run_in_executor(None, self.disable_capture)
+            await asyncio.get_event_loop().run_in_executor(None, self.disable_capture) #type: ignore
             self._active_client = None
 
     async def _on_client_inactive(self, data: dict):
         """Async callback for client inactive"""
         if self._active_client and data.get("client_screen") == self._active_client:
             self._active_client = None
-            await asyncio.get_event_loop().run_in_executor(None, self.disable_capture)
+            await asyncio.get_event_loop().run_in_executor(None, self.disable_capture) #type: ignore
 
     def start(self, wait_ready=True, timeout=1):
         """Avvia il processo della window"""
@@ -482,11 +481,11 @@ class CursorHandlerWorker(_base.CursorHandlerWorker):
         while self.is_running:
             try:
                 # Poll non-bloccante
-                has_data = await loop.run_in_executor(None, self.mouse_conn_rec.poll, 0.01)
+                has_data = await loop.run_in_executor(None, self.mouse_conn_rec.poll, 0.0000001)
 
                 if has_data:
                     # Leggi dal pipe in executor
-                    delta_x, delta_y = await loop.run_in_executor(None, self.mouse_conn_rec.recv)
+                    delta_x, delta_y = await loop.run_in_executor(None, self.mouse_conn_rec.recv) #type: ignore
 
                     mouse_event = MouseEvent(action=MouseEvent.MOVE_ACTION)
                     mouse_event.dx = delta_x
@@ -540,38 +539,3 @@ class CursorHandlerWorker(_base.CursorHandlerWorker):
         """Imposta un messaggio nella window"""
         self.send_command({'type': 'set_message', 'message': message})
         return self.get_result()
-
-
-async def __main():
-    eb = EventBus()
-    controller = CursorHandlerWorker(eb)
-    controller.start()
-
-    try:
-        # Avvia la window
-        controller.start()
-        print("Window avviata!")
-
-        # Cycle to enable again and disable
-        for i in range(2):
-            print(f"Ciclo {i+1}: Abilitazione cattura mouse...")
-            result = controller.enable_capture()
-            print(f"Risultato: {result}")
-            time.sleep(2)
-            print(f"Ciclo {i+1}: Disabilitazione cattura mouse...")
-            result = controller.disable_capture()
-            print(f"Risultato: {result}")
-            time.sleep(2)
-
-        # Aspetta un po' prima di chiudere
-        controller.set_message("Chiusura tra 2 secondi...")
-        time.sleep(2)
-
-    finally:
-        # Ferma la window
-        print("Chiusura window...")
-        await controller.stop()
-        print("Test completato!")
-
-if __name__ == "__main__":
-    asyncio.run(__main())

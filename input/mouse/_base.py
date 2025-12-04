@@ -36,7 +36,6 @@ class ButtonMapping(enum.Enum):
     #: The right button
     right = 3
 
-
 class ScreenEdge(enum.Enum):
     LEFT = 1
     RIGHT = 2
@@ -140,6 +139,13 @@ class BaseServerMouseListener(ABC):
 
         self.logger = Logger.get_instance()
 
+        # Store event loop reference for thread-safe async scheduling
+        try:
+            self._loop = asyncio.get_running_loop()
+        except RuntimeError:
+            # No event loop running yet - will be set when start() is called
+            self._loop = None
+
         # Subscribe with async callbacks
         self.event_bus.subscribe(event_type=EventType.ACTIVE_SCREEN_CHANGED, callback=self._on_active_screen_changed)
         self.event_bus.subscribe(event_type=EventType.CLIENT_CONNECTED, callback=self._on_client_connected)
@@ -149,6 +155,13 @@ class BaseServerMouseListener(ABC):
         """
         Starts the mouse listener.
         """
+        # Capture event loop reference if not already set
+        if self._loop is None:
+            try:
+                self._loop = asyncio.get_running_loop()
+            except RuntimeError:
+                self.logger.log("Warning: No event loop running when starting mouse listener. Async operations may fail.", Logger.WARNING)
+
         self._listener.start()
         self.logger.log("Server mouse listener started.", Logger.DEBUG)
 
@@ -271,16 +284,32 @@ class BaseServerMouseListener(ABC):
         return True
 
     def _schedule_async(self, coro):
-        """Helper to schedule async coroutines from sync context (pynput thread)"""
+        """
+        Helper to schedule async coroutines from sync context (pynput thread).
+        Uses saved event loop reference for thread-safe scheduling.
+        """
+        if self._loop is not None and not self._loop.is_closed():
+            # Best case: we have a valid loop reference
+            try:
+                asyncio.run_coroutine_threadsafe(coro, self._loop)
+                return
+            except Exception as e:
+                self.logger.log(f"Error scheduling coroutine: {e}", Logger.ERROR)
+
+        # Fallback: try to get running loop
         try:
             loop = asyncio.get_running_loop()
             asyncio.run_coroutine_threadsafe(coro, loop)
         except RuntimeError:
-            # No event loop, try creating task in default loop
+            # Last resort: try to get event loop (may not work from thread)
             try:
-                asyncio.create_task(coro)
-            except RuntimeError:
-                self.logger.log("No event loop available for async operation", Logger.WARNING)
+                loop = asyncio.get_event_loop()
+                if loop.is_running():
+                    asyncio.run_coroutine_threadsafe(coro, loop)
+                else:
+                    self.logger.log("Event loop not running - cannot schedule async operation", Logger.WARNING)
+            except Exception as e:
+                self.logger.log(f"No event loop available for async operation: {e}", Logger.WARNING)
 
     async def _handle_cross_screen(self, edge: ScreenEdge, mouse_event: MouseEvent, screen: str):
         """Async handler for cross-screen events"""
@@ -447,13 +476,11 @@ class BaseClientMouseController:
                 # Get message from async queue
                 message = await self._queue.get()
 
-                curtime = time()
-                if hasattr(message, 'timestamp'):
-                    print(f"Mouse Time passed: {curtime - message.timestamp:.4f}")
-
                 event = EventMapper.get_event(message)
                 if not isinstance(event, MouseEvent):
                     continue
+
+                #TODO: Benchamrk to see if not using run_in_executor for move has a significant impact on performance
 
                 # Execute mouse actions in executor to avoid blocking
                 if event.action == MouseEvent.MOVE_ACTION:

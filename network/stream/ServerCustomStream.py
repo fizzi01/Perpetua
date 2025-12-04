@@ -132,8 +132,14 @@ class UnidirectionalStreamHandler(StreamHandler):
                     await asyncio.sleep(self._waiting_time)
                     continue
                 except Exception as e:
-                    self.logger.log(f"Error in {self.handler_id} core loop: {e}", Logger.ERROR)
-                    await asyncio.sleep(self._waiting_time)
+                    # Catch BrokenPipeError and ConnectionResetError separately if needed
+                    if isinstance(e, (BrokenPipeError, ConnectionResetError)):
+                        self.logger.log(f"Connection error in {self.handler_id}: {e}", Logger.WARNING)
+                        # Set active client to None on connection errors
+                        self._active_client = None
+                    else:
+                        self.logger.log(f"Error in {self.handler_id} core loop: {e}", Logger.ERROR)
+                        await asyncio.sleep(self._waiting_time)
             else:
                 await asyncio.sleep(self._waiting_time)
 

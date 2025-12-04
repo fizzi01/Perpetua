@@ -51,6 +51,7 @@ class ActiveClient:
             host=server_ip,
             port=server_port,
             heartbeat_interval=30,
+            clients=self.clients_manager,
             open_streams=self.open_streams,
             connected_callback=self.connected_callback,
             disconnected_callback=self.disconnected_callback

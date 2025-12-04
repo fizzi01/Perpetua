@@ -153,6 +153,11 @@ class MessageExchange:
             except asyncio.CancelledError:
                 break
             except Exception as e:
+                # Catch broken pipe or connection reset errors
+                if isinstance(e, (ConnectionResetError, BrokenPipeError)):
+                    self.logger.log(f"Connection error in receive loop: {e}", Logger.ERROR)
+                    self._running = False
+                    break
                 self.logger.log(f"Error in receive loop: {e}", Logger.ERROR)
                 await asyncio.sleep(0)
                 continue
