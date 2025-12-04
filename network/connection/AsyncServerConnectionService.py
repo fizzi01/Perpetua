@@ -361,7 +361,8 @@ class AsyncServerConnectionHandler:
                             # Send heartbeat message
                             config = MessageExchangeConfig(
                                 max_chunk_size=4096,
-                                auto_chunk=True
+                                auto_chunk=True,
+                                auto_dispatch=False, # We want to control message handling manually
                             )
                             client_msg_exchange = MessageExchange(config)
                             async def async_send(data: bytes):
@@ -396,6 +397,8 @@ class AsyncServerConnectionHandler:
                                         self.disconnected_callback(client)
                                 except Exception as e:
                                     self.logger.log(f"Error in disconnected callback: {e}", Logger.ERROR)
+                        except Exception as e:
+                            self.logger.log(f"Heartbeat error for client {client.ip_address}: {e}", Logger.CRITICAL)
         except asyncio.CancelledError:
             self.logger.log("Heartbeat loop cancelled.", Logger.INFO)
             await self.stop()

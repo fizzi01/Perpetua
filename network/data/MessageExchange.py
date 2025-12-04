@@ -159,6 +159,12 @@ class MessageExchange:
                     self.logger.log(f"Connection error in receive loop: {e}", Logger.ERROR)
                     self._running = False
                     break
+                # Avoid infinite loop if no receive callback is set
+                if self._receive_callback is None:
+                    self.logger.log("Receive callback is None, stopping receive loop.", Logger.CRITICAL)
+                    self._running = False
+                    break
+
                 self.logger.log(f"Error in receive loop {self._id}: {e}", Logger.ERROR)
                 await asyncio.sleep(0)
                 continue

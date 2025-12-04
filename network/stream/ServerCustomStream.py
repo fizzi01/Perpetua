@@ -116,6 +116,7 @@ class UnidirectionalStreamHandler(StreamHandler):
         while self._active:
             if self._active_client is not None and self._active_client.is_connected:
                 try:
+                    screen = self._active_client.screen_position # Before the first await to avoid missing active client
                     # Process sending queued data
                     data = await self._send_queue.get()
                     # If data is not dict call .to_dict()
@@ -124,7 +125,7 @@ class UnidirectionalStreamHandler(StreamHandler):
                     await self.msg_exchange.send_stream_type_message(
                         stream_type=self.stream_type,
                         source=self.source,
-                        target=self._active_client.screen_position,
+                        target=screen,
                         **data
                     )
 
@@ -191,6 +192,7 @@ class BidirectionalStreamHandler(StreamHandler):
         client_screen = data.get("client_screen")
         if self._active_client is not None and self._active_client.screen_position == client_screen:
             self._active_client = None
+            self.logger.log(f"{self.handler_id}: Active client disconnected {client_screen}", Logger.INFO)
             self.msg_exchange.set_transport(send_callback=None, receive_callback=None)
 
     async def _on_active_screen_changed(self, data: dict):
@@ -224,6 +226,8 @@ class BidirectionalStreamHandler(StreamHandler):
                 )
                 # Start msg exchange listener (always runs for async dispatch)
                 await self.msg_exchange.start()
+                self.logger.log(
+                    f"{self.handler_id}: Active client set to {self._active_client.screen_position}", Logger.INFO)
             else:
                 self.logger.log(
                     f"{self.handler_id}: No valid stream for active client {self._active_client.screen_position}",

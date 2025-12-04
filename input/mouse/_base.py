@@ -439,7 +439,7 @@ class BaseClientMouseController:
         self.stream = stream_handler  # Should be a mouse stream
         self.command_stream = command_stream  # Should be a command stream
         self.event_bus = event_bus
-        self._cross_screen_event = Event()
+        self._cross_screen_event = asyncio.Event()
 
         self._is_active = False
         self._screen_size: tuple[int, int] = Screen.get_size()

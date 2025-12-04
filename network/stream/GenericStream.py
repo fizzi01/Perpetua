@@ -23,7 +23,7 @@ class StreamHandler:
         self.stream_type = stream_type
         self.clients = clients
         self.event_bus = event_bus
-        self._send_queue: asyncio.Queue = asyncio.Queue()
+        self._send_queue: asyncio.Queue = asyncio.Queue(maxsize=10000)
         self._active = False
         self._sender_task = None
 
