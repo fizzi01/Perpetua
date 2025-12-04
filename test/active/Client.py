@@ -16,7 +16,8 @@ from network.stream import StreamType
 from input.mouse import ClientMouseController
 
 from utils.logging import Logger
-Logger(logging=True, stdout=print)
+
+Logger().set_level(Logger.DEBUG)  # Set log level to reduce output during tests
 
 class ActiveClient:
 

@@ -165,6 +165,7 @@ class AsyncClientConnectionHandler:
             self.clients.update_client(self._client_obj)
 
         self.logger.log("AsyncClientConnectionHandler stopped", Logger.INFO)
+        return True
 
     async def _core_loop(self):
         """Main connection loop with automatic reconnection"""
@@ -232,6 +233,8 @@ class AsyncClientConnectionHandler:
 
             except asyncio.CancelledError:
                 self.logger.log("Core loop cancelled", Logger.DEBUG)
+                self._connected = False
+                await self.stop()
                 break
             except Exception as e:
                 self.logger.log(f"Error in core loop: {e}", Logger.ERROR)
@@ -277,7 +280,7 @@ class AsyncClientConnectionHandler:
             self.logger.log(f"Connection refused by {self.host}:{self.port}", Logger.WARNING)
             return False
         except Exception as e:
-            self.logger.log(f"Connection error: {e}", Logger.ERROR)
+            self.logger.log(f"Connection error -> {e}", Logger.ERROR)
             return False
 
     async def _handshake(self) -> bool:
@@ -354,7 +357,8 @@ class AsyncClientConnectionHandler:
                     writer = self._stream_writers.get(stream_type)
                     if reader and writer:
                         client = self.clients.get_client()
-                        client.conn_socket.add_stream(stream_type, reader, writer)
+                        if client.conn_socket is not None:
+                            client.conn_socket.add_stream(stream_type, reader, writer)
                         self.clients.update_client(client)
 
             self.logger.log("Handshake completed successfully", Logger.INFO)
@@ -366,7 +370,7 @@ class AsyncClientConnectionHandler:
         except asyncio.CancelledError:
             raise
         except Exception as e:
-            self.logger.log(f"Handshake error: {e}", Logger.ERROR)
+            self.logger.log(f"Handshake error -> {e}", Logger.ERROR)
             import traceback
             self.logger.log(traceback.format_exc(), Logger.ERROR)
             return False
@@ -421,7 +425,7 @@ class AsyncClientConnectionHandler:
                 await self._handle_disconnection()
                 break
             except Exception as e:
-                self.logger.log(f"Heartbeat error: {e}", Logger.ERROR)
+                self.logger.log(f"Heartbeat error -> {e}", Logger.ERROR)
                 await self._handle_disconnection()
                 break
 

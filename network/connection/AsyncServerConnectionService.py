@@ -109,7 +109,7 @@ class AsyncServerConnectionHandler:
 
         # Disconnetti tutti i client
         for client in self.clients.clients:
-            if client.is_connected and client.conn_socket:
+            if client.is_connected and client.conn_socket is not None:
                 try:
                     #await client.conn_socket.close()
                     await client.conn_socket.wait_closed()
@@ -347,54 +347,58 @@ class AsyncServerConnectionHandler:
 
     async def _heartbeat_loop(self):
         """Loop di heartbeat per verificare le connessioni e aggiornare metriche"""
-        while self._running:
-            await asyncio.sleep(self.heartbeat_interval)
+        try:
+            while self._running:
+                await asyncio.sleep(self.heartbeat_interval)
 
-            for client in self.clients.clients:
-                if client.is_connected and client.conn_socket:
-                    try:
-                        # Use is_open() for AsyncClientConnection
-                        if not client.conn_socket.is_open():
-                            raise ConnectionResetError
-
-                        # Send heartbeat message
-                        config = MessageExchangeConfig(
-                            max_chunk_size=4096,
-                            auto_chunk=True
-                        )
-                        client_msg_exchange = MessageExchange(config)
-                        async def async_send(data: bytes):
-                            command_writer = client.conn_socket.get_writer(StreamType.COMMAND)
-                            command_writer.write(data)
-                            await command_writer.drain()
-
-                        client_msg_exchange.set_transport(async_send, None)
-                        await client_msg_exchange.send_custom_message(message_type="HEARTBEAT", payload={})
-
-                        # Update active time
-                        client.connection_time += self.heartbeat_interval
-                    except (ConnectionResetError, OSError):
-                        self.logger.log(f"Client {client.ip_address} disconnected (heartbeat failed).", Logger.WARNING)
-                        client.is_connected = False
-
-                        # Close asyncio streams properly
-                        #client.conn_socket.close()
+                for client in self.clients.clients:
+                    if client.is_connected and client.conn_socket is not None:
                         try:
-                            await client.conn_socket.wait_closed()
-                        except Exception:
-                            pass
+                            # Use is_open() for AsyncClientConnection
+                            if not client.conn_socket.is_open():
+                                raise ConnectionResetError
 
-                        client.conn_socket = None
-                        self.clients.update_client(client)
+                            # Send heartbeat message
+                            config = MessageExchangeConfig(
+                                max_chunk_size=4096,
+                                auto_chunk=True
+                            )
+                            client_msg_exchange = MessageExchange(config)
+                            async def async_send(data: bytes):
+                                command_writer = client.conn_socket.get_writer(StreamType.COMMAND)
+                                command_writer.write(data)
+                                await command_writer.drain()
 
-                        if self.disconnected_callback:
+                            client_msg_exchange.set_transport(async_send, None)
+                            await client_msg_exchange.send_custom_message(message_type="HEARTBEAT", payload={})
+
+                            # Update active time
+                            client.connection_time += self.heartbeat_interval
+                        except (ConnectionResetError, OSError):
+                            self.logger.log(f"Client {client.ip_address} disconnected (heartbeat failed).", Logger.WARNING)
+                            client.is_connected = False
+
+                            # Close asyncio streams properly
+                            #client.conn_socket.close()
                             try:
-                                if asyncio.iscoroutinefunction(self.disconnected_callback):
-                                    await self.disconnected_callback(client)
-                                else:
-                                    self.disconnected_callback(client)
-                            except Exception as e:
-                                self.logger.log(f"Error in disconnected callback: {e}", Logger.ERROR)
+                                await client.conn_socket.wait_closed()
+                            except Exception:
+                                pass
+
+                            client.conn_socket = None
+                            self.clients.update_client(client)
+
+                            if self.disconnected_callback:
+                                try:
+                                    if asyncio.iscoroutinefunction(self.disconnected_callback):
+                                        await self.disconnected_callback(client)
+                                    else:
+                                        self.disconnected_callback(client)
+                                except Exception as e:
+                                    self.logger.log(f"Error in disconnected callback: {e}", Logger.ERROR)
+        except asyncio.CancelledError:
+            self.logger.log("Heartbeat loop cancelled.", Logger.INFO)
+            await self.stop()
 
     def _ssl_wrap(self, client_socket):
         """Wrap del socket con SSL"""
