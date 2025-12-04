@@ -51,7 +51,7 @@ class ActiveClient:
         self.client = AsyncClientConnectionHandler(
             host=server_ip,
             port=server_port,
-            heartbeat_interval=30,
+            heartbeat_interval=1,
             clients=self.clients_manager,
             open_streams=self.open_streams,
             connected_callback=self.connected_callback,
@@ -123,7 +123,7 @@ async def main():
     try:
         # Run indefinitely until interrupted
         while True:
-            await asyncio.sleep(1)
+            await asyncio.sleep(0)
     except KeyboardInterrupt:
         print("\nKeyboard interrupt received")
 

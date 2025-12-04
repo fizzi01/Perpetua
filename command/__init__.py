@@ -70,5 +70,5 @@ class CommandHandler:
         else:
             # Dispatch CLIENT_ACTIVE event to notify that client itself is now active
             await self.event_bus.dispatch(
-                event_type=EventType.CLIENT_ACTIVE, data={})
+                event_type=EventType.CLIENT_ACTIVE, data={"screen_position": event.target})
 

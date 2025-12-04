@@ -53,8 +53,7 @@ class UnidirectionalStreamHandler(StreamHandler):
         """
         Async event handler for when a client becomes active.
         """
-        self.logger.log(f"{self.handler_id} - Client is active", Logger.DEBUG)
-        if self._active:
+        if self._is_active:
             return
         self._is_active = True
 
@@ -77,7 +76,9 @@ class UnidirectionalStreamHandler(StreamHandler):
             )
             # Start msg exchange listener (always runs for async dispatch)
             await self.msg_exchange.start()
+            self.logger.log(f"{self.handler_id} - Client is active", Logger.DEBUG)
         else:
+            self.logger.log(f"Invalid connection socket for main client in {self.handler_id}", Logger.ERROR)
             raise ValueError(f"Invalid connection socket for main client in {self.handler_id}")
 
     async def _on_client_inactive(self, data: dict):
@@ -87,6 +88,7 @@ class UnidirectionalStreamHandler(StreamHandler):
         self._is_active = False
         # Stop msg exchange listener
         await self.msg_exchange.stop()
+        self.logger.log(f"{self.handler_id} - Client is inactive", Logger.DEBUG)
 
     def register_receive_callback(self, receive_callback, message_type: str):
         """
@@ -94,7 +96,6 @@ class UnidirectionalStreamHandler(StreamHandler):
         This is delegated to MessageExchange which handles async dispatch automatically.
         """
         self.msg_exchange.register_handler(message_type, receive_callback)
-
 
     async def _core_sender(self):
         """
@@ -131,13 +132,14 @@ class BidirectionalStreamHandler(StreamHandler):
     """
 
     def __init__(self, stream_type: int, clients: ClientsManager, event_bus: EventBus, handler_id: Optional[str] = None,
-                 active_only: bool = False):
+                 active_only: bool = False, avoid_receive_stop: bool = True):
         super().__init__(stream_type=stream_type, clients=clients, event_bus=event_bus, sender=True)
 
         self._is_active = False # Track if current client is active
 
         self.handler_id = handler_id if handler_id else f"BidirectionalStreamHandler_{stream_type}"
         self._active_only = active_only
+        self._avoid_receive_stop = avoid_receive_stop
 
         # Create a MessageExchange object
         self.msg_exchange = MessageExchange(
@@ -199,9 +201,10 @@ class BidirectionalStreamHandler(StreamHandler):
         """
         Async event handler for when a client becomes inactive.
         """
-        self._is_active = False
-        # Stop msg exchange listener
-        await self.msg_exchange.stop()
+        if not self._avoid_receive_stop:
+            self._is_active = False
+            # Stop msg exchange listener
+            await self.msg_exchange.stop()
 
     def register_receive_callback(self, receive_callback, message_type: str):
         """

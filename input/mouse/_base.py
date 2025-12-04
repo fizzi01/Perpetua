@@ -105,7 +105,7 @@ class EdgeDetector:
             callbacks[edge]()
 
     @staticmethod
-    def get_crossing_coords(x: float | int, y: float | int, screen_size: tuple, edge: ScreenEdge) -> tuple[float, float]:
+    def get_crossing_coords(x: float | int, y: float | int, screen_size: tuple, edge: ScreenEdge, screen: str) -> tuple[float, float]:
         """
         Get the coordinates when crossing back from client to server.
         Coords will be the opposite of the real one (so opposite to the edge reached).
@@ -118,21 +118,23 @@ class EdgeDetector:
         Returns:
             tuple[float, float]: The normalized crossing coordinates.
         """
+        if screen == "":
+            return -1, -1
 
         # If we reach the bottom edge, we need to set y to 1 (top of the server screen)
-        if edge == ScreenEdge.BOTTOM:
+        if edge == ScreenEdge.BOTTOM and screen == "top":
             return x / screen_size[0], 1.0
         # If we reach the top edge, we need to set y to 0 (bottom of the server screen)
-        elif edge == ScreenEdge.TOP:
+        elif edge == ScreenEdge.TOP and screen == "bottom":
             return x / screen_size[0], 0.0
         # If we reach the left edge, we need to set x to 1 (right of the server screen)
-        elif edge == ScreenEdge.LEFT:
+        elif edge == ScreenEdge.LEFT and screen == "right":
             return 1.0, y / screen_size[1]
         # If we reach the right edge, we need to set x to 0 (left of the server screen)
-        elif edge == ScreenEdge.RIGHT:
+        elif edge == ScreenEdge.RIGHT and screen == "left":
             return 0.0, y / screen_size[1]
         else:
-            return x / screen_size[0], y / screen_size[1]
+            return -1, -1
 
 
 
@@ -442,6 +444,7 @@ class BaseClientMouseController:
         self._cross_screen_event = asyncio.Event()
 
         self._is_active = False
+        self._current_screen = None
         self._screen_size: tuple[int, int] = Screen.get_size()
 
         # Instead of creating a listener, we just check edge cases after a mouse move event is received
@@ -558,6 +561,7 @@ class BaseClientMouseController:
         """
         Async event handler for when client becomes active.
         """
+        self._current_screen = data.get("screen_position", None)
         # Reset movement history
         self._movement_history.clear()
 
@@ -594,7 +598,7 @@ class BaseClientMouseController:
         This is called after cursor movement. Optimized for maximum speed.
         """
         if self._cross_screen_event.is_set() or not self._is_active:
-            return
+            return await asyncio.sleep(0)
 
         # Get the current cursor position
         x, y = self._controller.position
@@ -614,7 +618,10 @@ class BaseClientMouseController:
         # If we reach an edge, dispatch event to deactivate client and send cross screen message to server
         if edge:
             try:
-                x, y = EdgeDetector.get_crossing_coords(x=x, y=y, screen_size=self._screen_size, edge=edge)
+                x, y = EdgeDetector.get_crossing_coords(x=x, y=y, screen_size=self._screen_size, edge=edge, screen=self._current_screen)
+                if x == -1 and y == -1:
+                    # Invalid crossing coords for current screen setup
+                    return await asyncio.sleep(0)
                 self._cross_screen_event.set()
 
                 screen_data = {"x": x, "y": y}
