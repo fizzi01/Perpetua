@@ -70,9 +70,6 @@ class AsyncClientConnectionHandler:
         self.clients = clients if clients is not None else ClientsManager(client_mode=True)
 
         self.open_streams = open_streams if open_streams is not None else [
-            StreamType.MOUSE,
-            StreamType.KEYBOARD,
-            StreamType.CLIPBOARD
         ]
 
         # Connection state

@@ -142,5 +142,10 @@ class EventMapper:
                 command=message_payload.get("command"),
                 params=message_payload.get("params", {})
             )
+        elif event_type == MessageType.KEYBOARD:
+            return KeyboardEvent(
+                key=message_payload.get("key"),
+                action=message_payload.get("event")
+            )
         else:
             return None
