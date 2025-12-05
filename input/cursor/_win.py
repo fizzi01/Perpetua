@@ -3,20 +3,14 @@ Logic to handle cursor visibility on Windows systems.
 """
 from queue import Empty
 from typing import Optional
-from ctypes import windll, c_int, byref, Structure, POINTER, c_uint
-from xml.dom.expatbuilder import DOCUMENT_NODE
-
 import wx
+
 from multiprocessing import Queue
 from multiprocessing.connection import Connection
 
 from event.EventBus import EventBus
 from input.cursor._base import BaseCursorHandlerWindow, BaseCursorHandlerWorker
 from network.stream.GenericStream import StreamHandler
-
-class POINT(Structure):
-    _fields_ = [("x", c_int), ("y", c_int)]
-
 
 class DebugOverlayPanel(wx.Panel):
     def __init__(self, parent):
@@ -77,46 +71,6 @@ class CursorHandlerWindow(BaseCursorHandlerWindow):
         self.SetTransparent(1)
         self._create()
 
-    def _process_commands(self):
-        """Processa i comandi dalla queue"""
-        try:
-            while self._running:
-                try:
-                    command = self.command_queue.get(timeout=0.2)
-                    cmd_type = command.get('type')
-
-                    if cmd_type == 'enable_capture':
-                        wx.CallAfter(self.enable_mouse_capture)
-                        self.result_queue.put({'type': 'capture_enabled', 'success': True})
-
-                    elif cmd_type == 'disable_capture':
-                        wx.CallAfter(self.disable_mouse_capture)
-                        self.result_queue.put({'type': 'capture_disabled', 'success': True})
-                    elif cmd_type == 'get_stats':
-                        self.result_queue.put({
-                            'type': 'stats',
-                            'is_captured': self.mouse_captured,
-                        })
-
-                    elif cmd_type == 'set_message':
-                        message = command.get('message', '')
-                        self.panel.info_text.SetLabel(message)
-                        self.result_queue.put({'type': 'message_set', 'success': True})
-
-                    elif cmd_type == 'quit':
-                        self._running = False
-                        self.Close()
-                except Empty:
-                    continue
-        except Exception as e:
-            print(f"Error processing commands: {e}")
-
-    def _get_hwnd(self):
-        """Get the Windows HWND handle for this window"""
-        if self.hwnd is None:
-            self.hwnd = self.GetHandle()
-        return self.hwnd
-
     def ForceOverlay(self):
         try:
             self.Iconize(False)
@@ -170,10 +124,6 @@ class CursorHandlerWindow(BaseCursorHandlerWindow):
     def reset_mouse_position(self):
         """Reset mouse position to center using Windows API"""
         if self.mouse_captured and self.center_pos:
-            # Use Windows API for more reliable positioning
-            # user32.SetCursorPos(self.center_pos[0], self.center_pos[1])
-
-            # Also use wx method as backup
             client_center = self.ScreenToClient(self.center_pos)
             self.WarpPointer(client_center.x, client_center.y)
 
