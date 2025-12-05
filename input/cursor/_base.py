@@ -23,9 +23,8 @@ class BaseCursorHandlerWindow(wx.Frame):
     Base class for cursor handling window.
     Derived classes must implement platform-specific methods.
     """
-    def __init__(self, command_queue: Queue, result_queue:  Queue, mouse_conn: Connection, debug: bool = False):
-        super().__init__(None, title="", size=(400, 400))
-
+    def __init__(self, command_queue: Queue, result_queue:  Queue, mouse_conn: Connection, debug: bool = False, **frame_kwargs):
+        super().__init__(None, title="", **frame_kwargs)
 
         self._debug = debug
         self.mouse_captured = False
@@ -277,7 +276,8 @@ class _CursorHandlerProcess:
 
     def run(self):
         self.app = wx.App()
-        self.window = self.window_class(command_queue=self.command_queue, result_queue=self.result_queue, mouse_conn=self.mouse_conn, debug=self._debug)
+        self.window = self.window_class(command_queue=self.command_queue, result_queue=self.result_queue,
+                                        mouse_conn=self.mouse_conn, debug=self._debug)
 
         # Notify that the window is ready
         self.result_queue.put({'type': 'window_ready'})
@@ -341,9 +341,9 @@ class BaseCursorHandlerWorker:
             return True
 
         self.process = Process(target=_CursorHandlerProcess(command_queue=self.command_queue,
-                                                           result_queue=self.result_queue,
-                                                           mouse_conn=self.mouse_conn_send,
-                                                          window_class=self.window_class,
+                                                            result_queue=self.result_queue,
+                                                            mouse_conn=self.mouse_conn_send,
+                                                            window_class=self.window_class,
                                                             debug=self._debug).run)
         self.process.start()
         self.is_running = True
