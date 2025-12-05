@@ -137,8 +137,6 @@ class EdgeDetector:
             return -1, -1
 
 
-
-
 class BaseServerMouseListener(ABC):
     """
     It listens for mouse events on macOS systems.
@@ -243,10 +241,6 @@ class BaseServerMouseListener(ABC):
 
         if active_screen is not None:
             self._listening = True
-            # reset movement history
-            with self._movement_history.mutex:
-                self._movement_history.queue.clear()
-
             self._cross_screen_event.clear()
         else:
             self._listening = False
@@ -351,6 +345,10 @@ class BaseServerMouseListener(ABC):
 
     async def _handle_cross_screen(self, edge: ScreenEdge, mouse_event: MouseEvent, screen: str):
         """Async handler for cross-screen events"""
+        # reset movement history
+        with self._movement_history.mutex:
+            self._movement_history.queue.clear()
+
         await self.event_bus.dispatch(
             event_type=EventType.ACTIVE_SCREEN_CHANGED,
             data={"active_screen": screen}
