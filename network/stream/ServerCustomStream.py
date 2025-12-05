@@ -32,13 +32,14 @@ class UnidirectionalStreamHandler(StreamHandler):
 
         # Create a MessageExchange object
         self.msg_exchange = MessageExchange(
-            conf=MessageExchangeConfig(auto_dispatch=True)
+            conf=MessageExchangeConfig(auto_dispatch=True),
+            id=self.handler_id
         )
 
         self.logger = Logger.get_instance()
 
         # Subscribe with async callbacks
-        event_bus.subscribe(event_type=EventType.ACTIVE_SCREEN_CHANGED, callback=self._on_active_screen_changed)
+        self.event_bus.subscribe(event_type=EventType.ACTIVE_SCREEN_CHANGED, callback=self._on_active_screen_changed)
         self.event_bus.subscribe(event_type=EventType.CLIENT_DISCONNECTED, callback=self._on_client_disconnected)
 
     async def stop(self):
@@ -165,13 +166,14 @@ class BidirectionalStreamHandler(StreamHandler):
 
         # Create a MessageExchange object
         self.msg_exchange = MessageExchange(
-            conf=MessageExchangeConfig(auto_dispatch=True)
+            conf=MessageExchangeConfig(auto_dispatch=True),
+            id=self.handler_id
         )
 
         self.logger = Logger.get_instance()
 
         # Subscribe with async callbacks
-        event_bus.subscribe(event_type=EventType.ACTIVE_SCREEN_CHANGED, callback=self._on_active_screen_changed)
+        self.event_bus.subscribe(event_type=EventType.ACTIVE_SCREEN_CHANGED, callback=self._on_active_screen_changed)
         self.event_bus.subscribe(event_type=EventType.CLIENT_DISCONNECTED, callback=self._on_client_disconnected)
 
     async def stop(self):

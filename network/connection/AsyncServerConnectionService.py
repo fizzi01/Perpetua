@@ -220,7 +220,7 @@ class AsyncServerConnectionHandler:
                 auto_chunk=True,
                 auto_dispatch=False, # We want to control message handling manually
             )
-            client_msg_exchange = MessageExchange(config)
+            client_msg_exchange = MessageExchange(config, id=f"Handshake_{client.ip_address}")
 
             # Setup transport callbacks asyncio
             async def async_send(data: bytes):
@@ -364,7 +364,7 @@ class AsyncServerConnectionHandler:
                                 auto_chunk=True,
                                 auto_dispatch=False, # We want to control message handling manually
                             )
-                            client_msg_exchange = MessageExchange(config)
+                            client_msg_exchange = MessageExchange(config, id=f"Heartbeat_{client.ip_address}")
                             async def async_send(data: bytes):
                                 command_writer = client.conn_socket.get_writer(StreamType.COMMAND)
                                 command_writer.write(data)

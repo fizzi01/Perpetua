@@ -49,19 +49,22 @@ class KeyUtilities:
         """
         return isinstance(key, Key)
 
+
 class BaseServerKeyboardListener(ABC):
     """
     Base class for server-side keyboard listeners.
     """
-    def __init__(self, event_bus: EventBus, stream_handler: StreamHandler, command_stream: StreamHandler, filtering: bool = True):
 
-        self.stream = stream_handler    # Should be a keyboard stream
+    def __init__(self, event_bus: EventBus, stream_handler: StreamHandler, command_stream: StreamHandler,
+                 filtering: bool = True):
+
+        self.stream = stream_handler  # Should be a keyboard stream
         self.command_stream = command_stream
         self.event_bus = event_bus
 
         self._listening = False
         self._active_screens = {}
-        self._screen_size: tuple[int,int] = Screen.get_size()
+        self._screen_size: tuple[int, int] = Screen.get_size()
 
         # Check platform to set appropriate mouse filter
         self._filter_args = {}
@@ -76,9 +79,8 @@ class BaseServerKeyboardListener(ABC):
             except Exception:
                 pass
 
-
         self._listener = KeyboardListener(on_press=self.on_press, on_release=self.on_release,
-                                       **self._filter_args)
+                                          **self._filter_args)
 
         self.logger = Logger()
 
@@ -103,7 +105,9 @@ class BaseServerKeyboardListener(ABC):
             try:
                 self._loop = asyncio.get_running_loop()
             except RuntimeError:
-                self.logger.log("Warning: No event loop running when starting keyboard listener. Async operations may fail.", Logger.WARNING)
+                self.logger.log(
+                    "Warning: No event loop running when starting keyboard listener. Async operations may fail.",
+                    Logger.WARNING)
 
         self._listener.start()
         self.logger.log("Server keyboard listener started.", Logger.DEBUG)
@@ -225,10 +229,12 @@ class BaseServerKeyboardListener(ABC):
         except Exception as e:
             self.logger.log(f"Error handling key release -> {e}", Logger.ERROR)
 
+
 class BaseClientKeyboardController(ABC):
     """
     Base class for client-side keyboard controllers.
     """
+
     def __init__(self, event_bus: EventBus, stream_handler: StreamHandler, command_stream: StreamHandler):
         self.stream = stream_handler  # Should be a mouse stream
         self.command_stream = command_stream  # Should be a command stream
@@ -307,7 +313,7 @@ class BaseClientKeyboardController(ABC):
                 event = EventMapper.get_event(message)
                 if not isinstance(event, KeyboardEvent):
                     continue
-                    
+
                 await loop.run_in_executor(
                     None,
                     self._key_event_action,
@@ -354,7 +360,7 @@ class BaseClientKeyboardController(ABC):
             await self._queue.put(message)
         except Exception as e:
             self.logger.log(f"ClientKeyboardController: Failed to process mouse event -> {e}", Logger.ERROR)
-            
+
     def _key_event_action(self, event: KeyboardEvent):
         """
         Synchronous action to perform key event.

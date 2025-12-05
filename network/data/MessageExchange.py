@@ -66,6 +66,7 @@ class MessageExchange:
 
         self._running = True
         self._message_queue = asyncio.Queue(maxsize=10000)
+        self._lock = asyncio.Lock()
         self._receive_task = asyncio.create_task(self._receive_loop())
 
     async def _receive_loop(self):
@@ -77,7 +78,8 @@ class MessageExchange:
         while self._running:
             try:
                 # Ricevi nuovi dati in modo non bloccante
-                new_data = await self._receive_callback(self.config.receive_buffer_size)
+                async with self._lock:
+                    new_data = await self._receive_callback(self.config.receive_buffer_size)
                 if not new_data:
                     await asyncio.sleep(0)  # Breve pausa per evitare busy waiting
                     continue
@@ -158,20 +160,24 @@ class MessageExchange:
                 self.logger.log("Transport layer disconnected, stopping receive loop.", Logger.WARNING)
                 self._running = False
                 break
+            except RuntimeError as e:
+                self.logger.log(f"Error in receive loop {self._id} -> {e}", Logger.CRITICAL)
+                self._running = False
+                break
             except Exception as e:
                 # Catch broken pipe or connection reset errors
                 if isinstance(e, (ConnectionResetError, BrokenPipeError, ConnectionError, ConnectionAbortedError)):
-                    self.logger.log(f"Connection error in receive loop: {e}", Logger.ERROR)
+                    self.logger.log(f"Connection error in receive loop -> {e}", Logger.ERROR)
                     self._running = False
                     break
                 # Avoid infinite loop if no receive callback is set
                 if self._receive_callback is None:
-                    self.logger.log("Receive callback is None, stopping receive loop.", Logger.CRITICAL)
+                    self.logger.log("Receive callback is None, stopping receive loop.", Logger.DEBUG)
                     self._running = False
                     break
                 import traceback
                 traceback.print_exc()
-                self.logger.log(f"Error in receive loop {self._id}: {e}", Logger.ERROR)
+                self.logger.log(f"Error in receive loop {self._id} -> {e}", Logger.ERROR)
                 await asyncio.sleep(0)
                 continue
 
