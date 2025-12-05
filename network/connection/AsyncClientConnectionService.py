@@ -297,7 +297,7 @@ class AsyncClientConnectionHandler:
             async def async_recv(size: int) -> bytes:
                 return await self._command_reader.read(size)
 
-            self._msg_exchange.set_transport(async_send, async_recv)
+            await self._msg_exchange.set_transport(async_send, async_recv)
 
             # Start receive loop
             await self._msg_exchange.start()
@@ -352,7 +352,7 @@ class AsyncClientConnectionHandler:
                     writer = self._stream_writers.get(stream_type)
                     if reader and writer:
                         client = self.clients.get_client()
-                        if client.conn_socket is not None:
+                        if client.conn_socket is not None and isinstance(client.conn_socket, AsyncClientConnection):
                             client.conn_socket.add_stream(stream_type, reader, writer)
                         self.clients.update_client(client)
 

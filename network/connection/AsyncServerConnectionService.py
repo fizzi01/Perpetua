@@ -230,7 +230,7 @@ class AsyncServerConnectionHandler:
             async def async_recv(size: int) -> bytes:
                 return await reader.read(size)
 
-            client_msg_exchange.set_transport(async_send, async_recv)
+            await client_msg_exchange.set_transport(async_send, async_recv)
 
             # Invia handshake request
             self.logger.log(f"Sending handshake request to client {client.ip_address}", Logger.DEBUG)
@@ -370,7 +370,7 @@ class AsyncServerConnectionHandler:
                                 command_writer.write(data)
                                 await command_writer.drain()
 
-                            client_msg_exchange.set_transport(async_send, None)
+                            await client_msg_exchange.set_transport(async_send, None)
                             await client_msg_exchange.send_custom_message(message_type="HEARTBEAT", payload={})
 
                             # Update active time

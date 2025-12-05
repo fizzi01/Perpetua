@@ -60,7 +60,7 @@ class UnidirectionalStreamHandler(StreamHandler):
         client_screen = data.get("client_screen")
         if self._active_client is not None and self._active_client.screen_position == client_screen:
             self._active_client = None
-            self.msg_exchange.set_transport(send_callback=None, receive_callback=None)
+            await self.msg_exchange.set_transport(send_callback=None, receive_callback=None)
 
     async def _on_active_screen_changed(self, data: dict):
         """
@@ -87,7 +87,7 @@ class UnidirectionalStreamHandler(StreamHandler):
                 async def async_recv(size: int) -> bytes:
                     return await reader.read(size)
 
-                self.msg_exchange.set_transport(
+                await self.msg_exchange.set_transport(
                     send_callback=async_send,
                     receive_callback=async_recv,
                 )
@@ -97,7 +97,7 @@ class UnidirectionalStreamHandler(StreamHandler):
                 self.logger.log(
                     f"{self.handler_id}: No valid stream for active client {self._active_client.screen_position}",
                     Logger.WARNING)
-                self.msg_exchange.set_transport(send_callback=None, receive_callback=None)
+                await self.msg_exchange.set_transport(send_callback=None, receive_callback=None)
                 await self.msg_exchange.stop()
 
             # Empty the send queue efficiently
@@ -107,7 +107,7 @@ class UnidirectionalStreamHandler(StreamHandler):
                 except asyncio.QueueEmpty:
                     break
         else:
-            self.msg_exchange.set_transport(send_callback=None, receive_callback=None)
+            await self.msg_exchange.set_transport(send_callback=None, receive_callback=None)
             await self.msg_exchange.stop()
 
     async def _core_sender(self):
@@ -195,7 +195,7 @@ class BidirectionalStreamHandler(StreamHandler):
         if self._active_client is not None and self._active_client.screen_position == client_screen:
             self._active_client = None
             self.logger.log(f"{self.handler_id}: Active client disconnected {client_screen}", Logger.INFO)
-            self.msg_exchange.set_transport(send_callback=None, receive_callback=None)
+            await self.msg_exchange.set_transport(send_callback=None, receive_callback=None)
 
     async def _on_active_screen_changed(self, data: dict):
         """
@@ -222,7 +222,7 @@ class BidirectionalStreamHandler(StreamHandler):
                 async def async_recv(size: int) -> bytes:
                     return await reader.read(size)
 
-                self.msg_exchange.set_transport(
+                await self.msg_exchange.set_transport(
                     send_callback=async_send,
                     receive_callback=async_recv,
                 )
@@ -234,7 +234,7 @@ class BidirectionalStreamHandler(StreamHandler):
                 self.logger.log(
                     f"{self.handler_id}: No valid stream for active client {self._active_client.screen_position}",
                     Logger.WARNING)
-                self.msg_exchange.set_transport(send_callback=None, receive_callback=None)
+                await self.msg_exchange.set_transport(send_callback=None, receive_callback=None)
                 await self.msg_exchange.stop()
 
             # Empty the send queue efficiently
@@ -244,7 +244,7 @@ class BidirectionalStreamHandler(StreamHandler):
                 except asyncio.QueueEmpty:
                     break
         else:
-            self.msg_exchange.set_transport(send_callback=None, receive_callback=None)
+            await self.msg_exchange.set_transport(send_callback=None, receive_callback=None)
             await self.msg_exchange.stop()
 
     async def _core_sender(self):

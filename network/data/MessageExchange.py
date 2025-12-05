@@ -57,6 +57,8 @@ class MessageExchange:
 
         self._missed_data = 0
 
+        self._lock = asyncio.Lock()
+
         self.logger = Logger.get_instance()
 
     async def start(self):
@@ -66,7 +68,6 @@ class MessageExchange:
 
         self._running = True
         self._message_queue = asyncio.Queue(maxsize=10000)
-        self._lock = asyncio.Lock()
         self._receive_task = asyncio.create_task(self._receive_loop())
 
     async def _receive_loop(self):
@@ -182,7 +183,7 @@ class MessageExchange:
                 continue
 
 
-    def set_transport(self, send_callback: Optional[Callable] = None, receive_callback: Optional[Callable] = None):
+    async def set_transport(self, send_callback: Optional[Callable] = None, receive_callback: Optional[Callable] = None):
         """
         Set the transport layer callback for sending messages.
 
