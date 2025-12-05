@@ -4,39 +4,15 @@ Logic to handle cursor visibility on Windows systems.
 from queue import Empty
 from typing import Optional
 from ctypes import windll, c_int, byref, Structure, POINTER, c_uint
+from xml.dom.expatbuilder import DOCUMENT_NODE
 
 import wx
-
 from multiprocessing import Queue
 from multiprocessing.connection import Connection
-
-# Windows API imports
-import ctypes
-from ctypes import wintypes
 
 from event.EventBus import EventBus
 from input.cursor._base import BaseCursorHandlerWindow, BaseCursorHandlerWorker
 from network.stream.GenericStream import StreamHandler
-
-
-# Windows API constants
-SWP_NOSIZE = 0x0001
-SWP_NOMOVE = 0x0002
-HWND_TOPMOST = -1
-HWND_NOTOPMOST = -2
-SW_HIDE = 0
-SW_SHOW = 5
-GWL_EXSTYLE = -20
-WS_EX_TOPMOST = 0x00000008
-WS_EX_LAYERED = 0x00080000
-WS_EX_TRANSPARENT = 0x00000020
-WS_EX_TOOLWINDOW = 0x00000080
-WS_EX_NOACTIVATE = 0x08000000
-
-# Load Windows DLLs
-user32 = ctypes.windll.user32
-kernel32 = ctypes.windll.kernel32
-
 
 class POINT(Structure):
     _fields_ = [("x", c_int), ("y", c_int)]
@@ -87,14 +63,18 @@ class DebugOverlayPanel(wx.Panel):
 class CursorHandlerWindow(BaseCursorHandlerWindow):
 
     def __init__(self, command_queue: Queue, result_queue: Queue, mouse_conn: Connection, debug: bool = False):
-        super().__init__(command_queue, result_queue, mouse_conn, debug)
+        super().__init__(command_queue, result_queue, mouse_conn, debug, style=wx.STAY_ON_TOP | wx.FRAME_NO_TASKBAR | wx.NO_BORDER)
 
         # Panel principale
-        self.panel = DebugOverlayPanel(self)
+        self.panel = None
 
         # Windows-specific handle
         self.hwnd = None
 
+        self._old_style = self.GetWindowStyle()
+        # self.SetWindowStyle(
+        #     self._old_style | wx.STAY_ON_TOP | wx.FRAME_NO_TASKBAR | wx.NO_BORDER  | wx.TRANSPARENT_WINDOW)
+        self.SetTransparent(1)
         self._create()
 
     def _process_commands(self):
@@ -139,58 +119,22 @@ class CursorHandlerWindow(BaseCursorHandlerWindow):
 
     def ForceOverlay(self):
         try:
+            self.Iconize(False)
+            self.AcceptsFocusRecursively()
             super().ForceOverlay()
-
-            # Store the previously active window
-            self.previous_app = user32.GetForegroundWindow()
-
-            hwnd = self._get_hwnd()
-
-            # Set window as topmost
-            user32.SetWindowPos(
-                hwnd,
-                HWND_TOPMOST,
-                0, 0, 0, 0,
-                SWP_NOMOVE | SWP_NOSIZE
-            )
-
-            # Set extended window style to make it always on top
-            ex_style = user32.GetWindowLongW(hwnd, GWL_EXSTYLE)
-            user32.SetWindowLongW(hwnd, GWL_EXSTYLE, ex_style | WS_EX_TOPMOST)
-
-            # Force window to foreground
-            user32.SetForegroundWindow(hwnd)
-            user32.SetFocus(hwnd)
-
+            self.ShowFullScreen(True, style=wx.FULLSCREEN_ALL)
         except Exception as e:
             print(f"Error forcing overlay: {e}")
 
     def HideOverlay(self):
         try:
-            hwnd = self._get_hwnd()
-
-            # Remove topmost flag
-            ex_style = user32.GetWindowLongW(hwnd, GWL_EXSTYLE)
-            user32.SetWindowLongW(hwnd, GWL_EXSTYLE, ex_style & ~WS_EX_TOPMOST)
-
-            user32.SetWindowPos(
-                hwnd,
-                HWND_NOTOPMOST,
-                0, 0, 0, 0,
-                SWP_NOMOVE | SWP_NOSIZE
-            )
-
+            self.Iconize(True)
             super().HideOverlay()
         except Exception as e:
             print(f"Error hiding overlay: {e}")
 
     def RestorePreviousApp(self):
-        try:
-            if self.previous_app:
-                user32.SetForegroundWindow(self.previous_app)
-            self.previous_app = None
-        except Exception as e:
-            print(f"Error restoring previous app: {e}")
+        return
 
     def on_key_press(self, event):
         key_code = event.GetKeyCode()
@@ -219,56 +163,19 @@ class CursorHandlerWindow(BaseCursorHandlerWindow):
             # Hide cursor using wx
             cursor = wx.Cursor(wx.CURSOR_BLANK)
             self.SetCursor(cursor)
-
-            # Also hide using Windows API for more reliability
-            while user32.ShowCursor(False) >= 0:
-                pass
         else:
             # Show cursor
             self.SetCursor(wx.NullCursor)
-
-            # Show using Windows API
-            while user32.ShowCursor(True) < 0:
-                pass
 
     def reset_mouse_position(self):
         """Reset mouse position to center using Windows API"""
         if self.mouse_captured and self.center_pos:
             # Use Windows API for more reliable positioning
-            user32.SetCursorPos(self.center_pos[0], self.center_pos[1])
+            # user32.SetCursorPos(self.center_pos[0], self.center_pos[1])
 
             # Also use wx method as backup
             client_center = self.ScreenToClient(self.center_pos)
             self.WarpPointer(client_center.x, client_center.y)
-
-    def on_mouse_move(self, event):
-        if not self.mouse_captured:
-            event.Skip()
-            return
-
-        # Get current mouse position
-        point = POINT()
-        user32.GetCursorPos(byref(point))
-
-        # Calculate delta from center
-        delta_x = point.x - self.center_pos[0]
-        delta_y = point.y - self.center_pos[1]
-
-        # Process only if there's movement
-        if delta_x != 0 or delta_y != 0:
-            if self.mouse_conn:
-                try:
-                    self.mouse_conn.send({'dx': delta_x, 'dy': delta_y})
-                except:
-                    pass
-
-            if self._debug:
-                self.panel.delta_text.SetLabel(f"Delta X: {delta_x}, Delta Y: {delta_y}")
-
-            # Reset position to center
-            self.reset_mouse_position()
-
-        event.Skip()
 
     def update_ui(self, panel_obj, data, call):
         try:
@@ -281,4 +188,3 @@ class CursorHandlerWorker(BaseCursorHandlerWorker):
     def __init__(self, event_bus: EventBus, stream: Optional[StreamHandler] = None, debug: bool = False,
                  window_class=CursorHandlerWindow):
         super().__init__(event_bus, stream, debug, window_class)
-
