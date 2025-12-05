@@ -22,6 +22,7 @@ from command import CommandHandler
 
 from input.cursor import CursorHandlerWorker
 from input.mouse import ServerMouseListener, ServerMouseController
+from input.keyboard import ServerKeyboardListener
 
 from utils.logging import Logger
 
@@ -51,6 +52,14 @@ class ActiveServer:
             event_bus=self.event_bus,
             handler_id="ServerMouseStreamHandler",
             sender=True  # Mouse data is sent from server to client
+        )
+
+        self.keyboard_stream_handler = UnidirectionalStreamHandler(
+            stream_type=StreamType.KEYBOARD,
+            clients=self.clients_manager,
+            event_bus=self.event_bus,
+            handler_id="ServerKeyboardStreamHandler",
+            sender=True  # Keyboard data is sent from server to client
         )
 
         # Create Cursor Handler Worker
@@ -85,6 +94,13 @@ class ActiveServer:
             filtering=False
         )
 
+        # Create Keyboard Listener
+        self.keyboard_listener = ServerKeyboardListener(
+            event_bus=self.event_bus,
+            stream_handler=self.keyboard_stream_handler,
+            command_stream=self.command_stream_handler
+        )
+
     async def on_client_connected(self, client: ClientObj):
         """Async callback for client connection"""
         client_pos = client.screen_position
@@ -116,6 +132,10 @@ class ActiveServer:
             await self.stop()
             return False
 
+        if not await self.keyboard_stream_handler.start():
+            await self.stop()
+            return False
+
         # Start cursor handler worker (sync method)
         if not self.cursor_handler_worker.start():
             await self.stop()
@@ -123,6 +143,11 @@ class ActiveServer:
 
         # Start mouse listener (sync method - pynput thread)
         if not self.mouse_listener.start():
+            await self.stop()
+            return False
+
+        # Start keyboard listener (sync method - pynput thread)
+        if not self.keyboard_listener.start():
             await self.stop()
             return False
 
@@ -134,11 +159,14 @@ class ActiveServer:
         await self.connection_handler.stop()
         # Stop mouse listener
         self.mouse_listener.stop()
+        # Stop keyboard listener
+        self.keyboard_listener.stop()
         # Stop cursor handler
         await self.cursor_handler_worker.stop()
         # Stop stream handlers
         await self.mouse_stream_handler.stop()
         await self.command_stream_handler.stop()
+        await self.keyboard_stream_handler.stop()
 
 
 
@@ -166,7 +194,7 @@ async def main():
 
 if __name__ == "__main__":
     try:
-        asyncio.run(main())
+        asyncio.run(main(),debug=True)
     except KeyboardInterrupt:
         print("\nServer shutdown complete")
 

@@ -63,6 +63,23 @@ class MouseEvent(Event):
             "is_pressed": self.is_pressed
         }
 
+class KeyboardEvent(Event):
+    """
+    Keyboard event data structure.
+    """
+    PRESS_ACTION = "press"
+    RELEASE_ACTION = "release"
+
+    def __init__(self, key: str, action: str):
+        self.key = key
+        self.action = action
+        self.timestamp = time()
+
+    def to_dict(self) -> dict:
+        return {
+            "key": self.key,
+            "event": self.action
+        }
 
 class CommandEvent(Event):
     """

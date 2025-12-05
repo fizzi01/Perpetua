@@ -14,6 +14,7 @@ from network.stream.ClientCustomStream import UnidirectionalStreamHandler, Bidir
 from network.stream import StreamType
 
 from input.mouse import ClientMouseController
+from input.keyboard import ClientKeyboardController
 
 from utils.logging import Logger
 
@@ -45,7 +46,17 @@ class ActiveClient:
             active_only=True
         )
 
-        self.open_streams = [StreamType.MOUSE]
+        self.keyboard_stream_handler = UnidirectionalStreamHandler(
+            stream_type=StreamType.KEYBOARD,
+            clients=self.clients_manager,
+            event_bus=self.event_bus,
+            handler_id="ClientKeyboardStreamHandler",
+            sender=False,  # Keyboard data is received from server
+            active_only=True
+        )
+
+
+        self.open_streams = [StreamType.MOUSE, StreamType.COMMAND]
 
         # Create Async Client Connection Handler
         self.client = AsyncClientConnectionHandler(
@@ -71,6 +82,13 @@ class ActiveClient:
             command_stream=self.command_stream_handler
         )
 
+        # Create Keyboard Controller
+        self.keyboard_controller = ClientKeyboardController(
+            event_bus=self.event_bus,
+            stream_handler=self.keyboard_stream_handler,
+            command_stream=self.command_stream_handler
+        )
+
     async def connected_callback(self, client):
         """Async callback for connection"""
         await self.event_bus.dispatch(
@@ -80,6 +98,7 @@ class ActiveClient:
 
         await self.mouse_stream_handler.start()
         await self.command_stream_handler.start()
+        await self.keyboard_stream_handler.start()
 
     async def disconnected_callback(self, client):
         """Async callback for disconnection"""
@@ -90,23 +109,28 @@ class ActiveClient:
 
         await self.mouse_stream_handler.stop()
         await self.command_stream_handler.stop()
+        await self.keyboard_stream_handler.stop()
 
     async def start(self):
         """Start client asynchronously"""
         # Connect to server
         await self.client.start()
 
-        # Start mouse controller
+        # Start controller
+        # We can start on start since controllers will work only when receiving events
         await self.mouse_controller.start()
+        await self.keyboard_controller.start()
 
     async def stop(self):
         """Stop client asynchronously"""
-        # Stop mouse controller
+        # Stop controller
         await self.mouse_controller.stop()
+        await self.keyboard_controller.stop()
 
         # Stop stream handlers
         await self.mouse_stream_handler.stop()
         await self.command_stream_handler.stop()
+        await self.keyboard_stream_handler.stop()
 
         # Disconnect from server
         await self.client.stop()
@@ -114,7 +138,7 @@ class ActiveClient:
 
 async def main():
     """Async main function"""
-    active_client = ActiveClient(server_ip="192.168.1.62", server_port=5555)
+    active_client = ActiveClient(server_ip="192.168.1.74", server_port=5555)
     await active_client.start()
 
     print("Client started")

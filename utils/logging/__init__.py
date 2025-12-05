@@ -50,7 +50,6 @@ class SilentFormatter(logging.Formatter):
 class Logger:
     """
     Wrapper del package logging di Python che preserva l'API legacy.
-    Thread-safe e più performante dell'implementazione custom.
     """
     _instance = None
     _lock = threading.Lock()

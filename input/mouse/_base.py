@@ -136,12 +136,10 @@ class EdgeDetector:
         else:
             return -1, -1
 
-
 class BaseServerMouseListener(ABC):
     """
-    It listens for mouse events on macOS systems.
-    Its main purpose is to capture mouse movements and clicks. And handle some border cases like cursor reaching screen edges.
-    Now async-compatible with AsyncEventBus.
+    Base class for server-side mouse listeners.
+    Its main purpose is to listen to mouse events and dispatch them
     """
     def __init__(self, event_bus: EventBus, stream_handler: StreamHandler, command_stream: StreamHandler, filtering: bool = True):
 
@@ -157,12 +155,15 @@ class BaseServerMouseListener(ABC):
         # Check platform to set appropriate mouse filter
         self._filter_args = {}
         if filtering:
-            import platform
-            current_platform = platform.system()
-            if current_platform == "Darwin":
-                self._filter_args["darwin_intercept"] = self._darwin_mouse_suppress_filter
-            elif current_platform == "Windows":
-                self._filter_args["win32_event_filter"] = self._win32_mouse_suppress_filter
+            try:
+                import platform
+                current_platform = platform.system()
+                if current_platform == "Darwin":
+                    self._filter_args["darwin_intercept"] = self._darwin_mouse_suppress_filter
+                elif current_platform == "Windows":
+                    self._filter_args["win32_event_filter"] = self._win32_mouse_suppress_filter
+            except Exception:
+                pass
 
 
         self._listener = MouseListener(on_move=self.on_move, on_scroll=self.on_scroll, on_click=self.on_click,
@@ -171,7 +172,7 @@ class BaseServerMouseListener(ABC):
         # Queue for mouse movements history to detect screen edge reaching
         self._movement_history = Queue(maxsize=5)
 
-        self.logger = Logger.get_instance()
+        self.logger = Logger()
 
         # Store event loop reference for thread-safe async scheduling
         try:
@@ -372,7 +373,7 @@ class BaseServerMouseListener(ABC):
                 # Schedule async send
                 self._schedule_async(self.stream.send(mouse_event))
             except Exception as e:
-                self.logger.log(f"Failed to dispatch mouse click event - {e}", Logger.ERROR)
+                self.logger.log(f"Failed to dispatch mouse click event -> {e}", Logger.ERROR)
         return True
 
     def on_scroll(self, x, y, dx, dy):
@@ -382,13 +383,14 @@ class BaseServerMouseListener(ABC):
                 # Schedule async send
                 self._schedule_async(self.stream.send(mouse_event))
             except Exception as e:
-                self.logger.log(f"Failed to dispatch mouse scroll event - {e}", Logger.ERROR)
+                self.logger.log(f"Failed to dispatch mouse scroll event -> {e}", Logger.ERROR)
         return True
 
 class BaseServerMouseController(ABC):
     """
-    It controls the mouse on macOS systems for server side.
-    Its main purpose is to move the mouse cursor and perform clicks based on received events.
+    Base class for server-side mouse controllers.
+    Its main purpose is to control the mouse cursor position
+    when the active screen changes.
     """
 
     def __init__(self, event_bus: EventBus):
@@ -430,7 +432,7 @@ class BaseServerMouseController(ABC):
 
         self._controller.position = (x, y)
 
-class BaseClientMouseController:
+class BaseClientMouseController(ABC):
     """
     Async mouse controller for client side.
     Handles mouse movements, clicks, and scrolls based on received events.
