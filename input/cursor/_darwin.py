@@ -107,40 +107,6 @@ class CursorHandlerWindow(BaseCursorHandlerWindow):
 
         self._create()
 
-    def _process_commands(self):
-        """Processa i comandi dalla queue"""
-        try:
-            while self._running:
-                try:
-                    command = self.command_queue.get(timeout=0.2)
-                    cmd_type = command.get('type')
-
-                    if cmd_type == 'enable_capture':
-                        wx.CallAfter(self.enable_mouse_capture)
-                        self.result_queue.put({'type': 'capture_enabled', 'success': True})
-
-                    elif cmd_type == 'disable_capture':
-                        wx.CallAfter(self.disable_mouse_capture)
-                        self.result_queue.put({'type': 'capture_disabled', 'success': True})
-                    elif cmd_type == 'get_stats':
-                        self.result_queue.put({
-                            'type': 'stats',
-                            'is_captured': self.mouse_captured,
-                        })
-
-                    elif cmd_type == 'set_message':
-                        message = command.get('message', '')
-                        self.panel.info_text.SetLabel(message)
-                        self.result_queue.put({'type': 'message_set', 'success': True})
-
-                    elif cmd_type == 'quit':
-                        self._running = False
-                        self.Close()
-                except Empty:
-                    continue
-        except Exception as e:
-            print(f"Error processing commands: {e}")
-
     def ForceOverlay(self):
         try:
             super().ForceOverlay()
