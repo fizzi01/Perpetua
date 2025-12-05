@@ -240,6 +240,8 @@ class BaseServerMouseListener(ABC):
         active_screen = data.get("active_screen")
 
         if active_screen is not None:
+            with self._movement_history.mutex:
+                self._movement_history.queue.clear()
             self._listening = True
             self._cross_screen_event.clear()
         else:
@@ -574,6 +576,8 @@ class BaseClientMouseController:
         """
         Async event handler for when a client becomes inactive.
         """
+        # Reset movement history
+        self._movement_history.clear()
         self._is_active = False
 
     async def _mouse_event_callback(self, message):
@@ -606,7 +610,7 @@ class BaseClientMouseController:
 
         # Need at least 2 positions to determine direction
         if len(self._movement_history) < 2:
-            return
+            return await asyncio.sleep(0)
 
         # Convert deque to list for edge detection (fast operation)
         queue_data = list(self._movement_history)
@@ -625,16 +629,13 @@ class BaseClientMouseController:
                 screen_data = {"x": x, "y": y}
                 command = CommandEvent(command=CommandEvent.CROSS_SCREEN, params=screen_data)
 
-                # Clear movement history to avoid multiple detections
-                self._movement_history.clear()
                 # Send command and dispatch event
                 await self.command_stream.send(command)
                 await self.event_bus.dispatch(event_type=EventType.CLIENT_INACTIVE, data={})
             except Exception as e:
                 self.logger.log(f"Failed to dispatch screen event - {e}", Logger.ERROR)
-            finally:
-                self._cross_screen_event.clear()
 
+        return await asyncio.sleep(0)
 
     def _position_cursor(self, x: float | int, y: float | int):
         """
