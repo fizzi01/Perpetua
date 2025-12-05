@@ -70,7 +70,7 @@ class UnidirectionalStreamHandler(StreamHandler):
             async def async_recv(size: int) -> bytes:
                 return await reader.read(size)
 
-            self.msg_exchange.set_transport(
+            await self.msg_exchange.set_transport(
                 send_callback=async_send,
                 receive_callback=async_recv,
             )
@@ -188,7 +188,7 @@ class BidirectionalStreamHandler(StreamHandler):
             async def async_recv(size: int) -> bytes:
                 return await reader.read(size)
 
-            self.msg_exchange.set_transport(
+            await self.msg_exchange.set_transport(
                 send_callback=async_send,
                 receive_callback=async_recv,
             )
