@@ -136,6 +136,7 @@ class EdgeDetector:
         else:
             return -1, -1
 
+#TODO: Improve crossing edge detection to avoid false positives during crossing
 class BaseServerMouseListener(ABC):
     """
     Base class for server-side mouse listeners.
@@ -432,6 +433,7 @@ class BaseServerMouseController(ABC):
 
         self._controller.position = (x, y)
 
+#TODO: Optimize edge detection to avoid false positives during crossing
 class BaseClientMouseController(ABC):
     """
     Async mouse controller for client side.

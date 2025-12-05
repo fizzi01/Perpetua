@@ -249,6 +249,7 @@ class BaseClientKeyboardController(ABC):
         self._pressed = False
         # Track pressed keys for hotkey combinations
         self.pressed_keys = set()
+        self.caps_lock_state = False
 
         self.logger = Logger()
 
@@ -366,4 +367,24 @@ class BaseClientKeyboardController(ABC):
         Synchronous action to perform key event.
         Os-specific implementations should override this method.
         """
-        raise NotImplementedError()
+        key = KeyUtilities.map_key(event.key)
+
+        if event.action == KeyboardEvent.PRESS_ACTION:
+            # Handl Caps Lock toggle
+            if key == Key.caps_lock:
+                if self.caps_lock_state: # TODO: Better handling of caps lock state
+                    self._controller.release(key)
+                else:
+                    self._controller.press(key)
+                self.caps_lock_state = not self.caps_lock_state
+            elif KeyUtilities.is_special(key):  # General special key handling
+                if key in self.pressed_keys:
+                    self._controller.release(key)
+                    self.pressed_keys.discard(key)
+
+            # Press key
+            self._controller.press(key)
+            self.pressed_keys.add(key)
+        elif event.action == KeyboardEvent.RELEASE_ACTION:
+            self._controller.release(key)
+            self.pressed_keys.discard(key)  # We don't need to check cause discard doesn't raise
