@@ -35,7 +35,12 @@ def backend_module(package: str, platform_map: dict = None):
         module = importlib.import_module(f'.{module_name}', package=package)
         return module
     except ImportError as e:
-        raise ImportError(f"Unable to load module for {platform}: {e}")
+        # Fallback on _base if specific module not found
+        try:
+            module = importlib.import_module(f'._base', package=package)
+            return module
+        except ImportError:
+            raise ImportError(f"Unable to load module for {platform}: {e}")
 
 
 def export_module_symbols(module, target_globals):

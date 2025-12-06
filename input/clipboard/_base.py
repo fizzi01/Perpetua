@@ -1,0 +1,411 @@
+import asyncio
+import enum
+from typing import Optional, Callable, Any
+from copykitten import copy, paste, CopykittenError
+import hashlib
+
+from event import ClipboardEvent, EventType
+from event.EventBus import EventBus
+from network.stream.GenericStream import StreamHandler
+
+from utils.logging import Logger
+
+class ClipboardType(enum.Enum):
+    """
+    Enum for different clipboard content types.
+    """
+    TEXT = "text"
+    URL = "url"
+    FILE = "file"
+    IMAGE = "image"
+    EMPTY = "empty"
+    ERROR = "error"
+
+class BaseClipboard:
+    """
+    Efficient async polling mechanism to monitor clipboard changes.
+    Since system APIs (especially on macOS) don't provide event-based
+    clipboard monitoring, we use asyncio-based polling with content hashing
+    to detect changes efficiently.
+
+    Extensible to support multiple content types. (On MacOS to access files needs further logic)
+    """
+
+    def __init__(
+        self,
+        on_change: Optional[Callable[[str, ClipboardType], Any]] = None,
+        poll_interval: float = 0.5,
+        content_types: Optional[list[ClipboardType]] = None
+    ):
+        """
+        Initialize the clipboard listener.
+
+        Args:
+            on_change: Async callback called when clipboard content changes.
+                       Signature: async def callback(content: str, content_type: ClipboardType)
+            poll_interval: Polling interval in seconds (default: 0.5)
+            content_types: List of content types to monitor (default: [ClipboardType.TEXT])
+        """
+        self.on_change = on_change
+        self.poll_interval = poll_interval
+        self.content_types = content_types or [ClipboardType.TEXT]
+
+        self._running = False
+        self._task: Optional[asyncio.Task] = None
+        self._last_hash: Optional[str] = None
+        self._last_content: Optional[str] = None
+
+        self.logger = Logger()
+
+    @staticmethod
+    def _hash_content(content: str) -> str:
+        """
+        Create a fast hash of the clipboard content for change detection.
+        Using MD5 for speed (not security).
+        """
+        if not content:
+            return ""
+        # Ensure we're encoding to bytes properly
+        content_bytes = content.encode('utf-8', errors='ignore')
+        return hashlib.md5(content_bytes).hexdigest()
+
+    async def _get_clipboard_content(self) -> tuple[Optional[str], ClipboardType]:
+        """
+        Get current clipboard content asynchronously.
+
+        Returns:
+            Tuple of (content, content_type)
+        """
+        try:
+            # Run blocking clipboard operation in executor to avoid blocking event loop
+            loop = asyncio.get_running_loop()
+            try:
+                content = await loop.run_in_executor(None, paste) #type: ignore
+            except CopykittenError:
+                return None, ClipboardType.EMPTY
+            except Exception as e:
+                self.logger.warning(f"Can't access clipboard -> {e}")
+                return None, ClipboardType.ERROR
+
+            # Determine the content type (simplified - can be extended)
+            content_type = ClipboardType.TEXT
+            if isinstance(content, str):
+                # Could check for URLs, file paths, etc.
+                if content.startswith(('http://', 'https://')):
+                    content_type = ClipboardType.URL
+                elif content.startswith('file://'):
+                    content_type = ClipboardType.FILE
+            elif content is None:
+                return None, ClipboardType.EMPTY
+
+            # Filter based on monitored types
+            if content_type not in self.content_types:
+                return None, ClipboardType.EMPTY
+
+            return content, content_type
+
+        except Exception as e:
+            self.logger.error(f"Error reading clipboard -> {e}")
+            return None, ClipboardType.ERROR
+
+    async def _set_clipboard_content(self, content: str) -> bool:
+        """
+        Set clipboard content asynchronously.
+
+        Args:
+            content: Content to set in clipboard
+
+        Returns:
+            True if successful, False otherwise
+        """
+        try:
+            loop = asyncio.get_running_loop()
+            await loop.run_in_executor(None, copy, content)
+
+            # Update our tracking
+            self._last_content = content
+            self._last_hash = self._hash_content(content)
+
+            return True
+        except Exception as e:
+            self.logger.error(f"Error writing to clipboard -> {e}")
+            return False
+
+    async def _poll_loop(self):
+        """
+        Main polling loop that checks for clipboard changes.
+        """
+        self.logger.info("Clipboard polling started")
+
+        # Get initial state
+        initial_content, _ = await self._get_clipboard_content()
+        if initial_content:
+            self._last_hash = self._hash_content(initial_content)
+            self._last_content = initial_content
+
+        while self._running:
+            try:
+                # Get current clipboard content
+                content, content_type = await self._get_clipboard_content()
+                if content is not None:
+                    # Calculate hash for efficient comparison
+                    current_hash = self._hash_content(content)
+
+                    # Check if content has changed
+                    if current_hash != self._last_hash:
+                        self._last_hash = current_hash
+                        self._last_content = content
+
+                        # Invoke callback if registered
+                        if self.on_change:
+                            if asyncio.iscoroutinefunction(self.on_change):
+                                await self.on_change(content, content_type)
+                            else:
+                                # Support sync callbacks too
+                                loop = asyncio.get_running_loop()
+                                await loop.run_in_executor(None, self.on_change, content, content_type)
+
+                # Sleep until next poll
+                await asyncio.sleep(self.poll_interval)
+
+            except asyncio.CancelledError:
+                self.logger.info("Clipboard polling cancelled")
+                self._running = False
+                break
+            except Exception as e:
+                self.logger.error(f"Error in clipboard poll loop -> {e}")
+                # Continue polling even on error
+                await asyncio.sleep(self.poll_interval)
+
+        self.logger.info("Clipboard polling stopped")
+
+    async def start(self):
+        """
+        Start the clipboard monitoring.
+        """
+        if self._running:
+            self.logger.warning("Clipboard listener already running")
+            return
+
+        self._running = True
+        self._task = asyncio.create_task(self._poll_loop())
+        self.logger.info(f"Started clipboard monitoring (poll interval: {self.poll_interval}s)")
+
+    async def stop(self):
+        """
+        Stop the clipboard monitoring.
+        """
+        if not self._running:
+            return
+
+        self._running = False
+
+        if self._task:
+            self._task.cancel()
+            try:
+                await self._task
+            except asyncio.CancelledError:
+                pass
+            self._task = None
+
+        self.logger.info("Stopped clipboard monitoring")
+
+    def is_listening(self) -> bool:
+        """
+        Check if the clipboard listener is currently running.
+
+        Returns:
+            True if running, False otherwise
+        """
+        return self._running
+
+    def get_last_content(self) -> Optional[str]:
+        """
+        Get the last known clipboard content without polling.
+
+        Returns:
+            Last clipboard content or None
+        """
+        return self._last_content
+
+    def set_poll_interval(self, interval: float):
+        """
+        Update the polling interval.
+
+        Args:
+            interval: New polling interval in seconds
+        """
+        self.poll_interval = max(0.1, interval)  # Minimum 100ms
+        self.logger.debug(f"Clipboard poll interval updated to {self.poll_interval}s")
+
+    async def set_clipboard(self, content: str) -> bool:
+        """
+        Set clipboard content and update internal state.
+
+        Args:
+            content: Content to set
+
+        Returns:
+            True if successful
+        """
+        return await self._set_clipboard_content(content)
+
+    async def _debug_set_clipboard(self, content: str) -> bool:
+        """
+        Set clipboard content WITHOUT updating internal state.
+        This allows the polling loop to detect the change.
+
+        USE ONLY FOR TESTING - this bypasses the normal state tracking.
+
+        Args:
+            content: Content to set
+
+        Returns:
+            True if successful
+        """
+        try:
+            loop = asyncio.get_running_loop()
+            await loop.run_in_executor(None, copy, content)
+            # Deliberately NOT updating _last_hash and _last_content
+            # so the polling loop will detect this as a change
+            return True
+        except Exception as e:
+            self.logger.error(f"Error writing to clipboard (debug) -> {e}")
+            return False
+
+
+class BaseClipboardListener:
+    """
+    Base clipboard listener that integrates with an event bus and stream handlers.
+    Listens for clipboard changes and dispatches events to connected clients.
+    """
+    def __init__(self, event_bus: EventBus, stream_handler: StreamHandler, command_stream: StreamHandler, clipboard = BaseClipboard):
+        """
+        Initialize the clipboard listener.
+        Args:
+            event_bus: Event bus for event handling
+            stream_handler: Stream handler to send clipboard events
+            command_stream: Command stream handler
+            clipboard: Clipboard monitoring class (default: BaseClipboard)
+        """
+        self.event_bus = event_bus
+        self.stream_handler = stream_handler # Can be a broadcast stream handler or unidirectional
+        self.command_stream = command_stream
+
+        self._active_screens = {}
+
+        self.logger = Logger()
+
+        self.clipboard = clipboard(on_change=self._on_clipboard_change,
+                                       content_types=[ClipboardType.TEXT, ClipboardType.URL, ClipboardType.FILE])
+
+        self.event_bus.subscribe(event_type=EventType.CLIENT_CONNECTED, callback=self._on_client_connected)
+        self.event_bus.subscribe(event_type=EventType.CLIENT_DISCONNECTED, callback=self._on_client_disconnected)
+
+    async def start(self) -> bool:
+        """
+        Start the clipboard listener.
+        """
+        # We start the listener only when there is at least one connected client
+        self.logger.log("Clipboard listener started.", Logger.DEBUG)
+        return True
+
+    async def stop(self):
+        """
+        Stop the clipboard listener.
+        """
+        if self.clipboard.is_listening():
+            await self.clipboard.stop()
+
+        # Clean event subscriptions
+        self.event_bus.unsubscribe(event_type=EventType.CLIENT_CONNECTED, callback=self._on_client_connected)
+        self.event_bus.unsubscribe(event_type=EventType.CLIENT_DISCONNECTED, callback=self._on_client_disconnected)
+
+        self.logger.log("Clipboard listener stopped", Logger.DEBUG)
+
+    async def _on_client_connected(self, data: dict):
+        """
+        Async event handler for when a client connects.
+        """
+        client_screen = data.get("client_screen")
+        self._active_screens[client_screen] = True
+        self._listening = True
+
+        if not self.clipboard.is_listening():
+            await self.clipboard.start()
+
+    async def _on_client_disconnected(self, data: dict):
+        """
+        Async event handler for when a client disconnects.
+        """
+        # try to get client from data to remove from active screens
+        client = data.get("client_screen")
+        if client and client in self._active_screens:
+            del self._active_screens[client]
+
+        # if active screens is empty, we stop listening
+        if len(self._active_screens.items()) == 0:
+            self._listening = False
+            if self.clipboard.is_listening():
+                await self.clipboard.stop()
+
+    async def _on_clipboard_change(self, content: str, content_type: ClipboardType):
+        if self._listening:
+            event = ClipboardEvent(content=content, content_type=content_type.value)
+            # Send clipboard event to all connected clients -> Sync server clipboard with clients (if server)
+            await self.stream_handler.send(event)
+
+    def get_clipboard_context(self) -> BaseClipboard:
+        """
+        Get the clipboard context.
+        Returns:
+            Clipboard monitoring instance
+        """
+        return self.clipboard
+
+
+class BaseClipboardController:
+    """
+    Base clipboard controller that handles incoming clipboard events from clients.
+    Updates the local clipboard based on received events.
+    """
+    def __init__(self, event_bus: EventBus, stream_handler: StreamHandler, clipboard: Optional[BaseClipboard] = None):
+        """
+        Initialize the clipboard controller.
+        Args:
+            event_bus: Event bus for event handling
+            stream_handler: Stream handler to receive clipboard events
+            clipboard: Clipboard monitoring instance (default: BaseClipboard)
+        """
+        self.event_bus = event_bus
+        self.stream_handler = stream_handler
+
+        if clipboard is None:
+            raise ValueError("Clipboard instance must be provided to ClipboardController")
+
+        self.clipboard = clipboard
+
+        #self.event_bus.subscribe(event_type=EventType.CLIPBOARD_EVENT, callback=self._on_clipboard_event)
+        self.stream_handler.register_receive_callback(self._on_clipboard_event, "clipboard")
+
+    async def start(self) -> bool:
+        """
+        Start the clipboard controller.
+        """
+        return True
+
+    async def stop(self):
+        """
+        Stop the clipboard controller.
+        """
+        return True
+
+    async def _on_clipboard_event(self, data: dict):
+        """
+        Async event handler for incoming clipboard events from clients.
+        """
+        content = data.get("content")
+        #content_type = data.get("content_type")
+
+        if content:
+            await self.clipboard.set_clipboard(content)

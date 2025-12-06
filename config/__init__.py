@@ -30,3 +30,39 @@ class ApplicationConfig:
             "server": self.config_file,
             "client": self.client_config_file,
         }
+
+class ServerConfig:
+    """
+    Server configuration settings
+    Exposes API to handle: streams enabled, SSL certificates, clients infos, logging levels.
+    """
+    def __init__(self, app_config: ApplicationConfig = ApplicationConfig()):
+        self.app_config = app_config
+        self.streams_enabled = {
+            "mouse": True,
+            "keyboard": True,
+            "clipboard": True,
+            "file_transfer": True,
+            "screen_sharing": True,
+        }
+
+    def enable_stream(self, stream_type: str):
+        self.streams_enabled[stream_type] = True
+
+    def disable_stream(self, stream_type: str):
+        self.streams_enabled[stream_type] = False
+
+    def is_stream_enabled(self, stream_type: str) -> bool:
+        return self.streams_enabled.get(stream_type, False)
+
+    def get_ssl_config(self) -> dict:
+        return {
+            "certfile": f"{self.app_config.ssl_path}{self.app_config.ssl_certfile}",
+            "keyfile": f"{self.app_config.ssl_path}{self.app_config.ssl_keyfile}",
+        }
+
+class ClientConfig:
+    """
+    Client configuration settings
+    Exposes API to handle: server connection info, logging levels.
+    """

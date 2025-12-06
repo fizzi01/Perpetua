@@ -3,11 +3,9 @@ packaging==24.2
 psutil==6.1.0
 pynput==1.7.7
 pyobjc==10.2
-pyperclip==1.8.2
 screeninfo==0.8.1
-tabulate==0.9.0
 zeroconf==0.136.2
 wxPython==4.2.2
 netifaces==0.11.0
-desktop-notifier==6.0.0
 attrs==24.2.0
+copykitten==2.0.0

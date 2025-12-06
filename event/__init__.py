@@ -114,6 +114,21 @@ class ScreenEvent(Event):
             "data": self.data
         }
 
+class ClipboardEvent(Event):
+    """
+    Clipboard event data structure.
+    """
+
+    def __init__(self, content: str, content_type: str = "text"):
+        self.content = content
+        self.content_type = content_type
+        self.timestamp = time()
+
+    def to_dict(self) -> dict:
+        return {
+            "content": self.content,
+            "content_type": self.content_type
+        }
 
 class EventMapper:
     """

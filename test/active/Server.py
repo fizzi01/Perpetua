@@ -15,7 +15,7 @@ from model.ClientObj import ClientObj, ClientsManager
 from event.EventBus import AsyncEventBus  # Changed to AsyncEventBus
 
 from network.connection.AsyncServerConnectionService import AsyncServerConnectionHandler  # Changed to async
-from network.stream.ServerCustomStream import UnidirectionalStreamHandler, BidirectionalStreamHandler
+from network.stream.ServerCustomStream import UnidirectionalStreamHandler, BidirectionalStreamHandler, BroadcastStreamHandler
 from network.stream import StreamType
 
 from command import CommandHandler
@@ -23,6 +23,7 @@ from command import CommandHandler
 from input.cursor import CursorHandlerWorker
 from input.mouse import ServerMouseListener, ServerMouseController
 from input.keyboard import ServerKeyboardListener
+from input.clipboard import ClipboardListener, ClipboardController
 
 from utils.logging import Logger
 
@@ -38,13 +39,15 @@ class ActiveServer:
         # Create AsyncEventBus
         self.event_bus = AsyncEventBus()
 
-        # Create Stream Handlers (no more instant parameter - always async)
+        # Create Stream Handlers
+        self._stream_handlers = []
         self.command_stream_handler = BidirectionalStreamHandler(
             stream_type=StreamType.COMMAND,
             clients=self.clients_manager,
             event_bus=self.event_bus,
             handler_id="ServerCommandStreamHandler"
         )
+        self._stream_handlers.append(self.command_stream_handler)
 
         self.mouse_stream_handler = UnidirectionalStreamHandler(
             stream_type=StreamType.MOUSE,
@@ -53,6 +56,7 @@ class ActiveServer:
             handler_id="ServerMouseStreamHandler",
             sender=True  # Mouse data is sent from server to client
         )
+        self._stream_handlers.append(self.mouse_stream_handler)
 
         self.keyboard_stream_handler = UnidirectionalStreamHandler(
             stream_type=StreamType.KEYBOARD,
@@ -61,12 +65,21 @@ class ActiveServer:
             handler_id="ServerKeyboardStreamHandler",
             sender=True  # Keyboard data is sent from server to client
         )
+        self._stream_handlers.append(self.keyboard_stream_handler)
+
+        self.clipboard_stream_handler = BroadcastStreamHandler(
+            stream_type=StreamType.CLIPBOARD,
+            clients=self.clients_manager,
+            event_bus=self.event_bus,
+            handler_id="ServerClipboardStreamHandler"
+        )
+        self._stream_handlers.append(self.clipboard_stream_handler)
 
         # Create Cursor Handler Worker
         self.cursor_handler_worker = CursorHandlerWorker(
             event_bus=self.event_bus,
             stream=self.mouse_stream_handler,
-            debug=True
+            debug=False
         )
 
         # Create Async Connection Handler
@@ -101,6 +114,18 @@ class ActiveServer:
             command_stream=self.command_stream_handler
         )
 
+        # Create Clipboard Listener and Controller
+        self.clipboard_listener = ClipboardListener(
+            event_bus=self.event_bus,
+            stream_handler=self.clipboard_stream_handler,
+            command_stream=self.command_stream_handler
+        )
+        self.clipboard_controller = ClipboardController(
+            event_bus=self.event_bus,
+            clipboard=self.clipboard_listener.get_clipboard_context(),
+            stream_handler=self.clipboard_stream_handler
+        )
+
     async def on_client_connected(self, client: ClientObj):
         """Async callback for client connection"""
         client_pos = client.screen_position
@@ -124,17 +149,10 @@ class ActiveServer:
             return False
 
         # Start stream handlers
-        if not await self.command_stream_handler.start():
-            await self.stop()
-            return False
-
-        if not await self.mouse_stream_handler.start():
-            await self.stop()
-            return False
-
-        if not await self.keyboard_stream_handler.start():
-            await self.stop()
-            return False
+        for handler in self._stream_handlers:
+            if not await handler.start():
+                await self.stop()
+                return False
 
         # Start cursor handler worker (sync method)
         if not self.cursor_handler_worker.start():
@@ -151,22 +169,29 @@ class ActiveServer:
             await self.stop()
             return False
 
+        if not await self.clipboard_listener.start():
+            await self.stop()
+            return False
+
         return True
 
     async def stop(self):
         """Stop all components asynchronously"""
         # Stop connection handler
         await self.connection_handler.stop()
+
         # Stop mouse listener
         self.mouse_listener.stop()
         # Stop keyboard listener
         self.keyboard_listener.stop()
+
+        # Stop clipboard listener
+        await self.clipboard_listener.stop()
         # Stop cursor handler
         await self.cursor_handler_worker.stop()
         # Stop stream handlers
-        await self.mouse_stream_handler.stop()
-        await self.command_stream_handler.stop()
-        await self.keyboard_stream_handler.stop()
+        for handler in self._stream_handlers:
+            await handler.stop()
 
 
 
@@ -194,7 +219,7 @@ async def main():
 
 if __name__ == "__main__":
     try:
-        asyncio.run(main(),debug=True)
+        asyncio.run(main())
     except KeyboardInterrupt:
         print("\nServer shutdown complete")
 

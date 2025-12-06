@@ -68,7 +68,7 @@ class BaseCursorHandlerWindow(wx.Frame):
         try:
             while self._running:
                 try:
-                    command = self.command_queue.get(timeout=0.2)
+                    command = self.command_queue.get(timeout=0.1)
                     cmd_type = command.get('type')
 
                     if cmd_type == 'enable_capture':
@@ -238,16 +238,13 @@ class BaseCursorHandlerWindow(wx.Frame):
 
         # Processa solo se c'è movimento
         if delta_x != 0 or delta_y != 0:
-            # Aggiorna UI
-            if self._debug and self.panel is not None and hasattr(self.panel, 'debug_text'):
-                self.update_ui(self.panel, f"Mouse moved: ΔX={delta_x}, ΔY={delta_y}", self.panel.debug_text.SetLabel)
             try:
                 self.mouse_conn.send((delta_x, delta_y))
             except Exception as e:
                 pass
 
             # Resetta posizione
-            wx.CallAfter(self.reset_mouse_position)
+            self.reset_mouse_position()
 
         event.Skip()
 
