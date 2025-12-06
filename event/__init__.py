@@ -162,5 +162,10 @@ class EventMapper:
                 key=message_payload.get("key"),
                 action=message_payload.get("event")
             )
+        elif event_type == MessageType.CLIPBOARD:
+            return ClipboardEvent(
+                content=message_payload.get("content"),
+                content_type=message_payload.get("content_type", "text")
+            )
         else:
             return None

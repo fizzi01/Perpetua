@@ -4,7 +4,7 @@ from typing import Optional, Callable, Any
 from copykitten import copy, paste, CopykittenError
 import hashlib
 
-from event import ClipboardEvent, EventType
+from event import ClipboardEvent, EventType, EventMapper
 from event.EventBus import EventBus
 from network.stream.GenericStream import StreamHandler
 
@@ -400,12 +400,15 @@ class BaseClipboardController:
         """
         return True
 
-    async def _on_clipboard_event(self, data: dict):
+    async def _on_clipboard_event(self, message):
         """
         Async event handler for incoming clipboard events from clients.
         """
-        content = data.get("content")
-        #content_type = data.get("content_type")
+        event = EventMapper.get_event(message)
+        if not isinstance(event, ClipboardEvent):
+            return
+
+        content = event.content
 
         if content:
             await self.clipboard.set_clipboard(content)
