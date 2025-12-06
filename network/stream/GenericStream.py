@@ -23,7 +23,7 @@ class StreamHandler:
         self.stream_type = stream_type
         self.clients = clients
         self.event_bus = event_bus
-        self._send_queue: asyncio.Queue = asyncio.Queue(maxsize=10000)
+        self._send_queue: asyncio.Queue = asyncio.Queue(maxsize=1000)
         self._active = False
         self._sender_task = None
 
@@ -77,6 +77,16 @@ class StreamHandler:
         Queues data to be sent over the stream.
         """
         await self._send_queue.put(data)
+
+    def _clear_buffer(self):
+        """
+        Clears the send queue.
+        """
+        while not self._send_queue.empty():
+            try:
+                self._send_queue.get_nowait()
+            except asyncio.QueueEmpty:
+                break
 
     async def _core_sender(self):
         """

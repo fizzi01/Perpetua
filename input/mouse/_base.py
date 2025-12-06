@@ -171,7 +171,7 @@ class BaseServerMouseListener(ABC):
                                        **self._filter_args)
 
         # Queue for mouse movements history to detect screen edge reaching
-        self._movement_history = Queue(maxsize=5)
+        self._movement_history = deque(maxlen=5)
 
         self.logger = Logger()
 
@@ -242,8 +242,7 @@ class BaseServerMouseListener(ABC):
         active_screen = data.get("active_screen")
 
         if active_screen is not None:
-            with self._movement_history.mutex:
-                self._movement_history.queue.clear()
+            self._movement_history.clear()
             self._listening = True
             self._cross_screen_event.clear()
         else:
@@ -269,16 +268,14 @@ class BaseServerMouseListener(ABC):
 
             # Add the current position to the movement history
             try:
-                if self._movement_history.full():
-                    self._movement_history.get()
-                self._movement_history.put((x, y))
+                self._movement_history.append((x, y))
             except Exception:
                 pass
 
-            if self._movement_history.qsize() >= 2:
+            if len(self._movement_history) >= 2:
 
                 # Check all the previous movements to determine the direction
-                queue_data = list(self._movement_history.queue)
+                queue_data = list(self._movement_history)
 
                 edge = EdgeDetector.is_at_edge(movement_history=queue_data, x=x, y=y, screen_size=self._screen_size)
 
@@ -350,8 +347,7 @@ class BaseServerMouseListener(ABC):
     async def _handle_cross_screen(self, edge: ScreenEdge, mouse_event: MouseEvent, screen: str):
         """Async handler for cross-screen events"""
         # reset movement history
-        with self._movement_history.mutex:
-            self._movement_history.queue.clear()
+        self._movement_history.clear()
 
         await self.event_bus.dispatch(
             event_type=EventType.ACTIVE_SCREEN_CHANGED,

@@ -139,3 +139,7 @@ dist/*
 
 OLD_ignore/
 OLD/
+
+.build/
+.DS_Store/
+.vscode/

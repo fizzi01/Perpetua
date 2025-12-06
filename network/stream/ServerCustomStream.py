@@ -101,11 +101,7 @@ class UnidirectionalStreamHandler(StreamHandler):
                 await self.msg_exchange.stop()
 
             # Empty the send queue efficiently
-            while not self._send_queue.empty():
-                try:
-                    self._send_queue.get_nowait()
-                except asyncio.QueueEmpty:
-                    break
+            self._clear_buffer()
         else:
             await self.msg_exchange.set_transport(send_callback=None, receive_callback=None)
             await self.msg_exchange.stop()
@@ -236,11 +232,7 @@ class BidirectionalStreamHandler(StreamHandler):
                 await self.msg_exchange.stop()
 
             # Empty the send queue efficiently
-            while not self._send_queue.empty():
-                try:
-                    self._send_queue.get_nowait()
-                except asyncio.QueueEmpty:
-                    break
+            self._clear_buffer()
         else:
             await self.msg_exchange.set_transport(send_callback=None, receive_callback=None)
             await self.msg_exchange.stop()
