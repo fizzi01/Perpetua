@@ -228,8 +228,6 @@ class BidirectionalStreamHandler(StreamHandler):
                 )
                 # Start msg exchange listener (always runs for async dispatch)
                 await self.msg_exchange.start()
-                self.logger.log(
-                    f"{self.handler_id}: Active client set to {self._active_client.screen_position}", Logger.INFO)
             else:
                 self.logger.log(
                     f"{self.handler_id}: No valid stream for active client {self._active_client.screen_position}",

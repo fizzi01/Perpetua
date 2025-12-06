@@ -26,8 +26,7 @@ class AsyncClientConnectionHandler:
     resource management.
     """
 
-    def __init__(self,
-                 connected_callback: Optional[Callable[['ClientObj'], Any]] = None,
+    def __init__(self, connected_callback: Optional[Callable[['ClientObj'], Any]] = None,
                  disconnected_callback: Optional[Callable[['ClientObj'], Any]] = None,
                  host: str = "127.0.0.1",
                  port: int = 5001,
@@ -69,8 +68,7 @@ class AsyncClientConnectionHandler:
 
         self.clients = clients if clients is not None else ClientsManager(client_mode=True)
 
-        self.open_streams = open_streams if open_streams is not None else [
-        ]
+        self.open_streams = open_streams if open_streams is not None else []
 
         # Connection state
         self._running = False

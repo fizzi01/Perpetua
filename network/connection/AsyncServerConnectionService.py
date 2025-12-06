@@ -25,7 +25,6 @@ class AsyncServerConnectionHandler:
     and automatic heartbeat monitoring.
 
     Attributes:
-        msg_exchange (MessageExchange): Message exchange handler (unused, each client has own).
         connected_callback (callable): Callback for client connection.
         disconnected_callback (callable): Callback for client disconnection.
         host (str): Server host address.
@@ -36,8 +35,7 @@ class AsyncServerConnectionHandler:
         keyfile (str): SSL key file path.
     """
 
-    def __init__(self, msg_exchange: Optional['MessageExchange'] = None,
-                 connected_callback: Optional[Callable[['ClientObj'], Any]] = None,
+    def __init__(self, connected_callback: Optional[Callable[['ClientObj'], Any]] = None,
                  disconnected_callback: Optional[Callable[['ClientObj'], Any]] = None,
                  host: str = "0.0.0.0", port: int = 5001,
                  heartbeat_interval: int = 2,
@@ -70,7 +68,8 @@ class AsyncServerConnectionHandler:
             self.server = await asyncio.start_server(
                 self._handle_client,
                 self.host,
-                self.port
+                self.port,
+                ssl=self._get_ssl_context()
             )
 
             self.logger.log(f"AsyncServer started on {self.host}:{self.port}", Logger.INFO)
@@ -403,9 +402,19 @@ class AsyncServerConnectionHandler:
             self.logger.log("Heartbeat loop cancelled.", Logger.INFO)
             await self.stop()
 
-    def _ssl_wrap(self, client_socket):
-        """Wrap del socket con SSL"""
+    def _get_ssl_context(self) -> Optional[ssl.SSLContext]:
+        """
+        Create SSL context if certfile and keyfile are provided.
+        """
+        if not self.certfile or not self.keyfile:
+            return None
+
         context = ssl.create_default_context(ssl.Purpose.CLIENT_AUTH)
         context.load_cert_chain(certfile=self.certfile, keyfile=self.keyfile)
+        return context
+
+    def _ssl_wrap(self, client_socket):
+        """Wrap del socket con SSL"""
+        context = self._get_ssl_context()
         ssl_socket = context.wrap_socket(client_socket, server_side=True)
         return ssl_socket
