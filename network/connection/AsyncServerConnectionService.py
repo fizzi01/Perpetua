@@ -87,6 +87,9 @@ class AsyncServerConnectionHandler:
 
     async def stop(self):
         """Ferma il server e chiude tutte le connessioni in modo pulito"""
+        if not self._running:
+            return True
+
         self._running = False
 
         # Cancella heartbeat task
@@ -133,6 +136,7 @@ class AsyncServerConnectionHandler:
             await self.server.wait_closed()
 
         self.logger.log("AsyncServer stopped.", Logger.INFO)
+        return True
 
     async def _handle_client(self, reader: asyncio.StreamReader, writer: asyncio.StreamWriter):
         """Gestisce una nuova connessione client (handshake o stream aggiuntivo)"""

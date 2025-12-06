@@ -17,6 +17,7 @@ class AsyncClientConnection:
         self.client_addr = client_addr
         self.readers: Dict[int, asyncio.StreamReader] = {}
         self.writers: Dict[int, asyncio.StreamWriter] = {}
+        self._is_closed = False
 
     def add_stream(self, stream_type: int, reader: asyncio.StreamReader,
                    writer: asyncio.StreamWriter):
@@ -70,19 +71,29 @@ class AsyncClientConnection:
 
     async def wait_closed(self):
         """Wait for all streams to close"""
-        tasks = []
-        for writer in list(self.writers.values()):
-            if writer and not writer.is_closing():
-                writer.close()
-                tasks.append(writer.wait_closed())
+        if self._is_closed:
+            return
 
-        for reader in list(self.readers.values()):
-            if reader:
-                reader.feed_eof()
+        try:
+            tasks = []
+            for writer in list(self.writers.values()):
+                if writer and not writer.is_closing():
+                    writer.close()
+                    tasks.append(writer.wait_closed())
 
-        if tasks:
-            await asyncio.gather(*tasks, return_exceptions=True)
+            for reader in list(self.readers.values()):
+                if reader:
+                    reader.feed_eof()
 
-            self.readers.clear()
-            self.writers.clear()
+            if tasks:
+                await asyncio.gather(*tasks, return_exceptions=True)
+
+                self.readers.clear()
+                self.writers.clear()
+
+            self._is_closed = True
+        except asyncio.CancelledError:
+            pass
+        except Exception:
+            pass
 
