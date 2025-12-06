@@ -582,6 +582,7 @@ class BaseClientMouseController(ABC):
         """
         # Reset movement history
         self._movement_history.clear()
+        self._cross_screen_event.clear()
         self._is_active = False
 
     async def _mouse_event_callback(self, message):
@@ -593,10 +594,16 @@ class BaseClientMouseController(ABC):
             if not self._running:
                 await self.start()
 
+            # Ignore events if crossing screen or inactive
+            if self._cross_screen_event.is_set() or not self._is_active:
+                return await asyncio.sleep(0)
+
             # Put message in async queue
             await self._queue.put(message)
+            return None
         except Exception as e:
             self.logger.log(f"ClientMouseController: Failed to process mouse event - {e}", Logger.ERROR)
+            return None
 
     async def _check_edge(self):
         """
