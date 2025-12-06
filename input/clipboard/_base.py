@@ -293,6 +293,7 @@ class BaseClipboardListener:
         self.command_stream = command_stream
 
         self._active_screens = {}
+        self._listening = False
 
         self.logger = Logger()
 
@@ -301,6 +302,8 @@ class BaseClipboardListener:
 
         self.event_bus.subscribe(event_type=EventType.CLIENT_CONNECTED, callback=self._on_client_connected)
         self.event_bus.subscribe(event_type=EventType.CLIENT_DISCONNECTED, callback=self._on_client_disconnected)
+        self.event_bus.subscribe(event_type=EventType.CLIENT_ACTIVE, callback=self._on_client_active)
+        self.event_bus.subscribe(event_type=EventType.CLIENT_INACTIVE, callback=self._on_client_inactive)
 
     async def start(self) -> bool:
         """
@@ -320,8 +323,26 @@ class BaseClipboardListener:
         # Clean event subscriptions
         self.event_bus.unsubscribe(event_type=EventType.CLIENT_CONNECTED, callback=self._on_client_connected)
         self.event_bus.unsubscribe(event_type=EventType.CLIENT_DISCONNECTED, callback=self._on_client_disconnected)
+        self.event_bus.unsubscribe(event_type=EventType.CLIENT_ACTIVE, callback=self._on_client_active)
+        self.event_bus.unsubscribe(event_type=EventType.CLIENT_INACTIVE, callback=self._on_client_inactive)
 
         self.logger.log("Clipboard listener stopped", Logger.DEBUG)
+
+    async def _on_client_active(self, data: dict):
+        """
+        Async event handler for when client becomes active.
+        """
+        if not self.clipboard.is_listening():
+            await self.clipboard.start()
+        self._listening = True
+
+    async def _on_client_inactive(self, data: dict):
+        """
+        Async event handler for when a client becomes inactive.
+        """
+        if not self.clipboard.is_listening():
+            await self.clipboard.stop()
+        self._listening = False
 
     async def _on_client_connected(self, data: dict):
         """

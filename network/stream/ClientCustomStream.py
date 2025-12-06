@@ -213,7 +213,6 @@ class BidirectionalStreamHandler(StreamHandler):
         """
         self.msg_exchange.register_handler(message_type, receive_callback)
 
-
     async def _core_sender(self):
         """
         Core async sender loop for sending messages to the server with optimizations.
