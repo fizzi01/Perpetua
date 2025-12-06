@@ -128,6 +128,11 @@ class MessageExchange:
                         message = ProtocolMessage.from_bytes(message_data)
                         message.timestamp = time()
 
+                        if message.is_heartbeat():
+                            # Ignora messaggi di heartbeat
+                            offset += total_length
+                            continue
+
                         # Gestione chunk/messaggio normale
                         if message.is_chunk:
                             reconstructed = await self._handle_chunk(message)

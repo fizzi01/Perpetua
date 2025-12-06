@@ -18,6 +18,7 @@ class MessageType:
     COMMAND = "command"
     SCREEN = "screen"
     EXCHANGE = "exchange"
+    HEARTBEAT = "HEARTBEAT"
 
 @dataclass
 class ProtocolMessage:
@@ -115,6 +116,10 @@ class ProtocolMessage:
 
         # Parse JSON and create object
         return cls.from_json(json_str)
+
+    def is_heartbeat(self) -> bool:
+        """Check if the message is a heartbeat message."""
+        return self.message_type == MessageType.HEARTBEAT
 
     @classmethod
     def from_dict(cls, data: Dict[str, Any]) -> 'ProtocolMessage':
