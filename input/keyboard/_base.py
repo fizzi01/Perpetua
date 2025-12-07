@@ -120,11 +120,6 @@ class BaseServerKeyboardListener(ABC):
         if self.is_alive():
             self._listener.stop()
 
-        # Clean up event bus subscriptions
-        self.event_bus.unsubscribe(event_type=EventType.ACTIVE_SCREEN_CHANGED, callback=self._on_active_screen_changed)
-        self.event_bus.unsubscribe(event_type=EventType.CLIENT_CONNECTED, callback=self._on_client_connected)
-        self.event_bus.unsubscribe(event_type=EventType.CLIENT_DISCONNECTED, callback=self._on_client_disconnected)
-
         self.logger.log("Server keyboard listener stopped.", Logger.DEBUG)
         return True
 
@@ -302,10 +297,6 @@ class BaseClientKeyboardController(ABC):
                 except asyncio.CancelledError:
                     pass
                 self._worker_task = None
-
-            # Clean up event bus subscriptions
-            self.event_bus.unsubscribe(event_type=EventType.CLIENT_ACTIVE, callback=self._on_client_active)
-            self.event_bus.unsubscribe(event_type=EventType.CLIENT_INACTIVE, callback=self._on_client_inactive)
 
             self.logger.log("Client keyboard controller async worker stopped.", Logger.DEBUG)
 

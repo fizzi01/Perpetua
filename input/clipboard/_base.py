@@ -1,5 +1,6 @@
 import asyncio
 import enum
+import os
 from typing import Optional, Callable, Any
 from copykitten import copy, paste, CopykittenError
 import hashlib
@@ -69,6 +70,14 @@ class BaseClipboard:
         content_bytes = content.encode('utf-8', errors='ignore')
         return hashlib.md5(content_bytes).hexdigest()
 
+    @staticmethod
+    def _try_get_clip_file(file: str) -> str:
+        """
+        Os-specific logic to get a complete file path from clipboard content.
+        """
+        return file
+
+
     async def _get_clipboard_content(self) -> tuple[Optional[str], ClipboardType]:
         """
         Get current clipboard content asynchronously.
@@ -89,11 +98,12 @@ class BaseClipboard:
 
             # Determine the content type (simplified - can be extended)
             content_type = ClipboardType.TEXT
+            content = self._try_get_clip_file(content)
             if isinstance(content, str):
                 # Could check for URLs, file paths, etc.
                 if content.startswith(('http://', 'https://')):
                     content_type = ClipboardType.URL
-                elif content.startswith('file://'):
+                elif os.path.isfile(content):
                     content_type = ClipboardType.FILE
             elif content is None:
                 return None, ClipboardType.EMPTY
@@ -319,12 +329,6 @@ class BaseClipboardListener:
         """
         if self.clipboard.is_listening():
             await self.clipboard.stop()
-
-        # Clean event subscriptions
-        self.event_bus.unsubscribe(event_type=EventType.CLIENT_CONNECTED, callback=self._on_client_connected)
-        self.event_bus.unsubscribe(event_type=EventType.CLIENT_DISCONNECTED, callback=self._on_client_disconnected)
-        self.event_bus.unsubscribe(event_type=EventType.CLIENT_ACTIVE, callback=self._on_client_active)
-        self.event_bus.unsubscribe(event_type=EventType.CLIENT_INACTIVE, callback=self._on_client_inactive)
 
         self.logger.log("Clipboard listener stopped", Logger.DEBUG)
 
