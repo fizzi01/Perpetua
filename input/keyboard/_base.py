@@ -50,13 +50,22 @@ class KeyUtilities:
         return isinstance(key, Key)
 
 
-class BaseServerKeyboardListener(ABC):
+class ServerKeyboardListener(object):
     """
     Base class for server-side keyboard listeners.
     """
 
     def __init__(self, event_bus: EventBus, stream_handler: StreamHandler, command_stream: StreamHandler,
                  filtering: bool = True):
+        """
+        Initializes the server keyboard listener.
+
+        Args:
+            event_bus (EventBus): The event bus for inter-component communication.
+            stream_handler (StreamHandler): The stream handler for sending keyboard events.
+            command_stream (StreamHandler): The command stream handler.
+            filtering (bool): Whether to apply platform-specific filtering.
+        """
 
         self.stream = stream_handler  # Should be a keyboard stream
         self.command_stream = command_stream
@@ -231,12 +240,20 @@ class BaseServerKeyboardListener(ABC):
             self.logger.log(f"Error handling key release -> {e}", Logger.ERROR)
 
 
-class BaseClientKeyboardController(ABC):
+class ClientKeyboardController(object):
     """
     Base class for client-side keyboard controllers.
     """
 
     def __init__(self, event_bus: EventBus, stream_handler: StreamHandler, command_stream: StreamHandler):
+        """
+        Initializes the client keyboard controller.
+
+        Args:
+            event_bus (EventBus): The event bus for inter-component communication.
+            stream_handler (StreamHandler): The stream handler for receiving keyboard events.
+            command_stream (StreamHandler): The command stream handler.
+        """
         self.stream = stream_handler  # Should be a mouse stream
         self.command_stream = command_stream  # Should be a command stream
         self.event_bus = event_bus

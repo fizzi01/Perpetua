@@ -18,12 +18,21 @@ from network.stream.GenericStream import StreamHandler
 from utils.logging import Logger
 
 
-class BaseCursorHandlerWindow(wx.Frame):
+class CursorHandlerWindow(wx.Frame):
     """
     Base class for cursor handling window.
     Derived classes must implement platform-specific methods.
     """
     def __init__(self, command_queue: Queue, result_queue:  Queue, mouse_conn: Connection, debug: bool = False, **frame_kwargs):
+        """
+        Initialize the cursor handler window.
+        Args:
+            command_queue (Queue): Queue for receiving commands.
+            result_queue (Queue): Queue for sending results.
+            mouse_conn (Connection): Connection for sending mouse movement data.
+            debug (bool): Enable debug mode.
+            **frame_kwargs: Additional arguments for wx.Frame.
+        """
         super().__init__(None, title="", **frame_kwargs)
 
         self._debug = debug
@@ -261,7 +270,7 @@ class _CursorHandlerProcess:
     Internal class to run the cursor handler window in a separate process.
     """
 
-    def __init__(self, command_queue, result_queue, mouse_conn: Connection, debug: bool = False, window_class=BaseCursorHandlerWindow):
+    def __init__(self, command_queue, result_queue, mouse_conn: Connection, debug: bool = False, window_class=CursorHandlerWindow):
         self.command_queue = command_queue
         self.result_queue = result_queue
         self.mouse_conn = mouse_conn
@@ -282,14 +291,23 @@ class _CursorHandlerProcess:
         self.app.MainLoop()
         self.result_queue.put({'type': 'process_ended'})
 
-class BaseCursorHandlerWorker:
+class CursorHandlerWorker(object):
     """
     Base class for cursor handler worker.
     Manages the cursor handler window process and communication.
     There is no platform-specific code here, all platform specifics are in the window class.
     """
     def __init__(self, event_bus: EventBus, stream: Optional[StreamHandler] = None,
-                 debug: bool = False, window_class=BaseCursorHandlerWindow):
+                 debug: bool = False, window_class=CursorHandlerWindow):
+        """
+        Initialize the cursor handler worker.
+
+        Args:
+            event_bus (EventBus): The event bus for communication.
+            stream (Optional[StreamHandler]): The stream handler for mouse events.
+            debug (bool): Enable debug mode.
+            window_class: The window class to use for cursor handling.
+        """
         self.event_bus = event_bus
         self.stream = stream
 
@@ -332,7 +350,7 @@ class BaseCursorHandlerWorker:
             self._active_client = None
             await asyncio.get_event_loop().run_in_executor(None, self.disable_capture) #type: ignore
 
-    def start(self, wait_ready=True, timeout=1):
+    def start(self, wait_ready=True, timeout=1) -> bool:
         """Avvia il processo della window"""
         if self.is_running:
             return True

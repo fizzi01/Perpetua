@@ -38,21 +38,15 @@ class ServerConfig:
     """
     def __init__(self, app_config: ApplicationConfig = ApplicationConfig()):
         self.app_config = app_config
-        self.streams_enabled = {
-            "mouse": True,
-            "keyboard": True,
-            "clipboard": True,
-            "file_transfer": True,
-            "screen_sharing": True,
-        }
+        self.streams_enabled = {}
 
-    def enable_stream(self, stream_type: str):
+    def enable_stream(self, stream_type: int):
         self.streams_enabled[stream_type] = True
 
-    def disable_stream(self, stream_type: str):
+    def disable_stream(self, stream_type: int):
         self.streams_enabled[stream_type] = False
 
-    def is_stream_enabled(self, stream_type: str) -> bool:
+    def is_stream_enabled(self, stream_type: int) -> bool:
         return self.streams_enabled.get(stream_type, False)
 
     def get_ssl_config(self) -> dict:

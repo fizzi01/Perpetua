@@ -11,12 +11,12 @@ from AppKit import (NSPasteboard,
                     NSEventTypeMagnify)
 
 
-from ._base import BaseServerMouseListener, BaseServerMouseController, BaseClientMouseController
+from . import _base
 
 def _no_suppress_filter(event_type, event):
     return event
 
-class ServerMouseListener(BaseServerMouseListener):
+class ServerMouseListener(_base.ServerMouseListener):
     """
     It listens for mouse events on macOS systems.
     Its main purpose is to capture mouse movements and clicks. And handle some border cases like cursor reaching screen edges.
@@ -57,14 +57,14 @@ class ServerMouseListener(BaseServerMouseListener):
         else:
             return event
 
-class ServerMouseController(BaseServerMouseController):
+class ServerMouseController(_base.ServerMouseController):
     """
     It controls the mouse on macOS systems.
     Its main purpose is to move the cursor and simulate mouse clicks.
     """
     pass
 
-class ClientMouseController(BaseClientMouseController):
+class ClientMouseController(_base.ClientMouseController):
     """
     It controls the mouse on macOS systems.
     Its main purpose is to move the cursor and simulate mouse clicks.

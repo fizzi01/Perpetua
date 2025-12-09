@@ -4,7 +4,6 @@ from abc import ABC
 from collections import deque
 from typing import Callable, Optional
 from time import time
-from queue import Queue
 from threading import Event
 
 from pynput.mouse import Button, Controller as MouseController
@@ -14,6 +13,7 @@ from event import EventType, MouseEvent, CommandEvent, EventMapper
 from event.EventBus import EventBus
 
 from network.stream.GenericStream import StreamHandler
+from network.stream import StreamType
 
 from utils.logging import Logger
 from utils.screen import Screen
@@ -137,12 +137,21 @@ class EdgeDetector:
             return -1, -1
 
 #TODO: Improve crossing edge detection to avoid false positives during crossing
-class BaseServerMouseListener(ABC):
+class ServerMouseListener(object):
     """
     Base class for server-side mouse listeners.
     Its main purpose is to listen to mouse events and dispatch them
     """
     def __init__(self, event_bus: EventBus, stream_handler: StreamHandler, command_stream: StreamHandler, filtering: bool = True):
+        """
+        Initializes the server mouse listener.
+
+        Args:
+            event_bus (EventBus): The event bus for dispatching events.
+            stream_handler (StreamHandler): The stream handler for mouse events.
+            command_stream (StreamHandler): The stream handler for command events.
+            filtering (bool): Whether to apply platform-specific mouse event filtering.
+        """
 
         self.stream = stream_handler    # Should be a mouse stream
         self.command_stream = command_stream
@@ -219,7 +228,10 @@ class BaseServerMouseListener(ABC):
         Async event handler for when a client connects.
         """
         client_screen = data.get("client_screen")
-        self._active_screens[client_screen] = True
+        # We need this check in order to not dispatch cross-screen events to clients without mouse stream
+        client_streams = data.get("streams", []) # We check if client has mouse stream enabled
+        if client_screen and StreamType.MOUSE in client_streams: # If not, we ignore
+            self._active_screens[client_screen] = True
 
     async def _on_client_disconnected(self, data: dict):
         """
@@ -383,7 +395,7 @@ class BaseServerMouseListener(ABC):
                 self.logger.log(f"Failed to dispatch mouse scroll event -> {e}", Logger.ERROR)
         return True
 
-class BaseServerMouseController(ABC):
+class ServerMouseController(object):
     """
     Base class for server-side mouse controllers.
     Its main purpose is to control the mouse cursor position
@@ -391,6 +403,12 @@ class BaseServerMouseController(ABC):
     """
 
     def __init__(self, event_bus: EventBus):
+        """
+        Initializes the server mouse controller.
+
+        Args:
+            event_bus (EventBus): The event bus for dispatching events.
+        """
         self.event_bus = event_bus
 
         self._screen_size: tuple[int, int] = Screen.get_size()
@@ -430,7 +448,7 @@ class BaseServerMouseController(ABC):
         self._controller.position = (x, y)
 
 #TODO: Optimize edge detection to avoid false positives during crossing
-class BaseClientMouseController(ABC):
+class ClientMouseController(object):
     """
     Async mouse controller for client side.
     Handles mouse movements, clicks, and scrolls based on received events.
@@ -438,6 +456,14 @@ class BaseClientMouseController(ABC):
     """
 
     def __init__(self, event_bus: EventBus, stream_handler: StreamHandler, command_stream: StreamHandler):
+        """
+        Initializes the client mouse controller.
+
+        Args:
+            event_bus (EventBus): The event bus for dispatching events.
+            stream_handler (StreamHandler): The stream handler for mouse events.
+            command_stream (StreamHandler): The stream handler for command events.
+        """
         self.stream = stream_handler  # Should be a mouse stream
         self.command_stream = command_stream  # Should be a command stream
         self.event_bus = event_bus

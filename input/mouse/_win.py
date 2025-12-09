@@ -1,9 +1,9 @@
 """
 Provides mouse input support for Windows systems.
 """
-from ._base import BaseServerMouseListener, BaseClientMouseController, BaseServerMouseController
+from ._base import ServerMouseListener, ClientMouseController, ServerMouseController
 
-class ServerMouseListener(BaseServerMouseListener):
+class ServerMouseListener(ServerMouseListener):
     """
     It listens for mouse events on Windows systems.
     Its main purpose is to capture mouse movements and clicks. And handle some border cases like cursor reaching screen edges.
@@ -27,14 +27,14 @@ class ServerMouseListener(BaseServerMouseListener):
 
         return True
 
-class ServerMouseController(BaseServerMouseController):
+class ServerMouseController(ServerMouseController):
     """
     It controls mouse events on Windows systems.
     Its main purpose is to move the mouse cursor and perform clicks.
     """
     pass
 
-class ClientMouseController(BaseClientMouseController):
+class ClientMouseController(ClientMouseController):
     """
     It controls mouse events on Windows systems.
     Its main purpose is to move the mouse cursor and perform clicks.

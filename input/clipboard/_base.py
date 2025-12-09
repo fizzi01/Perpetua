@@ -22,7 +22,7 @@ class ClipboardType(enum.Enum):
     EMPTY = "empty"
     ERROR = "error"
 
-class BaseClipboard:
+class Clipboard:
     """
     Efficient async polling mechanism to monitor clipboard changes.
     Since system APIs (especially on macOS) don't provide event-based
@@ -283,20 +283,19 @@ class BaseClipboard:
             self.logger.error(f"Error writing to clipboard (debug) -> {e}")
             return False
 
-
-class BaseClipboardListener:
+class ClipboardListener:
     """
     Base clipboard listener that integrates with an event bus and stream handlers.
     Listens for clipboard changes and dispatches events to connected clients.
     """
-    def __init__(self, event_bus: EventBus, stream_handler: StreamHandler, command_stream: StreamHandler, clipboard = BaseClipboard):
+    def __init__(self, event_bus: EventBus, stream_handler: StreamHandler, command_stream: StreamHandler, clipboard = Clipboard):
         """
         Initialize the clipboard listener.
         Args:
             event_bus: Event bus for event handling
             stream_handler: Stream handler to send clipboard events
             command_stream: Command stream handler
-            clipboard: Clipboard monitoring class (default: BaseClipboard)
+            clipboard: Clipboard monitoring class (default to Os-specific Clipboard)
         """
         self.event_bus = event_bus
         self.stream_handler = stream_handler # Can be a broadcast stream handler or unidirectional
@@ -380,7 +379,7 @@ class BaseClipboardListener:
             # Send clipboard event to all connected clients -> Sync server clipboard with clients (if server)
             await self.stream_handler.send(event)
 
-    def get_clipboard_context(self) -> BaseClipboard:
+    def get_clipboard_context(self) -> Clipboard:
         """
         Get the clipboard context.
         Returns:
@@ -388,19 +387,18 @@ class BaseClipboardListener:
         """
         return self.clipboard
 
-
-class BaseClipboardController:
+class ClipboardController:
     """
     Base clipboard controller that handles incoming clipboard events from clients.
     Updates the local clipboard based on received events.
     """
-    def __init__(self, event_bus: EventBus, stream_handler: StreamHandler, clipboard: Optional[BaseClipboard] = None):
+    def __init__(self, event_bus: EventBus, stream_handler: StreamHandler, clipboard: Optional[Clipboard] = None):
         """
         Initialize the clipboard controller.
         Args:
             event_bus: Event bus for event handling
             stream_handler: Stream handler to receive clipboard events
-            clipboard: Clipboard monitoring instance (default: BaseClipboard)
+            clipboard: Clipboard monitoring instance (default to Os-specific Clipboard)
         """
         self.event_bus = event_bus
         self.stream_handler = stream_handler

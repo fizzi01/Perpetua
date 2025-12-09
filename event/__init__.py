@@ -5,7 +5,7 @@ from typing import Optional
 
 from network.protocol.message import ProtocolMessage, MessageType
 
-
+#TODO: Standardize event payloads
 class EventType(IntEnum):
     """
     Events type to subscribe to and dispatch.

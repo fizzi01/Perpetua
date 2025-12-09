@@ -9,7 +9,7 @@ from multiprocessing import Queue
 from multiprocessing.connection import Connection
 
 from event.EventBus import EventBus
-from input.cursor._base import BaseCursorHandlerWindow, BaseCursorHandlerWorker
+from input.cursor import _base
 from network.stream.GenericStream import StreamHandler
 
 class DebugOverlayPanel(wx.Panel):
@@ -54,7 +54,7 @@ class DebugOverlayPanel(wx.Panel):
         self.SetBackgroundColour(wx.Colour(10, 10, 10))
 
 
-class CursorHandlerWindow(BaseCursorHandlerWindow):
+class CursorHandlerWindow(_base.CursorHandlerWindow):
 
     def __init__(self, command_queue: Queue, result_queue: Queue, mouse_conn: Connection, debug: bool = False):
         super().__init__(command_queue, result_queue, mouse_conn, debug, style=wx.STAY_ON_TOP | wx.FRAME_NO_TASKBAR | wx.NO_BORDER)
@@ -134,7 +134,7 @@ class CursorHandlerWindow(BaseCursorHandlerWindow):
             pass
 
 
-class CursorHandlerWorker(BaseCursorHandlerWorker):
+class CursorHandlerWorker(_base.CursorHandlerWorker):
     def __init__(self, event_bus: EventBus, stream: Optional[StreamHandler] = None, debug: bool = False,
                  window_class=CursorHandlerWindow):
         super().__init__(event_bus, stream, debug, window_class)

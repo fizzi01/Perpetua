@@ -7,10 +7,11 @@ from AppKit import (NSPasteboard,
 from event.EventBus import EventBus
 from network.stream.GenericStream import StreamHandler
 
-from ._base import BaseClipboardListener, BaseClipboard, BaseClipboardController, ClipboardType
+from . import _base
+from ._base import ClipboardType
 
 
-class Clipboard(BaseClipboard):
+class Clipboard(_base.Clipboard):
 
     def __init__(self, on_change: Optional[Callable[[str, ClipboardType], Any]] = None, poll_interval: float = 0.5,
                  content_types: Optional[list[ClipboardType]] = None):
@@ -55,11 +56,11 @@ class Clipboard(BaseClipboard):
         except OSError:
             return None
 
-class ClipboardListener(BaseClipboardListener):
+class ClipboardListener(_base.ClipboardListener):
     def __init__(self, event_bus: EventBus, stream_handler: StreamHandler, command_stream: StreamHandler):
-        super().__init__(event_bus, stream_handler, command_stream, DarwinClipboard) #We impose the clipboard core class here
+        super().__init__(event_bus, stream_handler, command_stream, Clipboard) #We impose the clipboard core class here
 
 
-class ClipboardController(BaseClipboardController):
-    def __init__(self, event_bus: EventBus, stream_handler: StreamHandler, clipboard: BaseClipboard):
+class ClipboardController(_base.ClipboardController):
+    def __init__(self, event_bus: EventBus, stream_handler: StreamHandler, clipboard: Clipboard):
         super().__init__(event_bus, stream_handler, clipboard)
