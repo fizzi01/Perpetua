@@ -1,7 +1,6 @@
 """
 Provides logic to handle server-side socket connections using asyncio.
 Handles SSL and NON-SSL connections, heartbeats, and client management.
-Optimized for high performance with MessageExchange asyncio.
 """
 import asyncio
 
@@ -35,8 +34,8 @@ class AsyncServerConnectionHandler:
         keyfile (str): SSL key file path.
     """
 
-    def __init__(self, connected_callback: Optional[Callable[['ClientObj'], Any]] = None,
-                 disconnected_callback: Optional[Callable[['ClientObj'], Any]] = None,
+    def __init__(self, connected_callback: Optional[Callable[['ClientObj', list], Any]] = None,
+                 disconnected_callback: Optional[Callable[['ClientObj', list], Any]] = None,
                  host: str = "0.0.0.0", port: int = 5001,
                  heartbeat_interval: int = 2,
                  whitelist: Optional[ClientsManager] = None,
@@ -124,9 +123,9 @@ class AsyncServerConnectionHandler:
                 if self.disconnected_callback:
                     try:
                         if asyncio.iscoroutinefunction(self.disconnected_callback):
-                            await self.disconnected_callback(client)
+                            await self.disconnected_callback(client, [])
                         else:
-                            self.disconnected_callback(client)
+                            self.disconnected_callback(client, [])
                     except Exception as e:
                         self.logger.log(f"Error in disconnected callback: {e}", Logger.ERROR)
 
@@ -186,9 +185,9 @@ class AsyncServerConnectionHandler:
                 if self.connected_callback:
                     try:
                         if asyncio.iscoroutinefunction(self.connected_callback):
-                            await self.connected_callback(client_obj)
+                            await self.connected_callback(client_obj, client_obj.conn_socket.get_available_stream_types()) #type: ignore
                         else:
-                            self.connected_callback(client_obj)
+                            self.connected_callback(client_obj,client_obj.conn_socket.get_available_stream_types()) #type: ignore
                     except Exception as e:
                         self.logger.log(f"Error in connected callback: {e}", Logger.ERROR)
 
@@ -395,9 +394,9 @@ class AsyncServerConnectionHandler:
                             if self.disconnected_callback:
                                 try:
                                     if asyncio.iscoroutinefunction(self.disconnected_callback):
-                                        await self.disconnected_callback(client)
+                                        await self.disconnected_callback(client, [])
                                     else:
-                                        self.disconnected_callback(client)
+                                        self.disconnected_callback(client, [])
                                 except Exception as e:
                                     self.logger.log(f"Error in disconnected callback: {e}", Logger.ERROR)
                         except Exception as e:

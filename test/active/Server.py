@@ -126,20 +126,20 @@ class ActiveServer:
             stream_handler=self.clipboard_stream_handler
         )
 
-    async def on_client_connected(self, client: ClientObj):
+    async def on_client_connected(self, client: ClientObj, streams: list[int]):
         """Async callback for client connection"""
         client_pos = client.screen_position
         await self.event_bus.dispatch(
             event_type=EventType.CLIENT_CONNECTED,
-            data={"client_screen": client_pos}
+            data={"client_screen": client_pos, "streams": streams}
         )
 
-    async def on_client_disconnected(self, client: ClientObj):
+    async def on_client_disconnected(self, client: ClientObj, streams: list[int]):
         """Async callback for client disconnection"""
         client_pos = client.screen_position
         await self.event_bus.dispatch(
             event_type=EventType.CLIENT_DISCONNECTED,
-            data={"client_screen": client_pos}
+            data={"client_screen": client_pos, "streams": streams}
         )
 
     async def start(self) -> bool:

@@ -42,6 +42,10 @@ class AsyncClientConnection:
         """Check if stream type exists"""
         return stream_type in self.writers
 
+    def get_available_stream_types(self) -> list[int]:
+        """Get list of available stream types"""
+        return list(self.writers.keys())
+
     def is_open(self) -> bool:
         """
         Check if connection is still open by checking if any writer is not closing.

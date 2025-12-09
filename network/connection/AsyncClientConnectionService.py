@@ -1,6 +1,5 @@
 """
 Async Client Connection Handler using asyncio.
-Optimized for MessageExchange asyncio compatibility.
 """
 import asyncio
 import ssl
