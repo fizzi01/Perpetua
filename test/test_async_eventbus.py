@@ -6,7 +6,7 @@ import time
 from event.EventBus import AsyncEventBus
 from utils.logging import Logger
 
-Logger(stdout=print, logging=True)
+Logger()
 
 # Test event types
 EVENT_TEST_1 = 1

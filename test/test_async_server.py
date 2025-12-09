@@ -12,7 +12,7 @@ async def test_server_startup_shutdown():
     print("=== Test Server Startup/Shutdown ===\n")
 
     # Setup logger
-    Logger(stdout=print, logging=True)
+    Logger()
 
     # Setup whitelist
     clients = ClientsManager()
@@ -27,11 +27,11 @@ async def test_server_startup_shutdown():
     connected_clients = []
     disconnected_clients = []
 
-    async def on_connected(client):
+    async def on_connected(client, streams):
         connected_clients.append(client)
         print(f"✓ Client connected: {client.ip_address}")
 
-    async def on_disconnected(client):
+    async def on_disconnected(client, streams):
         disconnected_clients.append(client)
         print(f"✓ Client disconnected: {client.ip_address}")
 
@@ -66,7 +66,7 @@ async def test_server_multiple_start_stop():
     """Test avvio/arresto multipli"""
     print("\n=== Test Multiple Start/Stop ===\n")
 
-    Logger(stdout=print, logging=True)
+    Logger()
 
     clients = ClientsManager()
     handler = AsyncServerConnectionHandler(
@@ -99,13 +99,13 @@ async def test_heartbeat_monitoring():
     """Test del monitoraggio heartbeat"""
     print("\n=== Test Heartbeat Monitoring ===\n")
 
-    Logger(stdout=print, logging=True)
+    Logger()
 
     # Setup
     clients = ClientsManager()
     disconnected_clients = []
 
-    async def on_disconnected(client):
+    async def on_disconnected(client, streams):
         disconnected_clients.append(client)
         print(f"✓ Heartbeat detected disconnection: {client.ip_address}")
 
@@ -138,7 +138,7 @@ async def test_callback_compatibility():
     """Test compatibilità callback sync e async"""
     print("\n=== Test Callback Compatibility ===\n")
 
-    Logger(stdout=print, logging=True)
+    Logger()
 
     clients = ClientsManager()
 
@@ -146,11 +146,11 @@ async def test_callback_compatibility():
     sync_called = []
     async_called = []
 
-    def sync_callback(client):
+    def sync_callback(client,strems):
         sync_called.append(client)
         print(f"✓ Sync callback called for {client.ip_address}")
 
-    async def async_callback(client):
+    async def async_callback(client,streams):
         async_called.append(client)
         print(f"✓ Async callback called for {client.ip_address}")
 

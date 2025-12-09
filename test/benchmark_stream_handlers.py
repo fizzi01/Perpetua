@@ -27,7 +27,7 @@ from network.data.MessageExchange import MessageExchangeConfig
 from network.stream import StreamType
 from utils.logging import Logger
 
-Logger(stdout=print, logging=False)
+Logger()
 logging.basicConfig(level=logging.DEBUG)
 # ============================================================================
 # STATISTICS COLLECTOR
@@ -142,7 +142,7 @@ class StreamHandlerBenchmark:
         self.client_ready = asyncio.Event()
         self.connection_established = asyncio.Event()
 
-        Logger(stdout=print, logging=False)
+        Logger()
 
     async def setup_server(self):
         """Setup server with stream handler"""
@@ -157,7 +157,7 @@ class StreamHandlerBenchmark:
         self.server_clients.add_client(test_client)
 
         # Server connection handler
-        async def server_on_connected(client: ClientObj):
+        async def server_on_connected(client: ClientObj, streams: list):
             print(f"[Server] Client connected: {client.ip_address}")
 
             # Create stream handler for this client

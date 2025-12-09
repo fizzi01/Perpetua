@@ -72,7 +72,7 @@ async def __main():
 
     eb = EventBus()
     mock_stream = MockStreamHandler()
-    controller = CursorHandlerWorker(eb, stream=mock_stream, debug=False)
+    controller = CursorHandlerWorker(eb, stream=mock_stream, debug=True)
 
     try:
         # Avvia la window

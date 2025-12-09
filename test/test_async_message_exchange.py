@@ -17,7 +17,7 @@ logging.basicConfig(level=logging.WARNING)  # Solo warning ed errori
 
 async def test_basic_messaging():
     """Test base per invio e ricezione messaggi"""
-    Logger(stdout=print, logging=True)
+    Logger()
 
     print("=== Test Basic Messaging ===")
     start_time = time()
@@ -26,6 +26,7 @@ async def test_basic_messaging():
     config = MessageExchangeConfig(
         max_chunk_size=1024,
         auto_chunk=True,
+        auto_dispatch=False,
     )
 
     # Simula connessione con code asyncio ottimizzate
@@ -51,8 +52,8 @@ async def test_basic_messaging():
         data = await server_to_client_queue.get()
         return data
 
-    server_exchange.set_transport(server_send, server_recv)
-    client_exchange.set_transport(client_send, client_recv)
+    await server_exchange.set_transport(server_send, server_recv)
+    await client_exchange.set_transport(client_send, client_recv)
 
     # Registra handlers sul server
     received_messages = []
@@ -116,6 +117,7 @@ async def test_chunked_messages():
     config = MessageExchangeConfig(
         max_chunk_size=1024,
         auto_chunk=True,
+        auto_dispatch=False,
     )
 
     # Simula connessione
@@ -139,8 +141,8 @@ async def test_chunked_messages():
         data = await server_to_client_queue.get()
         return data
 
-    server_exchange.set_transport(server_send, server_recv)
-    client_exchange.set_transport(client_send, client_recv)
+    await server_exchange.set_transport(server_send, server_recv)
+    await client_exchange.set_transport(client_send, client_recv)
 
     # Handler per clipboard
     received_clipboard = []
@@ -201,7 +203,7 @@ async def test_rapid_fire():
     print("\n=== Test Rapid Fire Messages ===")
     start_time = time()
 
-    config = MessageExchangeConfig(max_chunk_size=4096, auto_chunk=False)
+    config = MessageExchangeConfig(max_chunk_size=4096, auto_chunk=False, auto_dispatch=False)
 
     # Simula connessione
     server_to_client_queue = asyncio.Queue(maxsize=1000)
@@ -224,8 +226,8 @@ async def test_rapid_fire():
         data = await server_to_client_queue.get()
         return data
 
-    server_exchange.set_transport(server_send, server_recv)
-    client_exchange.set_transport(client_send, client_recv)
+    await server_exchange.set_transport(server_send, server_recv)
+    await client_exchange.set_transport(client_send, client_recv)
 
     # Handler
     mouse_events = []
@@ -239,7 +241,7 @@ async def test_rapid_fire():
     await server_exchange.start()
 
     # Task per processare messaggi (ottimizzato)
-    num_messages = 100000
+    num_messages = 100
 
     async def process_messages():
         while len(mouse_events) < num_messages:

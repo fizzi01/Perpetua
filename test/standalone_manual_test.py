@@ -25,7 +25,7 @@ class ManualTestRunner:
     """Runner per test manuali senza unittest."""
 
     def __init__(self):
-        self.logger = Logger(stdout=print, logging=True)
+        self.logger = Logger()
         self.logger.set_level(Logger.DEBUG)
         self.host = "127.0.0.1"
         self.base_port = 5051
