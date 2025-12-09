@@ -145,7 +145,7 @@ class Clipboard:
         """
         Main polling loop that checks for clipboard changes.
         """
-        self.logger.info("Clipboard polling started")
+        self.logger.debug("Clipboard polling started")
 
         # Get initial state
         initial_content, _ = await self._get_clipboard_content()
@@ -179,11 +179,11 @@ class Clipboard:
                 await asyncio.sleep(self.poll_interval)
 
             except asyncio.CancelledError:
-                self.logger.info("Clipboard polling cancelled")
+                self.logger.debug("Clipboard polling cancelled")
                 self._running = False
                 break
             except Exception as e:
-                self.logger.error(f"Error in clipboard poll loop -> {e}")
+                self.logger.debug(f"Error in clipboard poll loop -> {e}")
                 # Continue polling even on error
                 await asyncio.sleep(self.poll_interval)
 
@@ -302,6 +302,8 @@ class ClipboardListener:
         self.command_stream = command_stream
 
         self._active_screens = {}
+        # Internal flag to track if we should be listening (When at least one client is active or connected)
+        # This flag should not be set directly, but via event handlers
         self._listening = False
 
         self.logger = Logger()
@@ -319,6 +321,8 @@ class ClipboardListener:
         Start the clipboard listener.
         """
         # We start the listener only when there is at least one connected client
+        if not self.clipboard.is_listening() and self._listening: # We resume listening if needed
+            await self.clipboard.start()
         self.logger.log("Clipboard listener started.", Logger.DEBUG)
         return True
 
@@ -330,6 +334,14 @@ class ClipboardListener:
             await self.clipboard.stop()
 
         self.logger.log("Clipboard listener stopped", Logger.DEBUG)
+
+    def is_alive(self) -> bool:
+        """
+        Check if the clipboard listener is active.
+        Returns:
+            True if clipboard listener is running
+        """
+        return self.clipboard.is_listening() and self._listening
 
     async def _on_client_active(self, data: dict):
         """
@@ -343,7 +355,7 @@ class ClipboardListener:
         """
         Async event handler for when a client becomes inactive.
         """
-        if not self.clipboard.is_listening():
+        if self.clipboard.is_listening():
             await self.clipboard.stop()
         self._listening = False
 

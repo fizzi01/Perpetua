@@ -72,6 +72,12 @@ class StreamHandler:
         self.logger.log(f"StreamHandler for {self.stream_type} stopped.", Logger.DEBUG)
         return True
 
+    def is_active(self) -> bool:
+        """
+        Returns whether the stream handler is active.
+        """
+        return self._active
+
     async def send(self, data: Any):
         """
         Queues data to be sent over the stream.

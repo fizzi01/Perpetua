@@ -319,7 +319,7 @@ class CursorHandlerWorker(object):
         # Unidirectional pipe for mouse movement
         self.mouse_conn_rec, self.mouse_conn_send = Pipe(duplex=False)
         self.process = None
-        self.is_running = False
+        self._is_running = False
         self._mouse_data_task = None  # Async task instead of thread
 
         self._active_client = None
@@ -352,7 +352,7 @@ class CursorHandlerWorker(object):
 
     def start(self, wait_ready=True, timeout=1) -> bool:
         """Avvia il processo della window"""
-        if self.is_running:
+        if self._is_running:
             return True
 
         self.process = Process(target=_CursorHandlerProcess(command_queue=self.command_queue,
@@ -361,7 +361,7 @@ class CursorHandlerWorker(object):
                                                             window_class=self.window_class,
                                                             debug=self._debug).run)
         self.process.start()
-        self.is_running = True
+        self._is_running = True
 
         if self.stream is not None:
             # Start async task for mouse data listener
@@ -390,7 +390,7 @@ class CursorHandlerWorker(object):
 
     async def stop(self, timeout=2):
         """Ferma il processo della window e cleanup async task"""
-        if not self.is_running:
+        if not self._is_running:
             return
 
         # Cancel async task if running
@@ -409,7 +409,7 @@ class CursorHandlerWorker(object):
             loop = asyncio.get_running_loop()
             await loop.run_in_executor(None, self.process.join, timeout)
             if self.process.is_alive():
-                self.process.terminate()
+                self.process.termienabnate()
                 await loop.run_in_executor(None, self.process.join, 1)
 
         # Close queues
@@ -419,9 +419,13 @@ class CursorHandlerWorker(object):
         self.mouse_conn_send.close()
         self.mouse_conn_rec.close()
 
-        self.is_running = False
+        self._is_running = False
 
         self.logger.log("CursorHandlerWorker stopped", Logger.DEBUG)
+
+    def is_alive(self) -> bool:
+        """Controlla se il processo della window è in esecuzione"""
+        return self._is_running and self.process is not None and self.process.is_alive()
 
     async def _mouse_data_listener(self):
         """
@@ -430,7 +434,7 @@ class CursorHandlerWorker(object):
         """
         loop = asyncio.get_running_loop()
 
-        while self.is_running:
+        while self._is_running:
             try:
                 # Poll non-bloccante
                 has_data = await loop.run_in_executor(None, self.mouse_conn_rec.poll, 0.0000001)
@@ -456,7 +460,7 @@ class CursorHandlerWorker(object):
 
     def send_command(self, command):
         """Invia un comando alla window"""
-        if not self.is_running:
+        if not self._is_running:
             raise RuntimeError("Window process not running")
         self.command_queue.put(command)
 

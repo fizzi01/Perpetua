@@ -213,9 +213,11 @@ class AsyncClientConnectionHandler:
                         # Connection failed
                         error_count += 1
                         if error_count >= self.max_errors:
-                            self.logger.log("Max connection errors reached, stopping", Logger.ERROR)
-                            self._running = False
-                            break
+                            self.logger.log("Max connection errors reached, going sleep mode", Logger.ERROR)
+                            await asyncio.sleep(5) #TODO: Implement backoff strategy
+                            # Optionally stop trying to reconnect
+                            # self._running = False
+                            # break
 
                         await asyncio.sleep(self.wait)
                         continue

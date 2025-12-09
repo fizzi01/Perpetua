@@ -110,24 +110,7 @@ class AsyncServerConnectionHandler:
 
         # Disconnetti tutti i client
         for client in self.clients.clients:
-            if client.is_connected and client.conn_socket is not None:
-                try:
-                    #await client.conn_socket.close()
-                    await client.conn_socket.wait_closed()
-                except Exception as e:
-                    self.logger.log(f"Error disconnecting client {client.ip_address}: {e}", Logger.ERROR)
-                client.is_connected = False
-                client.conn_socket = None
-                self.clients.update_client(client)
-
-                if self.disconnected_callback:
-                    try:
-                        if asyncio.iscoroutinefunction(self.disconnected_callback):
-                            await self.disconnected_callback(client, [])
-                        else:
-                            self.disconnected_callback(client, [])
-                    except Exception as e:
-                        self.logger.log(f"Error in disconnected callback: {e}", Logger.ERROR)
+            await self.force_disconnect_client(client)
 
         # Chiudi il server
         if self.server:
@@ -136,6 +119,30 @@ class AsyncServerConnectionHandler:
 
         self.logger.log("AsyncServer stopped.", Logger.INFO)
         return True
+
+    async def force_disconnect_client(self, client: ClientObj):
+        """
+        Forced disconnection of a specific client.
+        """
+        if client.is_connected and client.conn_socket is not None:
+            try:
+                #await client.conn_socket.close()
+                await client.conn_socket.wait_closed() # type: ignore
+                self.logger.log(f"Force disconnected client {client.ip_address}", Logger.INFO)
+            except Exception as e:
+                self.logger.log(f"Error force disconnecting client {client.ip_address}: {e}", Logger.ERROR)
+            client.is_connected = False
+            client.conn_socket = None
+            self.clients.update_client(client)
+
+            if self.disconnected_callback:
+                try:
+                    if asyncio.iscoroutinefunction(self.disconnected_callback):
+                        await self.disconnected_callback(client, [])
+                    else:
+                        self.disconnected_callback(client, [])
+                except Exception as e:
+                    self.logger.log(f"Error in disconnected callback: {e}", Logger.ERROR)
 
     async def _handle_client(self, reader: asyncio.StreamReader, writer: asyncio.StreamWriter):
         """Gestisce una nuova connessione client (handshake o stream aggiuntivo)"""
@@ -194,7 +201,7 @@ class AsyncServerConnectionHandler:
                 self.logger.log(f"Client {addr[0]} connected and handshake completed.", Logger.INFO)
             else:
                 self.logger.log(f"Handshake failed for client {addr[0]}. Closing connection.", Logger.WARNING)
-                writer.close()
+                #writer.close()
                 await writer.wait_closed()
                 client_obj.conn_socket = None
                 client_obj.is_connected = False
@@ -374,6 +381,11 @@ class AsyncServerConnectionHandler:
 
                             await client_msg_exchange.set_transport(async_send, None)
                             await client_msg_exchange.send_custom_message(message_type="HEARTBEAT", payload={})
+
+                            # Check eof on reader
+                            command_reader = client.conn_socket.get_reader(StreamType.COMMAND)
+                            if command_reader.at_eof():
+                                raise ConnectionResetError
 
                             # Update active time
                             client.connection_time += self.heartbeat_interval

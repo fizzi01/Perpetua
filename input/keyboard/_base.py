@@ -88,8 +88,7 @@ class ServerKeyboardListener(object):
             except Exception:
                 pass
 
-        self._listener = KeyboardListener(on_press=self.on_press, on_release=self.on_release,
-                                          **self._filter_args)
+        self._listener = None
 
         self.logger = Logger()
 
@@ -105,6 +104,13 @@ class ServerKeyboardListener(object):
         self.event_bus.subscribe(event_type=EventType.CLIENT_CONNECTED, callback=self._on_client_connected)
         self.event_bus.subscribe(event_type=EventType.CLIENT_DISCONNECTED, callback=self._on_client_disconnected)
 
+    def _create_listener(self) -> KeyboardListener:
+        """
+        Creates a new keyboard listener instance.
+        """
+        return KeyboardListener(on_press=self.on_press, on_release=self.on_release,
+                                          **self._filter_args)
+
     def start(self) -> bool:
         """
         Starts the mouse listener.
@@ -118,7 +124,9 @@ class ServerKeyboardListener(object):
                     "Warning: No event loop running when starting keyboard listener. Async operations may fail.",
                     Logger.WARNING)
 
-        self._listener.start()
+        if not self.is_alive():
+            self._listener = self._create_listener()
+            self._listener.start()
         self.logger.log("Server keyboard listener started.", Logger.DEBUG)
         return True
 
@@ -133,7 +141,7 @@ class ServerKeyboardListener(object):
         return True
 
     def is_alive(self):
-        return self._listener.is_alive()
+        return self._listener.is_alive() if self._listener else False
 
     async def _on_client_connected(self, data: dict):
         """

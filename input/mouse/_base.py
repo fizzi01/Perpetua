@@ -176,8 +176,7 @@ class ServerMouseListener(object):
                 pass
 
 
-        self._listener = MouseListener(on_move=self.on_move, on_scroll=self.on_scroll, on_click=self.on_click,
-                                       **self._filter_args)
+        self._listener = None
 
         # Queue for mouse movements history to detect screen edge reaching
         self._movement_history = deque(maxlen=5)
@@ -196,6 +195,13 @@ class ServerMouseListener(object):
         self.event_bus.subscribe(event_type=EventType.CLIENT_CONNECTED, callback=self._on_client_connected)
         self.event_bus.subscribe(event_type=EventType.CLIENT_DISCONNECTED, callback=self._on_client_disconnected)
 
+    def _create_listener(self) -> MouseListener:
+        """
+        Creates a new mouse listener instance.
+        """
+        return MouseListener(on_move=self.on_move, on_scroll=self.on_scroll, on_click=self.on_click,
+                                       **self._filter_args)
+
     def start(self) -> bool:
         """
         Starts the mouse listener.
@@ -207,7 +213,9 @@ class ServerMouseListener(object):
             except RuntimeError:
                 self.logger.log("Warning: No event loop running when starting mouse listener. Async operations may fail.", Logger.WARNING)
 
-        self._listener.start()
+        if not self.is_alive():
+            self._listener = self._create_listener()
+            self._listener.start()
         self.logger.log("Server mouse listener started.", Logger.DEBUG)
         return True
 
@@ -221,7 +229,7 @@ class ServerMouseListener(object):
         return True
 
     def is_alive(self):
-        return self._listener.is_alive()
+        return self._listener.is_alive() if self._listener else False
 
     async def _on_client_connected(self, data: dict):
         """
