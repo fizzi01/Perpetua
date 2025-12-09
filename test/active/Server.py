@@ -15,7 +15,7 @@ from model.ClientObj import ClientObj, ClientsManager
 from event.EventBus import AsyncEventBus  # Changed to AsyncEventBus
 
 from network.connection.AsyncServerConnectionService import AsyncServerConnectionHandler  # Changed to async
-from network.stream.ServerCustomStream import UnidirectionalStreamHandler, BidirectionalStreamHandler, BroadcastStreamHandler
+from network.stream.ServerCustomStream import UnidirectionalStreamHandler, BidirectionalStreamHandler, MulticastStreamHandler
 from network.stream import StreamType
 
 from command import CommandHandler
@@ -67,7 +67,7 @@ class ActiveServer:
         )
         self._stream_handlers.append(self.keyboard_stream_handler)
 
-        self.clipboard_stream_handler = BroadcastStreamHandler(
+        self.clipboard_stream_handler = MulticastStreamHandler(
             stream_type=StreamType.CLIPBOARD,
             clients=self.clients_manager,
             event_bus=self.event_bus,

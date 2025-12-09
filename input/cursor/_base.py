@@ -409,7 +409,7 @@ class CursorHandlerWorker(object):
             loop = asyncio.get_running_loop()
             await loop.run_in_executor(None, self.process.join, timeout)
             if self.process.is_alive():
-                self.process.termienabnate()
+                self.process.terminate()
                 await loop.run_in_executor(None, self.process.join, 1)
 
         # Close queues

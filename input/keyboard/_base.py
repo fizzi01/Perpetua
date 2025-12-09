@@ -325,6 +325,12 @@ class ClientKeyboardController(object):
 
             self.logger.log("Client keyboard controller async worker stopped.", Logger.DEBUG)
 
+    def is_running(self) -> bool:
+        """
+        Checks if the async mouse controller worker task is running.
+        """
+        return self._running and self._worker_task is not None and not self._worker_task.done()
+
     async def _run_worker(self):
         """
         Async worker task to handle mouse events.

@@ -264,7 +264,7 @@ class BidirectionalStreamHandler(StreamHandler):
 
 #TODO: Rename to MulticastStreamHandler?
 #TODO: Similar to BidirectionalStreamHandler, maybe refactor common code into a base class or BidirectionalStreamHandler too
-class BroadcastStreamHandler(StreamHandler):
+class MulticastStreamHandler(StreamHandler):
     """
     A custom async bidirectional stream handler for broadcasting messages to all connected clients,
     and receiving messages from any client.

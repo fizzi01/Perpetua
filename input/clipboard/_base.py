@@ -187,7 +187,7 @@ class Clipboard:
                 # Continue polling even on error
                 await asyncio.sleep(self.poll_interval)
 
-        self.logger.info("Clipboard polling stopped")
+        self.logger.debug("Clipboard polling stopped")
 
     async def start(self):
         """

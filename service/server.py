@@ -15,7 +15,7 @@ from network.connection.AsyncServerConnectionService import AsyncServerConnectio
 from network.stream.ServerCustomStream import (
     UnidirectionalStreamHandler,
     BidirectionalStreamHandler,
-    BroadcastStreamHandler
+    MulticastStreamHandler
 )
 from network.stream import StreamType, GenericStream
 from command import CommandHandler
@@ -318,7 +318,7 @@ class Server:
         )
 
         # Clipboard stream
-        self._stream_handlers[StreamType.CLIPBOARD] = BroadcastStreamHandler(
+        self._stream_handlers[StreamType.CLIPBOARD] = MulticastStreamHandler(
                 stream_type=StreamType.CLIPBOARD,
                 clients=self.clients_manager,
                 event_bus=self.event_bus,
@@ -481,7 +481,7 @@ class Server:
         # Get or create stream handler
         clipboard_stream = self._stream_handlers.get(StreamType.CLIPBOARD)
         if not clipboard_stream:
-            clipboard_stream = BroadcastStreamHandler(
+            clipboard_stream = MulticastStreamHandler(
                 stream_type=StreamType.CLIPBOARD,
                 clients=self.clients_manager,
                 event_bus=self.event_bus,

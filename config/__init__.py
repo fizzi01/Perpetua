@@ -58,5 +58,17 @@ class ServerConfig:
 class ClientConfig:
     """
     Client configuration settings
-    Exposes API to handle: server connection info, logging levels.
+    Exposes API to handle: server connection info, logging levels, streams enabled.
     """
+    def __init__(self, app_config: ApplicationConfig = ApplicationConfig()):
+        self.app_config = app_config
+        self.streams_enabled = {}
+
+    def enable_stream(self, stream_type: int):
+        self.streams_enabled[stream_type] = True
+
+    def disable_stream(self, stream_type: int):
+        self.streams_enabled[stream_type] = False
+
+    def is_stream_enabled(self, stream_type: int) -> bool:
+        return self.streams_enabled.get(stream_type, False)
