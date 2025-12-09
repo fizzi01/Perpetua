@@ -409,6 +409,12 @@ class AsyncClientConnectionHandler:
 
                 # Send heartbeat message
                 await self._msg_exchange.send_custom_message(message_type="HEARTBEAT", payload={})
+                # Get reader from client connection and check if eof is reached
+                client = self.clients.get_client()
+                if client.conn_socket is not None and isinstance(client.conn_socket, AsyncClientConnection):
+                    command_reader = client.conn_socket.get_reader(StreamType.COMMAND)
+                    if command_reader.at_eof():
+                        raise ConnectionResetError("Command stream EOF reached")
 
 
             except asyncio.CancelledError:
