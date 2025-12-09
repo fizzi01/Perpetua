@@ -341,25 +341,24 @@ class Server:
             stream=command_stream
         )
 
-        # Mouse components
-        # if self.is_stream_enabled(StreamType.MOUSE):
+        # Initialize all stream components (they will start only if enabled)
         await self._enable_mouse_stream()
-
-        # Keyboard components
-        #if self.is_stream_enabled(StreamType.KEYBOARD):
         await self._enable_keyboard_stream()
-
-        # Clipboard components
-        #if self.is_stream_enabled(StreamType.CLIPBOARD):
         await self._enable_clipboard_stream()
 
     # ==================== Runtime Enable/Disable Methods ====================
 
+    async def _ensure_stream_active(self, stream_type: int, stream_handler) -> None:
+        """Helper: Ensure stream handler is started if enabled"""
+        is_enabled = self.is_stream_enabled(stream_type)
+        if is_enabled and not stream_handler.is_active():
+            if not await stream_handler.start():
+                raise RuntimeError(f"Failed to start stream handler for {stream_type}")
+
     async def _enable_mouse_stream(self):
         """Enable mouse stream and components at runtime"""
+        # Get or create stream handler
         mouse_stream = self._stream_handlers.get(StreamType.MOUSE)
-
-        # Create stream handler if not exists
         if not mouse_stream:
             mouse_stream = UnidirectionalStreamHandler(
                 stream_type=StreamType.MOUSE,
@@ -368,82 +367,71 @@ class Server:
                 handler_id="ServerMouseStreamHandler",
                 sender=True
             )
-            if not await mouse_stream.start():
-                raise RuntimeError("Failed to start mouse stream handler")
-
             self._stream_handlers[StreamType.MOUSE] = mouse_stream
-        elif not mouse_stream.is_active():
-            if not await mouse_stream.start():
-                raise RuntimeError("Failed to start mouse stream handler")
 
-        # Create and start components if not exists
+        # Start stream if enabled
+        await self._ensure_stream_active(StreamType.MOUSE, mouse_stream)
+
+        is_enabled = self.is_stream_enabled(StreamType.MOUSE)
         command_stream = self._stream_handlers[StreamType.COMMAND]
-        if 'cursor_handler' not in self._components:
+
+        # Cursor Handler - manages cursor visibility
+        cursor_handler = self._components.get('cursor_handler')
+        if not cursor_handler:
             cursor_handler = CursorHandlerWorker(
                 event_bus=self.event_bus,
                 stream=mouse_stream,
                 debug=False
             )
-            if self.is_stream_enabled(StreamType.MOUSE): # We create it but don't start if not enabled
-                if not cursor_handler.start():
-                    if StreamType.MOUSE not in self._stream_handlers:
-                        await mouse_stream.stop()
-                    raise RuntimeError("Failed to start cursor handler")
-
+            if is_enabled and not cursor_handler.start():
+                raise RuntimeError("Failed to start cursor handler")
             self._components['cursor_handler'] = cursor_handler
-        elif not self._components['cursor_handler'].is_alive():
-                if not self._components['cursor_handler'].start():
-                    await self._disable_mouse_stream()
-                    raise RuntimeError("Failed to start cursor handler")
+        elif is_enabled and not cursor_handler.is_alive():
+            if not cursor_handler.start():
+                await self._disable_mouse_stream()
+                raise RuntimeError("Failed to start cursor handler")
 
-        if 'mouse_controller' not in self._components:
-            mouse_controller = ServerMouseController(event_bus=self.event_bus)
-            self._components['mouse_controller'] = mouse_controller
+        # Mouse Controller - handles incoming mouse commands
+        if not self._components.get('mouse_controller'):
+            self._components['mouse_controller'] = ServerMouseController(
+                event_bus=self.event_bus
+            )
 
-        if 'mouse_listener' not in self._components:
+        # Mouse Listener - captures and sends mouse events
+        mouse_listener = self._components.get('mouse_listener')
+        if not mouse_listener:
             mouse_listener = ServerMouseListener(
                 event_bus=self.event_bus,
                 stream_handler=mouse_stream,
                 command_stream=command_stream,
                 filtering=False
             )
-            if self.is_stream_enabled(StreamType.MOUSE): # We create it but don't start if not enabled
-                if not mouse_listener.start():
-                    await self._disable_mouse_stream()
-                    raise RuntimeError("Failed to start mouse listener")
-
+            if is_enabled and not mouse_listener.start():
+                await self._disable_mouse_stream()
+                raise RuntimeError("Failed to start mouse listener")
             self._components['mouse_listener'] = mouse_listener
-        elif not self._components['mouse_listener'].is_alive():
-            if not self._components['mouse_listener'].start():
+        elif is_enabled and not mouse_listener.is_alive():
+            if not mouse_listener.start():
                 await self._disable_mouse_stream()
                 raise RuntimeError("Failed to start mouse listener")
 
 
     async def _disable_mouse_stream(self):
         """Disable mouse stream and components at runtime"""
-        # Stop components
-        if 'mouse_listener' in self._components:
-            self._components['mouse_listener'].stop()
-            #del self._components['mouse_listener']
-
-        # We can disable only once, so we stop it only with server stop
-        #if 'cursor_handler' in self._components:
-            #await self._components['cursor_handler'].stop()
-            #del self._components['cursor_handler']
-
-        #if 'mouse_controller' in self._components:
-            #del self._components['mouse_controller']
+        # Stop mouse listener
+        mouse_listener = self._components.get('mouse_listener')
+        if mouse_listener:
+            mouse_listener.stop()
 
         # Stop stream handler
-        if StreamType.MOUSE in self._stream_handlers:
-            await self._stream_handlers[StreamType.MOUSE].stop()
-            #del self._stream_handlers[StreamType.MOUSE]
+        mouse_stream = self._stream_handlers.get(StreamType.MOUSE)
+        if mouse_stream:
+            await mouse_stream.stop()
 
     async def _enable_keyboard_stream(self):
         """Enable keyboard stream and components at runtime"""
+        # Get or create stream handler
         keyboard_stream = self._stream_handlers.get(StreamType.KEYBOARD)
-
-        # Create stream handler if not exists
         if not keyboard_stream:
             keyboard_stream = UnidirectionalStreamHandler(
                 stream_type=StreamType.KEYBOARD,
@@ -452,49 +440,46 @@ class Server:
                 handler_id="ServerKeyboardStreamHandler",
                 sender=True
             )
-            if not await keyboard_stream.start():
-                raise RuntimeError("Failed to start keyboard stream handler")
-
             self._stream_handlers[StreamType.KEYBOARD] = keyboard_stream
-        elif not keyboard_stream.is_active():
-            if not await keyboard_stream.start():
-                raise RuntimeError("Failed to start mouse stream handler")
 
-        # Create and start components if not exists
-        if 'keyboard_listener' not in self._components:
-            command_stream = self._stream_handlers[StreamType.COMMAND]
+        # Start stream if enabled
+        await self._ensure_stream_active(StreamType.KEYBOARD, keyboard_stream)
+
+        is_enabled = self.is_stream_enabled(StreamType.KEYBOARD)
+        command_stream = self._stream_handlers[StreamType.COMMAND]
+
+        # Keyboard Listener - captures and sends keyboard events
+        keyboard_listener = self._components.get('keyboard_listener')
+        if not keyboard_listener:
             keyboard_listener = ServerKeyboardListener(
                 event_bus=self.event_bus,
                 stream_handler=keyboard_stream,
                 command_stream=command_stream
             )
-            if self.is_stream_enabled(StreamType.KEYBOARD):
-                if not keyboard_listener.start():
-                    if StreamType.KEYBOARD not in self._stream_handlers:
-                        await keyboard_stream.stop()
-                    raise RuntimeError("Failed to start keyboard listener")
-
+            if is_enabled and not keyboard_listener.start():
+                raise RuntimeError("Failed to start keyboard listener")
             self._components['keyboard_listener'] = keyboard_listener
-        elif not self._components['keyboard_listener'].is_alive():
-            if not self._components['keyboard_listener'].start():
+        elif is_enabled and not keyboard_listener.is_alive():
+            if not keyboard_listener.start():
                 await self._disable_keyboard_stream()
                 raise RuntimeError("Failed to start keyboard listener")
 
     async def _disable_keyboard_stream(self):
         """Disable keyboard stream and components at runtime"""
-        if 'keyboard_listener' in self._components:
-            self._components['keyboard_listener'].stop()
-            #del self._components['keyboard_listener']
+        # Stop keyboard listener
+        keyboard_listener = self._components.get('keyboard_listener')
+        if keyboard_listener:
+            keyboard_listener.stop()
 
-        if StreamType.KEYBOARD in self._stream_handlers:
-            await self._stream_handlers[StreamType.KEYBOARD].stop()
-            #del self._stream_handlers[StreamType.KEYBOARD]
+        # Stop stream handler
+        keyboard_stream = self._stream_handlers.get(StreamType.KEYBOARD)
+        if keyboard_stream:
+            await keyboard_stream.stop()
 
     async def _enable_clipboard_stream(self):
         """Enable clipboard stream and components at runtime"""
+        # Get or create stream handler
         clipboard_stream = self._stream_handlers.get(StreamType.CLIPBOARD)
-
-        # Create stream handler if not exists
         if not clipboard_stream:
             clipboard_stream = BroadcastStreamHandler(
                 stream_type=StreamType.CLIPBOARD,
@@ -502,35 +487,32 @@ class Server:
                 event_bus=self.event_bus,
                 handler_id="ServerClipboardStreamHandler"
             )
-            if not await clipboard_stream.start():
-                raise RuntimeError("Failed to start clipboard stream handler")
-
             self._stream_handlers[StreamType.CLIPBOARD] = clipboard_stream
-        elif not clipboard_stream.is_active():
-            if not await clipboard_stream.start():
-                raise RuntimeError("Failed to start mouse stream handler")
 
-        # Create and start components if not exists
-        if 'clipboard_listener' not in self._components:
-            command_stream = self._stream_handlers[StreamType.COMMAND]
+        # Start stream if enabled
+        await self._ensure_stream_active(StreamType.CLIPBOARD, clipboard_stream)
+
+        is_enabled = self.is_stream_enabled(StreamType.CLIPBOARD)
+        command_stream = self._stream_handlers[StreamType.COMMAND]
+
+        # Clipboard Listener - monitors clipboard changes
+        clipboard_listener = self._components.get('clipboard_listener')
+        if not clipboard_listener:
             clipboard_listener = ClipboardListener(
                 event_bus=self.event_bus,
                 stream_handler=clipboard_stream,
                 command_stream=command_stream
             )
-            if self.is_stream_enabled(StreamType.CLIPBOARD):
-                if not await clipboard_listener.start():
-                    if StreamType.CLIPBOARD not in self._stream_handlers:
-                        await clipboard_stream.stop()
-                    raise RuntimeError("Failed to start clipboard listener")
-
+            if is_enabled and not await clipboard_listener.start():
+                raise RuntimeError("Failed to start clipboard listener")
             self._components['clipboard_listener'] = clipboard_listener
-        elif not self._components['clipboard_listener'].is_alive():
-            if not await self._components['clipboard_listener'].start():
+        elif is_enabled and not clipboard_listener.is_alive():
+            if not await clipboard_listener.start():
                 await self._disable_clipboard_stream()
                 raise RuntimeError("Failed to start clipboard listener")
 
-        if 'clipboard_controller' not in self._components:
+        # Clipboard Controller - handles incoming clipboard updates
+        if self._components.get('clipboard_controller'):
             clipboard_controller = ClipboardController(
                 event_bus=self.event_bus,
                 clipboard=self._components['clipboard_listener'].get_clipboard_context(),
@@ -541,16 +523,16 @@ class Server:
 
     async def _disable_clipboard_stream(self):
         """Disable clipboard stream and components at runtime"""
-        if 'clipboard_listener' in self._components:
-            await self._components['clipboard_listener'].stop()
-            #del self._components['clipboard_listener']
+        # Stop clipboard listener
+        clipboard_listener = self._components.get('clipboard_listener')
+        if clipboard_listener:
+            await clipboard_listener.stop()
 
-        #if 'clipboard_controller' in self._components:
-            #del self._components['clipboard_controller']
+        # Stop stream handler
+        clipboard_stream = self._stream_handlers.get(StreamType.CLIPBOARD)
+        if clipboard_stream:
+            await clipboard_stream.stop()
 
-        if StreamType.CLIPBOARD in self._stream_handlers:
-            await self._stream_handlers[StreamType.CLIPBOARD].stop()
-            #del self._stream_handlers[StreamType.CLIPBOARD]
 
     # ==================== Event Callbacks ====================
 
