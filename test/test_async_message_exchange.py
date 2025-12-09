@@ -7,7 +7,7 @@ le operazioni avvengono contemporaneamente.
 """
 import asyncio
 from time import time
-from network.data.MessageExchange import MessageExchange, MessageExchangeConfig
+from network.data.exchange import MessageExchange, MessageExchangeConfig
 from network.protocol.message import ProtocolMessage
 from utils.logging import Logger
 import logging

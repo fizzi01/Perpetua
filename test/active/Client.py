@@ -4,13 +4,13 @@ Fully async implementation using AsyncEventBus and async connection handlers.
 """
 import asyncio
 from event import EventType
-from model.ClientObj import ClientObj, ClientsManager
-from event.EventBus import AsyncEventBus  # Changed to AsyncEventBus
+from model.client import ClientObj, ClientsManager
+from event.bus import AsyncEventBus  # Changed to AsyncEventBus
 
 from command import CommandHandler
 
-from network.connection.AsyncClientConnectionService import AsyncClientConnectionHandler  # Changed to async
-from network.stream.ClientCustomStream import UnidirectionalStreamHandler, BidirectionalStreamHandler
+from network.connection.client import ConnectionHandler  # Changed to async
+from network.stream.client import UnidirectionalStreamHandler, BidirectionalStreamHandler
 from network.stream import StreamType
 
 from input.mouse import ClientMouseController
@@ -66,7 +66,7 @@ class ActiveClient:
         self.open_streams = [StreamType.MOUSE, StreamType.COMMAND, StreamType.KEYBOARD, StreamType.CLIPBOARD]
 
         # Create Async Client Connection Handler
-        self.client = AsyncClientConnectionHandler(
+        self.client = ConnectionHandler(
             host=server_ip,
             port=server_port,
             heartbeat_interval=1,

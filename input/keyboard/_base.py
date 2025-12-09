@@ -3,14 +3,14 @@ from abc import ABC
 from typing import Optional
 
 from event import EventType, EventMapper, KeyboardEvent
-from event.EventBus import EventBus
+from event.bus import EventBus
 
 from pynput.keyboard import (Key, KeyCode,
                              Listener as KeyboardListener,
                              Controller as KeyboardController)
 import keyboard as hotkey_controller
 
-from network.stream.GenericStream import StreamHandler
+from network.stream import StreamHandler
 
 from utils.logging import Logger
 from utils.screen import Screen

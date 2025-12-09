@@ -2,8 +2,8 @@
 Test per AsyncServerConnectionHandler ottimizzato
 """
 import asyncio
-from network.connection.AsyncServerConnectionService import AsyncServerConnectionHandler
-from model.ClientObj import ClientObj, ClientsManager
+from network.connection.server import ConnectionHandler
+from model.client import ClientObj, ClientsManager
 from utils.logging import Logger
 
 
@@ -36,7 +36,7 @@ async def test_server_startup_shutdown():
         print(f"✓ Client disconnected: {client.ip_address}")
 
     # Crea handler
-    handler = AsyncServerConnectionHandler(
+    handler = ConnectionHandler(
         connected_callback=on_connected,
         disconnected_callback=on_disconnected,
         host="127.0.0.1",
@@ -69,7 +69,7 @@ async def test_server_multiple_start_stop():
     Logger()
 
     clients = ClientsManager()
-    handler = AsyncServerConnectionHandler(
+    handler = ConnectionHandler(
         host="127.0.0.1",
         port=15002,
         whitelist=clients
@@ -109,7 +109,7 @@ async def test_heartbeat_monitoring():
         disconnected_clients.append(client)
         print(f"✓ Heartbeat detected disconnection: {client.ip_address}")
 
-    handler = AsyncServerConnectionHandler(
+    handler = ConnectionHandler(
         disconnected_callback=on_disconnected,
         host="127.0.0.1",
         port=15003,
@@ -155,7 +155,7 @@ async def test_callback_compatibility():
         print(f"✓ Async callback called for {client.ip_address}")
 
     # Test 1: Async callback
-    handler1 = AsyncServerConnectionHandler(
+    handler1 = ConnectionHandler(
         connected_callback=async_callback,
         host="127.0.0.1",
         port=15004,
@@ -168,7 +168,7 @@ async def test_callback_compatibility():
     print("✓ Async callback test completed\n")
 
     # Test 2: Sync callback
-    handler2 = AsyncServerConnectionHandler(
+    handler2 = ConnectionHandler(
         connected_callback=sync_callback,
         host="127.0.0.1",
         port=15005,

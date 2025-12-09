@@ -41,9 +41,9 @@ from ApplicationServices import (
 )
 
 
-from event.EventBus import EventBus
+from event.bus import EventBus
 from input.cursor import _base
-from network.stream.GenericStream import StreamHandler
+from network.stream import StreamHandler
 
 
 class DebugOverlayPanel(wx.Panel):

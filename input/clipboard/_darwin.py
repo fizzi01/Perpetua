@@ -4,8 +4,8 @@ from typing import Optional, Callable, Any
 from AppKit import (NSPasteboard,
                     NSFilenamesPboardType)
 
-from event.EventBus import EventBus
-from network.stream.GenericStream import StreamHandler
+from event.bus import EventBus
+from network.stream import StreamHandler
 
 from . import _base
 from ._base import ClipboardType

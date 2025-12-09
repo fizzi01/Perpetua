@@ -8,16 +8,16 @@ from typing import Optional, Dict
 from dataclasses import dataclass
 
 from config import ApplicationConfig, ServerConfig
-from model.ClientObj import ClientObj, ClientsManager
-from event.EventBus import AsyncEventBus
+from model.client import ClientObj, ClientsManager
+from event.bus import AsyncEventBus
 from event import EventType
-from network.connection.AsyncServerConnectionService import AsyncServerConnectionHandler
-from network.stream.ServerCustomStream import (
+from network.connection.server import ConnectionHandler
+from network.stream.server import (
     UnidirectionalStreamHandler,
     BidirectionalStreamHandler,
     MulticastStreamHandler
 )
-from network.stream import StreamType, GenericStream
+from network.stream import StreamType, StreamHandler
 from command import CommandHandler
 from input.cursor import CursorHandlerWorker
 from input.mouse import ServerMouseListener, ServerMouseController
@@ -67,14 +67,14 @@ class Server:
         self.event_bus = AsyncEventBus()
 
         # Stream handlers registry
-        self._stream_handlers: Dict[int, GenericStream] = {}
+        self._stream_handlers: Dict[int, StreamHandler] = {}
 
         # Components registry
         self._components = {}
         self._running = False
 
         # Connection handler
-        self.connection_handler: Optional[AsyncServerConnectionHandler] = None
+        self.connection_handler: Optional[ConnectionHandler] = None
 
     # ==================== Client Management ====================
 
@@ -206,7 +206,7 @@ class Server:
         self.logger.info("Starting Server...")
 
         # Initialize connection handler
-        self.connection_handler = AsyncServerConnectionHandler(
+        self.connection_handler = ConnectionHandler(
             connected_callback=self._on_client_connected,
             disconnected_callback=self._on_client_disconnected,
             host=self.connection_config.host,
@@ -620,6 +620,7 @@ async def main():
 
         # Keep running
         while True:
+            # GUI Hooks or other async tasks can be handled here
             await asyncio.sleep(1)
 
     except KeyboardInterrupt:

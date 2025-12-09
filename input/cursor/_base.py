@@ -11,9 +11,9 @@ from multiprocessing.connection import Connection
 from typing import Optional
 
 from event import EventType, MouseEvent
-from event.EventBus import EventBus
+from event.bus import EventBus
 
-from network.stream.GenericStream import StreamHandler
+from network.stream import StreamHandler
 
 from utils.logging import Logger
 

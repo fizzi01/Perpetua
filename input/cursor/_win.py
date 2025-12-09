@@ -8,9 +8,10 @@ import wx
 from multiprocessing import Queue
 from multiprocessing.connection import Connection
 
-from event.EventBus import EventBus
+from event.bus import EventBus
 from input.cursor import _base
-from network.stream.GenericStream import StreamHandler
+from network.stream import StreamHandler
+
 
 class DebugOverlayPanel(wx.Panel):
     def __init__(self, parent):

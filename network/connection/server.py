@@ -7,16 +7,17 @@ import asyncio
 import ssl
 from typing import Optional, Callable, Any
 
-from model.ClientObj import ClientsManager, ClientObj
-from network.data.MessageExchange import MessageExchange, MessageExchangeConfig
+from model.client import ClientsManager, ClientObj
+from network.data.exchange import MessageExchange, MessageExchangeConfig
 from network.protocol.message import MessageType
 from utils.logging import Logger
 
 from ..stream import StreamType
 
-from .AsyncClientConnection import AsyncClientConnection
+from . import ClientConnection
 
-class AsyncServerConnectionHandler:
+
+class ConnectionHandler:
     """
     Manages server-side socket connections using asyncio.
 
@@ -222,7 +223,7 @@ class AsyncServerConnectionHandler:
         """
         try:
             # Crea un MessageExchange dedicato per questo client
-            from network.data.MessageExchange import MessageExchange, MessageExchangeConfig
+            from network.data.exchange import MessageExchange, MessageExchangeConfig
 
             config = MessageExchangeConfig(
                 max_chunk_size=4096,
@@ -275,7 +276,7 @@ class AsyncServerConnectionHandler:
                 self.logger.log(f"Client {client.ip_address} info: resolution={client.screen_resolution}, ssl={client.ssl}, streams={requested_streams}", Logger.DEBUG)
 
                 # Crea AsyncClientConnection per gestire multiple streams asyncio
-                client.conn_socket = AsyncClientConnection(client_addr)
+                client.conn_socket = ClientConnection(client_addr)
                 client.conn_socket.add_stream(StreamType.COMMAND, reader, writer)
 
                 # Accetta stream aggiuntivi richiesti dal client

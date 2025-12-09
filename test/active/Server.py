@@ -4,18 +4,18 @@ Fully async implementation using AsyncEventBus and async connection handlers.
 """
 import asyncio
 from event import EventType
-from network.data.MessageExchange import MessageExchange
+from network.data.exchange import MessageExchange
 # ServerConnectionService needs a Clientmanager with at least a ClienObj configured to connect to.
 # We need also an EventBus to handle events and the first stream handler (command stream).
 # (We need just one per stream cause the handler manages multiple clients).
 
 # We then need to create in order: 1. CursorHandlerWorker 2. ServerMouseListener and Controller 3. CommandHandler
 
-from model.ClientObj import ClientObj, ClientsManager
-from event.EventBus import AsyncEventBus  # Changed to AsyncEventBus
+from model.client import ClientObj, ClientsManager
+from event.bus import AsyncEventBus  # Changed to AsyncEventBus
 
-from network.connection.AsyncServerConnectionService import AsyncServerConnectionHandler  # Changed to async
-from network.stream.ServerCustomStream import UnidirectionalStreamHandler, BidirectionalStreamHandler, MulticastStreamHandler
+from network.connection.server import ConnectionHandler  # Changed to async
+from network.stream.server import UnidirectionalStreamHandler, BidirectionalStreamHandler, MulticastStreamHandler
 from network.stream import StreamType
 
 from command import CommandHandler
@@ -83,7 +83,7 @@ class ActiveServer:
         )
 
         # Create Async Connection Handler
-        self.connection_handler = AsyncServerConnectionHandler(
+        self.connection_handler = ConnectionHandler(
             connected_callback=self.on_client_connected,
             disconnected_callback=self.on_client_disconnected,
             host=host,

@@ -2,12 +2,12 @@ import asyncio
 from typing import Optional
 
 from utils.logging import Logger
-from network.stream.GenericStream import StreamHandler
-from network.data.MessageExchange import MessageExchange, MessageExchangeConfig
-from network.connection.AsyncClientConnection import AsyncClientConnection
-from model.ClientObj import ClientsManager, ClientObj
+from network.stream import StreamHandler
+from network.data.exchange import MessageExchange, MessageExchangeConfig
+from network.connection import ClientConnection
+from model.client import ClientsManager, ClientObj
 
-from event.EventBus import EventBus
+from event.bus import EventBus
 from event import EventType
 
 
@@ -75,7 +75,7 @@ class UnidirectionalStreamHandler(StreamHandler):
         if self._active_client is not None:
             # Try to get corresponding stream socket
             cl_stram_socket = self._active_client.conn_socket
-            if isinstance(cl_stram_socket, AsyncClientConnection):
+            if isinstance(cl_stram_socket, ClientConnection):
                 reader, writer = cl_stram_socket.get_stream(self.stream_type)
 
                 # Setup transport callbacks asyncio
@@ -206,7 +206,7 @@ class BidirectionalStreamHandler(StreamHandler):
         if self._active_client is not None:
             # Try to get corresponding stream socket
             cl_stram_socket = self._active_client.conn_socket
-            if isinstance(cl_stram_socket, AsyncClientConnection):
+            if isinstance(cl_stram_socket, ClientConnection):
                 reader, writer = cl_stram_socket.get_stream(self.stream_type)
 
                 # Setup transport callbacks asyncio
@@ -332,7 +332,7 @@ class MulticastStreamHandler(StreamHandler):
         if self._active_client is not None:
             # Try to get corresponding stream socket
             cl_stram_socket = self._active_client.conn_socket
-            if isinstance(cl_stram_socket, AsyncClientConnection):
+            if isinstance(cl_stram_socket, ClientConnection):
                 reader, writer = cl_stram_socket.get_stream(self.stream_type)
 
                 # Setup transport callbacks asyncio
@@ -379,7 +379,7 @@ class MulticastStreamHandler(StreamHandler):
                     for client in self.clients.get_clients():
                         if client.is_connected:
                             cl_stram_socket = client.conn_socket
-                            if isinstance(cl_stram_socket, AsyncClientConnection):
+                            if isinstance(cl_stram_socket, ClientConnection):
                                 _, writer = cl_stram_socket.get_stream(self.stream_type)
 
                                 # Setup transport callbacks asyncio

@@ -4,8 +4,8 @@ from typing import Optional, Callable, Any
 import win32clipboard
 import win32con
 
-from event.EventBus import EventBus
-from network.stream.GenericStream import StreamHandler
+from event.bus import EventBus
+from network.stream import StreamHandler
 
 from . import _base
 from ._base import ClipboardType

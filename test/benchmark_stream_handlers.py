@@ -15,15 +15,15 @@ import time
 from statistics import mean, median, stdev
 from typing import List, Dict, Any
 
-from event.EventBus import AsyncEventBus
+from event.bus import AsyncEventBus
 from event import EventType, MouseEvent, CommandEvent
-from model.ClientObj import ClientsManager, ClientObj
-from network.connection.AsyncServerConnectionService import AsyncServerConnectionHandler
-from network.connection.AsyncClientConnectionService import AsyncClientConnectionHandler
+from model.client import ClientsManager, ClientObj
+from network.connection.server import ConnectionHandler
+from network.connection.client import ConnectionHandler
 from network.protocol.message import MessageType
-from network.stream.ServerCustomStream import UnidirectionalStreamHandler as ServerStreamHandler
-from network.stream.ClientCustomStream import UnidirectionalStreamHandler as ClientStreamHandler
-from network.data.MessageExchange import MessageExchangeConfig
+from network.stream.server import UnidirectionalStreamHandler as ServerStreamHandler
+from network.stream.client import UnidirectionalStreamHandler as ClientStreamHandler
+from network.data.exchange import MessageExchangeConfig
 from network.stream import StreamType
 from utils.logging import Logger
 
@@ -192,7 +192,7 @@ class StreamHandlerBenchmark:
             self.connection_established.set()
             print("[Server] Stream handler ready")
 
-        self.server = AsyncServerConnectionHandler(
+        self.server = ConnectionHandler(
             connected_callback=server_on_connected,
             host=self.host,
             port=self.port,
@@ -246,7 +246,7 @@ class StreamHandlerBenchmark:
             self.client_ready.set()
             print("[Client] Stream handler ready")
 
-        self.client = AsyncClientConnectionHandler(
+        self.client = ConnectionHandler(
             connected_callback=client_on_connected,
             clients=self.client_clients,
             host=self.host,

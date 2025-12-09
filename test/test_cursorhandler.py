@@ -1,7 +1,7 @@
 import asyncio
 import time
 
-from event.EventBus import EventBus
+from event.bus import EventBus
 from input.cursor import CursorHandlerWorker
 
 

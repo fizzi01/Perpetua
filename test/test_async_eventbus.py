@@ -3,7 +3,7 @@ Test for the async EventBus implementation.
 """
 import asyncio
 import time
-from event.EventBus import AsyncEventBus
+from event.bus import AsyncEventBus
 from utils.logging import Logger
 
 Logger()

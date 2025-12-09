@@ -6,8 +6,8 @@ from copykitten import copy, paste, CopykittenError
 import hashlib
 
 from event import ClipboardEvent, EventType, EventMapper
-from event.EventBus import EventBus
-from network.stream.GenericStream import StreamHandler
+from event.bus import EventBus
+from network.stream import StreamHandler
 
 from utils.logging import Logger
 

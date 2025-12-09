@@ -3,8 +3,8 @@ Contains the logic to handle client/server commands coming from command streams.
 """
 import asyncio
 from event import EventType, CommandEvent, EventMapper
-from event.EventBus import EventBus
-from network.stream.GenericStream import StreamHandler
+from event.bus import EventBus
+from network.stream import StreamHandler
 from network.protocol.message import MessageType
 from utils.logging import Logger
 
@@ -13,7 +13,6 @@ class CommandHandler:
     """
     Async command handler that registers callbacks to stream to receive and handle commands.
     It dispatches appropriate events or actions based on the received commands.
-    Now fully async-compatible with AsyncEventBus.
     """
 
     def __init__(self, event_bus: EventBus, stream: StreamHandler):

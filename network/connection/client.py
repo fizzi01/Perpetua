@@ -5,16 +5,15 @@ import asyncio
 import ssl
 from typing import Optional, Callable, Any
 
-from model.ClientObj import ClientsManager, ClientObj
-from network.connection.AsyncClientConnection import AsyncClientConnection
-from network.exceptions.ConnectionExceptions import ServerNotFoundException
-from network.data.MessageExchange import MessageExchange, MessageExchangeConfig
+from model.client import ClientsManager, ClientObj
+from network.connection import ClientConnection
+from network.data.exchange import MessageExchange, MessageExchangeConfig
 from network.protocol.message import MessageType
 from network.stream import StreamType
 from utils.logging import Logger
 
 
-class AsyncClientConnectionHandler:
+class ConnectionHandler:
     """
     Async client-side connection handler using asyncio.
 
@@ -176,7 +175,7 @@ class AsyncClientConnectionHandler:
 
                         # Set first client connection socket
                         client = self.clients.get_client()
-                        client.conn_socket = AsyncClientConnection(("",0)) #TODO: Better initialization
+                        client.conn_socket = ClientConnection(("", 0)) #TODO: Better initialization
                         client.conn_socket.add_stream(StreamType.COMMAND, self._command_reader, self._command_writer)
                         self.clients.update_client(client)
 
@@ -351,7 +350,7 @@ class AsyncClientConnectionHandler:
                     writer = self._stream_writers.get(stream_type)
                     if reader and writer:
                         client = self.clients.get_client()
-                        if client.conn_socket is not None and isinstance(client.conn_socket, AsyncClientConnection):
+                        if client.conn_socket is not None and isinstance(client.conn_socket, ClientConnection):
                             client.conn_socket.add_stream(stream_type, reader, writer)
                         self.clients.update_client(client)
 
@@ -413,7 +412,7 @@ class AsyncClientConnectionHandler:
                 await self._msg_exchange.send_custom_message(message_type="HEARTBEAT", payload={})
                 # Get reader from client connection and check if eof is reached
                 client = self.clients.get_client()
-                if client.conn_socket is not None and isinstance(client.conn_socket, AsyncClientConnection):
+                if client.conn_socket is not None and isinstance(client.conn_socket, ClientConnection):
                     command_reader = client.conn_socket.get_reader(StreamType.COMMAND)
                     if command_reader.at_eof():
                         raise ConnectionResetError("Command stream EOF reached")

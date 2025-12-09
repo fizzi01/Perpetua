@@ -2,12 +2,12 @@ import asyncio
 from typing import Optional
 
 from utils.logging import Logger
-from network.connection.AsyncClientConnection import AsyncClientConnection
-from network.stream.GenericStream import StreamHandler
-from network.data.MessageExchange import MessageExchange, MessageExchangeConfig
-from model.ClientObj import ClientsManager, ClientObj
+from network.connection import ClientConnection
+from network.stream import StreamHandler
+from network.data.exchange import MessageExchange, MessageExchangeConfig
+from model.client import ClientsManager, ClientObj
 
-from event.EventBus import EventBus
+from event.bus import EventBus
 from event import EventType
 
 
@@ -59,7 +59,7 @@ class UnidirectionalStreamHandler(StreamHandler):
 
         # Set message exchange transport source
         cl_stram_socket = self._main_client.conn_socket
-        if isinstance(cl_stram_socket, AsyncClientConnection):
+        if isinstance(cl_stram_socket, ClientConnection):
             reader, writer = cl_stram_socket.get_stream(self.stream_type)
 
             # Setup transport callbacks asyncio
@@ -177,7 +177,7 @@ class BidirectionalStreamHandler(StreamHandler):
             raise ValueError(f"No main client found in ClientsManager for {self.handler_id}")
         # Set message exchange transport source
         cl_stram_socket = self._main_client.conn_socket
-        if isinstance(cl_stram_socket, AsyncClientConnection):
+        if isinstance(cl_stram_socket, ClientConnection):
             reader, writer = cl_stram_socket.get_stream(self.stream_type)
 
             # Setup transport callbacks asyncio

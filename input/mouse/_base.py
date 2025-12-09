@@ -10,10 +10,9 @@ from pynput.mouse import Button, Controller as MouseController
 from pynput.mouse import Listener as MouseListener
 
 from event import EventType, MouseEvent, CommandEvent, EventMapper
-from event.EventBus import EventBus
+from event.bus import EventBus
 
-from network.stream.GenericStream import StreamHandler
-from network.stream import StreamType
+from network.stream import StreamType, StreamHandler
 
 from utils.logging import Logger
 from utils.screen import Screen

@@ -8,15 +8,15 @@ from typing import Optional, Dict
 from dataclasses import dataclass
 
 from config import ApplicationConfig, ClientConfig
-from model.ClientObj import ClientObj, ClientsManager
-from event.EventBus import AsyncEventBus
+from model.client import ClientObj, ClientsManager
+from event.bus import AsyncEventBus
 from event import EventType
-from network.connection.AsyncClientConnectionService import AsyncClientConnectionHandler
-from network.stream.ClientCustomStream import (
+from network.connection.client import ConnectionHandler
+from network.stream.client import (
     UnidirectionalStreamHandler,
     BidirectionalStreamHandler
 )
-from network.stream import StreamType, GenericStream
+from network.stream import StreamType, StreamHandler
 from command import CommandHandler
 from input.mouse import ClientMouseController
 from input.keyboard import ClientKeyboardController
@@ -73,7 +73,7 @@ class Client:
         self.clients_manager.add_client(self.server_client)
 
         # Stream handlers registry
-        self._stream_handlers: Dict[int, GenericStream] = {}
+        self._stream_handlers: Dict[int, StreamHandler] = {}
 
         # Components registry
         self._components = {}
@@ -81,7 +81,7 @@ class Client:
         self._connected = False
 
         # Connection handler
-        self.connection_handler: Optional[AsyncClientConnectionHandler] = None
+        self.connection_handler: Optional[ConnectionHandler] = None
 
     # ==================== Stream Management ====================
 
@@ -196,7 +196,7 @@ class Client:
         enabled_streams = self._get_enabled_stream_types()
 
         # Initialize connection handler
-        self.connection_handler = AsyncClientConnectionHandler(
+        self.connection_handler = ConnectionHandler(
             connected_callback=self._on_connected,
             disconnected_callback=self._on_disconnected,
             host=self.connection_config.server_host,

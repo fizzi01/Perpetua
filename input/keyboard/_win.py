@@ -1,5 +1,5 @@
-from event.EventBus import EventBus
-from network.stream.GenericStream import StreamHandler
+from event.bus import EventBus
+from network.stream import StreamHandler
 
 from . import _base
 
