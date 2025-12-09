@@ -104,6 +104,23 @@ class Server:
         """Get a specific client"""
         return self.clients_manager.get_client(ip_address=ip_address, screen_position=screen_position)
 
+    def edit_client(self, ip_address: str, screen_position: str = None) -> ClientObj:
+        """Edit a client's properties"""
+        client = self.clients_manager.get_client(ip_address=ip_address)
+        if not client:
+            raise ValueError(f"Client with IP {ip_address} not found")
+
+        # if client is connected do not allow changing screen_position
+        if client.is_connected:
+            raise RuntimeError("Cannot edit a connected client's properties")
+
+        if screen_position:
+            client.screen_position = screen_position
+
+        self.clients_manager.update_client(client)
+        self.logger.info(f"Edited client {ip_address}: screen_position={screen_position}")
+        return client
+
     def is_clien_alive(self, ip_address: str) -> bool:
         """Check if a client is currently connected"""
         client = self.clients_manager.get_client(ip_address=ip_address)

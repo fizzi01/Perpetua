@@ -78,6 +78,12 @@ async def interactive_server():
                     ip = input("Enter client IP address to remove: ").strip()
                     await server.remove_client(ip)
                     print(f"Client {ip} removed\n")
+                elif cmd == "edit":
+                    # Dynamic edit client
+                    ip = input("Enter client IP address to edit: ").strip()
+                    position = input("Enter new screen position (top/bottom/left/right): ").strip().lower()
+                    server.edit_client(ip, screen_position=position)
+                    print(f"Client {ip} updated to position {position}\n")
                 elif cmd.startswith("enable "):
                     stream_type = cmd.split()[1]
                     # Parse to int
@@ -212,4 +218,6 @@ if __name__ == "__main__":
         asyncio.run(main())
     except KeyboardInterrupt:
         print("\nShutdown complete")
+    except RuntimeError as e:
+        print(f"\nRuntime error: {e}")
 

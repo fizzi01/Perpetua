@@ -128,10 +128,10 @@ class EdgeDetector:
             return x / screen_size[0], 1.0
         # If we reach the left edge, we need to set x to 1 (right of the server screen)
         elif edge == ScreenEdge.LEFT and screen == "right":
-            return 0.0, y / screen_size[1]
+            return 1.0, y / screen_size[1]
         # If we reach the right edge, we need to set x to 0 (left of the server screen)
         elif edge == ScreenEdge.RIGHT and screen == "left":
-            return 1.0, y / screen_size[1]
+            return 0.0, y / screen_size[1]
         else:
             return -1, -1
 
