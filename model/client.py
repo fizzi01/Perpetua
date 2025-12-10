@@ -6,6 +6,26 @@ screen resolution, and client name. But also additional optional config paramete
 """
 from typing import Optional
 
+class ScreenPosition:
+    """
+    Enum-like class for screen positions.
+    """
+    CENTER = "center"
+    TOP = "top"
+    BOTTOM = "bottom"
+    LEFT = "left"
+    RIGHT = "right"
+
+    @staticmethod
+    def is_valid(position: str) -> bool:
+        return position in {
+            ScreenPosition.CENTER,
+            ScreenPosition.TOP,
+            ScreenPosition.BOTTOM,
+            ScreenPosition.LEFT,
+            ScreenPosition.RIGHT
+        }
+
 class ClientObj:
     """
     Represents a client with its metadata.
@@ -16,7 +36,7 @@ class ClientObj:
                  ports: dict[int, int] = None,
                  connection_time: float = 0.0,
                  is_connected: bool = False,
-                 screen_position: str = "center",
+                 screen_position: str = ScreenPosition.CENTER,
                  screen_resolution: str = "1920x1080",
                  client_name: str = "Unknown",
                  ssl: bool = False,
@@ -26,7 +46,11 @@ class ClientObj:
         self.ip_address = ip_address
         self.ports = ports if ports is not None else {}
         self.connection_time = connection_time
+
         self.screen_position = screen_position
+        if not ScreenPosition.is_valid(screen_position):
+            raise ValueError(f"Invalid screen position: {screen_position}")
+
         self.screen_resolution = screen_resolution
         self.client_name = client_name
         self.ssl = ssl
@@ -97,7 +121,8 @@ class ClientsManager:
             if hostname: #Prioritize hostname if provided
                 if client.host_name and client.host_name == hostname:
                     return client
-            elif ip_address:
+
+            if ip_address:
                 if client.ip_address == ip_address:
                     return client
             elif screen_position:
