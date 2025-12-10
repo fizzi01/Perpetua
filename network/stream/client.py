@@ -39,7 +39,7 @@ class UnidirectionalStreamHandler(StreamHandler):
         if self._main_client is None:
             raise ValueError(f"No main client found in ClientsManager for {self.handler_id}")
 
-        self.logger = Logger.get_instance()
+        self.logger = Logger()
 
         # Subscribe with async callbacks
         event_bus.subscribe(event_type=EventType.CLIENT_ACTIVE, callback=self._on_client_active)
@@ -76,10 +76,10 @@ class UnidirectionalStreamHandler(StreamHandler):
             )
             # Start msg exchange listener (always runs for async dispatch)
             await self.msg_exchange.start()
-            self.logger.log(f"{self.handler_id} - Client is active", Logger.DEBUG)
+            #self.logger.debug(f"[{self.handler_id}] Client is active")
         else:
-            self.logger.log(f"Invalid connection socket for main client in {self.handler_id}", Logger.ERROR)
-            raise ValueError(f"Invalid connection socket for main client in {self.handler_id}")
+            self.logger.error(f"[{self.handler_id}] No valid stream for main client")
+            raise ValueError(f"[{self.handler_id}] No valid stream for main client")
 
     async def _on_client_inactive(self, data: dict):
         """
@@ -88,7 +88,7 @@ class UnidirectionalStreamHandler(StreamHandler):
         self._is_active = False
         # Stop msg exchange listener
         await self.msg_exchange.stop()
-        self.logger.log(f"{self.handler_id} - Client is inactive", Logger.DEBUG)
+        #self.logger.debug(f"[{self.handler_id}] Client is inactive")
 
     def register_receive_callback(self, receive_callback, message_type: str):
         """
@@ -120,8 +120,13 @@ class UnidirectionalStreamHandler(StreamHandler):
             except asyncio.TimeoutError:
                 await asyncio.sleep(self._waiting_time)
                 continue
+            except (ConnectionResetError, BrokenPipeError) as e:
+                self.logger.error(f"[{self.handler_id}] Connection error -> {e}")
+                self._is_active = False
+                await self.msg_exchange.stop()
+                await asyncio.sleep(self._waiting_time)
             except Exception as e:
-                self.logger.log(f"Error in {self.handler_id} core loop: {e}", Logger.ERROR)
+                self.logger.error(f"[{self.handler_id}] Error in core loop -> {e}")
                 await asyncio.sleep(self._waiting_time)
 
 
@@ -168,7 +173,7 @@ class BidirectionalStreamHandler(StreamHandler):
         if self._active:
             return
 
-        self.logger.log(f"{self.handler_id} - Client is active", Logger.DEBUG)
+        #self.logger.log(f"{self.handler_id} - Client is active", Logger.DEBUG)
         self._is_active = True
 
         self._main_client = self.clients.get_client()
@@ -195,7 +200,8 @@ class BidirectionalStreamHandler(StreamHandler):
             # Start msg exchange listener (always runs for async dispatch)
             await self.msg_exchange.start()
         else:
-            raise ValueError(f"Invalid connection socket for main client in {self.handler_id}")
+            self.logger.error(f"[{self.handler_id}] No valid stream for main client")
+            raise ValueError(f"[{self.handler_id}] No valid stream for main client")
 
     async def _on_client_inactive(self, data: dict):
         """
@@ -236,6 +242,11 @@ class BidirectionalStreamHandler(StreamHandler):
             except asyncio.TimeoutError:
                 await asyncio.sleep(self._waiting_time)
                 continue
+            except (ConnectionResetError, BrokenPipeError) as e:
+                self.logger.error(f"[{self.handler_id}] Connection error -> {e}")
+                self._is_active = False
+                await self.msg_exchange.stop()
+                await asyncio.sleep(self._waiting_time)
             except Exception as e:
-                self.logger.log(f"Error in {self.handler_id} core loop: {e}", Logger.ERROR)
+                self.logger.error(f"[{self.handler_id}] Error in core loop -> {e}")
                 await asyncio.sleep(self._waiting_time)

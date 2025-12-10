@@ -218,7 +218,7 @@ class Clipboard:
                 pass
             self._task = None
 
-        self.logger.info("Stopped clipboard monitoring")
+        self.logger.debug("Stopped clipboard monitoring")
 
     def is_listening(self) -> bool:
         """
