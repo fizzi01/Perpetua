@@ -562,7 +562,7 @@ class Server:
             event_type=EventType.CLIENT_CONNECTED,
             data={"client_screen": client.screen_position, "streams": streams}
         )
-        self.logger.info(f"Client {client.ip_address} connected at position {client.screen_position}")
+        self.logger.info(f"Client {client.get_net_id()} connected at position {client.screen_position}")
 
     async def _on_client_disconnected(self, client: ClientObj, streams: list[int]):
         """Handle client disconnection event"""
@@ -570,7 +570,7 @@ class Server:
             event_type=EventType.CLIENT_DISCONNECTED,
             data={"client_screen": client.screen_position, "streams": streams}
         )
-        self.logger.info(f"Client {client.ip_address} disconnected from position {client.screen_position}")
+        self.logger.info(f"Client {client.get_net_id()} disconnected from position {client.screen_position}")
 
     # ==================== Utility Methods ====================
 

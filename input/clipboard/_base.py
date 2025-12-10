@@ -199,7 +199,7 @@ class Clipboard:
 
         self._running = True
         self._task = asyncio.create_task(self._poll_loop())
-        self.logger.info(f"Started clipboard monitoring (poll interval: {self.poll_interval}s)")
+        self.logger.debug(f"Started clipboard monitoring (poll interval: {self.poll_interval}s)")
 
     async def stop(self):
         """

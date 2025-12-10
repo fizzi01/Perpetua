@@ -491,7 +491,7 @@ class Client:
             data={}
         )
 
-        self.logger.info(f"Connected to server at {client.ip_address}")
+        self.logger.info(f"Connected to server at {client.get_net_id()}")
 
     async def _on_disconnected(self, client: ClientObj):
         """Handle disconnection from server event"""
@@ -521,7 +521,7 @@ class Client:
             except Exception as e:
                 self.logger.error(f"Error stopping component {component_name}: {e}")
 
-        self.logger.info(f"Disconnected from server at {client.ip_address}")
+        self.logger.info(f"Disconnected from server at {client.get_net_id()}")
 
     # ==================== Utility Methods ====================
 

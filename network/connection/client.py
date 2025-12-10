@@ -340,6 +340,10 @@ class ConnectionHandler:
                 timeout=5.0
             )
             # Update client info from handshake
+            if not handshake_ack or handshake_ack.message_type != MessageType.EXCHANGE or not handshake_ack.payload.get("ack", False):
+                self.logger.log("Handshake failed, invalid acknowledgment from server", Logger.ERROR)
+                return False
+
             self._client_obj.screen_position = handshake_ack.payload.get("screen_position", "unknown")
 
             # Open additional streams
