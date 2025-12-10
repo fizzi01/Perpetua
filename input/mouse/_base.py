@@ -11,6 +11,7 @@ from pynput.mouse import Listener as MouseListener
 
 from event import EventType, MouseEvent, CommandEvent, EventMapper
 from event.bus import EventBus
+from model.client import ScreenPosition
 
 from network.stream import StreamType, StreamHandler
 
@@ -121,16 +122,16 @@ class EdgeDetector:
             return -1, -1
 
         # If we reach the bottom edge, we need to set y to 1 (top of the server screen)
-        if edge == ScreenEdge.BOTTOM and screen == "top":
+        if edge == ScreenEdge.BOTTOM and screen == ScreenPosition.TOP:
             return x / screen_size[0], 0.0
         # If we reach the top edge, we need to set y to 0 (bottom of the server screen)
-        elif edge == ScreenEdge.TOP and screen == "bottom":
+        elif edge == ScreenEdge.TOP and screen == ScreenPosition.BOTTOM:
             return x / screen_size[0], 1.0
         # If we reach the left edge, we need to set x to 1 (right of the server screen)
-        elif edge == ScreenEdge.LEFT and screen == "right":
+        elif edge == ScreenEdge.LEFT and screen == ScreenPosition.RIGHT:
             return 1.0, y / screen_size[1]
         # If we reach the right edge, we need to set x to 0 (left of the server screen)
-        elif edge == ScreenEdge.RIGHT and screen == "left":
+        elif edge == ScreenEdge.RIGHT and screen == ScreenPosition.LEFT:
             return 0.0, y / screen_size[1]
         else:
             return -1, -1
@@ -303,31 +304,31 @@ class ServerMouseListener(object):
 
                 try:
                     self._cross_screen_event.set()
-                    if edge == ScreenEdge.LEFT and self._active_screens.get("left", False):
+                    if edge == ScreenEdge.LEFT and self._active_screens.get(ScreenPosition.LEFT, False):
                             # Normalize position to avoid sticking
                             mouse_event.x = 1
                             mouse_event.y = y / self._screen_size[1]
                             # Schedule async operations
                             self._schedule_async(self._handle_cross_screen(
-                                edge, mouse_event, "left"
+                                edge, mouse_event, ScreenPosition.LEFT
                             ))
-                    elif edge == ScreenEdge.RIGHT and self._active_screens.get("right", False):
+                    elif edge == ScreenEdge.RIGHT and self._active_screens.get(ScreenPosition.RIGHT, False):
                             mouse_event.x = 0
                             mouse_event.y = y / self._screen_size[1]
                             self._schedule_async(self._handle_cross_screen(
-                                edge, mouse_event, "right"
+                                edge, mouse_event, ScreenPosition.RIGHT
                             ))
-                    elif edge == ScreenEdge.TOP and self._active_screens.get("top", False):
+                    elif edge == ScreenEdge.TOP and self._active_screens.get(ScreenPosition.TOP, False):
                             mouse_event.x = x / self._screen_size[0]
                             mouse_event.y = 1
                             self._schedule_async(self._handle_cross_screen(
-                                edge, mouse_event, "top"
+                                edge, mouse_event, ScreenPosition.TOP
                             ))
-                    elif edge == ScreenEdge.BOTTOM and self._active_screens.get("bottom",False):
+                    elif edge == ScreenEdge.BOTTOM and self._active_screens.get(ScreenPosition.BOTTOM,False):
                             mouse_event.x = x / self._screen_size[0]
                             mouse_event.y = 0
                             self._schedule_async(self._handle_cross_screen(
-                                edge, mouse_event, "bottom"
+                                edge, mouse_event, ScreenPosition.BOTTOM
                             ))
                 except Exception as e:
                     self._logger.error(f"Failed to dispatch mouse event -> {e}")

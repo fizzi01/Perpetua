@@ -8,7 +8,7 @@ from typing import Optional, Dict
 from dataclasses import dataclass
 
 from config import ApplicationConfig, ServerConfig
-from model.client import ClientObj, ClientsManager
+from model.client import ClientObj, ClientsManager, ScreenPosition
 from event.bus import AsyncEventBus
 from event import EventType
 from network.connection.server import ConnectionHandler
@@ -611,7 +611,7 @@ async def main():
 
 
     # Add clients to whitelist
-    server.add_client("192.168.1.74", screen_position="top")
+    server.add_client(ip_address="192.168.1.74", screen_position=ScreenPosition.BOTTOM)
 
     # Start server
     if not await server.start():

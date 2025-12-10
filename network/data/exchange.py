@@ -29,7 +29,7 @@ class MessageExchange:
     Handles protocol details, chunking, ordering, and callbacks using asyncio.
     """
 
-    def __init__(self, conf: MessageExchangeConfig = None, id = "MessageExchange"):
+    def __init__(self, conf: MessageExchangeConfig = None, id = "default"):
         """
         Initialize MessageExchange layer.
 
