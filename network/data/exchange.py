@@ -10,7 +10,7 @@ from typing import Callable, Dict, Optional, Any, List
 from config import ApplicationConfig
 from network.protocol.message import ProtocolMessage, MessageBuilder
 from network.stream import StreamType
-from utils.logging import Logger
+from utils.logging import Logger, get_logger
 
 
 @dataclass
@@ -59,7 +59,7 @@ class MessageExchange:
 
         self._lock = asyncio.Lock()
 
-        self.logger = Logger.get_instance()
+        self._logger = get_logger(f"{self.__class__.__name__}({self._id})")
 
     async def start(self):
         """Start asyncio task for incoming messages."""
@@ -163,27 +163,27 @@ class MessageExchange:
                 break
             except AttributeError:
                 # Transport layer disconnected
-                self.logger.log("Transport layer disconnected, stopping receive loop.", Logger.WARNING)
+                self._logger.log("Transport layer disconnected, stopping receive loop.", Logger.WARNING)
                 self._running = False
                 break
             except RuntimeError as e:
-                self.logger.log(f"Error in receive loop {self._id} -> {e}", Logger.CRITICAL)
+                self._logger.log(f"Error in receive loop {self._id} -> {e}", Logger.CRITICAL)
                 self._running = False
                 break
             except Exception as e:
                 # Catch broken pipe or connection reset errors
                 if isinstance(e, (ConnectionResetError, BrokenPipeError, ConnectionError, ConnectionAbortedError)):
-                    self.logger.log(f"Connection error in receive loop -> {e}", Logger.ERROR)
+                    self._logger.log(f"Connection error in receive loop -> {e}", Logger.ERROR)
                     self._running = False
                     break
                 # Avoid infinite loop if no receive callback is set
                 if self._receive_callback is None:
-                    self.logger.log("Receive callback is None, stopping receive loop.", Logger.DEBUG)
+                    self._logger.log("Receive callback is None, stopping receive loop.", Logger.DEBUG)
                     self._running = False
                     break
                 import traceback
                 traceback.print_exc()
-                self.logger.log(f"Error in receive loop {self._id} -> {e}", Logger.ERROR)
+                self._logger.log(f"Error in receive loop {self._id} -> {e}", Logger.ERROR)
                 await asyncio.sleep(0)
                 continue
 
@@ -276,7 +276,7 @@ class MessageExchange:
             await self.send_command_message(source=source, target=target, **kwargs)
             return
         else:
-            self.logger.log(f"Unknown stream type: {stream_type}", Logger.ERROR)
+            self._logger.log(f"Unknown stream type: {stream_type}", Logger.ERROR)
             return
 
     async def send_custom_message(self, message_type: str, payload: Dict[str, Any],source: str = None, target: str = None):
@@ -371,9 +371,9 @@ class MessageExchange:
                 else:
                     handler(message)
             except Exception as e:
-                self.logger.log(f"Error in message handler for {message.message_type}: {e}", Logger.ERROR)
+                self._logger.log(f"Error in message handler for {message.message_type}: {e}", Logger.ERROR)
         else:
-            self.logger.log(f"No handler registered for message type: {message.message_type}", Logger.DEBUG)
+            self._logger.log(f"No handler registered for message type: {message.message_type}", Logger.DEBUG)
 
     async def stop(self):
         """Cleanup and shutdown the message exchange layer."""

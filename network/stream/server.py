@@ -1,7 +1,7 @@
 import asyncio
 from typing import Optional
 
-from utils.logging import Logger
+from utils.logging import Logger, get_logger
 from network.stream import StreamHandler
 from network.data.exchange import MessageExchange, MessageExchangeConfig
 from network.connection import ClientConnection
@@ -26,7 +26,7 @@ class UnidirectionalStreamHandler(StreamHandler):
         super().__init__(stream_type=stream_type, clients=clients, event_bus=event_bus, sender=sender)
 
         self._active_client = None
-        self.handler_id = handler_id if handler_id else f"UnidirectionalStreamHandler_{stream_type}"
+        self.handler_id = handler_id if handler_id else f"{self.__class__.__name__}-{self.stream_type}"
         self.source = source
 
         # Create a MessageExchange object
@@ -35,7 +35,7 @@ class UnidirectionalStreamHandler(StreamHandler):
             id=self.handler_id
         )
 
-        self.logger = Logger()
+        self._logger = get_logger(self.handler_id)
 
         # Subscribe with async callbacks
         self.event_bus.subscribe(event_type=EventType.ACTIVE_SCREEN_CHANGED, callback=self._on_active_screen_changed)
@@ -93,8 +93,8 @@ class UnidirectionalStreamHandler(StreamHandler):
                 # Start msg exchange listener (always runs for async dispatch)
                 await self.msg_exchange.start()
             else:
-                self.logger.warning(
-                    f"[{self.handler_id}] No valid stream for active client {self._active_client.screen_position}")
+                self._logger.warning(
+                    f"No valid stream for active client {self._active_client.screen_position}")
                 await self.msg_exchange.set_transport(send_callback=None, receive_callback=None)
                 await self.msg_exchange.stop()
 
@@ -128,11 +128,11 @@ class UnidirectionalStreamHandler(StreamHandler):
                     await asyncio.sleep(self._waiting_time)
                     continue
                 except (BrokenPipeError, ConnectionResetError) as e:
-                    self.logger.warning(f"[{self.handler_id}] Connection error -> {e}")
+                    self._logger.warning(f"Connection error -> {e}")
                     # Set active client to None on connection errors
                     self._active_client = None
                 except Exception as e:
-                    self.logger.error(f"[{self.handler_id}] Error in core loop -> {e}")
+                    self._logger.error(f"Error in core loop -> {e}")
                     await asyncio.sleep(self._waiting_time)
             else:
                 await asyncio.sleep(self._waiting_time)
@@ -153,7 +153,7 @@ class BidirectionalStreamHandler(StreamHandler):
         super().__init__(stream_type=stream_type, clients=clients, event_bus=event_bus, sender=True)
 
         self._active_client = None
-        self.handler_id = handler_id if handler_id else f"BidirectionalStreamHandler_{stream_type}"
+        self.handler_id = handler_id if handler_id else f"{self.__class__.__name__}-{self.stream_type}"
         self.source = source
 
         # Create a MessageExchange object
@@ -162,7 +162,7 @@ class BidirectionalStreamHandler(StreamHandler):
             id=self.handler_id
         )
 
-        self.logger = Logger()
+        self._logger = get_logger(self.handler_id)
 
         # Subscribe with async callbacks
         self.event_bus.subscribe(event_type=EventType.ACTIVE_SCREEN_CHANGED, callback=self._on_active_screen_changed)
@@ -186,7 +186,7 @@ class BidirectionalStreamHandler(StreamHandler):
         client_screen = data.get("client_screen")
         if self._active_client is not None and self._active_client.screen_position == client_screen:
             self._active_client = None
-            #self.logger.debug(f"[{self.handler_id}] Active client disconnected {client_screen}")
+            #self.logger.debug(f"Active client disconnected {client_screen}")
             await self.msg_exchange.set_transport(send_callback=None, receive_callback=None)
 
     async def _on_active_screen_changed(self, data: dict):
@@ -221,8 +221,8 @@ class BidirectionalStreamHandler(StreamHandler):
                 # Start msg exchange listener (always runs for async dispatch)
                 await self.msg_exchange.start()
             else:
-                self.logger.warning(
-                    f"[{self.handler_id}] No valid stream for active client {self._active_client.screen_position}")
+                self._logger.warning(
+                    f"No valid stream for active client {self._active_client.screen_position}")
                 await self.msg_exchange.set_transport(send_callback=None, receive_callback=None)
                 await self.msg_exchange.stop()
 
@@ -253,11 +253,11 @@ class BidirectionalStreamHandler(StreamHandler):
                     await asyncio.sleep(self._waiting_time)
                     continue
                 except (BrokenPipeError, ConnectionResetError) as e:
-                    self.logger.warning(f"[{self.handler_id}] Connection error -> {e}")
+                    self._logger.warning(f"Connection error -> {e}")
                     # Set active client to None on connection errors
                     self._active_client = None
                 except Exception as e:
-                    self.logger.error(f"[{self.handler_id}] Error in core loop -> {e}")
+                    self._logger.error(f"Error in core loop -> {e}")
                     await asyncio.sleep(self._waiting_time)
             else:
                 await asyncio.sleep(self._waiting_time)
@@ -280,7 +280,7 @@ class MulticastStreamHandler(StreamHandler):
         super().__init__(stream_type=stream_type, clients=clients, event_bus=event_bus, sender=True)
 
         self._active_client = None
-        self.handler_id = handler_id if handler_id else f"UnidirectionalStreamHandler_{stream_type}"
+        self.handler_id = handler_id if handler_id else f"{self.__class__.__name__}-{self.stream_type}"
         self.source = source
 
         # Create a MessageExchange object (sending only, no receiving needed)
@@ -291,7 +291,7 @@ class MulticastStreamHandler(StreamHandler):
 
         self._clients_connected = 0
 
-        self.logger = Logger()
+        self._logger = get_logger(self.handler_id)
 
         # Subscribe with async callbacks
         self.event_bus.subscribe(event_type=EventType.CLIENT_CONNECTED, callback=self._on_client_connected)
@@ -314,7 +314,7 @@ class MulticastStreamHandler(StreamHandler):
         client_screen = data.get("client_screen")
         if self._active_client is not None and self._active_client.screen_position == client_screen:
             self._active_client = None
-            #self.logger.log(f"[{self.handler_id}] Active client disconnected {client_screen}", Logger.INFO)
+            #self.logger.log(f"Active client disconnected {client_screen}", Logger.INFO)
             await self.msg_exchange.set_transport(send_callback=None, receive_callback=None)
 
     async def _on_active_screen_changed(self, data: dict):
@@ -349,8 +349,8 @@ class MulticastStreamHandler(StreamHandler):
                 # Start msg exchange listener (always runs for async dispatch)
                 await self.msg_exchange.start()
             else:
-                self.logger.warning(
-                    f"[{self.handler_id}] No valid stream for active client {self._active_client.screen_position}")
+                self._logger.warning(
+                    f"No valid stream for active client {self._active_client.screen_position}")
                 await self.msg_exchange.set_transport(send_callback=None, receive_callback=None)
                 await self.msg_exchange.stop()
 
@@ -403,11 +403,11 @@ class MulticastStreamHandler(StreamHandler):
                     await asyncio.sleep(self._waiting_time)
                     continue
                 except (BrokenPipeError, ConnectionResetError) as e:
-                    self.logger.warning(f"[{self.handler_id}] Connection error -> {e}")
+                    self._logger.warning(f"Connection error -> {e}")
                     # Set active client to None on connection errors
                     self._active_client = None
                 except Exception as e:
-                    self.logger.error(f"[{self.handler_id}] Error in core loop -> {e}")
+                    self._logger.error(f"Error in core loop -> {e}")
                     await asyncio.sleep(self._waiting_time)
             else:
                 await asyncio.sleep(self._waiting_time)

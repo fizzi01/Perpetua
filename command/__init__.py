@@ -6,7 +6,7 @@ from event import EventType, CommandEvent, EventMapper
 from event.bus import EventBus
 from network.stream import StreamHandler
 from network.protocol.message import MessageType
-from utils.logging import Logger
+from utils.logging import get_logger
 
 
 class CommandHandler:
@@ -19,7 +19,7 @@ class CommandHandler:
         self.event_bus = event_bus
         self.stream = stream # StreamHandler for command stream
 
-        self.logger = Logger.get_instance()
+        self._logger = get_logger(self.__class__.__name__)
 
         # Register async callback for command messages
         self.stream.register_receive_callback(self.handle_command, message_type=MessageType.COMMAND)
@@ -32,7 +32,7 @@ class CommandHandler:
         try:
             event = EventMapper.get_event(message)
             if not isinstance(event, CommandEvent):
-                self.logger.log(f"CommandHandler: Received non-command event - {event}", Logger.WARNING)
+                self._logger.warning(f"Received non-command event - {event}")
                 return
 
             # Handle different commands types asynchronously
@@ -40,11 +40,11 @@ class CommandHandler:
                 # Create task to handle in background
                 asyncio.create_task(self.handle_cross_screen(event))
             else:
-                self.logger.log(f"CommandHandler: Unknown command received - {event.command}", Logger.WARNING)
+                self._logger.warning(f"Unknown command received - {event.command}")
                 return
 
         except Exception as e:
-            self.logger.log(f"CommandHandler: Error - {e}", Logger.ERROR)
+            self._logger.error(f"CommandHandler: Error - {e}")
             return
 
     async def handle_cross_screen(self, event: CommandEvent):

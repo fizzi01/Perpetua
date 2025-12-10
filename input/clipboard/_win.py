@@ -10,8 +10,11 @@ from network.stream import StreamHandler
 from . import _base
 from ._base import ClipboardType
 
+from utils.logging import get_logger
 
 class Clipboard(_base.Clipboard):
+
+    __logger = get_logger(__name__)
 
     def __init__(self, on_change: Optional[Callable[[str, ClipboardType], Any]] = None, poll_interval: float = 0.5,
                  content_types: Optional[list[ClipboardType]] = None):
@@ -22,13 +25,17 @@ class Clipboard(_base.Clipboard):
         """
         Os-specific logic to get a complete file path from clipboard content.
         """
-        files = Clipboard._get_clipboard_files()
-        if files:
-            # search for the file in the clipboard files
-            for path, ftype in files:
-                if ftype == "file" and os.path.basename(path) == os.path.basename(file):
-                    return path
-        return file
+        try:
+            files = Clipboard._get_clipboard_files()
+            if files:
+                # search for the file in the clipboard files
+                for path, ftype in files:
+                    if ftype == "file" and os.path.basename(path) == os.path.basename(file):
+                        return path
+            return file
+        except Exception as e:
+            Clipboard.__logger.critical(f"Could not retrieve files from clipboard -> {e}")
+            return file
 
     @staticmethod
     def _get_clipboard_files() -> Optional[list[str]]:

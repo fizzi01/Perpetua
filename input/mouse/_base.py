@@ -14,7 +14,7 @@ from event.bus import EventBus
 
 from network.stream import StreamType, StreamHandler
 
-from utils.logging import Logger
+from utils.logging import get_logger, Logger
 from utils.screen import Screen
 
 class ButtonMapping(enum.Enum):
@@ -180,7 +180,7 @@ class ServerMouseListener(object):
         # Queue for mouse movements history to detect screen edge reaching
         self._movement_history = deque(maxlen=5)
 
-        self.logger = Logger()
+        self._logger = get_logger(self.__class__.__name__)
 
         # Store event loop reference for thread-safe async scheduling
         try:
@@ -210,12 +210,13 @@ class ServerMouseListener(object):
             try:
                 self._loop = asyncio.get_running_loop()
             except RuntimeError:
-                self.logger.log("Warning: No event loop running when starting mouse listener. Async operations may fail.", Logger.WARNING)
+                self._logger.warning("No event loop running. "
+                                     "Mouse listener must be started within an async context.")
 
         if not self.is_alive():
             self._listener = self._create_listener()
             self._listener.start()
-        self.logger.log("Server mouse listener started.", Logger.DEBUG)
+        self._logger.debug("Started.")
         return True
 
     def stop(self) -> bool:
@@ -224,7 +225,7 @@ class ServerMouseListener(object):
         """
         if self.is_alive():
             self._listener.stop()
-        self.logger.log("Server mouse listener stopped.", Logger.DEBUG)
+        self._logger.debug("Stopped.")
         return True
 
     def is_alive(self):
@@ -329,7 +330,7 @@ class ServerMouseListener(object):
                                 edge, mouse_event, "bottom"
                             ))
                 except Exception as e:
-                    self.logger.log(f"Failed to dispatch mouse event - {e}", Logger.ERROR)
+                    self._logger.error(f"Failed to dispatch mouse event -> {e}")
                 finally:
                     self._cross_screen_event.clear()
 
@@ -346,7 +347,7 @@ class ServerMouseListener(object):
                 asyncio.run_coroutine_threadsafe(coro, self._loop)
                 return
             except Exception as e:
-                self.logger.log(f"Error scheduling coroutine: {e}", Logger.ERROR)
+                self._logger.error(f"Error scheduling coroutine -> {e}")
 
         # Fallback: try to get running loop
         try:
@@ -359,9 +360,9 @@ class ServerMouseListener(object):
                 if loop.is_running():
                     asyncio.run_coroutine_threadsafe(coro, loop)
                 else:
-                    self.logger.log("Event loop not running - cannot schedule async operation", Logger.WARNING)
+                    self._logger.warning("Event loop not running. Cannot schedule async operation")
             except Exception as e:
-                self.logger.log(f"No event loop available for async operation: {e}", Logger.WARNING)
+                self._logger.warning(f"No event loop available for async operation -> {e}")
 
     async def _handle_cross_screen(self, edge: ScreenEdge, mouse_event: MouseEvent, screen: str):
         """Async handler for cross-screen events"""
@@ -389,7 +390,7 @@ class ServerMouseListener(object):
                 # Schedule async send
                 self._schedule_async(self.stream.send(mouse_event))
             except Exception as e:
-                self.logger.log(f"Failed to dispatch mouse click event -> {e}", Logger.ERROR)
+                self._logger.error(f"Failed to dispatch mouse click event -> {e}")
         return True
 
     def on_scroll(self, x, y, dx, dy):
@@ -399,7 +400,7 @@ class ServerMouseListener(object):
                 # Schedule async send
                 self._schedule_async(self.stream.send(mouse_event))
             except Exception as e:
-                self.logger.log(f"Failed to dispatch mouse scroll event -> {e}", Logger.ERROR)
+                self._logger.error(f"Failed to dispatch mouse scroll event -> {e}")
         return True
 
 class ServerMouseController(object):
@@ -421,7 +422,7 @@ class ServerMouseController(object):
         self._screen_size: tuple[int, int] = Screen.get_size()
 
         self._controller = MouseController()
-        self.logger = Logger()
+        self._logger = get_logger(self.__class__.__name__)
 
         # Register for active screen changed events to reposition the cursor
         self.event_bus.subscribe(event_type=EventType.ACTIVE_SCREEN_CHANGED, callback=self._on_active_screen_changed)
@@ -449,7 +450,7 @@ class ServerMouseController(object):
             x = int(x)
             y = int(y)
         except ValueError:
-            self.logger.log(f"Invalid x or y values: x={x}, y={y}", Logger.ERROR)
+            self._logger.log(f"Invalid x or y values: x={x}, y={y}", Logger.ERROR)
             return
 
         self._controller.position = (x, y)
@@ -489,7 +490,7 @@ class ClientMouseController(object):
         self._last_press_time = -99
         self._doubleclick_counter = 0
 
-        self.logger = Logger.get_instance()
+        self._logger = get_logger(self.__class__.__name__)
 
         # Async queue instead of multiprocessing queue
         self._queue: asyncio.Queue = asyncio.Queue(maxsize=10000)
@@ -518,7 +519,7 @@ class ClientMouseController(object):
 
             # Start worker task
             self._worker_task = asyncio.create_task(self._run_worker())
-            self.logger.log("Client mouse controller async worker started.", Logger.DEBUG)
+            self._logger.log("Async worker started.", Logger.DEBUG)
 
     async def stop(self):
         """
@@ -535,7 +536,7 @@ class ClientMouseController(object):
                     pass
                 self._worker_task = None
 
-            self.logger.log("Client mouse controller async worker stopped.", Logger.DEBUG)
+            self._logger.log("Async worker stopped.", Logger.DEBUG)
 
     def is_alive(self) -> bool:
         """
@@ -593,7 +594,7 @@ class ClientMouseController(object):
             except asyncio.CancelledError:
                 break
             except Exception as e:
-                self.logger.log(f"Error in worker: {e}", Logger.ERROR)
+                self._logger.log(f"Error in worker -> {e}", Logger.ERROR)
                 await asyncio.sleep(0.01)
 
     async def _on_client_active(self, data: dict):
@@ -637,7 +638,7 @@ class ClientMouseController(object):
             await self._queue.put(message)
             return None
         except Exception as e:
-            self.logger.log(f"ClientMouseController: Failed to process mouse event - {e}", Logger.ERROR)
+            self._logger.log(f"Failed to process mouse event -> {e}", Logger.ERROR)
             return None
 
     async def _check_edge(self):
@@ -679,7 +680,7 @@ class ClientMouseController(object):
                 await self.command_stream.send(command)
                 await self.event_bus.dispatch(event_type=EventType.CLIENT_INACTIVE, data={})
             except Exception as e:
-                self.logger.log(f"Failed to dispatch screen event - {e}", Logger.ERROR)
+                self._logger.log(f"Failed to dispatch screen event -> {e}", Logger.ERROR)
 
         return await asyncio.sleep(0)
 

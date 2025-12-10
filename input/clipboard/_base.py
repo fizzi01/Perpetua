@@ -9,7 +9,7 @@ from event import ClipboardEvent, EventType, EventMapper
 from event.bus import EventBus
 from network.stream import StreamHandler
 
-from utils.logging import Logger
+from utils.logging import get_logger
 
 class ClipboardType(enum.Enum):
     """
@@ -56,7 +56,7 @@ class Clipboard:
         self._last_hash: Optional[str] = None
         self._last_content: Optional[str] = None
 
-        self.logger = Logger()
+        self._logger = get_logger(self.__class__.__name__)
 
     @staticmethod
     def _hash_content(content: str) -> str:
@@ -93,7 +93,7 @@ class Clipboard:
             except CopykittenError:
                 return None, ClipboardType.EMPTY
             except Exception as e:
-                self.logger.warning(f"Can't access clipboard -> {e}")
+                self._logger.warning(f"Failed to access clipboard -> {e}")
                 return None, ClipboardType.ERROR
 
             # Determine the content type (simplified - can be extended)
@@ -115,7 +115,7 @@ class Clipboard:
             return content, content_type
 
         except Exception as e:
-            self.logger.error(f"Error reading clipboard -> {e}")
+            self._logger.error(f"Error reading clipboard -> {e}")
             return None, ClipboardType.ERROR
 
     async def _set_clipboard_content(self, content: str) -> bool:
@@ -138,14 +138,14 @@ class Clipboard:
 
             return True
         except Exception as e:
-            self.logger.error(f"Error writing to clipboard -> {e}")
+            self._logger.error(f"Error writing to clipboard -> {e}")
             return False
 
     async def _poll_loop(self):
         """
         Main polling loop that checks for clipboard changes.
         """
-        self.logger.debug("Clipboard polling started")
+        self._logger.debug("Polling started")
 
         # Get initial state
         initial_content, _ = await self._get_clipboard_content()
@@ -168,38 +168,41 @@ class Clipboard:
 
                         # Invoke callback if registered
                         if self.on_change:
-                            if asyncio.iscoroutinefunction(self.on_change):
-                                await self.on_change(content, content_type)
-                            else:
-                                # Support sync callbacks too
-                                loop = asyncio.get_running_loop()
-                                await loop.run_in_executor(None, self.on_change, content, content_type)
+                            try:
+                                if asyncio.iscoroutinefunction(self.on_change):
+                                    await self.on_change(content, content_type)
+                                else:
+                                    # Support sync callbacks too
+                                    loop = asyncio.get_running_loop()
+                                    await loop.run_in_executor(None, self.on_change, content, content_type)
+                            except Exception as e:
+                                self._logger.error(f"Error in callback -> {e}")
 
                 # Sleep until next poll
                 await asyncio.sleep(self.poll_interval)
 
             except asyncio.CancelledError:
-                self.logger.debug("Clipboard polling cancelled")
+                self._logger.debug("Clipboard polling cancelled")
                 self._running = False
                 break
             except Exception as e:
-                self.logger.debug(f"Error in clipboard poll loop -> {e}")
+                self._logger.debug(f"Error in poll loop -> {e}")
                 # Continue polling even on error
                 await asyncio.sleep(self.poll_interval)
 
-        self.logger.debug("Clipboard polling stopped")
+        self._logger.debug("Polling stopped")
 
     async def start(self):
         """
         Start the clipboard monitoring.
         """
         if self._running:
-            self.logger.warning("Clipboard listener already running")
+            self._logger.warning("Already running")
             return
 
         self._running = True
         self._task = asyncio.create_task(self._poll_loop())
-        self.logger.debug(f"Started clipboard monitoring (poll interval: {self.poll_interval}s)")
+        self._logger.debug(f"Started monitoring (poll interval: {self.poll_interval}s)")
 
     async def stop(self):
         """
@@ -218,7 +221,7 @@ class Clipboard:
                 pass
             self._task = None
 
-        self.logger.debug("Stopped clipboard monitoring")
+        self._logger.debug("Stopped monitoring")
 
     def is_listening(self) -> bool:
         """
@@ -246,7 +249,7 @@ class Clipboard:
             interval: New polling interval in seconds
         """
         self.poll_interval = max(0.1, interval)  # Minimum 100ms
-        self.logger.debug(f"Clipboard poll interval updated to {self.poll_interval}s")
+        self._logger.debug(f"Clipboard poll interval updated to {self.poll_interval}s")
 
     async def set_clipboard(self, content: str) -> bool:
         """
@@ -280,7 +283,7 @@ class Clipboard:
             # so the polling loop will detect this as a change
             return True
         except Exception as e:
-            self.logger.error(f"Error writing to clipboard (debug) -> {e}")
+            self._logger.error(f"Error writing to clipboard (debug) -> {e}")
             return False
 
 class ClipboardListener:
@@ -306,7 +309,7 @@ class ClipboardListener:
         # This flag should not be set directly, but via event handlers
         self._listening = False
 
-        self.logger = Logger()
+        self._logger = get_logger(self.__class__.__name__)
 
         self.clipboard = clipboard(on_change=self._on_clipboard_change,
                                        content_types=[ClipboardType.TEXT, ClipboardType.URL, ClipboardType.FILE])
@@ -323,7 +326,7 @@ class ClipboardListener:
         # We start the listener only when there is at least one connected client
         if not self.clipboard.is_listening() and self._listening: # We resume listening if needed
             await self.clipboard.start()
-        self.logger.log("Clipboard listener started.", Logger.DEBUG)
+        self._logger.debug("Started")
         return True
 
     async def stop(self):
@@ -333,7 +336,7 @@ class ClipboardListener:
         if self.clipboard.is_listening():
             await self.clipboard.stop()
 
-        self.logger.log("Clipboard listener stopped", Logger.DEBUG)
+        self._logger.debug("Stopped")
 
     def is_alive(self) -> bool:
         """

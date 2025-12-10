@@ -3,7 +3,7 @@ import asyncio
 from typing import Callable, Dict, List, Union
 import inspect
 
-from utils.logging import Logger
+from utils.logging import get_logger
 
 
 class EventBus(ABC):
@@ -44,7 +44,7 @@ class AsyncEventBus(EventBus):
         # Use asyncio.Lock for async thread safety
         self._lock = asyncio.Lock()
 
-        self.logger = Logger.get_instance()
+        self._logger = get_logger(self.__class__.__name__)
 
     def subscribe(self, event_type: int, callback: Callable):
         """
@@ -110,7 +110,7 @@ class AsyncEventBus(EventBus):
                 loop = asyncio.get_running_loop()
                 await loop.run_in_executor(None, lambda: callback(*args, **kwargs)) #type: ignore
         except Exception as e:
-            self.logger.log(f"Exception raised while dispatching event - {e}", Logger.ERROR)
+            self._logger.error(f"Exception raised while dispatching event -> {e}")
 
 
 # Backward compatibility alias

@@ -23,7 +23,7 @@ from input.cursor import CursorHandlerWorker
 from input.mouse import ServerMouseListener, ServerMouseController
 from input.keyboard import ServerKeyboardListener
 from input.clipboard import ClipboardListener, ClipboardController
-from utils.logging import Logger
+from utils.logging import Logger,get_logger
 
 
 @dataclass
@@ -59,8 +59,8 @@ class Server:
         self.connection_config = connection_config or ServerConnectionConfig()
 
         # Set logging level
-        Logger().set_level(log_level)
-        self.logger = Logger()
+        self._logger = get_logger(self.__class__.__name__)
+        self._logger.set_level(log_level)
 
         # Initialize core components
         self.clients_manager = ClientsManager()
@@ -82,7 +82,7 @@ class Server:
         """Add a client to the whitelist"""
         client = ClientObj(ip_address=ip_address, screen_position=screen_position, hostname=hostname)
         self.clients_manager.add_client(client)
-        self.logger.info(f"Added client {ip_address if ip_address else hostname} at position {screen_position}")
+        self._logger.info(f"Added client {ip_address if ip_address else hostname} at position {screen_position}")
         return client
 
     async def remove_client(self, ip_address: str = None, hostname: Optional[str] = None, screen_position: str = None) -> bool:
@@ -92,7 +92,7 @@ class Server:
             await self.connection_handler.force_disconnect_client(client)
             # Finally remove from whitelist
             self.clients_manager.remove_client(client)
-            self.logger.info(f"Removed client {ip_address or screen_position}")
+            self._logger.info(f"Removed client {ip_address or screen_position}")
             return True
         return False
 
@@ -118,10 +118,10 @@ class Server:
             client.screen_position = screen_position
 
         self.clients_manager.update_client(client)
-        self.logger.info(f"Edited client {ip_address}: screen_position={screen_position}")
+        self._logger.info(f"Edited client {ip_address}: screen_position={screen_position}")
         return client
 
-    def is_clien_alive(self, ip_address: Optional[str] = None, hostname: Optional[str] = None) -> bool:
+    def is_client_alive(self, ip_address: Optional[str] = None, hostname: Optional[str] = None) -> bool:
         """Check if a client is currently connected"""
         if not ip_address and not hostname:
             raise ValueError("Either ip_address or hostname must be provided")
@@ -132,22 +132,22 @@ class Server:
     def clear_clients(self):
         """Remove all clients from whitelist"""
         self.clients_manager.clients.clear()
-        self.logger.info("Cleared all clients")
+        self._logger.info("Cleared all clients")
 
     # ==================== Stream Management ====================
 
     def enable_stream(self, stream_type: int):
         """Enable a specific stream type (applies before start or at runtime)"""
         self.server_config.enable_stream(stream_type)
-        self.logger.info(f"Enabled stream: {stream_type}")
+        self._logger.info(f"Enabled stream: {stream_type}")
 
     def disable_stream(self, stream_type: int):
         """Disable a specific stream type (applies before start or at runtime)"""
         if StreamType.COMMAND == stream_type:
-            self.logger.warning("Command stream is always enabled and cannot be disabled")
+            self._logger.warning("Command stream is always enabled and cannot be disabled")
             return
         self.server_config.disable_stream(stream_type)
-        self.logger.info(f"Disabled stream: {stream_type}")
+        self._logger.info(f"Disabled stream: {stream_type}")
 
     def is_stream_enabled(self, stream_type: int) -> bool:
         """Check if a stream is enabled"""
@@ -161,7 +161,7 @@ class Server:
 
         # Se già abilitato, non fare nulla
         if self.is_stream_enabled(stream_type):
-            self.logger.warning(f"Stream {stream_type} already enabled")
+            self._logger.warning(f"Stream {stream_type} already enabled")
             return True
 
         # Abilita nella configurazione
@@ -176,16 +176,16 @@ class Server:
             elif stream_type == StreamType.CLIPBOARD:
                 await self._enable_clipboard_stream()
             else:
-                self.logger.error(f"Unknown stream type: {stream_type}")
+                self._logger.error(f"Unknown stream type: {stream_type}")
                 return False
 
-            self.logger.info(f"Runtime enabled stream: {stream_type}")
+            self._logger.info(f"Runtime enabled stream: {stream_type}")
             return True
         except Exception as e:
             import traceback
             traceback.print_exc()
             self.disable_stream(stream_type)
-            self.logger.error(f"Failed to enable {stream_type} stream: {e}")
+            self._logger.error(f"Failed to enable {stream_type} stream: {e}")
             raise RuntimeError(f"Failed to enable {stream_type} stream: {e}")
 
     async def disable_stream_runtime(self, stream_type: int) -> bool:
@@ -206,13 +206,13 @@ class Server:
             elif stream_type == StreamType.CLIPBOARD:
                 await self._disable_clipboard_stream()
             else:
-                self.logger.error(f"Unknown stream type: {stream_type}")
+                self._logger.error(f"Unknown stream type: {stream_type}")
                 return False
 
-            self.logger.info(f"Runtime disabled stream: {stream_type}")
+            self._logger.info(f"Runtime disabled stream: {stream_type}")
             return True
         except Exception as e:
-            self.logger.error(f"Failed to disable {stream_type} stream: {e}")
+            self._logger.error(f"Failed to disable {stream_type} stream: {e}")
             raise RuntimeError(f"Failed to disable {stream_type} stream: {e}")
 
     # ==================== Server Lifecycle ====================
@@ -220,10 +220,10 @@ class Server:
     async def start(self) -> bool:
         """Start the server with enabled components"""
         if self._running:
-            self.logger.warning("Server already running")
+            self._logger.warning("Server already running")
             return False
 
-        self.logger.info("Starting Server...")
+        self._logger.info("Starting Server...")
 
         # Initialize connection handler
         self.connection_handler = ConnectionHandler(
@@ -236,14 +236,14 @@ class Server:
         )
 
         if not await self.connection_handler.start():
-            self.logger.error("Failed to start connection handler")
+            self._logger.error("Failed to start connection handler")
             return False
 
         # Initialize and start enabled streams
         try:
             await self._initialize_streams()
         except Exception as e:
-            self.logger.error(f"Failed to initialize streams: {e}")
+            self._logger.error(f"Failed to initialize streams: {e}")
             await self.connection_handler.stop()
             return False
 
@@ -251,21 +251,21 @@ class Server:
         try:
             await self._initialize_components()
         except Exception as e:
-            self.logger.error(f"Failed to initialize components: {e}")
+            self._logger.error(f"Failed to initialize components: {e}")
             await self.stop()
             return False
 
         self._running = True
-        self.logger.info(f"Server started on {self.connection_config.host}:{self.connection_config.port}")
+        self._logger.info(f"Server started on {self.connection_config.host}:{self.connection_config.port}")
         return True
 
     async def stop(self):
         """Stop all server components"""
         if not self._running:
-            self.logger.warning("Server not running")
+            self._logger.warning("Server not running")
             return
 
-        self.logger.info("Stopping PyContinuity Server...")
+        self._logger.info("Stopping PyContinuity Server...")
 
         # Stop connection handler
         if self.connection_handler:
@@ -280,7 +280,7 @@ class Server:
                     else:
                         component.stop()
             except Exception as e:
-                self.logger.error(f"Error stopping component {component_name}: {e}")
+                self._logger.error(f"Error stopping component {component_name}: {e}")
 
         # Stop all stream handlers
         for stream_type, handler in list(self._stream_handlers.items()):
@@ -288,12 +288,12 @@ class Server:
                 if hasattr(handler, 'stop'):
                     await handler.stop()
             except Exception as e:
-                self.logger.error(f"Error stopping stream handler {stream_type}: {e}")
+                self._logger.error(f"Error stopping stream handler {stream_type}: {e}")
 
         self._components.clear()
         self._stream_handlers.clear()
         self._running = False
-        self.logger.info("Server stopped")
+        self._logger.info("Server stopped")
 
     def is_running(self) -> bool:
         """Check if server is running"""
@@ -562,7 +562,7 @@ class Server:
             event_type=EventType.CLIENT_CONNECTED,
             data={"client_screen": client.screen_position, "streams": streams}
         )
-        self.logger.info(f"Client {client.get_net_id()} connected at position {client.screen_position}")
+        self._logger.info(f"Client {client.get_net_id()} connected at position {client.screen_position}")
 
     async def _on_client_disconnected(self, client: ClientObj, streams: list[int]):
         """Handle client disconnection event"""
@@ -570,7 +570,7 @@ class Server:
             event_type=EventType.CLIENT_DISCONNECTED,
             data={"client_screen": client.screen_position, "streams": streams}
         )
-        self.logger.info(f"Client {client.get_net_id()} disconnected from position {client.screen_position}")
+        self._logger.info(f"Client {client.get_net_id()} disconnected from position {client.screen_position}")
 
     # ==================== Utility Methods ====================
 

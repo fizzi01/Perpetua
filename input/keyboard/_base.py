@@ -1,5 +1,4 @@
 import asyncio
-from abc import ABC
 from typing import Optional
 
 from event import EventType, EventMapper, KeyboardEvent
@@ -12,7 +11,7 @@ import keyboard as hotkey_controller
 
 from network.stream import StreamHandler
 
-from utils.logging import Logger
+from utils.logging import get_logger
 from utils.screen import Screen
 
 class KeyUtilities:
@@ -90,7 +89,7 @@ class ServerKeyboardListener(object):
 
         self._listener = None
 
-        self.logger = Logger()
+        self._logger = get_logger(self.__class__.__name__)
 
         # Store event loop reference for thread-safe async scheduling
         try:
@@ -120,14 +119,12 @@ class ServerKeyboardListener(object):
             try:
                 self._loop = asyncio.get_running_loop()
             except RuntimeError:
-                self.logger.log(
-                    "Warning: No event loop running when starting keyboard listener. Async operations may fail.",
-                    Logger.WARNING)
+                self._logger.warning("No event loop running when starting keyboard listener. Async operations may fail.")
 
         if not self.is_alive():
             self._listener = self._create_listener()
             self._listener.start()
-        self.logger.log("Server keyboard listener started.", Logger.DEBUG)
+        self._logger.debug("Started.")
         return True
 
     def stop(self) -> bool:
@@ -137,7 +134,7 @@ class ServerKeyboardListener(object):
         if self.is_alive():
             self._listener.stop()
 
-        self.logger.log("Server keyboard listener stopped.", Logger.DEBUG)
+        self._logger.debug("Stopped.")
         return True
 
     def is_alive(self):
@@ -192,7 +189,7 @@ class ServerKeyboardListener(object):
                 asyncio.run_coroutine_threadsafe(coro, self._loop)
                 return
             except Exception as e:
-                self.logger.log(f"Error scheduling coroutine: {e}", Logger.ERROR)
+                self._logger.error(f"Error scheduling coroutine -> {e}")
 
         # Fallback: try to get running loop
         try:
@@ -205,9 +202,9 @@ class ServerKeyboardListener(object):
                 if loop.is_running():
                     asyncio.run_coroutine_threadsafe(coro, loop)
                 else:
-                    self.logger.log("Event loop not running - cannot schedule async operation", Logger.WARNING)
+                    self._logger.warning("Event loop not running, cannot schedule async operation")
             except Exception as e:
-                self.logger.log(f"No event loop available for async operation: {e}", Logger.WARNING)
+                self._logger.warning(f"No event loop available for async operation -> {e}")
 
     @staticmethod
     def _get_key(key: Key | KeyCode) -> str:
@@ -232,7 +229,7 @@ class ServerKeyboardListener(object):
             event = KeyboardEvent(key=self._get_key(key), action=KeyboardEvent.PRESS_ACTION)
             self._schedule_async(self.stream.send(event))
         except Exception as e:
-            self.logger.log(f"Error handling key press -> {e}", Logger.ERROR)
+            self._logger.error(f"Error handling key press -> {e}")
 
     def on_release(self, key: Key | KeyCode | None):
         """
@@ -245,7 +242,7 @@ class ServerKeyboardListener(object):
             event = KeyboardEvent(key=self._get_key(key), action=KeyboardEvent.RELEASE_ACTION)
             self._schedule_async(self.stream.send(event))
         except Exception as e:
-            self.logger.log(f"Error handling key release -> {e}", Logger.ERROR)
+            self._logger.error(f"Error handling key release -> {e}")
 
 
 class ClientKeyboardController(object):
@@ -277,7 +274,7 @@ class ClientKeyboardController(object):
         self.pressed_keys = set()
         self.caps_lock_state = False
 
-        self.logger = Logger()
+        self._logger = get_logger(self.__class__.__name__)
 
         # Async queue instead of multiprocessing queue
         self._queue: asyncio.Queue = asyncio.Queue(maxsize=1000)
@@ -306,7 +303,7 @@ class ClientKeyboardController(object):
 
             # Start worker task
             self._worker_task = asyncio.create_task(self._run_worker())
-            self.logger.log("Client keyboard controller async worker started.", Logger.DEBUG)
+            self._logger.debug("Async worker started.")
 
     async def stop(self):
         """
@@ -323,7 +320,7 @@ class ClientKeyboardController(object):
                     pass
                 self._worker_task = None
 
-            self.logger.log("Client keyboard controller async worker stopped.", Logger.DEBUG)
+            self._logger.debug("Async worker stopped.")
 
     def is_running(self) -> bool:
         """
@@ -358,7 +355,7 @@ class ClientKeyboardController(object):
             except asyncio.CancelledError:
                 break
             except Exception as e:
-                self.logger.log(f"Error in worker -> {e}", Logger.ERROR)
+                self._logger.error(f"Error in worker -> {e}")
                 await asyncio.sleep(0.01)
 
     async def _on_client_active(self, data: dict):
@@ -392,7 +389,7 @@ class ClientKeyboardController(object):
             # Put message in async queue
             await self._queue.put(message)
         except Exception as e:
-            self.logger.log(f"ClientKeyboardController: Failed to process mouse event -> {e}", Logger.ERROR)
+            self._logger.error(f"Failed to process mouse event -> {e}")
 
     def _key_event_action(self, event: KeyboardEvent):
         """

@@ -1,7 +1,7 @@
 import asyncio
 from typing import Optional
 
-from utils.logging import Logger
+from utils.logging import Logger, get_logger
 from network.connection import ClientConnection
 from network.stream import StreamHandler
 from network.data.exchange import MessageExchange, MessageExchangeConfig
@@ -23,8 +23,10 @@ class UnidirectionalStreamHandler(StreamHandler):
 
         self._is_active = False # Track if current client is active
 
-        self.handler_id = handler_id if handler_id else f"UnidirectionalStreamHandler_{stream_type}"
+        self.handler_id = handler_id if handler_id else f"{self.__class__.__name__}-{self.stream_type}"
         self._active_only = active_only
+
+        self._logger = get_logger(self.handler_id)
 
         # Create a MessageExchange object
         self.msg_exchange = MessageExchange(
@@ -37,9 +39,8 @@ class UnidirectionalStreamHandler(StreamHandler):
         self._main_client: Optional[ClientObj] = self.clients.get_client()
 
         if self._main_client is None:
-            raise ValueError(f"No main client found in ClientsManager for {self.handler_id}")
-
-        self.logger = Logger()
+            self._logger.error(f"No main client found in ClientsManager")
+            raise ValueError(f"[{self.handler_id}] No main client found in ClientsManager")
 
         # Subscribe with async callbacks
         event_bus.subscribe(event_type=EventType.CLIENT_ACTIVE, callback=self._on_client_active)
@@ -78,8 +79,8 @@ class UnidirectionalStreamHandler(StreamHandler):
             await self.msg_exchange.start()
             #self.logger.debug(f"[{self.handler_id}] Client is active")
         else:
-            self.logger.error(f"[{self.handler_id}] No valid stream for main client")
-            raise ValueError(f"[{self.handler_id}] No valid stream for main client")
+            self._logger.error(f"No valid stream for main client")
+            raise ValueError(f"No valid stream for main client")
 
     async def _on_client_inactive(self, data: dict):
         """
@@ -121,12 +122,12 @@ class UnidirectionalStreamHandler(StreamHandler):
                 await asyncio.sleep(self._waiting_time)
                 continue
             except (ConnectionResetError, BrokenPipeError) as e:
-                self.logger.error(f"[{self.handler_id}] Connection error -> {e}")
+                self._logger.error(f"Connection error -> {e}")
                 self._is_active = False
                 await self.msg_exchange.stop()
                 await asyncio.sleep(self._waiting_time)
             except Exception as e:
-                self.logger.error(f"[{self.handler_id}] Error in core loop -> {e}")
+                self._logger.error(f"Error in core loop -> {e}")
                 await asyncio.sleep(self._waiting_time)
 
 
@@ -142,7 +143,7 @@ class BidirectionalStreamHandler(StreamHandler):
 
         self._is_active = False # Track if current client is active
 
-        self.handler_id = handler_id if handler_id else f"BidirectionalStreamHandler_{stream_type}"
+        self.handler_id = handler_id if handler_id else f"{self.__class__.__name__}-{self.stream_type}"
         self._active_only = active_only
         self._avoid_receive_stop = avoid_receive_stop
 
@@ -156,7 +157,7 @@ class BidirectionalStreamHandler(StreamHandler):
         # If client manager is correctly initialized, it should have only one main client
         self._main_client: Optional[ClientObj] = None
 
-        self.logger = Logger()
+        self._logger = get_logger(self.handler_id)
 
         # Subscribe with async callbacks
         event_bus.subscribe(event_type=EventType.CLIENT_ACTIVE, callback=self._on_client_active)
@@ -179,7 +180,8 @@ class BidirectionalStreamHandler(StreamHandler):
         self._main_client = self.clients.get_client()
 
         if self._main_client is None:
-            raise ValueError(f"No main client found in ClientsManager for {self.handler_id}")
+            self._logger.error(f"No main client found in ClientsManager")
+            raise ValueError(f"No main client found in ClientsManager")
         # Set message exchange transport source
         cl_stram_socket = self._main_client.conn_socket
         if isinstance(cl_stram_socket, ClientConnection):
@@ -200,8 +202,8 @@ class BidirectionalStreamHandler(StreamHandler):
             # Start msg exchange listener (always runs for async dispatch)
             await self.msg_exchange.start()
         else:
-            self.logger.error(f"[{self.handler_id}] No valid stream for main client")
-            raise ValueError(f"[{self.handler_id}] No valid stream for main client")
+            self._logger.error(f"No valid stream for main client")
+            raise ValueError(f"No valid stream for main client")
 
     async def _on_client_inactive(self, data: dict):
         """
@@ -243,10 +245,10 @@ class BidirectionalStreamHandler(StreamHandler):
                 await asyncio.sleep(self._waiting_time)
                 continue
             except (ConnectionResetError, BrokenPipeError) as e:
-                self.logger.error(f"[{self.handler_id}] Connection error -> {e}")
+                self._logger.error(f"Connection error -> {e}")
                 self._is_active = False
                 await self.msg_exchange.stop()
                 await asyncio.sleep(self._waiting_time)
             except Exception as e:
-                self.logger.error(f"[{self.handler_id}] Error in core loop -> {e}")
+                self._logger.error(f"Error in core loop -> {e}")
                 await asyncio.sleep(self._waiting_time)

@@ -15,7 +15,7 @@ from event.bus import EventBus
 
 from network.stream import StreamHandler
 
-from utils.logging import Logger
+from utils.logging import get_logger
 
 
 class CursorHandlerWindow(wx.Frame):
@@ -326,7 +326,7 @@ class CursorHandlerWorker(object):
 
         self.window_class = window_class
 
-        self.logger = Logger()
+        self._logger = get_logger(self.__class__.__name__)
 
         # Register to active_screen with async callbacks
         self.event_bus.subscribe(event_type=EventType.ACTIVE_SCREEN_CHANGED, callback=self._on_active_screen_changed)
@@ -379,13 +379,13 @@ class CursorHandlerWorker(object):
                 try:
                     result = self.result_queue.get(timeout=0.1)
                     if result.get('type') == 'window_ready':
-                        self.logger.log("CursorHandlerWorker started", Logger.DEBUG)
+                        self._logger.debug("Started")
                         return True
                 except Empty:
                     continue
             raise TimeoutError("Window not ready in time")
 
-        self.logger.log("CursorHandlerWorker started (without checks)", Logger.DEBUG)
+        self._logger.debug("Started (without checks)")
         return True
 
     async def stop(self, timeout=2):
@@ -421,7 +421,7 @@ class CursorHandlerWorker(object):
 
         self._is_running = False
 
-        self.logger.log("CursorHandlerWorker stopped", Logger.DEBUG)
+        self._logger.debug("Stopped")
 
     def is_alive(self) -> bool:
         """Controlla se il processo della window è in esecuzione"""

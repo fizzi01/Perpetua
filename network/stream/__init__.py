@@ -5,7 +5,7 @@ from attr import dataclass
 
 from event.bus import EventBus
 from model.client import ClientsManager
-from utils.logging import Logger
+from utils.logging import Logger, get_logger
 
 
 @dataclass
@@ -43,7 +43,7 @@ class StreamHandler:
 
         self._waiting_time = 0  # Time to wait in loops to prevent busy waiting
 
-        self.logger = Logger.get_instance()
+        self._logger = get_logger(self.__class__.__name__)
 
     def register_receive_callback(self, receive_callback, message_type: str):
         """
@@ -56,11 +56,14 @@ class StreamHandler:
         """
         Starts the stream handler.
         """
+        if self._active:
+            return True
+
         self._active = True
         if self._sender:
             self._sender_task = asyncio.create_task(self._core_sender())
 
-        self.logger.log(f"StreamHandler for {self.stream_type} started.", Logger.DEBUG)
+        self._logger.log(f"StreamHandler for {self.stream_type} started.", Logger.DEBUG)
         return True
 
     async def stop(self) -> bool:
@@ -76,12 +79,12 @@ class StreamHandler:
                 except asyncio.CancelledError:
                     pass
                 except asyncio.TimeoutError:
-                    self.logger.log(f"StreamHandler for {self.stream_type} sender task did not stop in time", Logger.WARNING)
+                    self._logger.log(f"StreamHandler for {self.stream_type} sender task did not stop in time", Logger.WARNING)
             except Exception as e:
-                self.logger.log(f"Error stopping StreamHandler for {self.stream_type}: {e}", Logger.ERROR)
+                self._logger.log(f"Error stopping StreamHandler for {self.stream_type}: {e}", Logger.ERROR)
                 return False
 
-        self.logger.log(f"StreamHandler for {self.stream_type} stopped.", Logger.DEBUG)
+        self._logger.log(f"StreamHandler for {self.stream_type} stopped.", Logger.DEBUG)
         return True
 
     def is_active(self) -> bool:

@@ -25,7 +25,7 @@ class ColoredFormatter(logging.Formatter):
         reset = self.COLORS['RESET']
 
         # Format message
-        return f"{color}[{cur_time}] [{record.levelname}]: {record.getMessage()}{reset}"
+        return f"{color}[{cur_time}][{record.levelname}][{record.name}] {record.getMessage()}{reset}"
 
 
 class SilentFormatter(logging.Formatter):
@@ -43,16 +43,20 @@ class SilentFormatter(logging.Formatter):
         if record.levelno >= logging.INFO:
             color = self.COLORS.get(record.levelname, '')
             reset = self.COLORS['RESET']
-            return f"{color}{record.levelname}: {record.getMessage()}{reset}"
+            return f"{color}[{record.levelname}][{record.name}] {record.getMessage()}{reset}"
         return ""
 
 
 class Logger:
     """
-    Wrapper del package logging di Python che preserva l'API legacy.
+    Wrapper del package logging di Python.
+    Ogni istanza è associata a un modulo specifico per tracciare l'origine dei log.
+    I logger dell'applicazione sono isolati nel namespace 'pyContinuity' per non interferire con le librerie esterne.
     """
-    _instance = None
+    _app_logger_configured = False
     _lock = threading.Lock()
+    _app_namespace = 'PyContinuity'
+    _shared_handler = None
 
     # Priority constants (mappati ai livelli di logging)
     DEBUG = 0
@@ -61,62 +65,112 @@ class Logger:
     ERROR = 3
     CRITICAL = 4
 
-    def __new__(cls, log=True, stdout=None):
-        if cls._instance is None:
-            with cls._lock:
-                if cls._instance is None:
-                    cls._instance = super(Logger, cls).__new__(cls)
-                    cls._instance._initialize(log, stdout)
-        return cls._instance
+    def __init__(self, name=None, log=True, stdout=None):
+        """
+        Inizializza un logger per un modulo specifico.
 
-    def _initialize(self, log=True, stdout=None):
-        """Inizializza il logger usando il package logging di Python"""
-        self.logging_enabled = logging
+        Args:
+            name: Nome del logger (tipicamente __name__ del modulo). Se None, usa 'pyContinuity'
+            log: Se True usa ColoredFormatter con DEBUG, altrimenti SilentFormatter con INFO
+            stdout: Funzione di output custom (deprecato, mantenuto per compatibilità)
+        """
+        self.logging_enabled = log
         self.stdout = stdout or print
 
-        # Crea logger interno
-        self._logger = logging.getLogger('pyContinuity')
-        self._logger.handlers.clear()  # Rimuovi handler esistenti
+        # Crea il nome del logger nel namespace dell'applicazione
+        if name is None or name == '__main__':
+            self.logger_name = self._app_namespace
+        elif name is not None and name.startswith(self._app_namespace):
+            # Se già inizia con il namespace, usalo così com'è
+            self.logger_name = name
+        else:
+            # Aggiungi il namespace dell'applicazione
+            self.logger_name = f"{name}"
+
+        self._logger = logging.getLogger(self.logger_name)
+
+        # NON propagare al root logger di Python per isolare dalle librerie esterne
         self._logger.propagate = False
 
-        # Crea handler per console
+        # Configura il logger dell'applicazione una sola volta
+        with self._lock:
+            if not Logger._app_logger_configured:
+                self._configure_app_logger(log)
+                Logger._app_logger_configured = True
+                # Disabilita i logger delle librerie esterne comuni
+                #self._silence_external_loggers()
+
+        # Aggiungi l'handler condiviso a questo logger se non ce l'ha già
+        if not self._logger.handlers and Logger._shared_handler:
+            self._logger.addHandler(Logger._shared_handler)
+
+        # Imposta il livello per questo specifico logger
+        if log:
+            self._logger.setLevel(logging.DEBUG)
+        else:
+            self._logger.setLevel(logging.INFO)
+
+    def _configure_app_logger(self, log=True):
+        """Configura il logger dell'applicazione una sola volta"""
+        # Crea handler condiviso per console
         handler = logging.StreamHandler(sys.stdout)
 
         # Imposta formatter in base alla modalità
         if log:
             formatter = ColoredFormatter()
-            self._logger.setLevel(logging.DEBUG)
             handler.setLevel(logging.DEBUG)
         else:
             formatter = SilentFormatter()
-            self._logger.setLevel(logging.INFO)
             handler.setLevel(logging.INFO)
 
         handler.setFormatter(formatter)
-        self._logger.addHandler(handler)
+
+        # Salva l'handler condiviso
+        Logger._shared_handler = handler
+
+    def _silence_external_loggers(self):
+        """Silenzia i logger delle librerie esterne per evitare spam"""
+        # Lista di logger comuni da silenziare (mostra solo WARNING e superiori)
+        external_loggers = [
+            'asyncio',
+            'urllib3',
+            'requests',
+            'matplotlib',
+            'PIL',
+            'paramiko',
+            'cryptography',
+            'aiohttp',
+            'websockets',
+        ]
+
+        for logger_name in external_loggers:
+            ext_logger = logging.getLogger(logger_name)
+            ext_logger.setLevel(logging.WARNING)
 
     def set_level(self, level: int):
         """
-        Imposta il livello di logging.
+        Imposta il livello di logging per questo logger.
 
         Args:
-            level: Priority level (DEBUG=0, INFO=1, ERROR=2, WARNING=3)
+            level: Priority level (DEBUG=0, INFO=1, WARNING=2, ERROR=3, CRITICAL=4)
         """
         # Mappa custom priority ai livelli logging
         level_map = {
             self.DEBUG: logging.DEBUG,
             self.INFO: logging.INFO,
-            self.ERROR: logging.ERROR,
             self.WARNING: logging.WARNING,
+            self.ERROR: logging.ERROR,
             self.CRITICAL: logging.CRITICAL
         }
 
         logging_level = level_map.get(level, logging.INFO)
+
+        # Imposta il livello del logger
         self._logger.setLevel(logging_level)
 
-        # Aggiorna anche gli handler
-        for handler in self._logger.handlers:
-            handler.setLevel(logging_level)
+        # Aggiorna anche l'handler condiviso se esiste
+        if Logger._shared_handler:
+            Logger._shared_handler.setLevel(logging_level)
 
     def log(self, message, priority: int = 0):
         """
@@ -158,20 +212,25 @@ class Logger:
         """Log a error level"""
         self.log(message, self.ERROR)
 
-    @classmethod
-    def get_instance(cls):
-        """
-        Ottieni l'istanza singleton del logger.
 
-        Returns:
-            Logger instance
+def get_logger(name=None, log=True):
+    """
+    Factory function per creare un logger.
 
-        Raises:
-            Exception: Se il logger non è stato inizializzato
-        """
-        if cls._instance is None:
-            # Crea un'istanza di default se non esiste
-            cls(log=True)
-        return cls._instance
+    Args:
+        name: logger name
+        log: True for detailed logging, False for silent mode
+
+    Returns:
+        Logger instance
+
+    Example:
+    ::
+        from utils.logging import get_logger
+        logger = get_logger(__name__)
+        logger.info("Message from this module")
+    """
+    return Logger(name=name, log=log)
+
 
 
