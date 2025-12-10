@@ -42,7 +42,7 @@ async def test_server_startup_shutdown():
         host="127.0.0.1",
         port=15001,  # Porta custom per test
         heartbeat_interval=1,
-        whitelist=clients
+        allowlist=clients
     )
 
     # Test avvio
@@ -72,7 +72,7 @@ async def test_server_multiple_start_stop():
     handler = ConnectionHandler(
         host="127.0.0.1",
         port=15002,
-        whitelist=clients
+        allowlist=clients
     )
 
     # Ciclo 3 volte
@@ -114,7 +114,7 @@ async def test_heartbeat_monitoring():
         host="127.0.0.1",
         port=15003,
         heartbeat_interval=1,  # 1 secondo
-        whitelist=clients
+        allowlist=clients
     )
 
     # Avvia
@@ -159,7 +159,7 @@ async def test_callback_compatibility():
         connected_callback=async_callback,
         host="127.0.0.1",
         port=15004,
-        whitelist=clients
+        allowlist=clients
     )
 
     await handler1.start()
@@ -172,7 +172,7 @@ async def test_callback_compatibility():
         connected_callback=sync_callback,
         host="127.0.0.1",
         port=15005,
-        whitelist=clients
+        allowlist=clients
     )
 
     await handler2.start()

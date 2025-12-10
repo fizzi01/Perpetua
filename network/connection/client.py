@@ -119,7 +119,7 @@ class ConnectionHandler:
             return True
 
         except Exception as e:
-            self.logger.log(f"Failed to start AsyncClientConnectionHandler: {e}", Logger.ERROR)
+            self.logger.log(f"Failed to start AsyncClientConnectionHandler -> {e}", Logger.ERROR)
             import traceback
             self.logger.log(traceback.format_exc(), Logger.ERROR)
             self._running = False
@@ -198,7 +198,7 @@ class ConnectionHandler:
                                     else:
                                         self.connected_callback(self._client_obj)
                                 except Exception as e:
-                                    self.logger.log(f"Error in connected callback: {e}", Logger.ERROR)
+                                    self.logger.log(f"Error in connected callback -> {e}", Logger.ERROR)
 
                             # Start heartbeat monitoring
                             if not self._heartbeat_task or self._heartbeat_task.done():
@@ -230,7 +230,7 @@ class ConnectionHandler:
                 await self.stop()
                 break
             except Exception as e:
-                self.logger.log(f"Error in core loop: {e}", Logger.ERROR)
+                self.logger.log(f"Error in core loop -> {e}", Logger.ERROR)
                 import traceback
                 self.logger.log(traceback.format_exc(), Logger.ERROR)
 
@@ -318,13 +318,10 @@ class ConnectionHandler:
 
             self.logger.log("Received valid handshake request from server", Logger.DEBUG)
 
-            # Update client info from handshake
-            self._client_obj.screen_position = handshake_req.payload.get("screen_position", "unknown")
-
             # Send handshake response
             await self._msg_exchange.send_handshake_message(
                 ack=True,
-                source=self._client_obj.screen_position,
+                source=self._client_obj.host_name,
                 target="server",
                 streams=self.open_streams,
                 screen_position=self._client_obj.screen_position,
@@ -336,6 +333,14 @@ class ConnectionHandler:
 
             # Small delay to ensure server processes handshake
             await asyncio.sleep(0.2)
+
+            # Receive handshake acknowledgment from server
+            handshake_ack = await asyncio.wait_for(
+                self._msg_exchange.get_received_message(),
+                timeout=5.0
+            )
+            # Update client info from handshake
+            self._client_obj.screen_position = handshake_ack.payload.get("screen_position", "unknown")
 
             # Open additional streams
             if self.open_streams:
@@ -393,7 +398,7 @@ class ConnectionHandler:
                 self.logger.log(f"Timeout connecting stream {stream_type}", Logger.ERROR)
                 return False
             except Exception as e:
-                self.logger.log(f"Failed to connect stream {stream_type}: {e}", Logger.ERROR)
+                self.logger.log(f"Failed to connect stream {stream_type} -> {e}", Logger.ERROR)
                 return False
 
         return True
@@ -454,7 +459,7 @@ class ConnectionHandler:
                 else:
                     self.disconnected_callback(self._client_obj)
             except Exception as e:
-                self.logger.log(f"Error in disconnected callback: {e}", Logger.ERROR)
+                self.logger.log(f"Error in disconnected callback -> {e}", Logger.ERROR)
 
         self.logger.log("Client disconnected from server", Logger.WARNING)
 

@@ -78,16 +78,16 @@ class Server:
 
     # ==================== Client Management ====================
 
-    def add_client(self, ip_address: str, screen_position: str = "top") -> ClientObj:
+    def add_client(self, ip_address: Optional[str] = None, hostname: Optional[str] = None, screen_position: str = "top") -> ClientObj:
         """Add a client to the whitelist"""
-        client = ClientObj(ip_address=ip_address, screen_position=screen_position)
+        client = ClientObj(ip_address=ip_address, screen_position=screen_position, hostname=hostname)
         self.clients_manager.add_client(client)
-        self.logger.info(f"Added client {ip_address} at position {screen_position}")
+        self.logger.info(f"Added client {ip_address if ip_address else hostname} at position {screen_position}")
         return client
 
-    async def remove_client(self, ip_address: str = None, screen_position: str = None) -> bool:
+    async def remove_client(self, ip_address: str = None, hostname: Optional[str] = None, screen_position: str = None) -> bool:
         """Remove a client from the whitelist"""
-        client = self.clients_manager.get_client(ip_address=ip_address, screen_position=screen_position)
+        client = self.clients_manager.get_client(ip_address=ip_address, screen_position=screen_position, hostname=hostname)
         if client:
             await self.connection_handler.force_disconnect_client(client)
             # Finally remove from whitelist
@@ -100,15 +100,15 @@ class Server:
         """Get all registered clients"""
         return self.clients_manager.get_clients()
 
-    def get_client(self, ip_address: str = None, screen_position: str = None) -> Optional[ClientObj]:
+    def get_client(self, ip_address: Optional[str] = None, hostname: Optional[str] = None, screen_position: str = None) -> Optional[ClientObj]:
         """Get a specific client"""
-        return self.clients_manager.get_client(ip_address=ip_address, screen_position=screen_position)
+        return self.clients_manager.get_client(ip_address=ip_address, hostname=hostname, screen_position=screen_position)
 
-    def edit_client(self, ip_address: str, screen_position: str = None) -> ClientObj:
+    def edit_client(self, ip_address: Optional[str] = None, hostname: Optional[str] = None, screen_position: str = None) -> ClientObj:
         """Edit a client's properties"""
-        client = self.clients_manager.get_client(ip_address=ip_address)
+        client = self.clients_manager.get_client(ip_address=ip_address, hostname=hostname)
         if not client:
-            raise ValueError(f"Client with IP {ip_address} not found")
+            raise ValueError(f"Client [IP {ip_address}, Host {hostname}] not found")
 
         # if client is connected do not allow changing screen_position
         if client.is_connected:
@@ -121,9 +121,12 @@ class Server:
         self.logger.info(f"Edited client {ip_address}: screen_position={screen_position}")
         return client
 
-    def is_clien_alive(self, ip_address: str) -> bool:
+    def is_clien_alive(self, ip_address: Optional[str] = None, hostname: Optional[str] = None) -> bool:
         """Check if a client is currently connected"""
-        client = self.clients_manager.get_client(ip_address=ip_address)
+        if not ip_address and not hostname:
+            raise ValueError("Either ip_address or hostname must be provided")
+
+        client = self.clients_manager.get_client(ip_address=ip_address, hostname=hostname)
         return client.is_connected if client else False
 
     def clear_clients(self):
@@ -229,7 +232,7 @@ class Server:
             host=self.connection_config.host,
             port=self.connection_config.port,
             heartbeat_interval=self.connection_config.heartbeat_interval,
-            whitelist=self.clients_manager
+            allowlist=self.clients_manager
         )
 
         if not await self.connection_handler.start():

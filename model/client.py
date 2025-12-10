@@ -12,6 +12,7 @@ class ClientObj:
     """
     def __init__(self,
                  ip_address: str,
+                 hostname: Optional[str] = None,
                  ports: dict[int, int] = None,
                  connection_time: float = 0.0,
                  is_connected: bool = False,
@@ -21,6 +22,7 @@ class ClientObj:
                  ssl: bool = False,
                  conn_socket: Optional[object] = None,
                  additional_params: dict = None):
+        self.host_name = hostname
         self.ip_address = ip_address
         self.ports = ports if ports is not None else {}
         self.connection_time = connection_time
@@ -32,8 +34,12 @@ class ClientObj:
         self.is_connected = is_connected
         self.additional_params = additional_params if additional_params is not None else {}
 
+    def get_net_id(self) -> str:
+        return self.host_name if self.host_name else self.ip_address
+
+
     def __repr__(self):
-        return (f"ClientObj(ip_address={self.ip_address}, port={self.ports}, "
+        return (f"ClientObj(host_name={self.host_name}, ip_address={self.ip_address}, port={self.ports}, "
                 f"connection_time={self.connection_time}, screen_position={self.screen_position}, "
                 f"screen_resolution={self.screen_resolution}, client_name={self.client_name}, "
                 f"additional_params={self.additional_params})")
@@ -82,13 +88,16 @@ class ClientsManager:
     def get_clients(self) -> list['ClientObj']:
         return self.clients
 
-    def get_client(self, ip_address: Optional[str] = None, screen_position: Optional[str] = None) -> Optional['ClientObj']:
+    def get_client(self, ip_address: Optional[str] = None, hostname: Optional[str] = None, screen_position: Optional[str] = None) -> Optional['ClientObj']:
 
         if self._is_client_main: # Return the only client in client mode
             return self.clients[0] if self.clients else None
 
         for client in self.clients:
-            if ip_address:
+            if hostname: #Prioritize hostname if provided
+                if client.host_name and client.host_name == hostname:
+                    return client
+            elif ip_address:
                 if client.ip_address == ip_address:
                     return client
             elif screen_position:

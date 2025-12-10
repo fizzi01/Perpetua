@@ -197,7 +197,7 @@ class StreamHandlerBenchmark:
             host=self.host,
             port=self.port,
             heartbeat_interval=30,
-            whitelist=self.server_clients
+            allowlist=self.server_clients
         )
 
         await self.server.start()

@@ -89,7 +89,7 @@ class ActiveServer:
             host=host,
             port=port,
             heartbeat_interval=1,
-            whitelist=self.clients_manager
+            allowlist=self.clients_manager
         )
 
         # Create Command Handler
