@@ -123,7 +123,7 @@ async def interactive_server():
                 elif cmd.startswith("ssl off"):
                     server.disable_ssl()
                 elif cmd.startswith("share ca"):
-                    await server.share_certificate()
+                    await server.share_certificate(host=server.connection_config.host)
                 elif cmd == "help":
                     helper()
                 elif cmd:

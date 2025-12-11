@@ -666,7 +666,7 @@ class Server:
                 raise RuntimeError("Failed to start clipboard listener")
 
         # Clipboard Controller - handles incoming clipboard updates
-        if self._components.get('clipboard_controller'):
+        if not self._components.get('clipboard_controller'):
             clipboard_controller = ClipboardController(
                 event_bus=self.event_bus,
                 clipboard=self._components['clipboard_listener'].get_clipboard_context(),
