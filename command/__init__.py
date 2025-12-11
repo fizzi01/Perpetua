@@ -17,13 +17,12 @@ class CommandHandler:
 
     def __init__(self, event_bus: EventBus, stream: StreamHandler):
         self.event_bus = event_bus
-        self.stream = stream # StreamHandler for command stream
+        self.stream = stream  # StreamHandler for command stream
 
         self._logger = get_logger(self.__class__.__name__)
 
         # Register async callback for command messages
         self.stream.register_receive_callback(self.handle_command, message_type=MessageType.COMMAND)
-
 
     async def handle_command(self, message):
         """

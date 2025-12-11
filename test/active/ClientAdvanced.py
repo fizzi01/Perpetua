@@ -178,6 +178,7 @@ async def interactive_client():
 
                     print("\nDisconnecting...")
                     await client.stop()
+                    client.cleanup()
                     print("✓ Client stopped\n")
 
                 elif cmd == "reconnect":
@@ -199,10 +200,10 @@ async def interactive_client():
                     try:
                         stream_type = int(cmd.split()[1])
                     except (ValueError, IndexError):
-                        print("✗ Invalid stream type. Use: 1=MOUSE, 2=KEYBOARD, 3=CLIPBOARD\n")
+                        print("✗ Invalid stream type. Use: 1=MOUSE, 4=KEYBOARD, 12=CLIPBOARD\n")
                         continue
 
-                    stream_names = {1: "MOUSE", 2: "KEYBOARD", 3: "CLIPBOARD"}
+                    stream_names = {1: "MOUSE", 4: "KEYBOARD", 12: "CLIPBOARD"}
                     stream_name = stream_names.get(stream_type, str(stream_type))
 
                     print(f"\nEnabling {stream_name} stream...")
@@ -228,14 +229,14 @@ async def interactive_client():
                     try:
                         stream_type = int(cmd.split()[1])
                     except (ValueError, IndexError):
-                        print("✗ Invalid stream type. Use: 1=MOUSE, 2=KEYBOARD, 3=CLIPBOARD\n")
+                        print("✗ Invalid stream type. Use: 1=MOUSE, 4=KEYBOARD, 12=CLIPBOARD\n")
                         continue
 
                     if stream_type == 0:  # COMMAND stream
                         print("✗ Cannot disable COMMAND stream (it's always enabled)\n")
                         continue
 
-                    stream_names = {1: "MOUSE", 2: "KEYBOARD", 3: "CLIPBOARD"}
+                    stream_names = {1: "MOUSE", 4: "KEYBOARD", 12: "CLIPBOARD"}
                     stream_name = stream_names.get(stream_type, str(stream_type))
 
                     print(f"\nDisabling {stream_name} stream...")

@@ -63,11 +63,21 @@ class UnidirectionalStreamHandler(StreamHandler):
         if isinstance(cl_stram_socket, ClientConnection):
             reader, writer = cl_stram_socket.get_stream(self.stream_type)
 
+            if writer is None:  # We avoid sending if no writer is available
+                self._active_client = None
+                return
+
             # Setup transport callbacks asyncio
             async def async_send(data: bytes):
                 writer.write(data)
                 await writer.drain()
 
+            if reader is None:  # We stop receiving if no reader is available
+                await self.msg_exchange.set_transport(send_callback=async_send, receive_callback=None)
+                await self.msg_exchange.stop()
+                return
+
+            # If we are here, both reader and writer are valid
             async def async_recv(size: int) -> bytes:
                 return await reader.read(size)
 
@@ -138,14 +148,13 @@ class BidirectionalStreamHandler(StreamHandler):
     """
 
     def __init__(self, stream_type: int, clients: ClientsManager, event_bus: EventBus, handler_id: Optional[str] = None,
-                 active_only: bool = False, avoid_receive_stop: bool = True):
+                 active_only: bool = False):
         super().__init__(stream_type=stream_type, clients=clients, event_bus=event_bus, sender=True)
 
         self._is_active = False # Track if current client is active
 
         self.handler_id = handler_id if handler_id else f"{self.__class__.__name__}-{self.stream_type}"
         self._active_only = active_only
-        self._avoid_receive_stop = avoid_receive_stop
 
         # Create a MessageExchange object
         self.msg_exchange = MessageExchange(
@@ -187,11 +196,21 @@ class BidirectionalStreamHandler(StreamHandler):
         if isinstance(cl_stram_socket, ClientConnection):
             reader, writer = cl_stram_socket.get_stream(self.stream_type)
 
+            if writer is None:  # We avoid sending if no writer is available
+                self._active_client = None
+                return
+
             # Setup transport callbacks asyncio
             async def async_send(data: bytes):
                 writer.write(data)
                 await writer.drain()
 
+            if reader is None:  # We stop receiving if no reader is available
+                await self.msg_exchange.set_transport(send_callback=async_send, receive_callback=None)
+                await self.msg_exchange.stop()
+                return
+
+            # If we are here, both reader and writer are valid
             async def async_recv(size: int) -> bytes:
                 return await reader.read(size)
 
@@ -209,10 +228,10 @@ class BidirectionalStreamHandler(StreamHandler):
         """
         Async event handler for when a client becomes inactive.
         """
-        if not self._avoid_receive_stop:
-            self._is_active = False
-            # Stop msg exchange listener
-            await self.msg_exchange.stop()
+        # We only stop sending
+        self._is_active = False
+        #await self.msg_exchange.set_transport(send_callback=None, receive_callback=None)
+        #await self.msg_exchange.stop()
 
     def register_receive_callback(self, receive_callback, message_type: str):
         """

@@ -387,7 +387,9 @@ class ConnectionHandler:
                     timeout=10.0
                 )
 
-                await asyncio.wait_for(writer.start_tls(sslcontext=ssl_context), timeout=10.0)
+                # Upgrade to TLS if needed
+                if self.use_ssl and ssl_context:
+                    await asyncio.wait_for(writer.start_tls(sslcontext=ssl_context), timeout=10.0)
 
                 self._stream_readers[stream_type] = reader
                 self._stream_writers[stream_type] = writer

@@ -379,11 +379,22 @@ class Client:
         if self.connection_handler:
             await self.connection_handler.stop()
 
-        self._components.clear()
-        self._stream_handlers.clear()
+        #self._components.clear()
+        #self._stream_handlers.clear()
         self._running = False
         self._connected = False
         self._logger.info("Client stopped")
+
+    def cleanup(self):
+        """Cleanup client resources"""
+        self._logger.info("Cleaning up client resources...")
+        # We cleanup component and stream handlers obj from memory
+        self._components.clear()
+        self._stream_handlers.clear()
+
+        # We also reset event bus
+        self.event_bus = AsyncEventBus()
+        self._logger.info("Client resources cleaned up.")
 
     def is_running(self) -> bool:
         """Check if client is running"""
@@ -448,15 +459,8 @@ class Client:
 
     async def _initialize_components(self):
         """Initialize enabled components based on configuration"""
-        command_stream = self._stream_handlers[StreamType.COMMAND]
-
-        # Command handler (always required)
-        self._components['command_handler'] = CommandHandler(
-            event_bus=self.event_bus,
-            stream=command_stream
-        )
-
         # Initialize stream components based on enabled streams
+        await self._enable_command_stream()
         await self._enable_mouse_stream()
         await self._enable_keyboard_stream()
         await self._enable_clipboard_stream()
@@ -469,6 +473,27 @@ class Client:
         if is_enabled and not stream_handler.is_active():
             if not await stream_handler.start():
                 raise RuntimeError(f"Failed to start stream handler for {stream_type}")
+
+    async def _enable_command_stream(self):
+        """Enable command stream and components at runtime"""
+        # Command stream is always enabled
+        command_stream = self._stream_handlers.get(StreamType.COMMAND)
+        if not command_stream:
+            self._logger.error("Command stream handler not initialized")
+            return
+
+        # Start stream if connected
+        if self._connected:
+            await self._ensure_stream_active(StreamType.COMMAND, command_stream)
+
+        # Command Handler - handles incoming commands from server
+        command_handler = self._components.get('command_handler')
+        if not command_handler:
+            command_handler = CommandHandler(
+                event_bus=self.event_bus,
+                stream=command_stream
+            )
+            self._components['command_handler'] = command_handler
 
     async def _enable_mouse_stream(self):
         """Enable mouse stream and components at runtime"""

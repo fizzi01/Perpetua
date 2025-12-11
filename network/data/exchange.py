@@ -63,12 +63,31 @@ class MessageExchange:
 
     async def start(self):
         """Start asyncio task for incoming messages."""
+        if self._running:
+            return
+
         if not self._receive_callback:
             raise RuntimeError("Transport layer not configured. Call set_transport() first.")
 
         self._running = True
         self._message_queue = asyncio.Queue(maxsize=10000)
         self._receive_task = asyncio.create_task(self._receive_loop())
+
+        self._logger.debug("Started")
+
+    async def stop(self):
+        """Cleanup and shutdown the message exchange layer."""
+        self._running = False
+
+        if self._receive_task:
+            self._receive_task.cancel()
+            try:
+                await self._receive_task
+            except asyncio.CancelledError:
+                pass
+
+        self._chunk_buffer.clear()
+        self._logger.debug("Stopped")
 
     async def _receive_loop(self):
         """Loop di ricezione asyncio con buffer intelligente per messaggi frammentati."""
@@ -132,7 +151,6 @@ class MessageExchange:
                             # Ignora messaggi di heartbeat
                             offset += total_length
                             continue
-
                         # Gestione chunk/messaggio normale
                         if message.is_chunk:
                             reconstructed = await self._handle_chunk(message)
@@ -375,15 +393,4 @@ class MessageExchange:
         else:
             self._logger.log(f"No handler registered for message type: {message.message_type}", Logger.DEBUG)
 
-    async def stop(self):
-        """Cleanup and shutdown the message exchange layer."""
-        self._running = False
 
-        if self._receive_task:
-            self._receive_task.cancel()
-            try:
-                await self._receive_task
-            except asyncio.CancelledError:
-                pass
-
-        self._chunk_buffer.clear()
