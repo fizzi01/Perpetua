@@ -4,6 +4,8 @@ Provides a clean interface to configure and manage client components.
 Supports runtime enable/disable of streams and listeners.
 """
 import asyncio
+import os
+from pathlib import Path
 from typing import Optional, Dict
 from dataclasses import dataclass
 
@@ -21,6 +23,8 @@ from command import CommandHandler
 from input.mouse import ClientMouseController
 from input.keyboard import ClientKeyboardController
 from input.clipboard import ClipboardListener, ClipboardController
+from utils.crypto import CertificateManager
+from utils.crypto.sharing import CertificateReceiver
 from utils.logging import Logger, get_logger
 
 
@@ -31,6 +35,7 @@ class ClientConnectionConfig:
     server_port: int = 5555
     heartbeat_interval: int = 1
     auto_reconnect: bool = True
+    certfile: Optional[str] = None
 
 
 class Client:
@@ -56,6 +61,8 @@ class Client:
         self.app_config = app_config or ApplicationConfig()
         self.client_config = client_config or ClientConfig()
         self.connection_config = connection_config or ClientConnectionConfig()
+        self._cert_manager = CertificateManager(cert_dir=self.app_config.get_certificate_path())
+        self._cert_receiver: Optional[CertificateReceiver] = None
 
         self._logger = get_logger(self.__class__.__name__)
         self._logger.set_level(log_level)
@@ -81,6 +88,130 @@ class Client:
 
         # Connection handler
         self.connection_handler: Optional[ConnectionHandler] = None
+
+    # ==================== Certificate Management ====================
+
+    def enable_ssl(self) -> bool:
+        """Enable SSL connection if certificate is loaded"""
+        if self.connection_config.certfile and os.path.exists(self.connection_config.certfile):
+            self._logger.info("SSL connection enabled")
+            return True
+        else:
+            self._logger.warning("Cannot enable SSL: No valid certificate loaded")
+            return False
+
+    def disable_ssl(self):
+        """Disable SSL connection"""
+        self._logger.info("SSL connection disabled")
+        self.connection_config.certfile = None
+
+    def _load_certificate(self) -> bool:
+        """Load SSL certificate for secure connection"""
+        if self._cert_manager.certificate_exist():
+            self.connection_config.certfile = self._cert_manager.get_ca_cert_path()
+            self._logger.info(f"Loaded certificate from: {self.connection_config.certfile}")
+            return True
+        else:
+            self._logger.warning(f"Certificate not found")
+            return False
+
+    def _remove_certificate(self):
+        """Remove loaded SSL certificate. It will disable SSL connection."""
+        if self.connection_config.certfile:
+            self._logger.info(f"Removing certificate and disabling SSL connection")
+            self.connection_config.certfile = None
+        else:
+            self._logger.info("No certificate to remove")
+
+    async def receive_certificate(
+            self,
+            otp: str,
+            server_host: Optional[str] = None,
+            server_port: int = 5556,
+            timeout: int = 30
+    ) -> bool:
+        """
+        Receive CA certificate from server using OTP.
+
+        Args:
+            otp: One-time password provided by server
+            server_host: Server host for certificate sharing (default: same as connection host)
+            server_port: Server port for certificate sharing (default: 5556)
+            save_path: Path to save received certificate (default: ./certs/ca_cert.pem)
+            timeout: Connection timeout in seconds (default: 10)
+
+        Returns:
+            True if certificate received and saved successfully
+
+        Example:
+        ::
+            # Get OTP from server (out-of-band, e.g., displayed on server screen)
+            otp = input("Enter OTP from server: ")
+            success = await client.receive_certificate(otp)
+            if success:
+                print("Certificate received successfully!")
+        """
+        if not otp or len(otp) != 6 or not otp.isdigit():
+            self._logger.error("Invalid OTP format. Must be 6 digits")
+            return False
+
+        # Use connection host if not specified
+        if server_host is None:
+            server_host = self.connection_config.server_host
+
+        self._logger.info(f"Attempting to receive certificate from {server_host}:{server_port}")
+
+        try:
+            # Create receiver
+            self._cert_receiver = CertificateReceiver(
+                server_host=server_host,
+                server_port=server_port,
+                timeout=timeout
+            )
+
+            # Receive certificate
+            success, cert_data = await self._cert_receiver.receive_certificate(otp)
+
+            if not success:
+                self._logger.error("Failed to receive certificate from server")
+                return False
+
+            if not cert_data:
+                self._logger.error("Received empty certificate data")
+                return False
+
+            # Save certificate
+            if not self._cert_manager.save_ca_data(data=cert_data):
+                self._logger.error("Failed to save received certificate")
+                return False
+
+            return True
+
+        except Exception as e:
+            self._logger.error(f"Error receiving certificate -> {e}")
+            import traceback
+            self._logger.error(traceback.format_exc())
+            return False
+
+    def get_certificate_path(self) -> Optional[Path|str]:
+        """
+        Get path of received CA certificate.
+
+        Returns:
+            Path to received certificate or None if not received yet
+        """
+        return self.connection_config.certfile
+
+    def has_certificate(self) -> bool:
+        """
+        Check if client has received a certificate.
+
+        Returns:
+            True if certificate was received and file exists
+        """
+        if not self.connection_config.certfile:
+            return False
+        return os.path.exists(self.connection_config.certfile)
 
     # ==================== Stream Management ====================
 
@@ -203,7 +334,8 @@ class Client:
             heartbeat_interval=self.connection_config.heartbeat_interval,
             clients=self.clients_manager,
             open_streams=enabled_streams,
-            auto_reconnect=self.connection_config.auto_reconnect
+            auto_reconnect=self.connection_config.auto_reconnect,
+            certfile=self.connection_config.certfile,
         )
 
         # Connect to server

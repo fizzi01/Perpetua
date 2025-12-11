@@ -4,10 +4,11 @@ Provides a clean interface to configure and manage server components.
 Supports runtime enable/disable of streams and listeners.
 """
 import asyncio
-from typing import Optional, Dict
-from dataclasses import dataclass
+import socket
 
-from config import ApplicationConfig, ServerConfig
+from typing import Optional, Dict, Tuple
+
+from config import ApplicationConfig, ServerConfig, ServerConnectionConfig
 from model.client import ClientObj, ClientsManager, ScreenPosition
 from event.bus import AsyncEventBus
 from event import EventType
@@ -23,15 +24,12 @@ from input.cursor import CursorHandlerWorker
 from input.mouse import ServerMouseListener, ServerMouseController
 from input.keyboard import ServerKeyboardListener
 from input.clipboard import ClipboardListener, ClipboardController
+
+from utils.net import get_local_ip
+from utils.crypto import CertificateManager
+from utils.crypto.sharing import CertificateSharing
+
 from utils.logging import Logger,get_logger
-
-
-@dataclass
-class ServerConnectionConfig:
-    """Server connection configuration"""
-    host: str = "0.0.0.0"
-    port: int = 5555
-    heartbeat_interval: int = 1
 
 
 class Server:
@@ -53,14 +51,19 @@ class Server:
         server_config: Optional[ServerConfig] = None,
         log_level: int = Logger.INFO
     ):
+        # Set logging level
+        self._logger = get_logger(self.__class__.__name__)
+        self._logger.set_level(log_level)
+
         # Initialize configurations
         self.app_config = app_config or ApplicationConfig()
         self.server_config = server_config or ServerConfig(self.app_config)
         self.connection_config = connection_config or ServerConnectionConfig()
-
-        # Set logging level
-        self._logger = get_logger(self.__class__.__name__)
-        self._logger.set_level(log_level)
+        self._cert_manager = CertificateManager(cert_dir=self.app_config.get_certificate_path())
+        self._cert_sharing: Optional[CertificateSharing] = None
+        
+        if self.connection_config.ssl_enabled:
+            self._setup_certificates()
 
         # Initialize core components
         self.clients_manager = ClientsManager()
@@ -76,6 +79,134 @@ class Server:
         # Connection handler
         self.connection_handler: Optional[ConnectionHandler] = None
 
+    # ==================== Certificate Management ====================
+
+    def enable_ssl(self) -> bool:
+        """Enable SSL for server connections. It will take effect on next start."""
+        try:
+            self._setup_certificates()
+        except Exception:
+            self.connection_config.ssl_enabled = False
+            self._logger.error("Failed to setup SSL certificates, cannot enable SSL")
+            return False
+
+        self.connection_config.ssl_enabled = True
+        self._logger.info("SSL enabled for server connections")
+        return True
+
+    def disable_ssl(self):
+        """Disable SSL for server connections. It will take effect on next start."""
+        self.connection_config.ssl_enabled = False
+        self.connection_config.certfile = None
+        self.connection_config.keyfile = None
+        self._logger.info("SSL disabled for server connections")
+
+    def _setup_certificates(self):
+        """Ensure SSL certificates are available"""
+        try:
+            if not self._cert_manager.certificates_exist():
+                self._logger.warning("SSL certificates not found, generating new ones...")
+                hostname = socket.gethostname()
+                ip = get_local_ip()
+                
+                self._cert_manager.generate_ca()
+                self._cert_manager.generate_server_certificate(hostname, [ip, 'localhost'])
+                
+                self.connection_config.certfile, self.connection_config.keyfile = self._cert_manager.get_server_credentials()
+                if not self.connection_config.certfile or not self.connection_config.keyfile:
+                    raise RuntimeError("Failed to generate SSL certificates")
+                
+                self._logger.info("SSL certificates generated successfully")
+            else:
+                self.connection_config.certfile, self.connection_config.keyfile = self._cert_manager.get_server_credentials()
+                self._logger.info("SSL certificates found and loaded")
+        except Exception as e:
+            self._logger.error(f"Error setting up SSL certificates -> {e}")
+            raise
+
+    async def share_certificate(self, host: str = "0.0.0.0", port: int = 5556, timeout: int = 30) -> Tuple[
+        bool, Optional[str]]:
+        """
+        Start certificate sharing process with OTP.
+
+        Opens a temporary server that clients can connect to receive the CA certificate.
+        Returns an OTP that must be used by the client to decrypt the certificate.
+
+        Args:
+            host: Host address for temporary server (default: all interfaces)
+            port: Port for temporary server (default: 5556)
+            timeout: Maximum time window in seconds (default: 10)
+
+        Returns:
+            Tuple of (success, otp). OTP is None if failed.
+
+        Example:
+        ::
+            success, otp = await server.share_certificate()
+            if success:
+                print(f"Share this OTP with client: {otp}")
+        """
+        if not self._cert_manager.certificates_exist():
+            self._logger.error("No certificates available to share")
+            return False, None
+
+        # Stop previous sharing if active
+        if self._cert_sharing and self._cert_sharing.is_sharing_active():
+            await self._cert_sharing.stop_sharing()
+
+        try:
+            # Get CA certificate
+            cert_data = self._cert_manager.load_ca_data()
+
+            if not cert_data:
+                self._logger.error("Failed to load CA certificate data")
+                return False, None
+
+            # Create and start sharing
+            self._cert_sharing = CertificateSharing(
+                cert_data=cert_data,
+                host=host,
+                port=port,
+                timeout=timeout
+            )
+
+            success, otp = await self._cert_sharing.start_sharing()
+
+            if success:
+                self._logger.info(f"Certificate sharing started. OTP: {otp}")
+                return True, otp
+            else:
+                self._logger.error("Failed to start certificate sharing")
+                return False, None
+
+        except Exception as e:
+            self._logger.error(f"Error starting certificate sharing -> {e}")
+            return False, None
+
+    async def stop_cert_sharing(self):
+        """
+        Stop certificate sharing server.
+
+        Invalidates OTP and closes temporary server.
+        """
+        if self._cert_sharing:
+            await self._cert_sharing.stop_sharing()
+            self._logger.info("Certificate sharing stopped")
+
+    def get_sharing_otp(self) -> Optional[str]:
+        """
+        Get current OTP for certificate sharing.
+
+        Returns:
+            OTP string if valid and sharing is active, None otherwise
+        """
+        if self._cert_sharing:
+            return self._cert_sharing.get_otp()
+        return None
+
+    def is_cert_sharing_active(self) -> bool:
+        """Check if certificate sharing is currently active"""
+        return self._cert_sharing is not None and self._cert_sharing.is_sharing_active()
     # ==================== Client Management ====================
 
     def add_client(self, ip_address: Optional[str] = None, hostname: Optional[str] = None, screen_position: str = "top") -> ClientObj:
@@ -89,7 +220,8 @@ class Server:
         """Remove a client from the whitelist"""
         client = self.clients_manager.get_client(ip_address=ip_address, screen_position=screen_position, hostname=hostname)
         if client:
-            await self.connection_handler.force_disconnect_client(client)
+            if self._running: # If server is running, disconnect client first
+                await self.connection_handler.force_disconnect_client(client)
             # Finally remove from whitelist
             self.clients_manager.remove_client(client)
             self._logger.info(f"Removed client {ip_address or screen_position}")
@@ -185,8 +317,8 @@ class Server:
             import traceback
             traceback.print_exc()
             self.disable_stream(stream_type)
-            self._logger.error(f"Failed to enable {stream_type} stream: {e}")
-            raise RuntimeError(f"Failed to enable {stream_type} stream: {e}")
+            self._logger.error(f"Failed to enable {stream_type} stream -> {e}")
+            raise RuntimeError(f"Failed to enable {stream_type} stream -> {e}")
 
     async def disable_stream_runtime(self, stream_type: int) -> bool:
         """Disable a stream at runtime"""
@@ -212,8 +344,8 @@ class Server:
             self._logger.info(f"Runtime disabled stream: {stream_type}")
             return True
         except Exception as e:
-            self._logger.error(f"Failed to disable {stream_type} stream: {e}")
-            raise RuntimeError(f"Failed to disable {stream_type} stream: {e}")
+            self._logger.error(f"Failed to disable {stream_type} stream -> {e}")
+            raise RuntimeError(f"Failed to disable {stream_type} stream -> {e}")
 
     # ==================== Server Lifecycle ====================
 
@@ -232,7 +364,9 @@ class Server:
             host=self.connection_config.host,
             port=self.connection_config.port,
             heartbeat_interval=self.connection_config.heartbeat_interval,
-            allowlist=self.clients_manager
+            allowlist=self.clients_manager,
+            certfile=self.connection_config.certfile,
+            keyfile=self.connection_config.keyfile,
         )
 
         if not await self.connection_handler.start():
@@ -243,7 +377,7 @@ class Server:
         try:
             await self._initialize_streams()
         except Exception as e:
-            self._logger.error(f"Failed to initialize streams: {e}")
+            self._logger.error(f"Failed to initialize streams -> {e}")
             await self.connection_handler.stop()
             return False
 
@@ -251,7 +385,7 @@ class Server:
         try:
             await self._initialize_components()
         except Exception as e:
-            self._logger.error(f"Failed to initialize components: {e}")
+            self._logger.error(f"Failed to initialize components -> {e}")
             await self.stop()
             return False
 
@@ -280,7 +414,7 @@ class Server:
                     else:
                         component.stop()
             except Exception as e:
-                self._logger.error(f"Error stopping component {component_name}: {e}")
+                self._logger.error(f"Error stopping component {component_name} -> {e}")
 
         # Stop all stream handlers
         for stream_type, handler in list(self._stream_handlers.items()):
@@ -288,7 +422,7 @@ class Server:
                 if hasattr(handler, 'stop'):
                     await handler.stop()
             except Exception as e:
-                self._logger.error(f"Error stopping stream handler {stream_type}: {e}")
+                self._logger.error(f"Error stopping stream handler {stream_type} -> {e}")
 
         self._components.clear()
         self._stream_handlers.clear()

@@ -143,3 +143,6 @@ OLD/
 .build/
 .DS_Store/
 .vscode/
+
+*.crt
+*.key

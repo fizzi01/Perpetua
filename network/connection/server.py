@@ -323,7 +323,9 @@ class ConnectionHandler:
 
                             # Wrap con SSL se richiesto (già gestito da asyncio transport)
                             if client.ssl and self.certfile and self.keyfile:
-                                await stream_writer.start_tls(self._get_ssl_context())
+                                await asyncio.wait_for(stream_writer.start_tls(self._get_ssl_context()),
+                                                       timeout=10.0
+                                                       )
                                 self._logger.log(f"SSL stream connection for {stream_type} from {stream_addr}", Logger.INFO)
 
                             client.conn_socket.add_stream(stream_type, stream_reader, stream_writer)
@@ -450,6 +452,13 @@ class ConnectionHandler:
         except asyncio.CancelledError:
             self._logger.log("Heartbeat loop cancelled.", Logger.INFO)
             await self.stop()
+
+    def set_ssl_files(self, certfile: str, keyfile: str):
+        """
+        Set SSL certificate and key files.
+        """
+        self.certfile = certfile
+        self.keyfile = keyfile
 
     def _get_ssl_context(self) -> Optional[ssl.SSLContext]:
         """

@@ -18,7 +18,7 @@ class ScreenPosition:
 
     @staticmethod
     def is_valid(position: str) -> bool:
-        return position in {
+        return position.lower() in {
             ScreenPosition.CENTER,
             ScreenPosition.TOP,
             ScreenPosition.BOTTOM,

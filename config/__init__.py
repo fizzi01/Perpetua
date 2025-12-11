@@ -1,4 +1,6 @@
 from dataclasses import dataclass, field
+from typing import Optional
+
 
 @dataclass
 class ApplicationConfig:
@@ -31,6 +33,12 @@ class ApplicationConfig:
             "client": self.client_config_file,
         }
 
+    def get_config_dir(self) -> str:
+        return self.config_path
+
+    def get_certificate_path(self) -> str:
+        return self.get_config_dir() + self.ssl_path
+
 class ServerConfig:
     """
     Server configuration settings
@@ -39,6 +47,13 @@ class ServerConfig:
     def __init__(self, app_config: ApplicationConfig = ApplicationConfig()):
         self.app_config = app_config
         self.streams_enabled = {}
+        self.is_ssl_enabled = False
+
+    def enable_ssl(self):
+        self.is_ssl_enabled = True
+
+    def disable_ssl(self):
+        self.is_ssl_enabled = False
 
     def enable_stream(self, stream_type: int):
         self.streams_enabled[stream_type] = True
@@ -72,3 +87,14 @@ class ClientConfig:
 
     def is_stream_enabled(self, stream_type: int) -> bool:
         return self.streams_enabled.get(stream_type, False)
+
+
+@dataclass
+class ServerConnectionConfig:
+    """Server connection configuration"""
+    host: str = "0.0.0.0"
+    port: int = 5555
+    heartbeat_interval: int = 1
+    certfile: Optional[str] = None
+    keyfile: Optional[str] = None
+    ssl_enabled: bool = False

@@ -3,10 +3,24 @@ Advanced Server Example - Gestione runtime degli stream
 Dimostra come abilitare/disabilitare stream durante l'esecuzione
 """
 import asyncio
+from socket import gethostname
 
 from network.stream import StreamType
-from service.server import Server, ServerConnectionConfig
+from service.server import Server
+from config import ServerConnectionConfig
 from utils.logging import Logger
+
+def helper():
+    print("\nCommands:")
+    print("  list    - List active streams")
+    print("  enable  <stream> - Enable a stream")
+    print("  disable <stream> - Disable a stream")
+    print("  clients - Show connected clients")
+    print("  add     - Add a new client")
+    print("  remove  - Remove a client")
+    print("  edit    - Edit a client's configuration")
+    print("  ssl on/off - Enable or disable SSL")
+    print("  quit    - Stop server and exit\n")
 
 
 async def interactive_server():
@@ -14,8 +28,9 @@ async def interactive_server():
 
     # Configurazione
     conn_config = ServerConnectionConfig(
-        host="192.168.1.62",
-        port=5555
+        host=gethostname(),
+        port=5555,
+        ssl_enabled=True,
     )
 
     server = Server(
@@ -24,7 +39,7 @@ async def interactive_server():
     )
 
     # Aggiungi client
-    server.add_client("192.168.1.74", screen_position="top")
+    server.add_client(hostname="Federico", screen_position="top")
 
     # Avvia server
     if not await server.start():
@@ -34,12 +49,7 @@ async def interactive_server():
     print("\n" + "="*60)
     print("PyContinuity Interactive Server")
     print("="*60)
-    print("\nCommands:")
-    print("  list    - List active streams")
-    print("  enable  <stream> - Enable a stream (mouse, keyboard, clipboard)")
-    print("  disable <stream> - Disable a stream")
-    print("  clients - Show connected clients")
-    print("  quit    - Stop server and exit")
+    helper()
     print("="*60 + "\n")
 
     # Task per gestire input utente
@@ -65,25 +75,25 @@ async def interactive_server():
                     print(f"\nRegistered clients: {len(clients)}")
                     for client in clients:
                         status = "Connected" if client.is_connected else "Disconnected"
-                        print(f"  - {client.ip_address} ({client.screen_position}) - {status}")
+                        print(f"  - {client.get_net_id()} ({client.screen_position}) - {status}")
                     print()
                 elif cmd == "add":
                     # Dynamic add client
-                    ip = input("Enter client IP address: ").strip()
+                    hostname = input("Enter client hostname or IP: ").strip()
                     position = input("Enter screen position (top/bottom/left/right): ").strip().lower()
-                    server.add_client(ip, screen_position=position)
-                    print(f"Client {ip} added at position {position}\n")
+                    server.add_client(hostname=hostname,ip_address=hostname, screen_position=position)
+                    print(f"Client {hostname} added at position {position}\n")
                 elif cmd == "remove":
                     # Dynamic remove client
-                    ip = input("Enter client IP address to remove: ").strip()
-                    await server.remove_client(ip)
+                    ip = input("Enter client hostname or IP to remove: ").strip()
+                    await server.remove_client(hostname=ip, ip_address=ip)
                     print(f"Client {ip} removed\n")
                 elif cmd == "edit":
                     # Dynamic edit client
-                    ip = input("Enter client IP address to edit: ").strip()
+                    hostname = input("Enter client hostname or IP: ").strip()
                     position = input("Enter new screen position (top/bottom/left/right): ").strip().lower()
-                    server.edit_client(ip, screen_position=position)
-                    print(f"Client {ip} updated to position {position}\n")
+                    server.edit_client(hostname=hostname, ip_address=hostname, screen_position=position)
+                    print(f"Client {hostname} updated to position {position}\n")
                 elif cmd.startswith("enable "):
                     stream_type = cmd.split()[1]
                     # Parse to int
@@ -106,15 +116,14 @@ async def interactive_server():
                         print(f"Active streams: {server.get_active_streams()}\n")
                     except Exception as e:
                         print(f"✗ Failed to disable {stream_type}: {e}\n")
-
+                elif cmd.startswith("ssl on"):
+                    server.enable_ssl()
+                elif cmd.startswith("ssl off"):
+                    server.disable_ssl()
+                elif cmd.startswith("share ca"):
+                    await server.share_certificate()
                 elif cmd == "help":
-                    print("\nCommands:")
-                    print("  list    - List active streams")
-                    print("  enable  <stream> - Enable a stream")
-                    print("  disable <stream> - Disable a stream")
-                    print("  clients - Show connected clients")
-                    print("  quit    - Stop server and exit\n")
-
+                    helper()
                 elif cmd:
                     print(f"Unknown command: {cmd}")
                     print("Type 'help' for available commands\n")

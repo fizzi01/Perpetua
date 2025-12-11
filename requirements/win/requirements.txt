@@ -10,3 +10,5 @@ comtypes==1.4.8
 wxPython==4.2.2
 attrs==24.2.0
 copykitten==2.0.0
+cryptography==46.0.3
+pyjwt==2.10.1

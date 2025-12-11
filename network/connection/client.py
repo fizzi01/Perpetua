@@ -389,7 +389,7 @@ class ConnectionHandler:
             try:
                 # Connect to server for this stream
                 reader, writer = await asyncio.wait_for(
-                    asyncio.open_connection(self.host, self.port, ssl=ssl_context),
+                    asyncio.open_connection(self.host, self.port),
                     timeout=10.0
                 )
 
