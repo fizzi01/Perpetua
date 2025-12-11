@@ -212,6 +212,10 @@ class Logger:
         """Log a error level"""
         self.log(message, self.ERROR)
 
+    def critical(self, message):
+        """Log a critical level"""
+        self.log(message, self.CRITICAL)
+
 
 def get_logger(name=None, log=True):
     """
