@@ -78,11 +78,23 @@ class UnidirectionalStreamHandler(StreamHandler):
             if isinstance(cl_stram_socket, ClientConnection):
                 reader, writer = cl_stram_socket.get_stream(self.stream_type)
 
+                if writer is None:  # We avoid sending if no writer is available
+                    self._logger.debug("No writer available for active client")
+                    self._active_client = None
+                    return
+
                 # Setup transport callbacks asyncio
                 async def async_send(data: bytes):
                     writer.write(data)
                     await writer.drain()
 
+                if reader is None:  # We stop receiving if no reader is available
+                    self._logger.debug("No reader available for active client")
+                    await self.msg_exchange.set_transport(send_callback=async_send, receive_callback=None)
+                    await self.msg_exchange.stop()
+                    return
+
+                # If we are here, both reader and writer are valid
                 async def async_recv(size: int) -> bytes:
                     return await reader.read(size)
 
@@ -93,7 +105,7 @@ class UnidirectionalStreamHandler(StreamHandler):
                 # Start msg exchange listener (always runs for async dispatch)
                 await self.msg_exchange.start()
             else:
-                self._logger.warning(
+                self._logger.debug(
                     f"No valid stream for active client {self._active_client.screen_position}")
                 await self.msg_exchange.set_transport(send_callback=None, receive_callback=None)
                 await self.msg_exchange.stop()
@@ -127,6 +139,9 @@ class UnidirectionalStreamHandler(StreamHandler):
                 except asyncio.TimeoutError:
                     await asyncio.sleep(self._waiting_time)
                     continue
+                except AttributeError:
+                    # Active client became None during await
+                    self._active_client = None
                 except (BrokenPipeError, ConnectionResetError) as e:
                     self._logger.warning(f"Connection error -> {e}")
                     # Set active client to None on connection errors
@@ -206,11 +221,23 @@ class BidirectionalStreamHandler(StreamHandler):
             if isinstance(cl_stram_socket, ClientConnection):
                 reader, writer = cl_stram_socket.get_stream(self.stream_type)
 
+                if writer is None:  # We avoid sending if no writer is available
+                    self._logger.debug("No writer available for active client")
+                    self._active_client = None
+                    return
+
                 # Setup transport callbacks asyncio
                 async def async_send(data: bytes):
                     writer.write(data)
                     await writer.drain()
 
+                if reader is None:  # We stop receiving if no reader is available
+                    self._logger.debug("No reader available for active client")
+                    await self.msg_exchange.set_transport(send_callback=async_send, receive_callback=None)
+                    await self.msg_exchange.stop()
+                    return
+
+                # If we are here, both reader and writer are valid
                 async def async_recv(size: int) -> bytes:
                     return await reader.read(size)
 
@@ -252,6 +279,11 @@ class BidirectionalStreamHandler(StreamHandler):
                 except asyncio.TimeoutError:
                     await asyncio.sleep(self._waiting_time)
                     continue
+                except AttributeError:
+                    # Active client became None during await
+                    self._logger.debug(
+                        f"No valid stream for active client {self._active_client.screen_position}")
+                    pass
                 except (BrokenPipeError, ConnectionResetError) as e:
                     self._logger.warning(f"Connection error -> {e}")
                     # Set active client to None on connection errors
@@ -334,11 +366,21 @@ class MulticastStreamHandler(StreamHandler):
             if isinstance(cl_stram_socket, ClientConnection):
                 reader, writer = cl_stram_socket.get_stream(self.stream_type)
 
+                if writer is None:  # We avoid sending if no writer is available
+                    self._active_client = None
+                    return
+
                 # Setup transport callbacks asyncio
                 async def async_send(data: bytes):
                     writer.write(data)
                     await writer.drain()
 
+                if reader is None:  # We stop receiving if no reader is available
+                    await self.msg_exchange.set_transport(send_callback=async_send, receive_callback=None)
+                    await self.msg_exchange.stop()
+                    return
+
+                # If we are here, both reader and writer are valid
                 async def async_recv(size: int) -> bytes:
                     return await reader.read(size)
 
@@ -402,6 +444,9 @@ class MulticastStreamHandler(StreamHandler):
                 except asyncio.TimeoutError:
                     await asyncio.sleep(self._waiting_time)
                     continue
+                except AttributeError:
+                    # Active client became None during await
+                    self._active_client = None
                 except (BrokenPipeError, ConnectionResetError) as e:
                     self._logger.warning(f"Connection error -> {e}")
                     # Set active client to None on connection errors
