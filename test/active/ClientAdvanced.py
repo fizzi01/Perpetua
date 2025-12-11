@@ -32,12 +32,13 @@ async def interactive_client():
     conn_config = ClientConnectionConfig(
         server_host=input("Enter server host (default: localhost): ").strip() or "localhost",
         server_port=int(input("Enter server port (default: 5555): ").strip() or "5555"),
+        client_hostname=gethostname(),
         auto_reconnect=True
     )
 
     client = Client(
         connection_config=conn_config,
-        log_level=Logger.INFO
+        log_level=Logger.DEBUG
     )
 
     # Enable default streams
