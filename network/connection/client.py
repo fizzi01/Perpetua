@@ -251,15 +251,9 @@ class ConnectionHandler:
     async def _connect(self) -> bool:
         """Establish command stream connection"""
         try:
-            # Create SSL context if needed
-            ssl_context = None
-            if self.use_ssl and self.certfile:
-                ssl_context = ssl.create_default_context(ssl.Purpose.SERVER_AUTH)
-                ssl_context.load_verify_locations(self.certfile)
-
             # Connect to server
             self._command_reader, self._command_writer = await asyncio.wait_for(
-                asyncio.open_connection(self.host, self.port, ssl=ssl_context),
+                asyncio.open_connection(self.host, self.port),
                 timeout=5.0
             )
 
@@ -392,6 +386,8 @@ class ConnectionHandler:
                     asyncio.open_connection(self.host, self.port),
                     timeout=10.0
                 )
+
+                await asyncio.wait_for(writer.start_tls(sslcontext=ssl_context), timeout=10.0)
 
                 self._stream_readers[stream_type] = reader
                 self._stream_writers[stream_type] = writer
