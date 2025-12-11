@@ -7,9 +7,8 @@ import asyncio
 import os
 from pathlib import Path
 from typing import Optional, Dict
-from dataclasses import dataclass
 
-from config import ApplicationConfig, ClientConfig
+from config import ApplicationConfig, ClientConfig, ClientConnectionConfig
 from model.client import ClientObj, ClientsManager
 from event.bus import AsyncEventBus
 from event import EventType
@@ -26,17 +25,6 @@ from input.clipboard import ClipboardListener, ClipboardController
 from utils.crypto import CertificateManager
 from utils.crypto.sharing import CertificateReceiver
 from utils.logging import Logger, get_logger
-
-
-@dataclass
-class ClientConnectionConfig:
-    """Client connection configuration"""
-    server_host: str = "127.0.0.1"
-    server_port: int = 5555
-    client_hostname: Optional[str] = None
-    heartbeat_interval: int = 1
-    auto_reconnect: bool = True
-    certfile: Optional[str] = None
 
 
 class Client:
@@ -58,6 +46,7 @@ class Client:
         client_config: Optional[ClientConfig] = None,
         log_level: int = Logger.INFO
     ):
+
         self._logger = get_logger(self.__class__.__name__)
         self._logger.set_level(log_level)
 
@@ -75,12 +64,12 @@ class Client:
         self.clients_manager = ClientsManager(client_mode=True)
         self.event_bus = AsyncEventBus()
 
-        # Add server to clients manager
-        self.server_client = ClientObj(
-            ip_address=self.connection_config.server_host,
-            ssl=False
+        # Add main to clients manager
+        self.main_client = ClientObj(
+            ip_address="0.0.0.0", # Dummmy we don't need it
+            hostname=self.connection_config.client_hostname
         )
-        self.clients_manager.add_client(self.server_client)
+        self.clients_manager.add_client(self.main_client)
 
         # Stream handlers registry
         self._stream_handlers: Dict[int, StreamHandler] = {}
@@ -115,7 +104,7 @@ class Client:
     def _load_certificate(self) -> bool:
         """Load SSL certificate for secure connection"""
         if self._cert_manager.certificate_exist():
-            self.connection_config.certfile = self._cert_manager.get_ca_cert_path()
+            self.connection_config.certfile = self._cert_manager.get_ca_cert_path(source_id=self.connection_config.server_host)
             self._logger.info(f"Loaded certificate from: {self.connection_config.certfile}")
             return True
         else:
@@ -188,7 +177,7 @@ class Client:
                 return False
 
             # Save certificate
-            if not self._cert_manager.save_ca_data(data=cert_data):
+            if not self._cert_manager.save_ca_data(data=cert_data, source_id=self.connection_config.server_host):
                 self._logger.error("Failed to save received certificate")
                 return False
 

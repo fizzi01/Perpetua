@@ -6,7 +6,8 @@ import asyncio
 from socket import gethostname
 
 from network.stream import StreamType
-from service.client import Client, ClientConnectionConfig
+from service.client import Client
+from config import ClientConnectionConfig
 from utils.logging import Logger
 
 

@@ -20,6 +20,8 @@ def helper():
     print("  remove  - Remove a client")
     print("  edit    - Edit a client's configuration")
     print("  ssl on/off - Enable or disable SSL")
+    print("  share ca - Share CA certificate with clients")
+    print("  help    - Show this help message")
     print("  quit    - Stop server and exit\n")
 
 
@@ -35,7 +37,7 @@ async def interactive_server():
 
     server = Server(
         connection_config=conn_config,
-        log_level=Logger.INFO
+        log_level=Logger.DEBUG
     )
 
     # Aggiungi client

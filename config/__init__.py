@@ -91,10 +91,62 @@ class ClientConfig:
 
 @dataclass
 class ServerConnectionConfig:
-    """Server connection configuration"""
-    host: str = "0.0.0.0"
+    """
+    Represents the configuration for a server connection.
+
+    This class is used to manage and specify the configuration settings needed
+    when establishing a server connection. It includes options for defining
+    the host, port, heartbeat interval, and support for SSL/TLS certificates as
+    well as enabling or disabling SSL functionality.
+
+    Attributes:
+        host:
+            Hostname or IP address of the server to connect to. Defaults to "0.0.0.0".
+        port:
+            Port number to connect to. Defaults to 5555.
+        heartbeat_interval:
+            Time interval in seconds to send heartbeat signals to the server.
+            Defaults to 1 second.
+        certfile:
+            Path to the SSL certificate file. If None, SSL is not configured.
+            Defaults to None.
+        keyfile:
+            Path to the SSL key file. If None, SSL is not configured. Defaults to None.
+        ssl_enabled:
+            A boolean indicating whether SSL/TLS is enabled for the connection.
+            Defaults to False.
+    """
+    host: str = "0.0.0.0" #Can be an hostname or an IP address
     port: int = 5555
     heartbeat_interval: int = 1
     certfile: Optional[str] = None
     keyfile: Optional[str] = None
     ssl_enabled: bool = False
+
+
+@dataclass
+class ClientConnectionConfig:
+    """
+    Represents the configuration settings for a client connection.
+
+    This class is utilized to define and store the configuration parameters required for
+    a client to connect to a server. These parameters include server details such as host
+    and port, client-specific settings like hostname and heartbeat interval, and
+    optional configurations for security and connectivity behaviors.
+
+    Attributes:
+        server_host: The hostname or IP address of the server to connect to.
+        server_port: The port number of the server to connect to.
+        client_hostname: The optional hostname of the client. Defaults to None if not specified.
+        heartbeat_interval: The interval in seconds for sending heartbeat signals to the server.
+        auto_reconnect: A flag indicating whether to automatically reconnect if the connection
+            drops. Defaults to True.
+        certfile: Path to the SSL certificate file for secure connections, or None if not
+            using SSL.
+    """
+    server_host: str = "127.0.0.1"
+    server_port: int = 5555
+    client_hostname: Optional[str] = None
+    heartbeat_interval: int = 1
+    auto_reconnect: bool = True
+    certfile: Optional[str] = None

@@ -1,5 +1,6 @@
 from pathlib import Path
-from typing import Tuple, Optional
+import json
+from typing import Tuple, Optional, Dict
 from cryptography import x509
 from cryptography.x509.oid import NameOID
 from cryptography.hazmat.primitives import hashes, serialization
@@ -162,11 +163,16 @@ class CertificateManager:
         return (self.ca_cert_path.exists() and self.ca_key_path.exists() and
                 self.server_cert_path.exists() and self.server_key_path.exists())
 
-    def certificate_exist(self) -> bool:
-        """
-        Check if client CA certificate is already present
-        """
-        return self.ca_cert_path.exists()
+    def certificate_exist(self, source_id: Optional[str] = None) -> bool:
+        """Check if CA certificate exists for a specific server"""
+        if source_id is None:
+            return self.ca_cert_path.exists()
+
+        mapping = self._load_cert_mapping()
+        cert_file = mapping.get(source_id)
+        if cert_file:
+            return (self.cert_dir / cert_file).exists()
+        return False
 
     def export_ca_for_client(self, export_path: str) -> bool:
         """Export CA certificate for distribution to clients"""
@@ -184,30 +190,83 @@ class CertificateManager:
             return str(self.server_cert_path), str(self.server_key_path)
         return None, None
 
-    def get_ca_cert_path(self) -> Optional[str]:
-        """Return the path of CA certificate"""
-        if self.ca_cert_path.exists():
-            return str(self.ca_cert_path)
+    def get_ca_cert_path(self, source_id: Optional[str] = None) -> Optional[str]:
+        """Return the path of CA certificate for a specific server"""
+        if source_id is None:
+            if self.ca_cert_path.exists():
+                return str(self.ca_cert_path)
+            return None
+
+        mapping = self._load_cert_mapping()
+        cert_file = mapping.get(source_id)
+        if cert_file:
+            cert_path = self.cert_dir / cert_file
+            if cert_path.exists():
+                return str(cert_path)
         return None
 
-    def load_ca_data(self) -> Optional[bytes]:
-        """Load CA certificate data for client side"""
+    def load_ca_data(self, source_id: Optional[str] = None) -> Optional[bytes]:
+        """Load CA certificate data for a specific server"""
+        cert_path = self.get_ca_cert_path(source_id)
+        if cert_path is None:
+            return None
+
         try:
-            with open(self.ca_cert_path, "rb") as f:
+            with open(cert_path, "rb") as f:
                 return f.read()
         except Exception as e:
             self._logger.log(f"Error loading CA data: {e}", Logger.ERROR)
             return None
 
-    def save_ca_data(self, data: bytes | str) -> bool:
-        """Save CA certificate data from client side"""
+    def save_ca_data(self, data: bytes | str, source_id: str) -> bool:
+        """Save CA certificate data from a specific server"""
         try:
             if isinstance(data, str):
                 data = data.encode('utf-8')
 
-            with open(self.ca_cert_path, "wb") as f:
+            # Create a unique filename for this server
+            cert_filename = f"ca_{source_id.replace(':', '_').replace('.', '_')}.crt"
+            cert_path = self.cert_dir / cert_filename
+
+            # Save certificate data
+            if isinstance(data, str):
+                data = data.encode()
+
+            with open(cert_path, "wb") as f:
                 f.write(data)
+
+            # Update mapping
+            mapping = self._load_cert_mapping()
+            mapping[source_id] = cert_filename
+            self._save_cert_mapping(mapping)
+
+            self._logger.log(f"Saved CA certificate for server: {source_id}", Logger.INFO)
             return True
         except Exception as e:
             self._logger.log(f"Error saving CA data: {e}", Logger.ERROR)
+            return False
+
+    def _get_cert_mapping_path(self) -> Path:
+        """Get the path to the certificate mapping file"""
+        return self.cert_dir / "cert_mapping.json"
+
+    def _load_cert_mapping(self) -> Dict[str, str]:
+        """Load the certificate mapping from file"""
+        mapping_path = self._get_cert_mapping_path()
+        if mapping_path.exists():
+            try:
+                with open(mapping_path, "r") as f:
+                    return json.load(f)
+            except Exception as e:
+                self._logger.log(f"Error loading cert mapping: {e}", Logger.ERROR)
+        return {}
+
+    def _save_cert_mapping(self, mapping: Dict[str, str]) -> bool:
+        """Save the certificate mapping to file"""
+        try:
+            with open(self._get_cert_mapping_path(), "w") as f:
+                json.dump(mapping, f, indent=2)
+            return True
+        except Exception as e:
+            self._logger.log(f"Error saving cert mapping: {e}", Logger.ERROR)
             return False

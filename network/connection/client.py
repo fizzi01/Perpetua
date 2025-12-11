@@ -100,10 +100,9 @@ class ConnectionHandler:
             self._running = True
 
             # Initialize client object
-            self._client_obj = self.clients.get_client(ip_address=self.host)
+            self._client_obj = self.clients.get_client()
             if not self._client_obj:
                 self._client_obj = ClientObj(
-                    ip_address=self.host,
                     ssl=self.use_ssl,
                     screen_position="unknown"
                 )

@@ -42,8 +42,15 @@ class ClientObj:
                  ssl: bool = False,
                  conn_socket: Optional[object] = None,
                  additional_params: dict = None):
-        self.host_name = hostname
+
+        if not self._check_ip(ip_address):
+            raise ValueError(f"Invalid IP address: {ip_address}")
         self.ip_address = ip_address
+
+        if hostname and not self._check_hostname(hostname):
+            raise ValueError(f"Invalid hostname: {hostname}")
+        self.host_name = hostname
+
         self.ports = ports if ports is not None else {}
         self.connection_time = connection_time
 
@@ -58,7 +65,53 @@ class ClientObj:
         self.is_connected = is_connected
         self.additional_params = additional_params if additional_params is not None else {}
 
+    @staticmethod
+    def _check_ip(ip_address: str) -> bool:
+        """
+        Validates the given IP address format (IPv4 or IPv6).
+
+        Args:
+            ip_address: The IP address string to validate.
+
+        Returns:
+            A boolean indicating whether the IP address is valid (True) or invalid (False).
+        """
+        import ipaddress
+        try:
+            ipaddress.ip_address(ip_address)
+            return True
+        except ValueError:
+            return False
+
+    @staticmethod
+    def _check_hostname(hostname: str) -> bool:
+        """
+        Checks if the given hostname is valid according to common domain naming conventions.
+
+        This method verifies that the hostname conforms to the general rules for domain
+        names, such as length restrictions and valid character usage. It ensures that
+        the hostname does not exceed 255 characters, does not end with a period unless
+        trimmed, and separates its parts by dots, each conforming to specific length
+        and naming requirements.
+
+        Args:
+            hostname: The hostname string to validate.
+
+        Returns:
+            A boolean indicating whether the hostname is valid (True) or invalid (False).
+        """
+        import re
+        if len(hostname) > 255:
+            return False
+        if hostname[-1] == ".":
+            hostname = hostname[:-1]
+        allowed = re.compile(r"(?!-)[A-Z\d-]{1,63}(?<!-)$", re.IGNORECASE)
+        return all(allowed.match(x) for x in hostname.split("."))
+
     def get_net_id(self) -> str:
+        """
+        Returns a unique identifier for the client, prioritizing hostname over IP address.
+        """
         return self.host_name if self.host_name else self.ip_address
 
 
@@ -113,6 +166,26 @@ class ClientsManager:
         return self.clients
 
     def get_client(self, ip_address: Optional[str] = None, hostname: Optional[str] = None, screen_position: Optional[str] = None) -> Optional['ClientObj']:
+        """
+        Returns a specific client from the list of available clients based on the given criteria.
+        The method primarily supports client filtering by `hostname`, `ip_address`, or `screen_position`.
+        When the mode is client mode, it will return the first client if one exists since there should
+        only be one client in this mode.
+
+        If multiple criteria are provided, the method gives priority to `hostname` followed by `ip_address`
+        and then `screen_position`.
+
+        Parameters:
+            ip_address (Optional[str]): The IP address of the desired client. Used for filtering if provided.
+            hostname (Optional[str]): The hostname of the desired client. If present, this filter is
+                prioritized over other criteria.
+            screen_position (Optional[str]): The screen position of the desired client. Considered if
+                other filters are not specified.
+
+        Returns:
+            Optional[ClientObj]: The client object matching the given criteria, or `None` if no client
+            matches the provided conditions or if no clients exist.
+        """
 
         if self._is_client_main: # Return the only client in client mode
             return self.clients[0] if self.clients else None
