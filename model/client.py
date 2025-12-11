@@ -31,7 +31,7 @@ class ClientObj:
     Represents a client with its metadata.
     """
     def __init__(self,
-                 ip_address: str,
+                 ip_address: Optional[str] = None,
                  hostname: Optional[str] = None,
                  ports: dict[int, int] = None,
                  connection_time: float = 0.0,
@@ -43,7 +43,7 @@ class ClientObj:
                  conn_socket: Optional[object] = None,
                  additional_params: dict = None):
 
-        if not self._check_ip(ip_address):
+        if ip_address and not self._check_ip(ip_address):
             raise ValueError(f"Invalid IP address: {ip_address}")
         self.ip_address = ip_address
 

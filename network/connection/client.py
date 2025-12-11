@@ -187,6 +187,7 @@ class ConnectionHandler:
 
                             # Update client status
                             self._client_obj.is_connected = True
+                            self._client_obj.ip_address = self._command_writer.get_extra_info('sockname')[0]
                             self.clients.update_client(self._client_obj)
 
                             # Call connected callback

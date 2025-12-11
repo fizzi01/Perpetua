@@ -103,7 +103,7 @@ class Client:
 
     def _load_certificate(self) -> bool:
         """Load SSL certificate for secure connection"""
-        if self._cert_manager.certificate_exist():
+        if self._cert_manager.certificate_exist(source_id=self.connection_config.server_host):
             self.connection_config.certfile = self._cert_manager.get_ca_cert_path(source_id=self.connection_config.server_host)
             self._logger.info(f"Loaded certificate from: {self.connection_config.certfile}")
             return True

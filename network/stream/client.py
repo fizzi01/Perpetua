@@ -171,7 +171,7 @@ class BidirectionalStreamHandler(StreamHandler):
         """
         Async event handler for when a client becomes active.
         """
-        if self._active:
+        if self._is_active:
             return
 
         #self.logger.log(f"{self.handler_id} - Client is active", Logger.DEBUG)
