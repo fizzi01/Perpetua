@@ -62,7 +62,8 @@ class CommandHandler:
             data_dict["client"] = event.source
 
             # Async dispatch
-            await self.event_bus.dispatch(    # when ServerMouseController receives this event will set the correct cursor position
+            await self.event_bus.dispatch(
+                # when ServerMouseController receives this event will set the correct cursor position
                 event_type=EventType.ACTIVE_SCREEN_CHANGED,
                 data=event.params
             )
@@ -70,4 +71,3 @@ class CommandHandler:
             # Dispatch CLIENT_ACTIVE event to notify that client itself is now active
             await self.event_bus.dispatch(
                 event_type=EventType.CLIENT_ACTIVE, data={"screen_position": event.target})
-

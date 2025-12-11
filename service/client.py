@@ -57,7 +57,8 @@ class Client:
         self._cert_manager = CertificateManager(cert_dir=self.app_config.get_certificate_path())
         self._cert_receiver: Optional[CertificateReceiver] = None
 
-        if self._cert_manager.certificate_exist() or self.connection_config.certfile:
+        if self._cert_manager.certificate_exist(
+                source_id=self.connection_config.server_host) or self.connection_config.certfile:
             self._load_certificate()
 
         # Initialize core components
@@ -104,7 +105,8 @@ class Client:
     def _load_certificate(self) -> bool:
         """Load SSL certificate for secure connection"""
         if self._cert_manager.certificate_exist(source_id=self.connection_config.server_host):
-            self.connection_config.certfile = self._cert_manager.get_ca_cert_path(source_id=self.connection_config.server_host)
+            self.connection_config.certfile = self._cert_manager.get_ca_cert_path(
+                source_id=self.connection_config.server_host)
             self._logger.info(f"Loaded certificate from: {self.connection_config.certfile}")
             return True
         else:
@@ -191,7 +193,7 @@ class Client:
             self._logger.error(traceback.format_exc())
             return False
 
-    def get_certificate_path(self) -> Optional[Path|str]:
+    def get_certificate_path(self) -> Optional[Path | str]:
         """
         Get path of received CA certificate.
 
@@ -342,7 +344,8 @@ class Client:
             return False
 
         self._running = True
-        self._logger.info(f"Client started and connecting to {self.connection_config.server_host}:{self.connection_config.server_port}")
+        self._logger.info(
+            f"Client started and connecting to {self.connection_config.server_host}:{self.connection_config.server_port}")
         return True
 
     async def stop(self):
@@ -731,4 +734,3 @@ if __name__ == "__main__":
         asyncio.run(main())
     except KeyboardInterrupt:
         print("\nClient shutdown complete")
-
