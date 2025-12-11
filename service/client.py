@@ -33,6 +33,7 @@ class ClientConnectionConfig:
     """Client connection configuration"""
     server_host: str = "127.0.0.1"
     server_port: int = 5555
+    client_hostname: Optional[str] = None
     heartbeat_interval: int = 1
     auto_reconnect: bool = True
     certfile: Optional[str] = None
@@ -57,6 +58,9 @@ class Client:
         client_config: Optional[ClientConfig] = None,
         log_level: int = Logger.INFO
     ):
+        self._logger = get_logger(self.__class__.__name__)
+        self._logger.set_level(log_level)
+
         # Initialize configurations
         self.app_config = app_config or ApplicationConfig()
         self.client_config = client_config or ClientConfig()
@@ -64,8 +68,8 @@ class Client:
         self._cert_manager = CertificateManager(cert_dir=self.app_config.get_certificate_path())
         self._cert_receiver: Optional[CertificateReceiver] = None
 
-        self._logger = get_logger(self.__class__.__name__)
-        self._logger.set_level(log_level)
+        if self._cert_manager.certificate_exist() or self.connection_config.certfile:
+            self._load_certificate()
 
         # Initialize core components
         self.clients_manager = ClientsManager(client_mode=True)
@@ -94,6 +98,9 @@ class Client:
     def enable_ssl(self) -> bool:
         """Enable SSL connection if certificate is loaded"""
         if self.connection_config.certfile and os.path.exists(self.connection_config.certfile):
+            self._logger.info("SSL connection enabled")
+            return True
+        elif self._load_certificate():
             self._logger.info("SSL connection enabled")
             return True
         else:
@@ -184,6 +191,8 @@ class Client:
             if not self._cert_manager.save_ca_data(data=cert_data):
                 self._logger.error("Failed to save received certificate")
                 return False
+
+            self._load_certificate()
 
             return True
 

@@ -202,6 +202,9 @@ class CertificateManager:
     def save_ca_data(self, data: bytes | str) -> bool:
         """Save CA certificate data from client side"""
         try:
+            if isinstance(data, str):
+                data = data.encode('utf-8')
+
             with open(self.ca_cert_path, "wb") as f:
                 f.write(data)
             return True
