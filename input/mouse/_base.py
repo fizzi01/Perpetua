@@ -161,6 +161,8 @@ class ServerMouseListener(object):
         self._active_screens = {}
         self._screen_size: tuple[int,int] = Screen.get_size()
         self._cross_screen_event = Event()
+        self._cross_screen_lock = asyncio.Lock()
+        self._handling_cross_screen = False
 
         # Check platform to set appropriate mouse filter
         self._filter_args = {}
@@ -281,7 +283,7 @@ class ServerMouseListener(object):
         While not listening, it needs to check if the cursor is reaching the screen edges.
         Since pynput runs in its own thread, we need to schedule async operations.
         """
-        if self._cross_screen_event.is_set():
+        if self._cross_screen_event.is_set() or self._handling_cross_screen:
             return True
 
         # The border check has to take in account only when we are moving forward and not backward or staying still
@@ -368,15 +370,31 @@ class ServerMouseListener(object):
     async def _handle_cross_screen(self, edge: ScreenEdge, mouse_event: MouseEvent, screen: str):
         """Async handler for cross-screen events"""
         # reset movement history
-        self._movement_history.clear()
+        try:
+            # Acquisisci il lock per evitare cross-screen concorrenti
+            async with self._cross_screen_lock:
+                # Reset movement history
+                self._movement_history.clear()
 
-        await self.event_bus.dispatch(
-            event_type=EventType.ACTIVE_SCREEN_CHANGED,
-            data={"active_screen": screen}
-        )
-        # Send command and mouse event
-        await self.command_stream.send(CommandEvent(command=CommandEvent.CROSS_SCREEN))
-        await self.stream.send(mouse_event)
+                # Dispatch eventi in sequenza
+                await self.event_bus.dispatch(
+                    event_type=EventType.ACTIVE_SCREEN_CHANGED,
+                    data={"active_screen": screen}
+                )
+
+                # Attendi il completamento dell'invio dei messaggi
+                await self.command_stream.send(CommandEvent(command=CommandEvent.CROSS_SCREEN))
+                await self.stream.send(mouse_event)
+
+                # Piccolo delay per garantire che i messaggi siano stati processati
+                await asyncio.sleep(0.05)
+
+        except Exception as e:
+            self._logger.error(f"Error handling cross-screen -> {e}")
+        finally:
+            # Resetta gli stati solo dopo il completamento di tutte le operazioni async
+            self._handling_cross_screen = False
+            self._cross_screen_event.clear()
 
     def on_click(self, x, y, button: Button, pressed):
         if self._listening:
@@ -477,6 +495,8 @@ class ClientMouseController(object):
         self.command_stream = command_stream  # Should be a command stream
         self.event_bus = event_bus
         self._cross_screen_event = asyncio.Event()
+        self._edge_check_lock = asyncio.Lock()
+        self._checking_edge = False
 
         self._is_active = False
         self._current_screen = None
@@ -647,41 +667,72 @@ class ClientMouseController(object):
         Check if the mouse cursor is at the edge of the screen and handle accordingly.
         This is called after cursor movement. Optimized for maximum speed.
         """
-        if self._cross_screen_event.is_set() or not self._is_active:
+        if self._checking_edge or self._cross_screen_event.is_set() or not self._is_active:
             return await asyncio.sleep(0)
 
-        # Get the current cursor position
-        x, y = self._controller.position
-
-        # Add the current position to the movement history (deque is thread-safe for append)
-        self._movement_history.append((x, y))
-
-        # Need at least 2 positions to determine direction
-        if len(self._movement_history) < 2:
-            return await asyncio.sleep(0)
-
-        # Convert deque to list for edge detection (fast operation)
-        queue_data = list(self._movement_history)
-
-        edge = EdgeDetector.is_at_edge(movement_history=queue_data, x=x, y=y, screen_size=self._screen_size)
-
-        # If we reach an edge, dispatch event to deactivate client and send cross screen message to server
-        if edge:
-            try:
-                x, y = EdgeDetector.get_crossing_coords(x=x, y=y, screen_size=self._screen_size, edge=edge, screen=self._current_screen)
-                if x == -1 and y == -1:
-                    # Invalid crossing coords for current screen setup
+        try:
+            # Acquisisci il lock per serializzare i controlli edge
+            async with self._edge_check_lock:
+                # Double-check dopo aver acquisito il lock
+                if self._cross_screen_event.is_set() or not self._is_active:
                     return await asyncio.sleep(0)
-                self._cross_screen_event.set()
 
-                screen_data = {"x": x, "y": y}
-                command = CommandEvent(command=CommandEvent.CROSS_SCREEN, params=screen_data)
+                self._checking_edge = True
 
-                # Send command and dispatch event
-                await self.command_stream.send(command)
-                await self.event_bus.dispatch(event_type=EventType.CLIENT_INACTIVE, data={})
-            except Exception as e:
-                self._logger.log(f"Failed to dispatch screen event -> {e}", Logger.ERROR)
+                # Get the current cursor position
+                x, y = self._controller.position
+
+                # Add the current position to the movement history
+                self._movement_history.append((x, y))
+
+                # Need at least 2 positions to determine direction
+                if len(self._movement_history) < 2:
+                    return None
+
+                # Convert deque to list for edge detection
+                queue_data = list(self._movement_history)
+
+                edge = EdgeDetector.is_at_edge(
+                    movement_history=queue_data,
+                    x=x,
+                    y=y,
+                    screen_size=self._screen_size
+                )
+
+                # If we reach an edge, dispatch event to deactivate client and send cross screen message to server
+                if edge:
+                    x, y = EdgeDetector.get_crossing_coords(
+                        x=x,
+                        y=y,
+                        screen_size=self._screen_size,
+                        edge=edge,
+                        screen=self._current_screen
+                    )
+
+                    if x == -1 and y == -1:
+                        # Invalid crossing coords for current screen setup
+                        return None
+
+                    # Set event BEFORE clearing history to block concurrent checks
+                    self._cross_screen_event.set()
+
+                    # Clear movement history atomically
+                    self._movement_history.clear()
+
+                    screen_data = {"x": x, "y": y}
+                    command = CommandEvent(command=CommandEvent.CROSS_SCREEN, params=screen_data)
+
+                    # Send command and dispatch event sequentially
+                    await self.command_stream.send(command)
+                    await self.event_bus.dispatch(event_type=EventType.CLIENT_INACTIVE, data={})
+
+                    # Piccolo delay per garantire che i messaggi siano stati processati
+                    return await asyncio.sleep(0)
+
+        except Exception as e:
+            self._logger.log(f"Failed to dispatch screen event -> {e}", Logger.ERROR)
+        finally:
+            self._checking_edge = False
 
         return await asyncio.sleep(0)
 
