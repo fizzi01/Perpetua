@@ -106,7 +106,7 @@ class Server:
 
         # Initialize configurations
         self.app_config = app_config or ApplicationConfig()
-        self.server_config = server_config or ServerConfig(self.app_config)
+        self.server_config = server_config or ServerConfig(self.app_config) #TODO: Handle stream preferences with persistence
         self.connection_config = connection_config or ServerConnectionConfig()
         self._cert_manager = CertificateManager(cert_dir=self.app_config.get_certificate_path())
         self._cert_sharing: Optional[CertificateSharing] = None
@@ -257,6 +257,7 @@ class Server:
         """Check if certificate sharing is currently active"""
         return self._cert_sharing is not None and self._cert_sharing.is_sharing_active()
     # ==================== Client Management ====================
+    # TODO: Add logic to save and load clients from persistent storage (maybe let the ClientsManager handle it?)
 
     def add_client(self, ip_address: Optional[str] = None, hostname: Optional[str] = None, screen_position: str = "top") -> ClientObj:
         """Add a client to the whitelist"""

@@ -178,7 +178,6 @@ async def interactive_client():
 
                     print("\nDisconnecting...")
                     await client.stop()
-                    client.cleanup()
                     print("✓ Client stopped\n")
 
                 elif cmd == "reconnect":

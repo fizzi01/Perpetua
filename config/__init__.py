@@ -45,6 +45,11 @@ class ServerConfig:
     Exposes API to handle: streams enabled, SSL certificates, clients infos, logging levels.
     """
     def __init__(self, app_config: ApplicationConfig = ApplicationConfig()):
+        """
+        Initializes the ServerConfig with default settings.
+        Args:
+            app_config (ApplicationConfig): The application configuration instance.
+        """
         self.app_config = app_config
         self.streams_enabled = {}
         self.is_ssl_enabled = False
