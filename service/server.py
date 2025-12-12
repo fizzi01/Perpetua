@@ -1,7 +1,6 @@
 """
-Unified Server API for PyContinuity
+Unified Server API
 Provides a clean interface to configure and manage server components.
-Supports runtime enable/disable of streams and listeners.
 """
 import asyncio
 import socket
@@ -34,14 +33,12 @@ from utils.logging import Logger,get_logger
 
 class Server:
     """
-    Unified Server API for PyContinuity.
-    Manages all server components with flexible configuration.
+    Manages server configurations, clients, connections, SSL setup, and certificate sharing.
 
-    Features:
-    - Start/stop server
-    - Manage client whitelist
-    - Enable/disable streams at runtime
-    - Configure connection parameters
+    This class provides features for configuring the server, managing client connections,
+    enabling and disabling SSL, managing SSL certificates, sharing certificates securely,
+    and maintaining a whitelist of clients. It abstracts away the complexities involved
+    in handling connections, certificate generation, and client management.
     """
 
     def __init__(
@@ -51,6 +48,58 @@ class Server:
         server_config: Optional[ServerConfig] = None,
         log_level: int = Logger.INFO
     ):
+        """
+        Initializes the primary configuration and components of the server application.
+
+        The constructor initializes core configurations, logging, components, and
+        registries required for the server application. It loads application-specific
+        settings, manages secure connections with optional SSL certificates, and sets
+        up core communication components and registries for managing client connections
+        and event handling.
+
+        Args:
+            connection_config (Optional[ServerConnectionConfig]): The configuration
+                controlling server connection properties such as host, port, and SSL.
+                Defaults to None, in which case a default configuration is created.
+            app_config (Optional[ApplicationConfig]): The application-level settings
+                such as directory paths and app-specific preferences. Defaults to None,
+                in which case a default configuration is initialized.
+            server_config (Optional[ServerConfig]): The server's runtime configuration
+                including system and application parameters. Defaults to None, using
+                a default configuration.
+            log_level (int): Logging level defined by the Logger class constants.
+                Defaults to Logger.INFO.
+
+        Attributes:
+            _logger (Logger): Internal logger for managing application logs.
+            app_config (ApplicationConfig): Initialized or passed application
+                configuration object.
+            server_config (ServerConfig): Holds runtime server settings and parameters,
+                initialized based on the passed argument or defaults.
+            connection_config (ServerConnectionConfig): Contains connection settings
+                including host, port, and SSL configuration.
+            _cert_manager (CertificateManager): Manages SSL certificates for secure
+                connections.
+            _cert_sharing (Optional[CertificateSharing]): Facilitates certificate
+                sharing between components, initialized only in SSL mode. Defaults to
+                None.
+            clients_manager (ClientsManager): Handles and tracks currently connected
+                clients.
+            event_bus (AsyncEventBus): Manages asynchronous events and their
+                distribution across the application services.
+            _stream_handlers (Dict[int, StreamHandler]): Registry mapping stream
+                identifiers to their respective handlers.
+            _components (dict): Storage for application components or services
+                initialized during runtime by the server.
+            _running (bool): Indicates the server's running state. Initialized as
+                False.
+            connection_handler (Optional[ConnectionHandler]): Coordinates incoming and
+                outgoing connections. Defaults to None, and is set during runtime.
+
+        Raises:
+            The constructor does not explicitly raise exceptions but may encounter
+            errors indirectly if components initialization or configurations fail.
+        """
         # Set logging level
         self._logger = get_logger(self.__class__.__name__)
         self._logger.set_level(log_level)
@@ -424,10 +473,20 @@ class Server:
             except Exception as e:
                 self._logger.error(f"Error stopping stream handler {stream_type} -> {e}")
 
-        self._components.clear()
-        self._stream_handlers.clear()
+        self.cleanup()
         self._running = False
         self._logger.info("Server stopped")
+
+    def cleanup(self):
+        """Cleanup client resources"""
+        self._logger.info("Cleaning up client resources...")
+        # We cleanup component and stream handlers obj from memory
+        self._components.clear()
+        self._stream_handlers.clear()
+
+        # We also reset event bus
+        self.event_bus = AsyncEventBus()
+        self._logger.info("Client resources cleaned up.")
 
     def is_running(self) -> bool:
         """Check if server is running"""

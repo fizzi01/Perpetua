@@ -1,7 +1,6 @@
 """
-Unified Client API for PyContinuity
+Unified Client API
 Provides a clean interface to configure and manage client components.
-Supports runtime enable/disable of streams and listeners.
 """
 import asyncio
 import os
@@ -29,14 +28,11 @@ from utils.logging import Logger, get_logger
 
 class Client:
     """
-    Unified Client API for PyContinuity.
-    Manages all client components with flexible configuration.
+    Manages client configurations, connections, and event-driven communication for various applications.
 
-    Features:
-    - Start/stop client
-    - Connect to server
-    - Enable/disable streams at runtime
-    - Configure connection parameters
+    This class is designed to handle the overall management of a client application in aspects such as
+    interaction with other clients, secure communication using certificates, and managing event streams
+    during runtime.
     """
 
     def __init__(
@@ -46,7 +42,37 @@ class Client:
         client_config: Optional[ClientConfig] = None,
         log_level: int = Logger.INFO
     ):
+        """
+        Initializes an instance of the class by setting up configurations, core components, and registries
+        necessary for managing clients, event handling, and connections.
 
+        Args:
+            connection_config (Optional[ClientConnectionConfig]): The configuration for the client connection. Defaults
+                to None if not provided.
+            app_config (Optional[ApplicationConfig]): The application configuration settings. Defaults to None if not
+                provided.
+            client_config (Optional[ClientConfig]): The client configuration settings. Defaults to None if not provided.
+            log_level (int): The log level for the logger. Defaults to Logger.INFO.
+
+        Attributes:
+            app_config (ApplicationConfig): Holds the application configuration details.
+            client_config (ClientConfig): Holds the client configuration details.
+            connection_config (ClientConnectionConfig): Holds the client connection configuration.
+            clients_manager (ClientsManager): Manages the collection of clients in client mode.
+            event_bus (AsyncEventBus): Handles asynchronous event-based communication.
+            main_client (ClientObj): Represents the main client object with a placeholder IP address and
+                hostname derived from the connection configuration.
+            _cert_manager (CertificateManager): Manages certificate-related operations including loading
+                certificates from directories.
+            _cert_receiver (Optional[CertificateReceiver]): Represents the entity responsible for handling
+                certificate reception. Default is None.
+            _stream_handlers (Dict[int, StreamHandler]): A registry mapping identifiers to stream handlers.
+            _components (dict): Holds the registered components initialized for the application.
+            _running (bool): Indicates whether the main processing is running. Default value is False.
+            _connected (bool): Reflects the connection state of the client. Default value is False.
+            connection_handler (Optional[ConnectionHandler]): Responsible for handling the connection with
+                the external server. Default is None.
+        """
         self._logger = get_logger(self.__class__.__name__)
         self._logger.set_level(log_level)
 
@@ -379,8 +405,7 @@ class Client:
         if self.connection_handler:
             await self.connection_handler.stop()
 
-        #self._components.clear()
-        #self._stream_handlers.clear()
+        self.cleanup()
         self._running = False
         self._connected = False
         self._logger.info("Client stopped")
