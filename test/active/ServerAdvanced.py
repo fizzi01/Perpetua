@@ -7,7 +7,7 @@ from socket import gethostname
 
 from network.stream import StreamType
 from service.server import Server
-from config import ServerConnectionConfig
+from config import ServerConfig, ApplicationConfig
 from utils.logging import Logger
 
 def helper():
@@ -29,19 +29,32 @@ async def interactive_server():
     """Server interattivo con controllo runtime degli stream"""
 
     # Configurazione
-    conn_config = ServerConnectionConfig(
+    app_config = ApplicationConfig()
+    app_config.config_path = "_test_config/"
+    server_config = ServerConfig(app_config, config_file=None)
+
+    # Set connection parameters
+    server_config.set_connection_params(
         host=gethostname(),
-        port=5555,
-        ssl_enabled=True,
+        port=5555
     )
 
+    # Enable SSL
+    server_config.enable_ssl()
+
+    # Set logging
+    server_config.set_logging(level=Logger.INFO)
+
     server = Server(
-        connection_config=conn_config,
-        log_level=Logger.DEBUG
+        app_config=app_config,
+        server_config=server_config,
+        auto_load_config=True
     )
 
     # Aggiungi client
-    server.add_client(hostname="Federico", screen_position="top")
+    # server.add_client(hostname="Federico", screen_position="top")
+    # server.add_client(hostname="Test2", screen_position="bottom")
+    # server.add_client(hostname="Test3", ip_address="192.168.1.12", screen_position="left")
 
     # Avvia server
     if not await server.start():
@@ -123,7 +136,7 @@ async def interactive_server():
                 elif cmd.startswith("ssl off"):
                     server.disable_ssl()
                 elif cmd.startswith("share ca"):
-                    await server.share_certificate(host=server.connection_config.host)
+                    await server.share_certificate(host=server.config.host)
                 elif cmd == "help":
                     helper()
                 elif cmd:
@@ -151,14 +164,23 @@ async def interactive_server():
 async def automated_demo():
     """Demo automatica che mostra il toggle degli stream"""
 
-    conn_config = ServerConnectionConfig(
+    # Configurazione
+    app_config = ApplicationConfig()
+    server_config = ServerConfig(app_config, config_file=None)
+
+    # Set connection parameters
+    server_config.set_connection_params(
         host="192.168.1.62",
         port=5555
     )
 
+    # Set logging
+    server_config.set_logging(level=Logger.INFO)
+
     server = Server(
-        connection_config=conn_config,
-        log_level=Logger.INFO
+        app_config=app_config,
+        server_config=server_config,
+        auto_load_config=False
     )
 
     server.add_client("192.168.1.74", screen_position="top")

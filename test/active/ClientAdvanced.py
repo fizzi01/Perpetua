@@ -7,7 +7,7 @@ from socket import gethostname
 
 from network.stream import StreamType
 from service.client import Client
-from config import ClientConnectionConfig
+from config import ClientConfig, ApplicationConfig
 from utils.logging import Logger
 
 
@@ -29,16 +29,25 @@ async def interactive_client():
     """Interactive client with runtime control of streams and SSL"""
 
     # Configuration
-    conn_config = ClientConnectionConfig(
-        server_host=input("Enter server host (default: localhost): ").strip() or "localhost",
-        server_port=int(input("Enter server port (default: 5555): ").strip() or "5555"),
-        client_hostname=gethostname(),
+    app_config = ApplicationConfig()
+    app_config.config_path = "_test_config/"
+    client_config = ClientConfig(app_config, config_file=None)
+
+    # Set server connection
+    client_config.set_server_connection(
+        host=input("Enter server host (default: localhost): ").strip() or "localhost",
+        port=int(input("Enter server port (default: 5555): ").strip() or "5555"),
+        hostname=gethostname(),
         auto_reconnect=True
     )
 
+    # Set logging
+    client_config.set_logging(level=Logger.DEBUG)
+
     client = Client(
-        connection_config=conn_config,
-        log_level=Logger.DEBUG
+        app_config=app_config,
+        client_config=client_config,
+        auto_load_config=False
     )
 
     # Enable default streams
@@ -82,8 +91,8 @@ async def interactive_client():
                     print(f"Connection Status:")
                     print(f"  Running: {client.is_running()}")
                     print(f"  Connected: {client.is_connected()}")
-                    print(f"  Server: {client.connection_config.server_host}:{client.connection_config.server_port}")
-                    print(f"  Auto-reconnect: {client.connection_config.auto_reconnect}")
+                    print(f"  Server: {client.config.server_host}:{client.config.server_port}")
+                    print(f"  Auto-reconnect: {client.config.auto_reconnect}")
                     print(f"\nStreams:")
                     print(f"  Enabled: {client.get_enabled_streams()}")
                     print(f"  Active: {client.get_active_streams()}")
@@ -115,9 +124,9 @@ async def interactive_client():
                     print("2. The server will display a 6-digit OTP")
                     print("3. Enter that OTP below\n")
 
-                    cert_host = input(f"Certificate server host (default: {conn_config.server_host}): ").strip()
+                    cert_host = input(f"Certificate server host (default: {client.config.server_host}): ").strip()
                     if not cert_host:
-                        cert_host = conn_config.server_host
+                        cert_host = client.config.server_host
 
                     cert_port = input("Certificate server port (default: 5556): ").strip()
                     cert_port = int(cert_port) if cert_port else 5556
@@ -296,15 +305,24 @@ async def automated_demo():
     server_host = input("Enter server host (default: localhost): ").strip() or "localhost"
     server_port = int(input("Enter server port (default: 5555): ").strip() or "5555")
 
-    conn_config = ClientConnectionConfig(
-        server_host=server_host,
-        server_port=server_port,
+    # Configuration
+    app_config = ApplicationConfig()
+    client_config = ClientConfig(app_config, config_file=None)
+
+    # Set server connection
+    client_config.set_server_connection(
+        host=server_host,
+        port=server_port,
         auto_reconnect=True
     )
 
+    # Set logging
+    client_config.set_logging(level=Logger.INFO)
+
     client = Client(
-        connection_config=conn_config,
-        log_level=Logger.INFO
+        app_config=app_config,
+        client_config=client_config,
+        auto_load_config=False
     )
 
     # Enable all streams initially
@@ -389,15 +407,24 @@ async def ssl_setup_demo():
     server_port = int(input("Enter server port (default: 5555): ").strip() or "5555")
     cert_port = int(input("Enter certificate sharing port (default: 5556): ").strip() or "5556")
 
-    conn_config = ClientConnectionConfig(
-        server_host=server_host,
-        server_port=server_port,
+    # Configuration
+    app_config = ApplicationConfig()
+    client_config = ClientConfig(app_config, config_file=None)
+
+    # Set server connection
+    client_config.set_server_connection(
+        host=server_host,
+        port=server_port,
         auto_reconnect=True
     )
 
+    # Set logging
+    client_config.set_logging(level=Logger.INFO)
+
     client = Client(
-        connection_config=conn_config,
-        log_level=Logger.INFO
+        app_config=app_config,
+        client_config=client_config,
+        auto_load_config=False
     )
 
     # Enable streams

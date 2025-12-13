@@ -7,7 +7,7 @@ import socket
 
 from typing import Optional, Dict, Tuple
 
-from config import ApplicationConfig, ServerConfig, ServerConnectionConfig
+from config import ApplicationConfig, ServerConfig
 from model.client import ClientObj, ClientsManager, ScreenPosition
 from event.bus import AsyncEventBus
 from event import EventType
@@ -43,10 +43,9 @@ class Server:
 
     def __init__(
         self,
-        connection_config: Optional[ServerConnectionConfig] = None,
         app_config: Optional[ApplicationConfig] = None,
         server_config: Optional[ServerConfig] = None,
-        log_level: int = Logger.INFO
+        auto_load_config: bool = True
     ):
         """
         Initializes the primary configuration and components of the server application.
@@ -58,26 +57,21 @@ class Server:
         and event handling.
 
         Args:
-            connection_config (Optional[ServerConnectionConfig]): The configuration
-                controlling server connection properties such as host, port, and SSL.
-                Defaults to None, in which case a default configuration is created.
-            app_config (Optional[ApplicationConfig]): The application-level settings
-                such as directory paths and app-specific preferences. Defaults to None,
-                in which case a default configuration is initialized.
-            server_config (Optional[ServerConfig]): The server's runtime configuration
-                including system and application parameters. Defaults to None, using
+            app_config: The application-level settings such as directory paths and
+                app-specific preferences. Defaults to None, in which case a default
+                configuration is initialized.
+            server_config: The server's runtime configuration including connection,
+                SSL, logging, streams, and authorized clients. Defaults to None, using
                 a default configuration.
-            log_level (int): Logging level defined by the Logger class constants.
-                Defaults to Logger.INFO.
+            auto_load_config: If True, automatically loads configuration from file if exists.
+                Defaults to True.
 
         Attributes:
             _logger (Logger): Internal logger for managing application logs.
             app_config (ApplicationConfig): Initialized or passed application
                 configuration object.
-            server_config (ServerConfig): Holds runtime server settings and parameters,
-                initialized based on the passed argument or defaults.
-            connection_config (ServerConnectionConfig): Contains connection settings
-                including host, port, and SSL configuration.
+            config (ServerConfig): Holds all server settings including connection,
+                SSL, logging, streams, and authorized clients.
             _cert_manager (CertificateManager): Manages SSL certificates for secure
                 connections.
             _cert_sharing (Optional[CertificateSharing]): Facilitates certificate
@@ -100,22 +94,31 @@ class Server:
             The constructor does not explicitly raise exceptions but may encounter
             errors indirectly if components initialization or configurations fail.
         """
-        # Set logging level
-        self._logger = get_logger(self.__class__.__name__)
-        self._logger.set_level(log_level)
-
         # Initialize configurations
         self.app_config = app_config or ApplicationConfig()
-        self.server_config = server_config or ServerConfig(self.app_config) #TODO: Handle stream preferences with persistence
-        self.connection_config = connection_config or ServerConnectionConfig()
+        self.config = server_config or ServerConfig(self.app_config)
+
+        # Try to load existing configuration if requested
+        if auto_load_config:
+            self.config.load()
+
+        # Set logging level
+        self._logger = get_logger(self.__class__.__name__)
+        self._logger.set_level(self.config.log_level)
+
+        # Initialize certificate manager
         self._cert_manager = CertificateManager(cert_dir=self.app_config.get_certificate_path())
         self._cert_sharing: Optional[CertificateSharing] = None
         
-        if self.connection_config.ssl_enabled:
+        # Setup SSL if enabled
+        if self.config.ssl_enabled:
             self._setup_certificates()
 
-        # Initialize core components
+        # Initialize clients manager and load authorized clients from config
         self.clients_manager = ClientsManager()
+        self._load_authorized_clients()
+
+        # Initialize event bus
         self.event_bus = AsyncEventBus()
 
         # Stream handlers registry
@@ -128,6 +131,56 @@ class Server:
         # Connection handler
         self.connection_handler: Optional[ConnectionHandler] = None
 
+    # ==================== Configuration Management ====================
+
+    def _load_authorized_clients(self) -> None:
+        """Load authorized clients from configuration"""
+        try:
+            clients = self.config.load_clients_as_objects()
+            for client in clients:
+                self.clients_manager.add_client(client)
+            if clients:
+                self._logger.info(f"Loaded {len(clients)} authorized clients from configuration")
+        except Exception as e:
+            self._logger.error(f"Error loading authorized clients: {e}")
+
+    def save_config(self) -> bool:
+        """
+        Save current configuration to file.
+
+        Returns:
+            True if saved successfully, False otherwise
+        """
+        try:
+            # Save current clients to config
+            self.config.save_clients_from_manager(self.clients_manager)
+            self.config.save()
+            self._logger.info("Configuration saved successfully")
+            return True
+        except Exception as e:
+            self._logger.error(f"Error saving configuration: {e}")
+            return False
+
+    def load_config(self) -> bool:
+        """
+        Load configuration from file.
+
+        Returns:
+            True if loaded successfully, False otherwise
+        """
+        try:
+            if self.config.load():
+                self._load_authorized_clients()
+                self._logger.set_level(self.config.log_level)
+                self._logger.info("Configuration loaded successfully")
+                return True
+            else:
+                self._logger.warning("Configuration file not found")
+                return False
+        except Exception as e:
+            self._logger.error(f"Error loading configuration: {e}")
+            return False
+
     # ==================== Certificate Management ====================
 
     def enable_ssl(self) -> bool:
@@ -135,23 +188,26 @@ class Server:
         try:
             self._setup_certificates()
         except Exception:
-            self.connection_config.ssl_enabled = False
+            self.config.ssl_enabled = False
             self._logger.error("Failed to setup SSL certificates, cannot enable SSL")
             return False
 
-        self.connection_config.ssl_enabled = True
+        self.config.enable_ssl()
         self._logger.info("SSL enabled for server connections")
         return True
 
-    def disable_ssl(self):
+    def disable_ssl(self) -> None:
         """Disable SSL for server connections. It will take effect on next start."""
-        self.connection_config.ssl_enabled = False
-        self.connection_config.certfile = None
-        self.connection_config.keyfile = None
+        self.config.disable_ssl()
         self._logger.info("SSL disabled for server connections")
 
-    def _setup_certificates(self):
-        """Ensure SSL certificates are available"""
+    def _setup_certificates(self) -> Tuple[str, str]:
+        """
+        Ensure SSL certificates are available.
+
+        Returns:
+            Tuple of (certfile_path, keyfile_path)
+        """
         try:
             if not self._cert_manager.certificates_exist():
                 self._logger.warning("SSL certificates not found, generating new ones...")
@@ -161,14 +217,16 @@ class Server:
                 self._cert_manager.generate_ca()
                 self._cert_manager.generate_server_certificate(hostname, [ip, 'localhost'])
                 
-                self.connection_config.certfile, self.connection_config.keyfile = self._cert_manager.get_server_credentials()
-                if not self.connection_config.certfile or not self.connection_config.keyfile:
+                certfile, keyfile = self._cert_manager.get_server_credentials()
+                if not certfile or not keyfile:
                     raise RuntimeError("Failed to generate SSL certificates")
                 
                 self._logger.info("SSL certificates generated successfully")
+                return certfile, keyfile
             else:
-                self.connection_config.certfile, self.connection_config.keyfile = self._cert_manager.get_server_credentials()
+                certfile, keyfile = self._cert_manager.get_server_credentials()
                 self._logger.info("SSL certificates found and loaded")
+                return certfile, keyfile
         except Exception as e:
             self._logger.error(f"Error setting up SSL certificates -> {e}")
             raise
@@ -257,24 +315,65 @@ class Server:
         """Check if certificate sharing is currently active"""
         return self._cert_sharing is not None and self._cert_sharing.is_sharing_active()
     # ==================== Client Management ====================
-    # TODO: Add logic to save and load clients from persistent storage (maybe let the ClientsManager handle it?)
 
-    def add_client(self, ip_address: Optional[str] = None, hostname: Optional[str] = None, screen_position: str = "top") -> ClientObj:
-        """Add a client to the whitelist"""
+    def add_client(
+        self,
+        ip_address: Optional[str] = None,
+        hostname: Optional[str] = None,
+        screen_position: str = "top",
+        auto_save: bool = True
+    ) -> ClientObj:
+        """
+        Add a client to the authorized list.
+
+        Args:
+            ip_address: IP address of the client
+            hostname: Hostname of the client
+            screen_position: Screen position relative to server
+            auto_save: If True, automatically saves configuration after adding
+
+        Returns:
+            The created ClientObj
+        """
         client = ClientObj(ip_address=ip_address, screen_position=screen_position, hostname=hostname)
         self.clients_manager.add_client(client)
+
+        if auto_save:
+            self.save_config()
+
         self._logger.info(f"Added client {ip_address if ip_address else hostname} at position {screen_position}")
         return client
 
-    async def remove_client(self, ip_address: str = None, hostname: Optional[str] = None, screen_position: str = None) -> bool:
-        """Remove a client from the whitelist"""
+    async def remove_client(
+        self,
+        ip_address: Optional[str] = None,
+        hostname: Optional[str] = None,
+        screen_position: Optional[str] = None,
+        auto_save: bool = True
+    ) -> bool:
+        """
+        Remove a client from the authorized list.
+
+        Args:
+            ip_address: IP address of the client
+            hostname: Hostname of the client
+            screen_position: Screen position of the client
+            auto_save: If True, automatically saves configuration after removal
+
+        Returns:
+            True if client was removed, False if not found
+        """
         client = self.clients_manager.get_client(ip_address=ip_address, screen_position=screen_position, hostname=hostname)
         if client:
-            if self._running: # If server is running, disconnect client first
+            if self._running:  # If server is running, disconnect client first
                 await self.connection_handler.force_disconnect_client(client)
             # Finally remove from whitelist
             self.clients_manager.remove_client(client)
-            self._logger.info(f"Removed client {ip_address or screen_position}")
+
+            if auto_save:
+                self.save_config()
+
+            self._logger.info(f"Removed client {ip_address or hostname or screen_position}")
             return True
         return False
 
@@ -282,12 +381,34 @@ class Server:
         """Get all registered clients"""
         return self.clients_manager.get_clients()
 
-    def get_client(self, ip_address: Optional[str] = None, hostname: Optional[str] = None, screen_position: str = None) -> Optional[ClientObj]:
+    def get_client(
+        self,
+        ip_address: Optional[str] = None,
+        hostname: Optional[str] = None,
+        screen_position: Optional[str] = None
+    ) -> Optional[ClientObj]:
         """Get a specific client"""
         return self.clients_manager.get_client(ip_address=ip_address, hostname=hostname, screen_position=screen_position)
 
-    def edit_client(self, ip_address: Optional[str] = None, hostname: Optional[str] = None, screen_position: str = None) -> ClientObj:
-        """Edit a client's properties"""
+    def edit_client(
+        self,
+        ip_address: Optional[str] = None,
+        hostname: Optional[str] = None,
+        screen_position: Optional[str] = None,
+        auto_save: bool = True
+    ) -> ClientObj:
+        """
+        Edit a client's properties.
+
+        Args:
+            ip_address: IP address of the client to edit
+            hostname: Hostname of the client to edit
+            screen_position: New screen position
+            auto_save: If True, automatically saves configuration after editing
+
+        Returns:
+            The updated ClientObj
+        """
         client = self.clients_manager.get_client(ip_address=ip_address, hostname=hostname)
         if not client:
             raise ValueError(f"Client [IP {ip_address}, Host {hostname}] not found")
@@ -300,6 +421,10 @@ class Server:
             client.screen_position = screen_position
 
         self.clients_manager.update_client(client)
+
+        if auto_save:
+            self.save_config()
+
         self._logger.info(f"Edited client {ip_address}: screen_position={screen_position}")
         return client
 
@@ -311,29 +436,40 @@ class Server:
         client = self.clients_manager.get_client(ip_address=ip_address, hostname=hostname)
         return client.is_connected if client else False
 
-    def clear_clients(self):
-        """Remove all clients from whitelist"""
+    def clear_clients(self, auto_save: bool = True) -> None:
+        """
+        Remove all clients from authorized list.
+
+        Args:
+            auto_save: If True, automatically saves configuration after clearing
+        """
         self.clients_manager.clients.clear()
+
+        if auto_save:
+            self.save_config()
+
         self._logger.info("Cleared all clients")
 
     # ==================== Stream Management ====================
 
-    def enable_stream(self, stream_type: int):
+    def enable_stream(self, stream_type: int) -> None:
         """Enable a specific stream type (applies before start or at runtime)"""
-        self.server_config.enable_stream(stream_type)
+        self.config.enable_stream(stream_type)
+        self.config.save()
         self._logger.info(f"Enabled stream: {stream_type}")
 
-    def disable_stream(self, stream_type: int):
+    def disable_stream(self, stream_type: int) -> None:
         """Disable a specific stream type (applies before start or at runtime)"""
         if StreamType.COMMAND == stream_type:
             self._logger.warning("Command stream is always enabled and cannot be disabled")
             return
-        self.server_config.disable_stream(stream_type)
+        self.config.disable_stream(stream_type)
+        self.config.save() #TODO: Avoid saving every time, use an auto save?
         self._logger.info(f"Disabled stream: {stream_type}")
 
     def is_stream_enabled(self, stream_type: int) -> bool:
         """Check if a stream is enabled"""
-        return self.server_config.is_stream_enabled(stream_type)
+        return self.config.is_stream_enabled(stream_type)
 
     async def enable_stream_runtime(self, stream_type: int) -> bool:
         """Enable a stream at runtime"""
@@ -407,16 +543,25 @@ class Server:
 
         self._logger.info("Starting Server...")
 
+        # Get SSL credentials if enabled
+        certfile, keyfile = None, None
+        if self.config.ssl_enabled:
+            try:
+                certfile, keyfile = self._setup_certificates()
+            except Exception as e:
+                self._logger.error(f"Failed to setup SSL certificates: {e}")
+                return False
+
         # Initialize connection handler
         self.connection_handler = ConnectionHandler(
             connected_callback=self._on_client_connected,
             disconnected_callback=self._on_client_disconnected,
-            host=self.connection_config.host,
-            port=self.connection_config.port,
-            heartbeat_interval=self.connection_config.heartbeat_interval,
+            host=self.config.host,
+            port=self.config.port,
+            heartbeat_interval=self.config.heartbeat_interval,
             allowlist=self.clients_manager,
-            certfile=self.connection_config.certfile,
-            keyfile=self.connection_config.keyfile,
+            certfile=certfile,
+            keyfile=keyfile,
         )
 
         if not await self.connection_handler.start():
@@ -440,7 +585,7 @@ class Server:
             return False
 
         self._running = True
-        self._logger.info(f"Server started on {self.connection_config.host}:{self.connection_config.port}")
+        self._logger.info(f"Server started on {self.config.host}:{self.config.port}")
         return True
 
     async def stop(self):
@@ -780,9 +925,9 @@ class Server:
         """Get a specific component by name"""
         return self._components.get(component_name)
 
-    def get_enabled_streams(self) -> list[str]:
+    def get_enabled_streams(self) -> list[int]:
         """Get list of enabled stream types"""
-        return [k for k, v in self.server_config.streams_enabled.items() if v]
+        return [k for k, v in self.config.streams_enabled.items() if v]
 
     def get_active_streams(self) -> list[int]:
         """Get list of currently active stream types"""
@@ -792,29 +937,39 @@ class Server:
 # ==================== Example Usage ====================
 
 async def main():
-    """Example usage of PyContinuityServer API"""
+    """Example usage of PyContinuityServer API with unified ServerConfig"""
 
-    # Create configuration
-    conn_config = ServerConnectionConfig(host="192.168.1.62", port=5555)
+    # Create server with unified configuration
+    # Option 1: Use default config and configure programmatically
+    server = Server()
 
-    # Create server
-    server = Server(
-        connection_config=conn_config,
-        log_level=Logger.INFO
-    )
+    # Configure server
+    server.config.set_connection_params(host="192.168.1.62", port=5555)
+    server.config.set_logging(level=Logger.INFO)
 
+    # Enable streams
+    server.enable_stream(StreamType.MOUSE)
+    server.enable_stream(StreamType.KEYBOARD)
+    server.enable_stream(StreamType.CLIPBOARD)
 
-    # Add clients to whitelist
+    # Add clients to authorized list
     server.add_client(ip_address="192.168.1.74", screen_position=ScreenPosition.BOTTOM)
+
+    # Save configuration for next time
+    server.save_config()
+
+    # Option 2: Load existing configuration
+    # server = Server(auto_load_config=True)
 
     # Start server
     if not await server.start():
         print("Failed to start server")
         return
 
-    print(f"Server started successfully")
+    print(f"Server started successfully on {server.config.host}:{server.config.port}")
     print(f"Enabled streams: {server.get_enabled_streams()}")
     print(f"Active streams: {server.get_active_streams()}")
+    print(f"Authorized clients: {len(server.get_clients())}")
 
     try:
         # Keep server running
@@ -842,6 +997,8 @@ async def main():
     finally:
         print("Stopping server...")
         await server.stop()
+        # Save configuration on exit
+        server.save_config()
 
 
 if __name__ == "__main__":
