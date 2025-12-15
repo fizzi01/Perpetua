@@ -23,6 +23,7 @@ from input.keyboard import ClientKeyboardController
 from input.clipboard import ClipboardListener, ClipboardController
 from utils.crypto import CertificateManager
 from utils.crypto.sharing import CertificateReceiver
+from utils.screen import Screen
 from utils.logging import Logger, get_logger
 
 
@@ -98,7 +99,8 @@ class Client:
         # Add main client to clients manager
         self.main_client = ClientObj(
             ip_address="0.0.0.0",  # Dummy, we don't need it
-            hostname=self.config.client_hostname
+            hostname=self.config.client_hostname,
+            screen_resolution=Screen.get_size_str(),
         )
         self.clients_manager.add_client(self.main_client)
 
@@ -194,6 +196,7 @@ class Client:
         else:
             self._logger.info("No certificate to remove")
 
+    # TODO: If an hostname is provided we should save the corresponding IP addr too
     async def receive_certificate(
             self,
             otp: str,

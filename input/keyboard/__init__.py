@@ -2,7 +2,7 @@ from utils import backend_module
 from typing import TYPE_CHECKING
 
 if TYPE_CHECKING:
-    from input.keyboard._base import *
+    from ._base import *
 else:
     # Load platform-specific mouse module
     _key_module = backend_module(__name__)

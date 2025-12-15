@@ -114,9 +114,9 @@ class Server:
         self._cert_sharing: Optional[CertificateSharing] = None
         
         # Setup SSL if enabled
+        self.certfile, self.keyfile = None, None
         if self.config.ssl_enabled:
-            self._setup_certificates()
-
+            self.certfile, self.keyfile = self._setup_certificates()
 
         # Initialize event bus
         self.event_bus = AsyncEventBus()
@@ -186,9 +186,12 @@ class Server:
     # ==================== Certificate Management ====================
 
     def enable_ssl(self) -> bool:
-        """Enable SSL for server connections. It will take effect on next start."""
+        """
+        Enable SSL for server connections. It will take effect on next start.
+        We won't auto save config here, need a manual save after this call.
+        """
         try:
-            self._setup_certificates()
+            self.certfile, self.keyfile = self._setup_certificates()
         except Exception:
             self.config.ssl_enabled = False
             self._logger.error("Failed to setup SSL certificates, cannot enable SSL")
@@ -199,7 +202,10 @@ class Server:
         return True
 
     def disable_ssl(self) -> None:
-        """Disable SSL for server connections. It will take effect on next start."""
+        """
+        Disable SSL for server connections. It will take effect on next start.
+        We won't auto save config here, need a manual save after this call.
+        """
         self.config.disable_ssl()
         self._logger.info("SSL disabled for server connections")
 
@@ -233,8 +239,8 @@ class Server:
             self._logger.error(f"Error setting up SSL certificates -> {e}")
             raise
 
-    async def share_certificate(self, host: str = "0.0.0.0", port: int = 5556, timeout: int = 30) -> Tuple[
-        bool, Optional[str]]:
+    async def share_certificate(self, host: str = "0.0.0.0", port: int = 5556, timeout: int = 30) \
+            -> Tuple[bool, Optional[str]]:
         """
         Start certificate sharing process with OTP.
 
@@ -558,15 +564,6 @@ class Server:
 
         self._logger.info("Starting Server...")
 
-        # Get SSL credentials if enabled
-        certfile, keyfile = None, None
-        if self.config.ssl_enabled:
-            try:
-                certfile, keyfile = self._setup_certificates()
-            except Exception as e:
-                self._logger.error(f"Failed to setup SSL certificates: {e}")
-                return False
-
         # Initialize connection handler
         self.connection_handler = ConnectionHandler(
             connected_callback=self._on_client_connected,
@@ -575,8 +572,8 @@ class Server:
             port=self.config.port,
             heartbeat_interval=self.config.heartbeat_interval,
             allowlist=self.clients_manager,
-            certfile=certfile,
-            keyfile=keyfile,
+            certfile=self.certfile,
+            keyfile=self.keyfile,
         )
 
         if not await self.connection_handler.start():
