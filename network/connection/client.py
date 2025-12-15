@@ -24,6 +24,9 @@ class ConnectionHandler:
     resource management.
     """
 
+    RECONNECTION_DELAY = 10  # seconds
+    HANDSHAKE_DELAY = 0.2  # seconds
+
     def __init__(self, connected_callback: Optional[Callable[['ClientObj'], Any]] = None,
                  disconnected_callback: Optional[Callable[['ClientObj'], Any]] = None,
                  host: str = "127.0.0.1",
@@ -211,12 +214,15 @@ class ConnectionHandler:
                     else:
                         # Connection failed
                         error_count += 1
-                        if error_count >= self.max_errors:
+                        if error_count >= self.max_errors and self.auto_reconnect:
                             self._logger.log("Max connection errors reached, going sleep mode", Logger.ERROR)
-                            await asyncio.sleep(5) #TODO: Implement backoff strategy
+                            await asyncio.sleep(self.RECONNECTION_DELAY) #TODO: Implement backoff strategy
                             # Optionally stop trying to reconnect
                             # self._running = False
                             # break
+                        elif error_count >= self.max_errors:
+                            # No auto reconnect, stop
+                            raise Exception("Max connection errors reached")
 
                         await asyncio.sleep(self.wait)
                         continue
@@ -326,7 +332,7 @@ class ConnectionHandler:
             self._logger.log("Sent handshake response to server", Logger.DEBUG)
 
             # Small delay to ensure server processes handshake
-            await asyncio.sleep(0.2)
+            await asyncio.sleep(self.HANDSHAKE_DELAY)
 
             # Receive handshake acknowledgment from server
             handshake_ack = await asyncio.wait_for(

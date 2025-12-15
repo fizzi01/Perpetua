@@ -35,6 +35,8 @@ class ConnectionHandler:
         keyfile (str): SSL key file path.
     """
 
+    HANDSHAKE_DELAY = 0.2 # sec
+
     def __init__(self, connected_callback: Optional[Callable[['ClientObj', list], Any]] = None,
                  disconnected_callback: Optional[Callable[['ClientObj', list], Any]] = None,
                  host: str = "0.0.0.0", port: int = 5001,
@@ -264,7 +266,7 @@ class ConnectionHandler:
                         ack=False,
                         source="server",
                     )
-                    await asyncio.sleep(0.2)
+                    await asyncio.sleep(self.HANDSHAKE_DELAY)
                     await client_msg_exchange.stop()
                     writer.close()
                     await writer.wait_closed()
