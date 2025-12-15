@@ -96,7 +96,7 @@ async def interactive_server():
                     # Dynamic add client
                     hostname = input("Enter client hostname or IP: ").strip()
                     position = input("Enter screen position (top/bottom/left/right): ").strip().lower()
-                    server.add_client(hostname=hostname,ip_address=hostname, screen_position=position)
+                    await server.add_client(hostname=hostname,ip_address=hostname, screen_position=position)
                     print(f"Client {hostname} added at position {position}\n")
                 elif cmd == "remove":
                     # Dynamic remove client
@@ -107,7 +107,7 @@ async def interactive_server():
                     # Dynamic edit client
                     hostname = input("Enter client hostname or IP: ").strip()
                     position = input("Enter new screen position (top/bottom/left/right): ").strip().lower()
-                    server.edit_client(hostname=hostname, ip_address=hostname, screen_position=position)
+                    await server.edit_client(hostname=hostname, ip_address=hostname, new_screen_position=position)
                     print(f"Client {hostname} updated to position {position}\n")
                 elif cmd.startswith("enable "):
                     stream_type = cmd.split()[1]
@@ -160,90 +160,9 @@ async def interactive_server():
         await server.stop()
         print("Server stopped")
 
-
-async def automated_demo():
-    """Demo automatica che mostra il toggle degli stream"""
-
-    # Configurazione
-    app_config = ApplicationConfig()
-    server_config = ServerConfig(app_config, config_file=None)
-
-    # Set connection parameters
-    server_config.set_connection_params(
-        host="192.168.1.62",
-        port=5555
-    )
-
-    # Set logging
-    server_config.set_logging(level=Logger.INFO)
-
-    server = Server(
-        app_config=app_config,
-        server_config=server_config,
-        auto_load_config=False
-    )
-
-    server.add_client("192.168.1.74", screen_position="top")
-
-    if not await server.start():
-        print("Failed to start server")
-        return
-
-    print("\n" + "="*60)
-    print("Automated Stream Toggle Demo")
-    print("="*60 + "\n")
-
-    try:
-        print("Initial state:")
-        print(f"  Active streams: {server.get_active_streams()}\n")
-        await asyncio.sleep(3)
-
-        # Disabilita mouse
-        print("Disabling mouse stream...")
-        await server.disable_stream_runtime(StreamType.MOUSE)
-        print(f"  Active streams: {server.get_active_streams()}\n")
-        await asyncio.sleep(3)
-
-        # Disabilita keyboard
-        print("Disabling keyboard stream...")
-        await server.disable_stream_runtime(StreamType.KEYBOARD)
-        print(f"  Active streams: {server.get_active_streams()}\n")
-        await asyncio.sleep(3)
-
-        # Riabilita mouse
-        print("Re-enabling mouse stream...")
-        await server.enable_stream_runtime(StreamType.MOUSE)
-        print(f"  Active streams: {server.get_active_streams()}\n")
-        await asyncio.sleep(3)
-
-        # Riabilita keyboard
-        print("Re-enabling keyboard stream...")
-        await server.enable_stream_runtime(StreamType.KEYBOARD)
-        print(f"  Active streams: {server.get_active_streams()}\n")
-        await asyncio.sleep(3)
-
-        print("Demo completed. Server will continue running...")
-        print("Press Ctrl+C to stop\n")
-
-        # Mantieni in esecuzione
-        while True:
-            await asyncio.sleep(1)
-
-    except KeyboardInterrupt:
-        print("\nKeyboard interrupt received")
-    finally:
-        await server.stop()
-        print("Server stopped")
-
-
 async def main():
     """Entry point"""
-    import sys
-
-    if len(sys.argv) > 1 and sys.argv[1] == "demo":
-        await automated_demo()
-    else:
-        await interactive_server()
+    await interactive_server()
 
 
 if __name__ == "__main__":

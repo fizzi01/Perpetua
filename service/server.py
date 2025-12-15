@@ -37,7 +37,7 @@ class Server:
 
     This class provides features for configuring the server, managing client connections,
     enabling and disabling SSL, managing SSL certificates, sharing certificates securely,
-    and maintaining a whitelist of clients. It abstracts away the complexities involved
+    and maintaining a allowlist of clients. It abstracts away the complexities involved
     in handling connections, certificate generation, and client management.
     """
 
@@ -100,11 +100,14 @@ class Server:
 
         # Try to load existing configuration if requested
         if auto_load_config:
-            self.config.load()
+            self.config.sync_load()
 
         # Set logging level
         self._logger = get_logger(self.__class__.__name__)
         self._logger.set_level(self.config.log_level)
+
+        # Log loaded clients
+        self._load_authorized_clients()
 
         # Initialize certificate manager
         self._cert_manager = CertificateManager(cert_dir=self.app_config.get_certificate_path())
@@ -114,9 +117,6 @@ class Server:
         if self.config.ssl_enabled:
             self._setup_certificates()
 
-        # Initialize clients manager and load authorized clients from config
-        self.clients_manager = ClientsManager()
-        self._load_authorized_clients()
 
         # Initialize event bus
         self.event_bus = AsyncEventBus()
@@ -131,20 +131,22 @@ class Server:
         # Connection handler
         self.connection_handler: Optional[ConnectionHandler] = None
 
+    @property
+    def clients_manager(self) -> ClientsManager:
+        """Access the ClientsManager from configuration"""
+        return self.config.clients_manager
+
     # ==================== Configuration Management ====================
 
     def _load_authorized_clients(self) -> None:
-        """Load authorized clients from configuration"""
-        try:
-            clients = self.config.load_clients_as_objects()
-            for client in clients:
-                self.clients_manager.add_client(client)
-            if clients:
-                self._logger.info(f"Loaded {len(clients)} authorized clients from configuration")
-        except Exception as e:
-            self._logger.error(f"Error loading authorized clients: {e}")
+        """Log info about loaded authorized clients (clients are loaded by config)"""
+        clients = self.clients_manager.get_clients()
+        if len(clients) > 0:
+            self._logger.info(f"Loaded {len(clients)} authorized clients from configuration")
+        else:
+            self._logger.info("No authorized clients found in configuration")
 
-    def save_config(self) -> bool:
+    async def save_config(self) -> bool:
         """
         Save current configuration to file.
 
@@ -152,16 +154,15 @@ class Server:
             True if saved successfully, False otherwise
         """
         try:
-            # Save current clients to config
-            self.config.save_clients_from_manager(self.clients_manager)
-            self.config.save()
+            # Clients are already in config.clients_manager, just save
+            await self.config.save()
             self._logger.info("Configuration saved successfully")
             return True
         except Exception as e:
             self._logger.error(f"Error saving configuration: {e}")
             return False
 
-    def load_config(self) -> bool:
+    async def load_config(self) -> bool:
         """
         Load configuration from file.
 
@@ -169,7 +170,8 @@ class Server:
             True if loaded successfully, False otherwise
         """
         try:
-            if self.config.load():
+            if await self.config.load():
+                # Clients are already loaded by config
                 self._load_authorized_clients()
                 self._logger.set_level(self.config.log_level)
                 self._logger.info("Configuration loaded successfully")
@@ -314,9 +316,10 @@ class Server:
     def is_cert_sharing_active(self) -> bool:
         """Check if certificate sharing is currently active"""
         return self._cert_sharing is not None and self._cert_sharing.is_sharing_active()
+
     # ==================== Client Management ====================
 
-    def add_client(
+    async def add_client(
         self,
         ip_address: Optional[str] = None,
         hostname: Optional[str] = None,
@@ -335,11 +338,14 @@ class Server:
         Returns:
             The created ClientObj
         """
-        client = ClientObj(ip_address=ip_address, screen_position=screen_position, hostname=hostname)
-        self.clients_manager.add_client(client)
+        client = self.config.add_client(
+            ip_address=ip_address,
+            hostname=hostname,
+            screen_position=screen_position
+        )
 
         if auto_save:
-            self.save_config()
+            await self.save_config()
 
         self._logger.info(f"Added client {ip_address if ip_address else hostname} at position {screen_position}")
         return client
@@ -363,15 +369,19 @@ class Server:
         Returns:
             True if client was removed, False if not found
         """
-        client = self.clients_manager.get_client(ip_address=ip_address, screen_position=screen_position, hostname=hostname)
+        client = self.config.get_client(
+            ip_address=ip_address,
+            hostname=hostname,
+            screen_position=screen_position
+        )
         if client:
             if self._running:  # If server is running, disconnect client first
                 await self.connection_handler.force_disconnect_client(client)
-            # Finally remove from whitelist
-            self.clients_manager.remove_client(client)
+            # Finally remove from allowlist
+            self.config.remove_client(client=client)
 
             if auto_save:
-                self.save_config()
+                await self.save_config()
 
             self._logger.info(f"Removed client {ip_address or hostname or screen_position}")
             return True
@@ -379,7 +389,7 @@ class Server:
 
     def get_clients(self) -> list[ClientObj]:
         """Get all registered clients"""
-        return self.clients_manager.get_clients()
+        return self.config.get_clients()
 
     def get_client(
         self,
@@ -388,13 +398,18 @@ class Server:
         screen_position: Optional[str] = None
     ) -> Optional[ClientObj]:
         """Get a specific client"""
-        return self.clients_manager.get_client(ip_address=ip_address, hostname=hostname, screen_position=screen_position)
+        return self.config.get_client(
+            ip_address=ip_address,
+            hostname=hostname,
+            screen_position=screen_position
+        )
 
-    def edit_client(
+    async def edit_client(
         self,
         ip_address: Optional[str] = None,
         hostname: Optional[str] = None,
-        screen_position: Optional[str] = None,
+        old_screen_position: Optional[str] = None,
+        new_screen_position: Optional[str] = None,
         auto_save: bool = True
     ) -> ClientObj:
         """
@@ -403,13 +418,13 @@ class Server:
         Args:
             ip_address: IP address of the client to edit
             hostname: Hostname of the client to edit
-            screen_position: New screen position
+            new_screen_position: New screen position
             auto_save: If True, automatically saves configuration after editing
 
         Returns:
             The updated ClientObj
         """
-        client = self.clients_manager.get_client(ip_address=ip_address, hostname=hostname)
+        client = self.config.get_client(ip_address=ip_address, hostname=hostname, screen_position=old_screen_position)
         if not client:
             raise ValueError(f"Client [IP {ip_address}, Host {hostname}] not found")
 
@@ -417,15 +432,15 @@ class Server:
         if client.is_connected:
             raise RuntimeError("Cannot edit a connected client's properties")
 
-        if screen_position:
-            client.screen_position = screen_position
+        if new_screen_position:
+            client.screen_position = new_screen_position
 
         self.clients_manager.update_client(client)
 
         if auto_save:
-            self.save_config()
+            await self.save_config()
 
-        self._logger.info(f"Edited client {ip_address}: screen_position={screen_position}")
+        self._logger.info(f"Edited client {ip_address}: screen_position={new_screen_position}")
         return client
 
     def is_client_alive(self, ip_address: Optional[str] = None, hostname: Optional[str] = None) -> bool:
@@ -433,38 +448,38 @@ class Server:
         if not ip_address and not hostname:
             raise ValueError("Either ip_address or hostname must be provided")
 
-        client = self.clients_manager.get_client(ip_address=ip_address, hostname=hostname)
+        client = self.config.get_client(ip_address=ip_address, hostname=hostname)
         return client.is_connected if client else False
 
-    def clear_clients(self, auto_save: bool = True) -> None:
+    async def clear_clients(self, auto_save: bool = True) -> None:
         """
         Remove all clients from authorized list.
 
         Args:
             auto_save: If True, automatically saves configuration after clearing
         """
-        self.clients_manager.clients.clear()
+        self.config.clients_manager.clear()
 
         if auto_save:
-            self.save_config()
+            await self.save_config()
 
         self._logger.info("Cleared all clients")
 
     # ==================== Stream Management ====================
 
-    def enable_stream(self, stream_type: int) -> None:
+    async def enable_stream(self, stream_type: int) -> None:
         """Enable a specific stream type (applies before start or at runtime)"""
         self.config.enable_stream(stream_type)
-        self.config.save()
+        await self.config.save()
         self._logger.info(f"Enabled stream: {stream_type}")
 
-    def disable_stream(self, stream_type: int) -> None:
+    async def disable_stream(self, stream_type: int) -> None:
         """Disable a specific stream type (applies before start or at runtime)"""
         if StreamType.COMMAND == stream_type:
             self._logger.warning("Command stream is always enabled and cannot be disabled")
             return
         self.config.disable_stream(stream_type)
-        self.config.save() #TODO: Avoid saving every time, use an auto save?
+        await self.config.save()
         self._logger.info(f"Disabled stream: {stream_type}")
 
     def is_stream_enabled(self, stream_type: int) -> bool:
@@ -474,7 +489,7 @@ class Server:
     async def enable_stream_runtime(self, stream_type: int) -> bool:
         """Enable a stream at runtime"""
         if not self._running:
-            self.enable_stream(stream_type)
+            await self.enable_stream(stream_type)
             return True
 
         # Se già abilitato, non fare nulla
@@ -483,7 +498,7 @@ class Server:
             return True
 
         # Abilita nella configurazione
-        self.enable_stream(stream_type)
+        await self.enable_stream(stream_type)
 
         # Inizializza e avvia i componenti per questo stream
         try:
@@ -502,18 +517,18 @@ class Server:
         except Exception as e:
             import traceback
             traceback.print_exc()
-            self.disable_stream(stream_type)
+            await self.disable_stream(stream_type)
             self._logger.error(f"Failed to enable {stream_type} stream -> {e}")
             raise RuntimeError(f"Failed to enable {stream_type} stream -> {e}")
 
     async def disable_stream_runtime(self, stream_type: int) -> bool:
         """Disable a stream at runtime"""
         if not self._running or not self.is_stream_enabled(stream_type):
-            self.disable_stream(stream_type)
+            await self.disable_stream(stream_type)
             return True
 
         # Disabilita nella configurazione
-        self.disable_stream(stream_type)
+        await self.disable_stream(stream_type)
 
         # Ferma e rimuovi i componenti
         try:
@@ -656,7 +671,7 @@ class Server:
             raise RuntimeError("Failed to start command stream handler")
         # Add to enabled streams if not present
         if not self.is_stream_enabled(StreamType.COMMAND):
-            self.enable_stream(StreamType.COMMAND)
+            await self.enable_stream(StreamType.COMMAND)
 
         # Mouse stream
         self._stream_handlers[StreamType.MOUSE] = UnidirectionalStreamHandler(
@@ -901,6 +916,8 @@ class Server:
             event_type=EventType.CLIENT_CONNECTED,
             data={"client_screen": client.screen_position, "streams": streams}
         )
+        # Save config on new connection
+        await self.save_config()
         self._logger.info(f"Client {client.get_net_id()} connected at position {client.screen_position}")
 
     async def _on_client_disconnected(self, client: ClientObj, streams: list[int]):
@@ -909,6 +926,7 @@ class Server:
             event_type=EventType.CLIENT_DISCONNECTED,
             data={"client_screen": client.screen_position, "streams": streams}
         )
+        await self.save_config()
         self._logger.info(f"Client {client.get_net_id()} disconnected from position {client.screen_position}")
 
     # ==================== Utility Methods ====================
@@ -948,15 +966,15 @@ async def main():
     server.config.set_logging(level=Logger.INFO)
 
     # Enable streams
-    server.enable_stream(StreamType.MOUSE)
-    server.enable_stream(StreamType.KEYBOARD)
-    server.enable_stream(StreamType.CLIPBOARD)
+    await server.enable_stream(StreamType.MOUSE)
+    await server.enable_stream(StreamType.KEYBOARD)
+    await server.enable_stream(StreamType.CLIPBOARD)
 
     # Add clients to authorized list
-    server.add_client(ip_address="192.168.1.74", screen_position=ScreenPosition.BOTTOM)
+    await server.add_client(ip_address="192.168.1.74", screen_position=ScreenPosition.BOTTOM)
 
     # Save configuration for next time
-    server.save_config()
+    await server.save_config()
 
     # Option 2: Load existing configuration
     # server = Server(auto_load_config=True)
@@ -998,7 +1016,7 @@ async def main():
         print("Stopping server...")
         await server.stop()
         # Save configuration on exit
-        server.save_config()
+        await server.save_config()
 
 
 if __name__ == "__main__":

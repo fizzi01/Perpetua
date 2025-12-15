@@ -17,7 +17,7 @@ from network.stream import StreamHandler
 
 from utils.logging import get_logger
 
-
+# TODO : We need to check if a mouse is available
 class CursorHandlerWindow(wx.Frame):
     """
     Base class for cursor handling window.

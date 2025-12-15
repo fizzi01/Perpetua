@@ -136,6 +136,7 @@ class EdgeDetector:
         else:
             return -1, -1
 
+#TODO : We need to check if a mouse is available
 #TODO: Improve crossing edge detection to avoid false positives during crossing
 class ServerMouseListener(object):
     """

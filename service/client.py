@@ -76,7 +76,7 @@ class Client:
 
         # Try to load existing configuration if requested
         if auto_load_config:
-            self.config.load()
+            self.config.sync_load()
 
         # Set logging level
         self._logger = get_logger(self.__class__.__name__)
@@ -88,7 +88,7 @@ class Client:
 
         # Load certificate if available and SSL is enabled
         if self.config.ssl_enabled:
-            if self._cert_manager.certificate_exist(source_id=self.config.server_host):
+            if self._cert_manager.certificate_exist(source_id=self.config.get_server_host()):
                 self._load_certificate()
 
         # Initialize core components
@@ -115,7 +115,7 @@ class Client:
 
     # ==================== Configuration Management ====================
 
-    def save_config(self) -> bool:
+    async def save_config(self) -> bool:
         """
         Save current configuration to file.
 
@@ -123,14 +123,14 @@ class Client:
             True if saved successfully, False otherwise
         """
         try:
-            self.config.save()
+            await self.config.save()
             self._logger.info("Configuration saved successfully")
             return True
         except Exception as e:
             self._logger.error(f"Error saving configuration: {e}")
             return False
 
-    def load_config(self) -> bool:
+    async def load_config(self) -> bool:
         """
         Load configuration from file.
 
@@ -138,7 +138,7 @@ class Client:
             True if loaded successfully, False otherwise
         """
         try:
-            if self.config.load():
+            if await self.config.load():
                 self._logger.set_level(self.config.log_level)
                 self._logger.info("Configuration loaded successfully")
                 return True
@@ -153,7 +153,7 @@ class Client:
 
     def enable_ssl(self) -> bool:
         """Enable SSL connection if certificate is loaded"""
-        if self._has_valid_certificate():
+        if self.has_certificate():
             self.config.enable_ssl()
             self._logger.info("SSL connection enabled")
             return True
@@ -170,23 +170,24 @@ class Client:
         self.config.disable_ssl()
         self._logger.info("SSL connection disabled")
 
-    def _has_valid_certificate(self) -> bool:
-        """Check if a valid certificate exists for the configured server"""
-        return self._cert_manager.certificate_exist(source_id=self.config.server_host)
+    def has_certificate(self) -> bool:
+        """Check if certificate exists for the server"""
+        return self._cert_manager.certificate_exist(source_id=self.config.get_server_host())
 
-    def _load_certificate(self) -> bool:
-        """Load SSL certificate for secure connection"""
-        if self._cert_manager.certificate_exist(source_id=self.config.server_host):
-            cert_path = self._cert_manager.get_ca_cert_path(source_id=self.config.server_host)
-            self._logger.info(f"Loaded certificate from: {cert_path}")
-            return True
+    def _load_certificate(self) -> Optional[str]:
+        """Load SSL certificate from CertificateManager"""
+        server_host = self.config.get_server_host()
+        if self._cert_manager.certificate_exist(source_id=server_host):
+            cert_path = self._cert_manager.get_ca_cert_path(source_id=server_host)
+            self._logger.info(f"Certificate loaded from {cert_path}")
+            return cert_path
         else:
-            self._logger.warning(f"Certificate not found for server {self.config.server_host}")
-            return False
+            self._logger.warning(f"Certificate not found for server {server_host}")
+            return None
 
     def _remove_certificate(self) -> None:
         """Remove loaded SSL certificate. It will disable SSL connection."""
-        if self._has_valid_certificate():
+        if self.has_certificate():
             self._logger.info(f"Removing certificate and disabling SSL connection")
             # Certificate removal would be handled by CertificateManager
             self.disable_ssl()
@@ -226,7 +227,7 @@ class Client:
 
         # Use connection host if not specified
         if server_host is None:
-            server_host = self.config.server_host
+            server_host = self.config.get_server_host()
 
         self._logger.info(f"Attempting to receive certificate from {server_host}:{server_port}")
 
@@ -250,7 +251,7 @@ class Client:
                 return False
 
             # Save certificate
-            if not self._cert_manager.save_ca_data(data=cert_data, source_id=self.config.server_host):
+            if not self._cert_manager.save_ca_data(data=cert_data, source_id=self.config.get_server_host()):
                 self._logger.error("Failed to save received certificate")
                 return False
 
@@ -274,34 +275,25 @@ class Client:
         Returns:
             Path to received certificate or None if not received yet
         """
-        if self._has_valid_certificate():
-            return self._cert_manager.get_ca_cert_path(source_id=self.config.server_host)
+        if self.has_certificate():
+            return self._cert_manager.get_ca_cert_path(source_id=self.config.get_server_host())
         return None
 
-    def has_certificate(self) -> bool:
-        """
-        Check if client has received a certificate.
-
-        Returns:
-            True if certificate was received and file exists
-        """
-        return self._has_valid_certificate()
-
     # ==================== Stream Management ====================
 
-    # ==================== Stream Management ====================
-
-    def enable_stream(self, stream_type: int) -> None:
+    async def enable_stream(self, stream_type: int) -> None:
         """Enable a specific stream type (applies before start or at runtime)"""
         self.config.enable_stream(stream_type)
+        await self.config.save()
         self._logger.info(f"Enabled stream: {stream_type}")
 
-    def disable_stream(self, stream_type: int) -> None:
+    async def disable_stream(self, stream_type: int) -> None:
         """Disable a specific stream type (applies before start or at runtime)"""
         if StreamType.COMMAND == stream_type:
             self._logger.warning("Command stream is always enabled and cannot be disabled")
             return
         self.config.disable_stream(stream_type)
+        await self.config.save()
         self._logger.info(f"Disabled stream: {stream_type}")
 
     def is_stream_enabled(self, stream_type: int) -> bool:
@@ -311,7 +303,7 @@ class Client:
     async def enable_stream_runtime(self, stream_type: int) -> bool:
         """Enable a stream at runtime"""
         if not self._running or not self._connected:
-            self.enable_stream(stream_type)
+            await self.enable_stream(stream_type)
             return True
 
         # Se già abilitato, non fare nulla
@@ -320,7 +312,7 @@ class Client:
             return True
 
         # Abilita nella configurazione
-        self.enable_stream(stream_type)
+        await self.enable_stream(stream_type)
 
         # Inizializza e avvia i componenti per questo stream
         try:
@@ -337,9 +329,7 @@ class Client:
             self._logger.info(f"Runtime enabled stream: {stream_type}")
             return True
         except Exception as e:
-            import traceback
-            traceback.print_exc()
-            self.disable_stream(stream_type)
+            await self.disable_stream(stream_type)
             self._logger.error(f"Failed to enable {stream_type} stream: {e}")
             raise RuntimeError(f"Failed to enable {stream_type} stream: {e}")
 
@@ -351,11 +341,11 @@ class Client:
             return False
 
         if not self._running or not self.is_stream_enabled(stream_type):
-            self.disable_stream(stream_type)
+            await self.disable_stream(stream_type)
             return True
 
         # Disabilita nella configurazione
-        self.disable_stream(stream_type)
+        await self.disable_stream(stream_type)
 
         # Ferma e rimuovi i componenti
         try:
@@ -397,19 +387,19 @@ class Client:
 
         # Get certificate path if SSL is enabled
         certfile = None
-        if self.config.ssl_enabled and self._has_valid_certificate():
-            certfile = self._cert_manager.get_ca_cert_path(source_id=self.config.server_host)
+        if self.config.ssl_enabled and self.has_certificate():
+            certfile = self._cert_manager.get_ca_cert_path(source_id=self.config.get_server_host())
 
         # Initialize connection handler
         self.connection_handler = ConnectionHandler(
             connected_callback=self._on_connected,
             disconnected_callback=self._on_disconnected,
-            host=self.config.server_host,
-            port=self.config.server_port,
-            heartbeat_interval=self.config.heartbeat_interval,
+            host=self.config.get_server_host(),
+            port=self.config.get_server_port(),
+            heartbeat_interval=self.config.get_heartbeat_interval(),
             clients=self.clients_manager,
             open_streams=enabled_streams,
-            auto_reconnect=self.config.auto_reconnect,
+            auto_reconnect=self.config.do_auto_reconnect(),
             certfile=certfile,
         )
 
@@ -419,8 +409,9 @@ class Client:
             return False
 
         self._running = True
-        self._logger.info(
-            f"Client started and connecting to {self.config.server_host}:{self.config.server_port}")
+        server_host = self.config.get_server_host()
+        server_port = self.config.get_server_port()
+        self._logger.info(f"Client started and connecting to {server_host}:{server_port}")
         return True
 
     async def stop(self):
@@ -498,7 +489,7 @@ class Client:
             handler_id="ClientCommandStreamHandler"
         )
         # Force enable command stream
-        self.enable_stream(StreamType.COMMAND)
+        await self.enable_stream(StreamType.COMMAND)
 
         # Mouse stream (receiver)
         self._stream_handlers[StreamType.MOUSE] = UnidirectionalStreamHandler(
@@ -719,6 +710,8 @@ class Client:
             data={}
         )
 
+        await self.save_config()
+
         self._logger.info(f"Connected to server at {client.get_net_id()}")
 
     async def _on_disconnected(self, client: ClientObj):
@@ -787,18 +780,17 @@ async def main():
     client.config.set_server_connection(
         host="192.168.1.74",
         port=5555,
-        hostname="MyClient",
         auto_reconnect=True
     )
-    client.config.set_logging(level="INFO")
+    client.config.set_logging(level=Logger.INFO)
 
     # Enable streams
-    client.enable_stream(StreamType.MOUSE)
-    client.enable_stream(StreamType.KEYBOARD)
-    client.enable_stream(StreamType.CLIPBOARD)
+    await client.enable_stream(StreamType.MOUSE)
+    await client.enable_stream(StreamType.KEYBOARD)
+    await client.enable_stream(StreamType.CLIPBOARD)
 
     # Save configuration for next time
-    client.save_config()
+    await client.save_config()
 
     # Option 2: Load existing configuration
     # client = Client(auto_load_config=True)
@@ -809,7 +801,7 @@ async def main():
         return
 
     print(f"Client started successfully")
-    print(f"Connecting to {client.config.server_host}:{client.config.server_port}")
+    print(f"Connecting to {client.config.get_server_host()}:{client.config.get_server_port()}")
     print(f"Enabled streams: {client.get_enabled_streams()}")
 
     try:
@@ -829,7 +821,7 @@ async def main():
         print("Stopping client...")
         await client.stop()
         # Save configuration on exit
-        client.save_config()
+        await client.save_config()
 
 
 if __name__ == "__main__":

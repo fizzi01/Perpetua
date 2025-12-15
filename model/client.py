@@ -37,19 +37,20 @@ class ClientObj:
                  connection_time: float = 0.0,
                  is_connected: bool = False,
                  screen_position: str = ScreenPosition.CENTER,
-                 screen_resolution: str = "1920x1080",
+                 screen_resolution: str = "1x1",
                  client_name: str = "Unknown",
                  ssl: bool = False,
                  conn_socket: Optional[object] = None,
                  additional_params: dict = None):
 
-        if ip_address and not self._check_ip(ip_address):
-            raise ValueError(f"Invalid IP address: {ip_address}")
-        self.ip_address = ip_address
-
         if hostname and not self._check_hostname(hostname):
             raise ValueError(f"Invalid hostname: {hostname}")
         self.host_name = hostname
+
+        # We prioritize hostname validation over IP address validation
+        if ip_address and not self._check_ip(ip_address) and not self.host_name:
+            raise ValueError(f"Invalid IP address: {ip_address}")
+        self.ip_address = ip_address
 
         self.ports = ports if ports is not None else {}
         self.connection_time = connection_time
@@ -114,6 +115,31 @@ class ClientObj:
         """
         return self.host_name if self.host_name else self.ip_address
 
+    def to_dict(self) -> dict:
+        return self.__dict__()
+
+    @classmethod
+    def from_dict(cls, data: dict) -> 'ClientObj':
+        c = cls()
+        c.host_name = data.get("host_name", None)
+        c.ip_address = data.get("ip_address", None)
+        c.connection_time = data.get("connection_time", 0.0)
+        c.screen_position = data.get("screen_position", ScreenPosition.CENTER)
+        c.screen_resolution = data.get("screen_resolution", "1x1")
+        c.ssl = data.get("ssl", False)
+        c.additional_params = data.get("additional_params", {})
+        return c
+
+    def __dict__(self) -> dict:
+        return {
+            "host_name": self.host_name,
+            "ip_address": self.ip_address,
+            "connection_time": self.connection_time,
+            "screen_position": self.screen_position,
+            "screen_resolution": self.screen_resolution,
+            "ssl": self.ssl,
+            "additional_params": self.additional_params
+        }
 
     def __repr__(self):
         return (f"ClientObj(host_name={self.host_name}, ip_address={self.ip_address}, port={self.ports}, "
@@ -161,6 +187,9 @@ class ClientsManager:
         else:
             raise ValueError("Either client or position must be provided to remove a client.")
         return self
+
+    def clear(self):
+        self.clients = []
 
     def get_clients(self) -> list['ClientObj']:
         return self.clients

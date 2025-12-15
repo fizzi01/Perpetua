@@ -1,6 +1,5 @@
 keyboard==0.13.5
 packaging==24.2
-psutil==6.1.0
 pynput==1.7.7
 pyobjc==10.2
 screeninfo==0.8.1
@@ -11,3 +10,4 @@ attrs==24.2.0
 copykitten==2.0.0
 cryptography==46.0.3
 pyjwt==2.10.1
+aiofiles==25.1.0

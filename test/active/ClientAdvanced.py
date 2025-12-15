@@ -37,10 +37,9 @@ async def interactive_client():
     client_config.set_server_connection(
         host=input("Enter server host (default: localhost): ").strip() or "localhost",
         port=int(input("Enter server port (default: 5555): ").strip() or "5555"),
-        hostname=gethostname(),
         auto_reconnect=True
     )
-
+    client_config.set_hostname(gethostname())
     # Set logging
     client_config.set_logging(level=Logger.DEBUG)
 
@@ -51,9 +50,9 @@ async def interactive_client():
     )
 
     # Enable default streams
-    client.enable_stream(StreamType.MOUSE)
-    client.enable_stream(StreamType.KEYBOARD)
-    client.enable_stream(StreamType.CLIPBOARD)
+    await client.enable_stream(StreamType.MOUSE)
+    await client.enable_stream(StreamType.KEYBOARD)
+    await client.enable_stream(StreamType.CLIPBOARD)
 
     print("\n" + "="*60)
     print("PyContinuity Interactive Client")
@@ -91,8 +90,8 @@ async def interactive_client():
                     print(f"Connection Status:")
                     print(f"  Running: {client.is_running()}")
                     print(f"  Connected: {client.is_connected()}")
-                    print(f"  Server: {client.config.server_host}:{client.config.server_port}")
-                    print(f"  Auto-reconnect: {client.config.auto_reconnect}")
+                    print(f"  Server: {client.config.get_server_host()}:{client.config.get_server_port()}")
+                    print(f"  Auto-reconnect: {client.config.do_auto_reconnect()}")
                     print(f"\nStreams:")
                     print(f"  Enabled: {client.get_enabled_streams()}")
                     print(f"  Active: {client.get_active_streams()}")
@@ -124,9 +123,9 @@ async def interactive_client():
                     print("2. The server will display a 6-digit OTP")
                     print("3. Enter that OTP below\n")
 
-                    cert_host = input(f"Certificate server host (default: {client.config.server_host}): ").strip()
+                    cert_host = input(f"Certificate server host (default: {client.config.get_server_host()}): ").strip()
                     if not cert_host:
-                        cert_host = client.config.server_host
+                        cert_host = client.config.get_server_host()
 
                     cert_port = input("Certificate server port (default: 5556): ").strip()
                     cert_port = int(cert_port) if cert_port else 5556
@@ -219,7 +218,7 @@ async def interactive_client():
                         if client.is_running() and client.is_connected():
                             success = await client.enable_stream_runtime(stream_type)
                         else:
-                            client.enable_stream(stream_type)
+                            await client.enable_stream(stream_type)
                             success = True
 
                         if success:
@@ -252,7 +251,7 @@ async def interactive_client():
                         if client.is_running() and client.is_connected():
                             success = await client.disable_stream_runtime(stream_type)
                         else:
-                            client.disable_stream(stream_type)
+                            await client.disable_stream(stream_type)
                             success = True
 
                         if success:
@@ -294,219 +293,6 @@ async def interactive_client():
         print("Client stopped")
 
 
-async def automated_demo():
-    """Automated demo showing stream toggling"""
-
-    print("\n" + "="*60)
-    print("Automated Client Stream Toggle Demo")
-    print("="*60 + "\n")
-
-    # Get server info
-    server_host = input("Enter server host (default: localhost): ").strip() or "localhost"
-    server_port = int(input("Enter server port (default: 5555): ").strip() or "5555")
-
-    # Configuration
-    app_config = ApplicationConfig()
-    client_config = ClientConfig(app_config, config_file=None)
-
-    # Set server connection
-    client_config.set_server_connection(
-        host=server_host,
-        port=server_port,
-        auto_reconnect=True
-    )
-
-    # Set logging
-    client_config.set_logging(level=Logger.INFO)
-
-    client = Client(
-        app_config=app_config,
-        client_config=client_config,
-        auto_load_config=False
-    )
-
-    # Enable all streams initially
-    client.enable_stream(StreamType.MOUSE)
-    client.enable_stream(StreamType.KEYBOARD)
-    client.enable_stream(StreamType.CLIPBOARD)
-
-    # Start client
-    if not await client.start():
-        print("Failed to start client")
-        return
-
-    print(f"Client started, connecting to {server_host}:{server_port}...")
-
-    try:
-        # Wait for connection
-        print("Waiting for connection...")
-        for i in range(10):
-            await asyncio.sleep(0.5)
-            if client.is_connected():
-                print(f"✓ Connected!")
-                break
-        else:
-            print("✗ Connection timeout")
-            return
-
-        print(f"\nInitial state:")
-        print(f"  Enabled streams: {client.get_enabled_streams()}")
-        print(f"  Active streams: {client.get_active_streams()}\n")
-        await asyncio.sleep(3)
-
-        # Disable mouse
-        print("Disabling MOUSE stream...")
-        await client.disable_stream_runtime(StreamType.MOUSE)
-        print(f"  Active streams: {client.get_active_streams()}\n")
-        await asyncio.sleep(3)
-
-        # Disable keyboard
-        print("Disabling KEYBOARD stream...")
-        await client.disable_stream_runtime(StreamType.KEYBOARD)
-        print(f"  Active streams: {client.get_active_streams()}\n")
-        await asyncio.sleep(3)
-
-        # Re-enable mouse
-        print("Re-enabling MOUSE stream...")
-        await client.enable_stream_runtime(StreamType.MOUSE)
-        print(f"  Active streams: {client.get_active_streams()}\n")
-        await asyncio.sleep(3)
-
-        # Re-enable keyboard
-        print("Re-enabling KEYBOARD stream...")
-        await client.enable_stream_runtime(StreamType.KEYBOARD)
-        print(f"  Active streams: {client.get_active_streams()}\n")
-        await asyncio.sleep(3)
-
-        print("Demo completed. Client will continue running...")
-        print("Press Ctrl+C to stop\n")
-
-        # Keep running
-        while True:
-            await asyncio.sleep(1)
-
-    except KeyboardInterrupt:
-        print("\nKeyboard interrupt received")
-    finally:
-        await client.stop()
-        print("Client stopped")
-
-
-async def ssl_setup_demo():
-    """Demo for SSL certificate setup workflow"""
-
-    print("\n" + "="*60)
-    print("SSL Certificate Setup Demo")
-    print("="*60 + "\n")
-
-    server_host = input("Enter server host: ").strip()
-    if not server_host:
-        print("Server host required")
-        return
-
-    server_port = int(input("Enter server port (default: 5555): ").strip() or "5555")
-    cert_port = int(input("Enter certificate sharing port (default: 5556): ").strip() or "5556")
-
-    # Configuration
-    app_config = ApplicationConfig()
-    client_config = ClientConfig(app_config, config_file=None)
-
-    # Set server connection
-    client_config.set_server_connection(
-        host=server_host,
-        port=server_port,
-        auto_reconnect=True
-    )
-
-    # Set logging
-    client_config.set_logging(level=Logger.INFO)
-
-    client = Client(
-        app_config=app_config,
-        client_config=client_config,
-        auto_load_config=False
-    )
-
-    # Enable streams
-    client.enable_stream(StreamType.MOUSE)
-    client.enable_stream(StreamType.KEYBOARD)
-    client.enable_stream(StreamType.CLIPBOARD)
-
-    print("\n" + "="*60)
-    print("Step 1: Receive Certificate")
-    print("="*60)
-    print("\nOn the server, run the command: share ca")
-    print("The server will display a 6-digit OTP\n")
-
-    input("Press Enter when server is ready with OTP...")
-
-    otp = input("\nEnter OTP from server: ").strip()
-
-    print("\nReceiving certificate...")
-    success = await client.receive_certificate(
-        otp=otp,
-        server_host=server_host,
-        server_port=cert_port
-    )
-
-    if not success:
-        print("✗ Failed to receive certificate. Aborting.")
-        return
-
-    print("✓ Certificate received successfully!")
-    print(f"  Certificate saved to: {client.get_certificate_path()}\n")
-
-    print("="*60)
-    print("Step 2: Enable SSL")
-    print("="*60)
-
-    if client.enable_ssl():
-        print("✓ SSL enabled\n")
-    else:
-        print("✗ Failed to enable SSL\n")
-        return
-
-    print("="*60)
-    print("Step 3: Connect with SSL")
-    print("="*60)
-
-    print(f"\nConnecting to {server_host}:{server_port} with SSL...\n")
-
-    if not await client.start():
-        print("✗ Failed to start client")
-        return
-
-    print("Client started, waiting for connection...")
-
-    try:
-        # Wait for connection
-        for i in range(10):
-            await asyncio.sleep(0.5)
-            if client.is_connected():
-                print(f"\n✓ Connected with SSL!")
-                print(f"  Active streams: {client.get_active_streams()}")
-                break
-        else:
-            print("\n✗ Connection timeout")
-            return
-
-        print("\n" + "="*60)
-        print("SSL Setup Complete!")
-        print("="*60)
-        print("\nClient is now connected securely with SSL/TLS encryption.")
-        print("Press Ctrl+C to stop\n")
-
-        # Keep running
-        while True:
-            await asyncio.sleep(1)
-
-    except KeyboardInterrupt:
-        print("\nKeyboard interrupt received")
-    finally:
-        await client.stop()
-        print("Client stopped")
-
-
 async def main():
     """Entry point"""
     import sys
@@ -514,25 +300,8 @@ async def main():
     print("\n" + "="*60)
     print("PyContinuity Advanced Client Examples")
     print("="*60)
-    print("\nSelect mode:")
-    print("1. Interactive mode (default)")
-    print("2. Automated demo")
-    print("3. SSL setup demo")
-    print()
 
-    if len(sys.argv) > 1:
-        mode = sys.argv[1]
-    else:
-        mode = input("Enter mode (1-3, default: 1): ").strip() or "1"
-
-    if mode == "1" or mode == "interactive":
-        await interactive_client()
-    elif mode == "2" or mode == "demo":
-        await automated_demo()
-    elif mode == "3" or mode == "ssl":
-        await ssl_setup_demo()
-    else:
-        print(f"Invalid mode: {mode}")
+    await interactive_client()
 
 
 if __name__ == "__main__":
