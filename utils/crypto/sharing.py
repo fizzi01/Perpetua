@@ -207,10 +207,21 @@ class CertificateReceiver:
         self._server_host = server_host
         self._server_port = server_port
         self._timeout = timeout
+
+        self._resolved_host: Optional[str] = None
         
         self.__writer: Optional[asyncio.StreamWriter] = None
 
         self._logger = get_logger(self.__class__.__name__)
+
+    def get_resolved_host(self) -> Optional[str]:
+        """
+        Get resolved server host after connection.
+
+        Returns:
+            Resolved host string or None if not connected
+        """
+        return self._resolved_host
 
     async def receive_certificate(self, otp: str) -> Tuple[bool, Optional[str]]:
         """
@@ -231,6 +242,12 @@ class CertificateReceiver:
                 timeout=self._timeout
             )
             self.__writer = writer
+
+            # Get resolved host
+            sock = writer.get_extra_info('socket')
+            if sock:
+                self._resolved_host = sock.getpeername()[0]
+                self._logger.log(f"Resolved server host: {self._resolved_host}", Logger.DEBUG)
 
             self._logger.log("Connected, waiting for certificate...", Logger.DEBUG)
 

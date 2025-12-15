@@ -37,9 +37,11 @@ class Server:
 
     This class provides features for configuring the server, managing client connections,
     enabling and disabling SSL, managing SSL certificates, sharing certificates securely,
-    and maintaining a allowlist of clients. It abstracts away the complexities involved
+    and maintaining an allowlist of clients. It abstracts away the complexities involved
     in handling connections, certificate generation, and client management.
     """
+
+    CLEANUP_DELAY = 0.5  # seconds to wait during cleanup
 
     def __init__(
         self,
@@ -630,6 +632,9 @@ class Server:
                     await handler.stop()
             except Exception as e:
                 self._logger.error(f"Error stopping stream handler {stream_type} -> {e}")
+
+        # Wait a moment for cleanup
+        await asyncio.sleep(self.CLEANUP_DELAY)
 
         self.cleanup()
         self._running = False

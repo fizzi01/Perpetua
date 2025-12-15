@@ -36,6 +36,8 @@ class Client:
     during runtime.
     """
 
+    CLEANUP_DELAY = 0.5  # seconds to wait during cleanup
+
     def __init__(
         self,
         app_config: Optional[ApplicationConfig] = None,
@@ -177,7 +179,12 @@ class Client:
         return self._cert_manager.certificate_exist(source_id=self.config.get_server_host())
 
     def _load_certificate(self) -> Optional[str]:
-        """Load SSL certificate from CertificateManager"""
+        """
+        Load SSL certificate from CertificateManager
+
+        Returns:
+            Path to loaded certificate or None if not found
+        """
         server_host = self.config.get_server_host()
         if self._cert_manager.certificate_exist(source_id=server_host):
             cert_path = self._cert_manager.get_ca_cert_path(source_id=server_host)
@@ -259,7 +266,10 @@ class Client:
                 return False
 
             # Load and enable SSL
-            self._load_certificate()
+            cur_path = self._load_certificate()
+            if cur_path:
+                cur_name = os.path.basename(cur_path)
+                self._cert_manager.extend_mapping(source_id=self._cert_receiver.get_resolved_host(), cert_filename=cur_name)
             self.config.enable_ssl()
 
             self._logger.info(f"Certificate received and saved successfully")
@@ -448,6 +458,9 @@ class Client:
         if self.connection_handler:
             await self.connection_handler.stop()
 
+        # Wait a moment to ensure everything is cleaned up
+        await asyncio.sleep(self.CLEANUP_DELAY)
+        # Cleanup resources
         self.cleanup()
         self._running = False
         self._connected = False
