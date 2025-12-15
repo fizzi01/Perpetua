@@ -105,6 +105,9 @@ class CursorHandlerWindow(_base.CursorHandlerWindow):
         # Set activation policy to Accessory to hide the icon in the Dock
         NSApp.setActivationPolicy_(NSApplicationActivationPolicyAccessory)
 
+        self.previous_app = NSWorkspace.sharedWorkspace().frontmostApplication()
+        self.previous_app_pid = self.previous_app.processIdentifier()
+
         self._create()
 
     def ForceOverlay(self):
