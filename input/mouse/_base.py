@@ -143,6 +143,10 @@ class ServerMouseListener(object):
     Base class for server-side mouse listeners.
     Its main purpose is to listen to mouse events and dispatch them
     """
+
+    MOVEMENT_HISTORY_N_THRESHOLD = 4
+    MOVEMENT_HISTORY_LEN = 5
+
     def __init__(self, event_bus: EventBus, stream_handler: StreamHandler, command_stream: StreamHandler, filtering: bool = True):
         """
         Initializes the server mouse listener.
@@ -182,7 +186,7 @@ class ServerMouseListener(object):
         self._listener = None
 
         # Queue for mouse movements history to detect screen edge reaching
-        self._movement_history = deque(maxlen=5)
+        self._movement_history = deque(maxlen=self.MOVEMENT_HISTORY_LEN)
 
         self._logger = get_logger(self.__class__.__name__)
 
@@ -296,7 +300,7 @@ class ServerMouseListener(object):
             except Exception:
                 pass
 
-            if len(self._movement_history) >= 2:
+            if len(self._movement_history) >= self.MOVEMENT_HISTORY_N_THRESHOLD:
 
                 # Check all the previous movements to determine the direction
                 queue_data = list(self._movement_history)
@@ -372,6 +376,9 @@ class ServerMouseListener(object):
         """Async handler for cross-screen events"""
         # reset movement history
         try:
+            # DEBUG: Print current state
+            self._logger.debug(f"Handling cross-screen to {screen} at edge {edge.name}\n | MouseEvent: {mouse_event}\n"
+                               f" | Active Screens: {list(self._active_screens.keys())}\n | Movement History: {list(self._movement_history)}")
             # Acquisisci il lock per evitare cross-screen concorrenti
             async with self._cross_screen_lock:
                 # Reset movement history
@@ -483,6 +490,9 @@ class ClientMouseController(object):
     Converted from multiprocessing to fully async with asyncio tasks.
     """
 
+    MOVEMENT_HISTORY_N_THRESHOLD = 4
+    MOVEMENT_HISTORY_LEN = 5
+
     def __init__(self, event_bus: EventBus, stream_handler: StreamHandler, command_stream: StreamHandler):
         """
         Initializes the client mouse controller.
@@ -505,7 +515,7 @@ class ClientMouseController(object):
 
         # Instead of creating a listener, we just check edge cases after a mouse move event is received
         # Using deque for better performance and async compatibility
-        self._movement_history = deque(maxlen=5)
+        self._movement_history = deque(maxlen=self.MOVEMENT_HISTORY_LEN)
 
         self._controller = MouseController()
         self._pressed = False
@@ -687,7 +697,7 @@ class ClientMouseController(object):
                 self._movement_history.append((x, y))
 
                 # Need at least 2 positions to determine direction
-                if len(self._movement_history) < 2:
+                if len(self._movement_history) < self.MOVEMENT_HISTORY_N_THRESHOLD:
                     return None
 
                 # Convert deque to list for edge detection
@@ -702,6 +712,12 @@ class ClientMouseController(object):
 
                 # If we reach an edge, dispatch event to deactivate client and send cross screen message to server
                 if edge:
+                    # DEBUG: Print current state
+                    self._logger.debug("Handling edge detection\n"
+                                       f" | Edge: {edge.name}\n"
+                                       f" | Current Screen: {self._current_screen}\n"
+                                       f" | Movement History: {list(self._movement_history)}\n"
+                                       f" | Position: x={x}, y={y}")
                     x, y = EdgeDetector.get_crossing_coords(
                         x=x,
                         y=y,
