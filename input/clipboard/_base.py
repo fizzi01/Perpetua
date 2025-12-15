@@ -358,9 +358,11 @@ class ClipboardListener:
         """
         Async event handler for when a client becomes inactive.
         """
-        if self.clipboard.is_listening():
-            await self.clipboard.stop()
-        self._listening = False
+        # Behavior change: We do not stop listening on inactive clients
+        pass
+        # if self.clipboard.is_listening():
+        #     await self.clipboard.stop()
+        # self._listening = False
 
     async def _on_client_connected(self, data: dict):
         """
