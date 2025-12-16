@@ -7,7 +7,7 @@ from network.data.exchange import MessageExchange, MessageExchangeConfig
 from model.client import ClientsManager, ClientObj
 
 from event.bus import EventBus
-from event import EventType, ActiveScreenChangedEvent, ClientDisconnectedEvent
+from event import EventType, ActiveScreenChangedEvent, ClientDisconnectedEvent, ClientConnectedEvent
 
 
 class UnidirectionalStreamHandler(StreamHandler):
@@ -369,9 +369,8 @@ class MulticastStreamHandler(StreamHandler):
         self.handler_id = handler_id if handler_id else f"{self.__class__.__name__}-{self.stream_type}"
         self.source = source
 
-        # TODO: To enable client to send messages even if not active, we need to manage multiple receive transports.
         self.msg_exchange = MessageExchange(
-            conf=MessageExchangeConfig(auto_dispatch=True),
+            conf=MessageExchangeConfig(auto_dispatch=True, multicast=True),
             id=self.handler_id
         )
 
@@ -382,7 +381,8 @@ class MulticastStreamHandler(StreamHandler):
         # Subscribe with async callbacks
         self.event_bus.subscribe(event_type=EventType.CLIENT_CONNECTED, callback=self._on_client_connected)
         self.event_bus.subscribe(event_type=EventType.CLIENT_DISCONNECTED, callback=self._on_client_disconnected)
-        self.event_bus.subscribe(event_type=EventType.ACTIVE_SCREEN_CHANGED, callback=self._on_active_screen_changed)
+        # We don't need active screen changed for multicast
+        #self.event_bus.subscribe(event_type=EventType.ACTIVE_SCREEN_CHANGED, callback=self._on_active_screen_changed)
 
     def register_receive_callback(self, receive_callback, message_type: str):
         """
@@ -391,8 +391,28 @@ class MulticastStreamHandler(StreamHandler):
         """
         self.msg_exchange.register_handler(message_type, receive_callback)
 
-    async def _on_client_connected(self, data):
+    async def _on_client_connected(self, data: Optional[ClientConnectedEvent]):
         self._clients_connected += 1
+
+        if data is None:
+            return
+
+        try:
+            client_screen = data.client_screen
+            # Because multicast, we set_transport for each connected client
+            client = self.clients.get_client(screen_position=client_screen)
+            if client is not None:
+                cl_conn = client.get_connection()
+                if cl_conn is not None:
+                    cl_stream = cl_conn.get_stream(self.stream_type)
+                    await self.msg_exchange.set_transport(
+                        send_callback=cl_stream.get_writer_call(),
+                        receive_callback=cl_stream.get_reader_call(),
+                        tr_id=client_screen
+                    )
+        finally:
+            if self._clients_connected == 1:
+                await self.msg_exchange.start()
 
     async def _on_client_disconnected(self, data: Optional[ClientDisconnectedEvent]):
         self._clients_connected -= 1
@@ -401,12 +421,14 @@ class MulticastStreamHandler(StreamHandler):
             return
 
         client_screen = data.client_screen
-        if self._active_client is not None and self._active_client.screen_position == client_screen:
-            try:
-                self._active_client = None
-                #self.logger.log(f"Active client disconnected {client_screen}", Logger.INFO)
-                await self.msg_exchange.set_transport(send_callback=None, receive_callback=None)
-            finally:
+        try:
+            #self.logger.log(f"Active client disconnected {client_screen}", Logger.INFO)
+            await self.msg_exchange.set_transport(send_callback=None,
+                                                  receive_callback=None,
+                                                  tr_id=client_screen)
+        finally:
+            if self._clients_connected == 0:
+                await self.msg_exchange.stop()
                 self._clear_buffer()
 
     async def _on_active_screen_changed(self, data: Optional[ActiveScreenChangedEvent]):
@@ -437,24 +459,27 @@ class MulticastStreamHandler(StreamHandler):
 
                     if cl_stream.get_reader() is None:  # We stop receiving if no reader is available
                         self._logger.debug("No reader available for active client")
-                        await self.msg_exchange.set_transport(send_callback=cl_stream.get_writer_call(), receive_callback=None)
+                        await self.msg_exchange.set_transport(send_callback=cl_stream.get_writer_call(),
+                                                              receive_callback=None,
+                                                              tr_id=active_screen)
                         await self.msg_exchange.stop()
                         return
 
                     await self.msg_exchange.set_transport(
                         send_callback=cl_stream.get_writer_call(),
                         receive_callback=cl_stream.get_reader_call(),
+                        tr_id=active_screen
                     )
                     # Start msg exchange listener (always runs for async dispatch)
                     await self.msg_exchange.start()
                 else:
                     self._logger.debug(
                         f"No valid stream for active client {self._active_client.screen_position}")
-                    await self.msg_exchange.set_transport(send_callback=None, receive_callback=None)
+                    await self.msg_exchange.set_transport(send_callback=None, receive_callback=None, tr_id=active_screen)
                     await self.msg_exchange.stop()
 
             else:
-                await self.msg_exchange.set_transport(send_callback=None, receive_callback=None)
+                await self.msg_exchange.set_transport(send_callback=None, receive_callback=None, tr_id=active_screen)
                 await self.msg_exchange.stop()
         finally:
             self._clear_buffer()
@@ -472,26 +497,12 @@ class MulticastStreamHandler(StreamHandler):
                     if not isinstance(data, dict) and hasattr(data, "to_dict"):
                         data = data.to_dict()
 
-                    # Broadcast to all connected clients
-                    for client in self.clients.get_clients():
-                        if client.is_connected:
-                            cl_conn = client.get_connection()
-                            if cl_conn is not None:
-                                cl_stream = cl_conn.get_stream(self.stream_type)
-
-                                await self.msg_exchange.set_transport(
-                                    send_callback=cl_stream.get_writer_call(),
-                                    receive_callback=None,
-                                )
-
-                                await self.msg_exchange.send_stream_type_message(
-                                    stream_type=self.stream_type,
-                                    source=self.source,
-                                    target=client.screen_position,
-                                    **data
-                                )
-                    # Clear transport after broadcasting
-                    await self.msg_exchange.set_transport(send_callback=None, receive_callback=None)
+                    await self.msg_exchange.send_stream_type_message(
+                        stream_type=self.stream_type,
+                        source=self.source,
+                        #target=client.screen_position, # Let the multicast message exchange handle all targets
+                        **data
+                    )
 
                 except asyncio.TimeoutError:
                     await asyncio.sleep(self._waiting_time)
@@ -508,6 +519,3 @@ class MulticastStreamHandler(StreamHandler):
                     await asyncio.sleep(self._waiting_time)
             else:
                 await asyncio.sleep(self._waiting_time)
-
-    async def stop(self):
-        await super().stop()
