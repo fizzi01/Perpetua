@@ -239,7 +239,7 @@ class ServerMouseListener(object):
     def is_alive(self):
         return self._listener.is_alive() if self._listener else False
 
-    async def _on_client_connected(self, data: Optional[ClientConnectedEvent], _):
+    async def _on_client_connected(self, data: Optional[ClientConnectedEvent]):
         """
         Async event handler for when a client connects.
         """
@@ -252,7 +252,7 @@ class ServerMouseListener(object):
         if client_screen and StreamType.MOUSE in client_streams: # If not, we ignore
             self._active_screens[client_screen] = True
 
-    async def _on_client_disconnected(self, data: Optional[ClientDisconnectedEvent], _):
+    async def _on_client_disconnected(self, data: Optional[ClientDisconnectedEvent]):
         """
         Async event handler for when a client disconnects.
         """
@@ -268,7 +268,7 @@ class ServerMouseListener(object):
         if len(self._active_screens.items()) == 0:
             self._listening = False
 
-    async def _on_active_screen_changed(self, data: Optional[ActiveScreenChangedEvent], _):
+    async def _on_active_screen_changed(self, data: Optional[ActiveScreenChangedEvent]):
         """
         Async event handler for when the active screen changes.
         """
@@ -468,7 +468,7 @@ class ServerMouseController(object):
         # Register for active screen changed events to reposition the cursor
         self.event_bus.subscribe(event_type=EventType.ACTIVE_SCREEN_CHANGED, callback=self._on_active_screen_changed)
 
-    def _on_active_screen_changed(self, data: Optional[ActiveScreenChangedEvent], _):
+    def _on_active_screen_changed(self, data: Optional[ActiveScreenChangedEvent]):
         """
         Activate only when the active screen becomes None.
         """
@@ -647,7 +647,7 @@ class ClientMouseController(object):
                 self._logger.log(f"Error in worker -> {e}", Logger.ERROR)
                 await asyncio.sleep(0.01)
 
-    async def _on_client_active(self,  data: Optional[ClientActiveEvent], _):
+    async def _on_client_active(self,  data: Optional[ClientActiveEvent]):
         """
         Async event handler for when client becomes active.
         """
@@ -663,7 +663,7 @@ class ClientMouseController(object):
         if not self._running:
             await self.start()
 
-    async def _on_client_inactive(self, data: Optional[ClientActiveEvent], _):
+    async def _on_client_inactive(self, data: Optional[ClientActiveEvent]):
         """
         Async event handler for when a client becomes inactive.
         """

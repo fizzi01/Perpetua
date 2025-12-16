@@ -348,7 +348,7 @@ class ClipboardListener:
         """
         return self.clipboard.is_listening() and self._listening
 
-    async def _on_client_active(self, data: Optional[ClientActiveEvent], _):
+    async def _on_client_active(self, data: Optional[ClientActiveEvent]):
         """
         Async event handler for when client becomes active.
         """
@@ -366,7 +366,7 @@ class ClipboardListener:
         #     await self.clipboard.stop()
         # self._listening = False
 
-    async def _on_client_connected(self, data: Optional[ClientConnectedEvent], _):
+    async def _on_client_connected(self, data: Optional[ClientConnectedEvent]):
         """
         Async event handler for when a client connects.
         """
@@ -380,7 +380,7 @@ class ClipboardListener:
         if not self.clipboard.is_listening():
             await self.clipboard.start()
 
-    async def _on_client_disconnected(self, data: Optional[ClientDisconnectedEvent], _):
+    async def _on_client_disconnected(self, data: Optional[ClientDisconnectedEvent]):
         """
         Async event handler for when a client disconnects.
         """

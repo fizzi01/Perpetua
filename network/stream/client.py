@@ -72,7 +72,7 @@ class UnidirectionalStreamHandler(StreamHandler):
         await super().stop()
         await self.msg_exchange.stop()
 
-    async def _on_client_active(self,  data: Optional[ClientActiveEvent], _):
+    async def _on_client_active(self,  data: Optional[ClientActiveEvent]):
         """
         Async event handler for when a client becomes active.
         """
@@ -109,7 +109,7 @@ class UnidirectionalStreamHandler(StreamHandler):
         finally:
             self._clear_buffer()
 
-    async def _on_client_inactive(self,  data: Optional[ClientActiveEvent], _):
+    async def _on_client_inactive(self,  data: Optional[ClientActiveEvent]):
         """
         Async event handler for when a client becomes inactive.
         """
@@ -216,7 +216,7 @@ class BidirectionalStreamHandler(StreamHandler):
         await super().stop()
         await self.msg_exchange.stop()
 
-    async def _on_client_active(self,  data: Optional[ClientActiveEvent], _):
+    async def _on_client_active(self,  data: Optional[ClientActiveEvent]):
         """
         Async event handler for when a client becomes active.
         """
@@ -254,7 +254,7 @@ class BidirectionalStreamHandler(StreamHandler):
         finally:
             self._clear_buffer()
 
-    async def _on_client_inactive(self,  data: Optional[ClientActiveEvent], _):
+    async def _on_client_inactive(self,  data: Optional[ClientActiveEvent]):
         """
         Async event handler for when a client becomes inactive.
         """

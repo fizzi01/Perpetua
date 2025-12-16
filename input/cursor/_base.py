@@ -332,7 +332,7 @@ class CursorHandlerWorker(object):
         self.event_bus.subscribe(event_type=EventType.ACTIVE_SCREEN_CHANGED, callback=self._on_active_screen_changed)
         self.event_bus.subscribe(event_type=EventType.CLIENT_DISCONNECTED, callback=self._on_client_disconnected)
 
-    async def _on_active_screen_changed(self, data: Optional[ActiveScreenChangedEvent], _):
+    async def _on_active_screen_changed(self, data: Optional[ActiveScreenChangedEvent]):
         """Async callback for active screen changed"""
 
         if data is None:
@@ -348,7 +348,7 @@ class CursorHandlerWorker(object):
             await asyncio.get_event_loop().run_in_executor(None, self.disable_capture) #type: ignore
             self._active_client = None
 
-    async def _on_client_disconnected(self, data: Optional[ClientDisconnectedEvent], _):
+    async def _on_client_disconnected(self, data: Optional[ClientDisconnectedEvent]):
         """Async callback for client inactive"""
         if data is None:
             return

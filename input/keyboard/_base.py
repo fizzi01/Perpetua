@@ -141,7 +141,7 @@ class ServerKeyboardListener(object):
     def is_alive(self):
         return self._listener.is_alive() if self._listener else False
 
-    async def _on_client_connected(self, data: Optional[ClientConnectedEvent], _):
+    async def _on_client_connected(self, data: Optional[ClientConnectedEvent]):
         """
         Async event handler for when a client connects.
         """
@@ -151,7 +151,7 @@ class ServerKeyboardListener(object):
         client_screen = data.client_screen
         self._active_screens[client_screen] = True
 
-    async def _on_client_disconnected(self, data: Optional[ClientDisconnectedEvent], _):
+    async def _on_client_disconnected(self, data: Optional[ClientDisconnectedEvent]):
         """
         Async event handler for when a client disconnects.
         """
@@ -166,7 +166,7 @@ class ServerKeyboardListener(object):
         if len(self._active_screens.items()) == 0:
             self._listening = False
 
-    async def _on_active_screen_changed(self, data: Optional[ActiveScreenChangedEvent], _):
+    async def _on_active_screen_changed(self, data: Optional[ActiveScreenChangedEvent]):
         """
         Async event handler for when the active screen changes.
         """
@@ -366,7 +366,7 @@ class ClientKeyboardController(object):
                 self._logger.error(f"Error in worker -> {e}")
                 await asyncio.sleep(0.01)
 
-    async def _on_client_active(self, data: Optional[ClientActiveEvent], _):
+    async def _on_client_active(self, data: Optional[ClientActiveEvent]):
         """
         Async event handler for when client becomes active.
         """
@@ -377,7 +377,7 @@ class ClientKeyboardController(object):
         if not self._running:
             await self.start()
 
-    async def _on_client_inactive(self,  data: Optional[ClientActiveEvent], _):
+    async def _on_client_inactive(self,  data: Optional[ClientActiveEvent]):
         """
         Async event handler for when a client becomes inactive.
         """

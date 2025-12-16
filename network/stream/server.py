@@ -79,7 +79,7 @@ class UnidirectionalStreamHandler(StreamHandler):
         """
         self.msg_exchange.register_handler(message_type, receive_callback)
 
-    async def _on_client_disconnected(self, data: Optional[ClientDisconnectedEvent], _):
+    async def _on_client_disconnected(self, data: Optional[ClientDisconnectedEvent]):
         """
         Async event handler for when a client becomes inactive.
         """
@@ -94,7 +94,7 @@ class UnidirectionalStreamHandler(StreamHandler):
             finally:
                 self._clear_buffer()
 
-    async def _on_active_screen_changed(self, data: Optional[ActiveScreenChangedEvent], _):
+    async def _on_active_screen_changed(self, data: Optional[ActiveScreenChangedEvent]):
         """
         Async event handler for when the active screen changes.
         """
@@ -222,7 +222,7 @@ class BidirectionalStreamHandler(StreamHandler):
         """
         self.msg_exchange.register_handler(message_type, receive_callback)
 
-    async def _on_client_disconnected(self, data: Optional[ClientDisconnectedEvent], _):
+    async def _on_client_disconnected(self, data: Optional[ClientDisconnectedEvent]):
         """
         Async event handler for when a client becomes inactive.
         """
@@ -235,7 +235,7 @@ class BidirectionalStreamHandler(StreamHandler):
             #self.logger.debug(f"Active client disconnected {client_screen}")
             await self.msg_exchange.set_transport(send_callback=None, receive_callback=None)
 
-    async def _on_active_screen_changed(self, data: Optional[ActiveScreenChangedEvent], _):
+    async def _on_active_screen_changed(self, data: Optional[ActiveScreenChangedEvent]):
         """
         Async event handler for when the active screen changes.
         """
@@ -391,10 +391,10 @@ class MulticastStreamHandler(StreamHandler):
         """
         self.msg_exchange.register_handler(message_type, receive_callback)
 
-    async def _on_client_connected(self, data, _):
+    async def _on_client_connected(self, data):
         self._clients_connected += 1
 
-    async def _on_client_disconnected(self, data: Optional[ClientDisconnectedEvent], _):
+    async def _on_client_disconnected(self, data: Optional[ClientDisconnectedEvent]):
         self._clients_connected -= 1
 
         if data is None:
@@ -409,7 +409,7 @@ class MulticastStreamHandler(StreamHandler):
             finally:
                 self._clear_buffer()
 
-    async def _on_active_screen_changed(self, data: Optional[ActiveScreenChangedEvent], _):
+    async def _on_active_screen_changed(self, data: Optional[ActiveScreenChangedEvent]):
         """
         Async event handler for when the active screen changes.
         """

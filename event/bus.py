@@ -13,17 +13,17 @@ class EventBus(ABC):
     Async event dispatching system that allows registration of event listeners and dispatching events to them.
     """
 
-    def subscribe(self, event_type: int, callback: Callable[[Optional[BusEvent], Any], Any]):
+    def subscribe(self, event_type: int, callback: Callable[[Optional[BusEvent]], Any]):
         """
         Subscribe a callback function to a specific event type.
         """
 
-    def unsubscribe(self, event_type: int, callback: Callable[[Optional[BusEvent], Any], Any]):
+    def unsubscribe(self, event_type: int, callback: Callable[[Optional[BusEvent]], Any]):
         """
         Unsubscribe a callback function from a specific event type.
         """
 
-    async def dispatch(self, event_type: int, data: Optional[BusEvent], *args, **kwargs):
+    async def dispatch(self, event_type: int, data: Optional[BusEvent] = None, **kwargs):
         """
         Dispatch an event to all registered listeners for the given event type.
         """
@@ -46,7 +46,7 @@ class AsyncEventBus(EventBus):
 
         self._logger = get_logger(self.__class__.__name__)
 
-    def subscribe(self, event_type: int, callback: Callable[[Optional[BusEvent], Any], Any]):
+    def subscribe(self, event_type: int, callback: Callable[[Optional[BusEvent]], Any]):
         """
         Subscribe a callback function to a specific event type.
         Thread-safe, but prefer calling from async context.
@@ -56,14 +56,14 @@ class AsyncEventBus(EventBus):
             self._subscribers[event_type] = []
         self._subscribers[event_type].append(callback)
 
-    def unsubscribe(self, event_type: int, callback: Callable[[Optional[BusEvent], Any], Any]):
+    def unsubscribe(self, event_type: int, callback: Callable[[Optional[BusEvent]], Any]):
         """
         Unsubscribe a callback function from an event type.
         """
         if event_type in self._subscribers and callback in self._subscribers[event_type]:
             self._subscribers[event_type].remove(callback)
 
-    async def dispatch(self, event_type: int, data: Optional[BusEvent], *args, **kwargs):
+    async def dispatch(self, event_type: int, data: Optional[BusEvent] = None, **kwargs):
         """
         Async dispatch of an event to all registered listeners.
         Executes all callbacks concurrently for maximum performance.
@@ -78,7 +78,7 @@ class AsyncEventBus(EventBus):
         # Create tasks for all callbacks
         tasks = []
         for callback in listeners:
-            tasks.append(self._execute_callback(callback, *args, **kwargs))
+            tasks.append(self._execute_callback(callback, data, **kwargs))
 
         # Execute all callbacks concurrently
         if tasks:
@@ -96,7 +96,7 @@ class AsyncEventBus(EventBus):
             # No event loop running
             pass
 
-    async def _execute_callback(self, callback: Callable, *args, **kwargs):
+    async def _execute_callback(self, callback: Callable, data, **kwargs):
         """
         Execute a callback with exception handling.
         Automatically handles both sync and async callbacks.
@@ -104,13 +104,15 @@ class AsyncEventBus(EventBus):
         try:
             # Check if callback is async
             if inspect.iscoroutinefunction(callback):
-                await callback(*args, **kwargs)
+                await callback(data, **kwargs)
             else:
                 # Run sync callback in executor to avoid blocking
                 loop = asyncio.get_running_loop()
                 await loop.run_in_executor(None, lambda: callback(*args, **kwargs)) #type: ignore
         except Exception as e:
+            import traceback
             self._logger.error(f"Exception raised while dispatching event -> {e}")
+            self._logger.error(traceback.format_exc())
 
 
 # Backward compatibility alias
