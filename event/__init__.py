@@ -204,8 +204,10 @@ class CrossScreenCommandEvent(CommandEvent):
     def to_dict(self) -> dict:
         return {
             "command": self.command,
-            "x": self.params.get("x", -1),
-            "y": self.params.get("y", -1)
+            "params": {
+                "x": self.params.get("x", -1),
+                "y": self.params.get("y", -1)
+            }
         }
 
 

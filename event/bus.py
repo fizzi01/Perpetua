@@ -108,7 +108,7 @@ class AsyncEventBus(EventBus):
             else:
                 # Run sync callback in executor to avoid blocking
                 loop = asyncio.get_running_loop()
-                await loop.run_in_executor(None, lambda: callback(*args, **kwargs)) #type: ignore
+                await loop.run_in_executor(None, lambda: callback(data, **kwargs)) #type: ignore
         except Exception as e:
             import traceback
             self._logger.error(f"Exception raised while dispatching event -> {e}")
