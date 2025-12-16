@@ -198,9 +198,9 @@ class ServerMouseListener(object):
             self._loop = None
 
         # Subscribe with async callbacks
-        self.event_bus.subscribe(event_type=EventType.ACTIVE_SCREEN_CHANGED, callback=self._on_active_screen_changed)
-        self.event_bus.subscribe(event_type=EventType.CLIENT_CONNECTED, callback=self._on_client_connected)
-        self.event_bus.subscribe(event_type=EventType.CLIENT_DISCONNECTED, callback=self._on_client_disconnected)
+        self.event_bus.subscribe(event_type=EventType.ACTIVE_SCREEN_CHANGED, callback=self._on_active_screen_changed, priority=True)
+        self.event_bus.subscribe(event_type=EventType.CLIENT_CONNECTED, callback=self._on_client_connected, priority=True)
+        self.event_bus.subscribe(event_type=EventType.CLIENT_DISCONNECTED, callback=self._on_client_disconnected, priority=True)
 
     def _create_listener(self) -> MouseListener:
         """
@@ -390,11 +390,6 @@ class ServerMouseListener(object):
                 if len(self._movement_history) < self.MOVEMENT_HISTORY_N_THRESHOLD: #Check again because of async
                     return
 
-                # DEBUG: Print current state
-                self._logger.debug(
-                    f"Handling cross-screen to {screen} at edge {edge.name}\n"
-                    f" | Active Screens: {list(self._active_screens.keys())}\n | Movement History: {list(self._movement_history)}")
-
                 # Reset movement history
                 self._movement_history.clear()
 
@@ -468,7 +463,7 @@ class ServerMouseController(object):
         # Register for active screen changed events to reposition the cursor
         self.event_bus.subscribe(event_type=EventType.ACTIVE_SCREEN_CHANGED, callback=self._on_active_screen_changed)
 
-    def _on_active_screen_changed(self, data: Optional[ActiveScreenChangedEvent]):
+    async def _on_active_screen_changed(self, data: Optional[ActiveScreenChangedEvent]):
         """
         Activate only when the active screen becomes None.
         """
@@ -479,9 +474,11 @@ class ServerMouseController(object):
                 x = data.x
                 y = data.y
                 if x > -1 and y > -1:
-                    self.position_cursor(x, y)
+                    # We need to asyncronously position the cursor multiple times to ensure it works across platforms
+                    for _ in range(3):
+                        asyncio.create_task(self.position_cursor(x, y))
 
-    def position_cursor(self, x: float | int, y: float | int):
+    async def position_cursor(self, x: float | int, y: float | int):
         """
         Position the mouse cursor to the specified (x, y) coordinates.
         """
@@ -625,7 +622,10 @@ class ClientMouseController(object):
                     #     self._position_cursor,
                     #     event.x, event.y
                     # )
-                    self._position_cursor(event.x, event.y)
+                    for _ in range(3): # We position multiple times to ensure it works across platforms
+                        asyncio.create_task(
+                            self._position_cursor(event.x, event.y)
+                        )
                     # Check for edge crossing after positioning
                     await self._check_edge()
                 elif event.action == MouseEvent.CLICK_ACTION:
@@ -743,13 +743,6 @@ class ClientMouseController(object):
                         # Invalid crossing coords for current screen setup
                         return None
 
-                    # DEBUG: Print current state
-                    self._logger.debug("Handling edge detection\n"
-                                       f" | Edge: {edge.name}\n"
-                                       f" | Current Screen: {self._current_screen}\n"
-                                       f" | Movement History: {list(self._movement_history)}\n"
-                                       f" | Position: x={x}, y={y}")
-
                     # Set event BEFORE clearing history to block concurrent checks
                     self._cross_screen_event.set()
 
@@ -772,7 +765,7 @@ class ClientMouseController(object):
 
         return await asyncio.sleep(0)
 
-    def _position_cursor(self, x: float | int, y: float | int):
+    async def _position_cursor(self, x: float | int, y: float | int):
         """
         Position the mouse cursor to the specified (x, y) coordinates.
         """

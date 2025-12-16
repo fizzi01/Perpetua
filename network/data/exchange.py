@@ -50,7 +50,7 @@ class MessageExchange:
         self._chunk_buffer: Dict[str, list] = {}
 
         # Transport layer callbacks
-        # We support multiple transports if multicast is enabled
+        # We support multiple transports for multicast scenarios
         self._send_callbacks: Dict[str, Optional[Callable[[bytes], Any]]] = {}
         self._receive_callbacks:  Dict[str, Optional[Callable[[int], Any]]] = {}
 
@@ -95,13 +95,16 @@ class MessageExchange:
         self._logger.debug("Stopped")
 
     async def _receive_loop(self):
-        """Loop di ricezione asyncio con buffer intelligente per messaggi frammentati."""
+        """
+        Core loop for receiving and processing incoming messages.
+        Handles chunk reassembly and dispatching to registered handlers.
+        """
         persistent_buffer = bytearray()
         prefix_len = ProtocolMessage.prefix_lenght
         max_msg_size = self.config.max_chunk_size * 100
 
         while self._running:
-            for tr_id, receive_callback in self._receive_callbacks.items():
+            for tr_id, receive_callback in self._receive_callbacks.items(): # Round-robin
                 if receive_callback is None:
                     await asyncio.sleep(0)
                     continue
@@ -220,11 +223,18 @@ class MessageExchange:
                             receive_callback: Optional[Callable] = None,
                             tr_id: Optional[str] = None):
         """
-        Set the transport layer callback for sending messages.
+        Sets the transport callbacks for sending and receiving messages. If the
+        configuration is for a single transport, the callbacks are set to a default
+        transport ID. For multicast configurations, a transport ID must be provided.
 
-        Args:
-            send_callback: Async function that sends bytes over the network
-            receive_callback: Async function that receives bytes from the network
+        Parameters:
+            send_callback: Optional[Callable]
+                The callback function to handle sending messages.
+            receive_callback: Optional[Callable]
+                The callback function to handle receiving messages.
+            tr_id: Optional[str]
+                The transport ID associated with the callbacks, required in multicast
+                configurations.
         """
         #async with self._lock: # Protect transport callbacks assignment
         if not self.config.multicast: # Single transport
@@ -333,11 +343,12 @@ class MessageExchange:
 
     async def _send_message(self, message: ProtocolMessage):
         """
-        Internal method to send a message through the transport layer.
+        Internal method to send a message via the transport layer.
+        If multicast is enabled, sends via all configured transports.
         Handles automatic chunking if enabled.
         """
         # Cycle through all send callbacks
-        for tr_id, send_callback in self._send_callbacks.items():
+        for tr_id, send_callback in self._send_callbacks.items(): # Round-robin
             if not send_callback:
                 raise RuntimeError("Transport layer not configured. Call set_transport() first.")
 

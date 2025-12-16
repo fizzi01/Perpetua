@@ -38,7 +38,9 @@ class ClientObj:
                  ip_address: Optional[str] = None,
                  hostname: Optional[str] = None,
                  ports: dict[int, int] = None,
-                 connection_time: float = 0.0,
+                 connection_time: float = 0.0, # FixME: Use datetime and first and last. This connection_time can increase indefinitely !!!
+                 first_connection_date: str = None,
+                 last_connection_date: str = None,
                  is_connected: bool = False,
                  screen_position: str = ScreenPosition.CENTER,
                  screen_resolution: str = "1x1",
@@ -58,6 +60,8 @@ class ClientObj:
 
         self.ports = ports if ports is not None else {}
         self.connection_time = connection_time
+        self.first_connection_date = first_connection_date
+        self.last_connection_date = last_connection_date
 
         self.screen_position = screen_position
         if not ScreenPosition.is_valid(screen_position):
@@ -69,6 +73,14 @@ class ClientObj:
         self.conn_socket = conn_socket
         self.is_connected = is_connected
         self.additional_params = additional_params if additional_params is not None else {}
+
+    def set_first_connection(self):
+        from datetime import datetime
+        self.first_connection_date = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+
+    def set_last_connection(self):
+        from datetime import datetime
+        self.last_connection_date = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
 
     def get_connection(self) -> Optional['ClientConnection']:
         """

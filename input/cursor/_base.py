@@ -5,8 +5,9 @@ import asyncio
 import wx
 import time
 
-from multiprocessing import Pipe, Process
+from multiprocessing import Pipe, Process, Manager
 from multiprocessing.connection import Connection
+from multiprocessing.managers import SyncManager
 from typing import Optional, Dict, Any
 
 from event import EventType, MouseEvent, ActiveScreenChangedEvent, ClientDisconnectedEvent
@@ -209,11 +210,6 @@ class CursorHandlerWindow(wx.Frame):
             self.CaptureMouse()
             self.reset_mouse_position()
 
-            # Aggiorna UI
-            if self._debug and self.panel is not None and hasattr(self.panel, 'status_text'):
-                self.update_ui(self.panel, "Mouse Capture: ATTIVO", self.panel.status_text.SetLabel)
-                self.update_ui(self.panel, wx.Colour(100, 255, 100), self.panel.status_text.SetForegroundColour)
-
     def disable_mouse_capture(self):
         """
         Disable mouse capture.
@@ -227,12 +223,6 @@ class CursorHandlerWindow(wx.Frame):
 
             # Ripristina il cursore
             self.handle_cursor_visibility(True)
-
-            # Aggiorna UI
-            if self._debug and self.panel is not None and hasattr(self.panel, 'status_text'):
-                self.update_ui(self.panel, "Mouse Capture: DISATTIVO", self.panel.status_text.SetLabel)
-                self.update_ui(self.panel, wx.Colour(255, 100, 100), self.panel.status_text.SetForegroundColour)
-
             self.HideOverlay()
 
     def reset_mouse_position(self):

@@ -13,7 +13,7 @@ class EventBus(ABC):
     Async event dispatching system that allows registration of event listeners and dispatching events to them.
     """
 
-    def subscribe(self, event_type: int, callback: Callable[[Optional[BusEvent]], Any]):
+    def subscribe(self, event_type: int, callback: Callable[[Optional[BusEvent]], Any], priority: bool = False):
         """
         Subscribe a callback function to a specific event type.
         """
@@ -46,7 +46,7 @@ class AsyncEventBus(EventBus):
 
         self._logger = get_logger(self.__class__.__name__)
 
-    def subscribe(self, event_type: int, callback: Callable[[Optional[BusEvent]], Any]):
+    def subscribe(self, event_type: int, callback: Callable[[Optional[BusEvent]], Any], priority: bool = False):
         """
         Subscribe a callback function to a specific event type.
         Thread-safe, but prefer calling from async context.
@@ -54,7 +54,10 @@ class AsyncEventBus(EventBus):
         # Sync version for compatibility
         if event_type not in self._subscribers:
             self._subscribers[event_type] = []
-        self._subscribers[event_type].append(callback)
+        if priority:
+            self._subscribers[event_type].insert(0, callback)
+        else:
+            self._subscribers[event_type].append(callback)
 
     def unsubscribe(self, event_type: int, callback: Callable[[Optional[BusEvent]], Any]):
         """

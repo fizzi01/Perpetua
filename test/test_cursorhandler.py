@@ -1,6 +1,7 @@
 import asyncio
 import time
 
+from event import ActiveScreenChangedEvent
 from event.bus import EventBus
 from input.cursor import CursorHandlerWorker
 
@@ -83,8 +84,7 @@ async def __main():
         print("-" * 80)
         print("TEST 1: Benchmark Cattura Mouse (muovi il mouse per 10 secondi)")
         print("-" * 80)
-
-        result = await controller._on_active_screen_changed({"active_screen": "test_screen"})
+        result = await controller._on_active_screen_changed(data=ActiveScreenChangedEvent(active_screen="test_screen"))
         print(f"✓ Cattura mouse abilitata: {result}")
         print("\n>>> MUOVI IL MOUSE VELOCEMENTE PER 10 SECONDI <<<\n")
 
@@ -106,7 +106,7 @@ async def __main():
                 last_report = current_time
 
         # Disabilita cattura
-        result = await controller._on_active_screen_changed({"active_screen": None})
+        result = await controller._on_active_screen_changed(data=ActiveScreenChangedEvent(active_screen=None))
         print(f"\n✓ Cattura mouse disabilitata: {result}\n")
 
         # Statistiche finali
@@ -155,9 +155,9 @@ async def __main():
 
         for i in range(cycles):
             print(f"  Ciclo {i+1}/{cycles}: Enable -> Wait -> Disable")
-            await controller._on_active_screen_changed({"active_screen": "test_screen"})
+            await controller._on_active_screen_changed(data=ActiveScreenChangedEvent(active_screen="test_screen"))
             await asyncio.sleep(2)
-            await controller._on_active_screen_changed({"active_screen": None})
+            await controller._on_active_screen_changed(data=ActiveScreenChangedEvent(active_screen=None))
             await asyncio.sleep(0.5)
 
         print(f"✓ Completati {cycles} cicli di enable/disable\n")

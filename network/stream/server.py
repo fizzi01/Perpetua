@@ -130,7 +130,7 @@ class UnidirectionalStreamHandler(StreamHandler):
                         send_callback=cl_stream.get_writer_call(),
                         receive_callback=cl_stream.get_reader_call(),
                     )
-                    # Start msg exchange listener (always runs for async dispatch)
+                    # Start msg exchange listener
                     await self.msg_exchange.start()
                 else:
                     self._logger.debug(
