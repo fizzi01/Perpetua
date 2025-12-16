@@ -519,3 +519,15 @@ class MulticastStreamHandler(StreamHandler):
                     await asyncio.sleep(self._waiting_time)
             else:
                 await asyncio.sleep(self._waiting_time)
+
+    async def stop(self):
+        await super().stop()
+        await self.msg_exchange.stop()
+
+    async def start(self) -> bool:
+        st = await super().start()
+        if self._clients_connected > 0:
+            await self.msg_exchange.start()
+        return st
+
+

@@ -297,8 +297,10 @@ class BidirectionalStreamHandler(StreamHandler):
                 continue
             except (ConnectionResetError, BrokenPipeError) as e:
                 self._logger.error(f"Connection error -> {e}")
-                self._is_active = False
-                await self.msg_exchange.stop()
+                if self._active_only:
+                    self._is_active = False
+                    await self.msg_exchange.stop()
+                    self._clear_buffer()
                 await asyncio.sleep(self._waiting_time)
             except Exception as e:
                 self._logger.error(f"Error in core loop -> {e}")
