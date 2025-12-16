@@ -5,7 +5,8 @@ from typing import Optional, Callable, Any
 from copykitten import copy, paste, CopykittenError
 import hashlib
 
-from event import ClipboardEvent, EventType, EventMapper
+from event import ClipboardEvent, EventType, EventMapper, ClientConnectedEvent, ClientDisconnectedEvent, \
+    ClientActiveEvent
 from event.bus import EventBus
 from network.stream import StreamHandler
 
@@ -347,7 +348,7 @@ class ClipboardListener:
         """
         return self.clipboard.is_listening() and self._listening
 
-    async def _on_client_active(self, data: dict):
+    async def _on_client_active(self, data: Optional[ClientActiveEvent], _):
         """
         Async event handler for when client becomes active.
         """
@@ -365,23 +366,29 @@ class ClipboardListener:
         #     await self.clipboard.stop()
         # self._listening = False
 
-    async def _on_client_connected(self, data: dict):
+    async def _on_client_connected(self, data: Optional[ClientConnectedEvent], _):
         """
         Async event handler for when a client connects.
         """
-        client_screen = data.get("client_screen")
+        if data is None:
+            return
+
+        client_screen = data.client_screen
         self._active_screens[client_screen] = True
         self._listening = True
 
         if not self.clipboard.is_listening():
             await self.clipboard.start()
 
-    async def _on_client_disconnected(self, data: dict):
+    async def _on_client_disconnected(self, data: Optional[ClientDisconnectedEvent], _):
         """
         Async event handler for when a client disconnects.
         """
+        if data is None:
+            return
+
         # try to get client from data to remove from active screens
-        client = data.get("client_screen")
+        client = data.client_screen
         if client and client in self._active_screens:
             del self._active_screens[client]
 

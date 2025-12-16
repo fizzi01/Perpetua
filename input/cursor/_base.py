@@ -10,7 +10,7 @@ from multiprocessing import Queue, Pipe, Process
 from multiprocessing.connection import Connection
 from typing import Optional
 
-from event import EventType, MouseEvent
+from event import EventType, MouseEvent, ActiveScreenChangedEvent, ClientDisconnectedEvent
 from event.bus import EventBus
 
 from network.stream import StreamHandler
@@ -330,11 +330,15 @@ class CursorHandlerWorker(object):
 
         # Register to active_screen with async callbacks
         self.event_bus.subscribe(event_type=EventType.ACTIVE_SCREEN_CHANGED, callback=self._on_active_screen_changed)
-        self.event_bus.subscribe(event_type=EventType.CLIENT_DISCONNECTED, callback=self._on_client_inactive)
+        self.event_bus.subscribe(event_type=EventType.CLIENT_DISCONNECTED, callback=self._on_client_disconnected)
 
-    async def _on_active_screen_changed(self, data):
+    async def _on_active_screen_changed(self, data: Optional[ActiveScreenChangedEvent], _):
         """Async callback for active screen changed"""
-        active_screen = data.get("active_screen")
+
+        if data is None:
+            return
+
+        active_screen = data.active_screen
 
         if active_screen:
             # Start capture cursor
@@ -344,9 +348,12 @@ class CursorHandlerWorker(object):
             await asyncio.get_event_loop().run_in_executor(None, self.disable_capture) #type: ignore
             self._active_client = None
 
-    async def _on_client_inactive(self, data: dict):
+    async def _on_client_disconnected(self, data: Optional[ClientDisconnectedEvent], _):
         """Async callback for client inactive"""
-        if self._active_client and data.get("client_screen") == self._active_client:
+        if data is None:
+            return
+
+        if self._active_client and data.client_screen == self._active_client:
             self._active_client = None
             await asyncio.get_event_loop().run_in_executor(None, self.disable_capture) #type: ignore
 

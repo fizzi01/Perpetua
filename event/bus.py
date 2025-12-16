@@ -1,9 +1,11 @@
 from abc import ABC
 import asyncio
-from typing import Callable, Dict, List, Union
+from typing import Callable, Dict, List, Optional, Any, Generic
 import inspect
 
 from utils.logging import get_logger
+
+from . import BusEvent
 
 
 class EventBus(ABC):
@@ -11,17 +13,17 @@ class EventBus(ABC):
     Async event dispatching system that allows registration of event listeners and dispatching events to them.
     """
 
-    def subscribe(self, event_type: int, callback: Callable):
+    def subscribe(self, event_type: int, callback: Callable[[Optional[BusEvent], Any], Any]):
         """
         Subscribe a callback function to a specific event type.
         """
 
-    def unsubscribe(self, event_type: int, callback: Callable):
+    def unsubscribe(self, event_type: int, callback: Callable[[Optional[BusEvent], Any], Any]):
         """
         Unsubscribe a callback function from a specific event type.
         """
 
-    async def dispatch(self, event_type: int, *args, **kwargs):
+    async def dispatch(self, event_type: int, data: Optional[BusEvent], *args, **kwargs):
         """
         Dispatch an event to all registered listeners for the given event type.
         """
@@ -41,12 +43,10 @@ class AsyncEventBus(EventBus):
         super().__init__()
         # Use dict for O(1) lookup, list for subscribers
         self._subscribers: Dict[int, List[Callable]] = {}
-        # Use asyncio.Lock for async thread safety
-        self._lock = asyncio.Lock()
 
         self._logger = get_logger(self.__class__.__name__)
 
-    def subscribe(self, event_type: int, callback: Callable):
+    def subscribe(self, event_type: int, callback: Callable[[Optional[BusEvent], Any], Any]):
         """
         Subscribe a callback function to a specific event type.
         Thread-safe, but prefer calling from async context.
@@ -56,14 +56,14 @@ class AsyncEventBus(EventBus):
             self._subscribers[event_type] = []
         self._subscribers[event_type].append(callback)
 
-    def unsubscribe(self, event_type: int, callback: Callable):
+    def unsubscribe(self, event_type: int, callback: Callable[[Optional[BusEvent], Any], Any]):
         """
         Unsubscribe a callback function from an event type.
         """
         if event_type in self._subscribers and callback in self._subscribers[event_type]:
             self._subscribers[event_type].remove(callback)
 
-    async def dispatch(self, event_type: int, *args, **kwargs):
+    async def dispatch(self, event_type: int, data: Optional[BusEvent], *args, **kwargs):
         """
         Async dispatch of an event to all registered listeners.
         Executes all callbacks concurrently for maximum performance.

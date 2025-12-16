@@ -1,7 +1,8 @@
 import asyncio
 from typing import Optional
 
-from event import EventType, EventMapper, KeyboardEvent
+from event import EventType, EventMapper, KeyboardEvent, ActiveScreenChangedEvent, ClientConnectedEvent, \
+    ClientDisconnectedEvent, ClientActiveEvent
 from event.bus import EventBus
 
 from pynput.keyboard import (Key, KeyCode,
@@ -140,19 +141,24 @@ class ServerKeyboardListener(object):
     def is_alive(self):
         return self._listener.is_alive() if self._listener else False
 
-    async def _on_client_connected(self, data: dict):
+    async def _on_client_connected(self, data: Optional[ClientConnectedEvent], _):
         """
         Async event handler for when a client connects.
         """
-        client_screen = data.get("client_screen")
+        if data is None:
+            return
+
+        client_screen = data.client_screen
         self._active_screens[client_screen] = True
 
-    async def _on_client_disconnected(self, data: dict):
+    async def _on_client_disconnected(self, data: Optional[ClientDisconnectedEvent], _):
         """
         Async event handler for when a client disconnects.
         """
+        if data is None:
+            return
         # try to get client from data to remove from active screens
-        client = data.get("client_screen")
+        client = data.client_screen
         if client and client in self._active_screens:
             del self._active_screens[client]
 
@@ -160,12 +166,15 @@ class ServerKeyboardListener(object):
         if len(self._active_screens.items()) == 0:
             self._listening = False
 
-    async def _on_active_screen_changed(self, data: dict):
+    async def _on_active_screen_changed(self, data: Optional[ActiveScreenChangedEvent], _):
         """
         Async event handler for when the active screen changes.
         """
+        if data is None:
+            return
+
         # If active screen is not none then we can start listening to mouse events
-        active_screen = data.get("active_screen")
+        active_screen = data.active_screen
 
         if active_screen is not None:
             self._listening = True
@@ -265,7 +274,6 @@ class ClientKeyboardController(object):
         self._cross_screen_event = asyncio.Event()
 
         self._is_active = False
-        self._current_screen = None
 
         self._controller = KeyboardController()
         self._hotkey_controller = hotkey_controller
@@ -358,12 +366,10 @@ class ClientKeyboardController(object):
                 self._logger.error(f"Error in worker -> {e}")
                 await asyncio.sleep(0.01)
 
-    async def _on_client_active(self, data: dict):
+    async def _on_client_active(self, data: Optional[ClientActiveEvent], _):
         """
         Async event handler for when client becomes active.
         """
-        self._current_screen = data.get("screen_position", None)
-
         self._is_active = True
         self._cross_screen_event.clear()
 
@@ -371,7 +377,7 @@ class ClientKeyboardController(object):
         if not self._running:
             await self.start()
 
-    async def _on_client_inactive(self, data: dict):
+    async def _on_client_inactive(self,  data: Optional[ClientActiveEvent], _):
         """
         Async event handler for when a client becomes inactive.
         """

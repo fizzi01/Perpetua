@@ -2,13 +2,13 @@ import asyncio
 from typing import Optional
 
 from utils.logging import Logger, get_logger
-from network.connection import ClientConnection
+from event import EventType, ClientActiveEvent
 from network.stream import StreamHandler
 from network.data.exchange import MessageExchange, MessageExchangeConfig
 from model.client import ClientsManager, ClientObj
 
 from event.bus import EventBus
-from event import EventType
+
 
 
 class UnidirectionalStreamHandler(StreamHandler):
@@ -72,7 +72,7 @@ class UnidirectionalStreamHandler(StreamHandler):
         await super().stop()
         await self.msg_exchange.stop()
 
-    async def _on_client_active(self, data: dict):
+    async def _on_client_active(self,  data: Optional[ClientActiveEvent], _):
         """
         Async event handler for when a client becomes active.
         """
@@ -109,7 +109,7 @@ class UnidirectionalStreamHandler(StreamHandler):
         finally:
             self._clear_buffer()
 
-    async def _on_client_inactive(self, data: dict):
+    async def _on_client_inactive(self,  data: Optional[ClientActiveEvent], _):
         """
         Async event handler for when a client becomes inactive.
         """
@@ -216,7 +216,7 @@ class BidirectionalStreamHandler(StreamHandler):
         await super().stop()
         await self.msg_exchange.stop()
 
-    async def _on_client_active(self, data: dict):
+    async def _on_client_active(self,  data: Optional[ClientActiveEvent], _):
         """
         Async event handler for when a client becomes active.
         """
@@ -254,7 +254,7 @@ class BidirectionalStreamHandler(StreamHandler):
         finally:
             self._clear_buffer()
 
-    async def _on_client_inactive(self, data: dict):
+    async def _on_client_inactive(self,  data: Optional[ClientActiveEvent], _):
         """
         Async event handler for when a client becomes inactive.
         """

@@ -1,6 +1,5 @@
 import asyncio
 import enum
-from abc import ABC
 from collections import deque
 from typing import Callable, Optional
 from time import time
@@ -9,7 +8,8 @@ from threading import Event
 from pynput.mouse import Button, Controller as MouseController
 from pynput.mouse import Listener as MouseListener
 
-from event import EventType, MouseEvent, CommandEvent, EventMapper
+from event import EventType, MouseEvent, EventMapper, CrossScreenCommandEvent, ActiveScreenChangedEvent, BusEvent, \
+    ClientConnectedEvent, ClientDisconnectedEvent, ClientActiveEvent
 from event.bus import EventBus
 from model.client import ScreenPosition
 
@@ -144,8 +144,8 @@ class ServerMouseListener(object):
     Its main purpose is to listen to mouse events and dispatch them
     """
 
-    MOVEMENT_HISTORY_N_THRESHOLD = 4
-    MOVEMENT_HISTORY_LEN = 5
+    MOVEMENT_HISTORY_N_THRESHOLD = 6
+    MOVEMENT_HISTORY_LEN = 8
 
     def __init__(self, event_bus: EventBus, stream_handler: StreamHandler, command_stream: StreamHandler, filtering: bool = True):
         """
@@ -239,22 +239,28 @@ class ServerMouseListener(object):
     def is_alive(self):
         return self._listener.is_alive() if self._listener else False
 
-    async def _on_client_connected(self, data: dict):
+    async def _on_client_connected(self, data: Optional[ClientConnectedEvent], _):
         """
         Async event handler for when a client connects.
         """
-        client_screen = data.get("client_screen")
+        if data is None:
+            return
+
+        client_screen = data.client_screen
         # We need this check in order to not dispatch cross-screen events to clients without mouse stream
-        client_streams = data.get("streams", []) # We check if client has mouse stream enabled
+        client_streams = data.streams # We check if client has mouse stream enabled
         if client_screen and StreamType.MOUSE in client_streams: # If not, we ignore
             self._active_screens[client_screen] = True
 
-    async def _on_client_disconnected(self, data: dict):
+    async def _on_client_disconnected(self, data: Optional[ClientDisconnectedEvent], _):
         """
         Async event handler for when a client disconnects.
         """
+        if data is None:
+            return
+
         # try to get client from data to remove from active screens
-        client = data.get("client_screen")
+        client = data.client_screen
         if client and client in self._active_screens:
             del self._active_screens[client]
 
@@ -262,12 +268,15 @@ class ServerMouseListener(object):
         if len(self._active_screens.items()) == 0:
             self._listening = False
 
-    async def _on_active_screen_changed(self, data: dict):
+    async def _on_active_screen_changed(self, data: Optional[ActiveScreenChangedEvent], _):
         """
         Async event handler for when the active screen changes.
         """
+        if data is None:
+            return
+
         # If active screen is not none then we can start listening to mouse events
-        active_screen = data.get("active_screen")
+        active_screen = data.active_screen
 
         if active_screen is not None:
             self._movement_history.clear()
@@ -376,22 +385,27 @@ class ServerMouseListener(object):
         """Async handler for cross-screen events"""
         # reset movement history
         try:
-            # DEBUG: Print current state
-            self._logger.debug(f"Handling cross-screen to {screen} at edge {edge.name}\n | MouseEvent: {mouse_event}\n"
-                               f" | Active Screens: {list(self._active_screens.keys())}\n | Movement History: {list(self._movement_history)}")
             # Acquisisci il lock per evitare cross-screen concorrenti
             async with self._cross_screen_lock:
+                if len(self._movement_history) < self.MOVEMENT_HISTORY_N_THRESHOLD: #Check again because of async
+                    return
+
+                # DEBUG: Print current state
+                self._logger.debug(
+                    f"Handling cross-screen to {screen} at edge {edge.name}\n"
+                    f" | Active Screens: {list(self._active_screens.keys())}\n | Movement History: {list(self._movement_history)}")
+
                 # Reset movement history
                 self._movement_history.clear()
 
-                # Dispatch eventi in sequenza
+                # We notify the system that an active screen change has occurred
                 await self.event_bus.dispatch(
                     event_type=EventType.ACTIVE_SCREEN_CHANGED,
-                    data={"active_screen": screen}
+                    data=ActiveScreenChangedEvent(active_screen=screen)
                 )
 
                 # Attendi il completamento dell'invio dei messaggi
-                await self.command_stream.send(CommandEvent(command=CommandEvent.CROSS_SCREEN))
+                await self.command_stream.send(CrossScreenCommandEvent())
                 await self.stream.send(mouse_event)
 
                 # Piccolo delay per garantire che i messaggi siano stati processati
@@ -454,17 +468,18 @@ class ServerMouseController(object):
         # Register for active screen changed events to reposition the cursor
         self.event_bus.subscribe(event_type=EventType.ACTIVE_SCREEN_CHANGED, callback=self._on_active_screen_changed)
 
-    def _on_active_screen_changed(self, data: dict):
+    def _on_active_screen_changed(self, data: Optional[ActiveScreenChangedEvent], _):
         """
         Activate only when the active screen becomes None.
         """
-        active_screen = data.get("active_screen")
-        if active_screen is None:
-            # Get the cursor position from data if available
-            x = data.get("x", -1)
-            y = data.get("y", -1)
-            if x > -1 and y > -1:
-                self.position_cursor(x, y)
+        if data is not None:
+            active_screen = data.active_screen
+            if active_screen is None:
+                # Get the cursor position from data if available
+                x = data.x
+                y = data.y
+                if x > -1 and y > -1:
+                    self.position_cursor(x, y)
 
     def position_cursor(self, x: float | int, y: float | int):
         """
@@ -490,8 +505,8 @@ class ClientMouseController(object):
     Converted from multiprocessing to fully async with asyncio tasks.
     """
 
-    MOVEMENT_HISTORY_N_THRESHOLD = 4
-    MOVEMENT_HISTORY_LEN = 5
+    MOVEMENT_HISTORY_N_THRESHOLD = 6
+    MOVEMENT_HISTORY_LEN = 8
 
     def __init__(self, event_bus: EventBus, stream_handler: StreamHandler, command_stream: StreamHandler):
         """
@@ -596,30 +611,33 @@ class ClientMouseController(object):
 
                 # Execute mouse actions in executor to avoid blocking
                 if event.action == MouseEvent.MOVE_ACTION:
-                    await loop.run_in_executor(
-                        None,
-                        self._move_cursor,
-                        event.x, event.y, event.dx, event.dy
-                    )
+                    # await loop.run_in_executor(
+                    #     None,
+                    #     self._move_cursor,
+                    #     event.x, event.y, event.dx, event.dy
+                    # )
+                    self._move_cursor(event.x, event.y, event.dx, event.dy)
                     # Check for edge crossing after movement
                     await self._check_edge()
                 elif event.action == MouseEvent.POSITION_ACTION:
-                    await loop.run_in_executor(
-                        None,
-                        self._position_cursor,
-                        event.x, event.y
-                    )
+                    # await loop.run_in_executor(
+                    #     None,
+                    #     self._position_cursor,
+                    #     event.x, event.y
+                    # )
+                    self._position_cursor(event.x, event.y)
                     # Check for edge crossing after positioning
                     await self._check_edge()
                 elif event.action == MouseEvent.CLICK_ACTION:
                     # Click is fast enough to run directly
                     self._click(event.button, event.is_pressed)
                 elif event.action == MouseEvent.SCROLL_ACTION:
-                    await loop.run_in_executor(
-                        None,
-                        self._scroll,
-                        event.dx, event.dy
-                    )
+                    # await loop.run_in_executor(
+                    #     None,
+                    #     self._scroll,
+                    #     event.dx, event.dy
+                    # )
+                    self._scroll(event.dx, event.dy)
 
             except asyncio.TimeoutError:
                 continue
@@ -629,11 +647,12 @@ class ClientMouseController(object):
                 self._logger.log(f"Error in worker -> {e}", Logger.ERROR)
                 await asyncio.sleep(0.01)
 
-    async def _on_client_active(self, data: dict):
+    async def _on_client_active(self,  data: Optional[ClientActiveEvent], _):
         """
         Async event handler for when client becomes active.
         """
-        self._current_screen = data.get("screen_position", None)
+        if data is not None:
+            self._current_screen = data.client_screen
         # Reset movement history
         self._movement_history.clear()
 
@@ -644,7 +663,7 @@ class ClientMouseController(object):
         if not self._running:
             await self.start()
 
-    async def _on_client_inactive(self, data: dict):
+    async def _on_client_inactive(self, data: Optional[ClientActiveEvent], _):
         """
         Async event handler for when a client becomes inactive.
         """
@@ -712,12 +731,6 @@ class ClientMouseController(object):
 
                 # If we reach an edge, dispatch event to deactivate client and send cross screen message to server
                 if edge:
-                    # DEBUG: Print current state
-                    self._logger.debug("Handling edge detection\n"
-                                       f" | Edge: {edge.name}\n"
-                                       f" | Current Screen: {self._current_screen}\n"
-                                       f" | Movement History: {list(self._movement_history)}\n"
-                                       f" | Position: x={x}, y={y}")
                     x, y = EdgeDetector.get_crossing_coords(
                         x=x,
                         y=y,
@@ -730,18 +743,24 @@ class ClientMouseController(object):
                         # Invalid crossing coords for current screen setup
                         return None
 
+                    # DEBUG: Print current state
+                    self._logger.debug("Handling edge detection\n"
+                                       f" | Edge: {edge.name}\n"
+                                       f" | Current Screen: {self._current_screen}\n"
+                                       f" | Movement History: {list(self._movement_history)}\n"
+                                       f" | Position: x={x}, y={y}")
+
                     # Set event BEFORE clearing history to block concurrent checks
                     self._cross_screen_event.set()
 
                     # Clear movement history atomically
                     self._movement_history.clear()
 
-                    screen_data = {"x": x, "y": y}
-                    command = CommandEvent(command=CommandEvent.CROSS_SCREEN, params=screen_data)
+                    command = CrossScreenCommandEvent(x=x,y=y)
 
                     # Send command and dispatch event sequentially
                     await self.command_stream.send(command)
-                    await self.event_bus.dispatch(event_type=EventType.CLIENT_INACTIVE, data={})
+                    await self.event_bus.dispatch(event_type=EventType.CLIENT_INACTIVE, data=None)
 
                     # Piccolo delay per garantire che i messaggi siano stati processati
                     return await asyncio.sleep(0)

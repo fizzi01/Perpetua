@@ -10,7 +10,7 @@ from typing import Optional, Dict, Tuple
 from config import ApplicationConfig, ServerConfig
 from model.client import ClientObj, ClientsManager, ScreenPosition
 from event.bus import AsyncEventBus
-from event import EventType
+from event import EventType, ClientConnectedEvent, ClientDisconnectedEvent
 from network.connection.server import ConnectionHandler
 from network.stream.server import (
     UnidirectionalStreamHandler,
@@ -916,7 +916,7 @@ class Server:
         """Handle client connection event"""
         await self.event_bus.dispatch(
             event_type=EventType.CLIENT_CONNECTED,
-            data={"client_screen": client.screen_position, "streams": streams}
+            data=ClientConnectedEvent(client_screen=client.get_screen_position(), streams=streams)
         )
         # Save config on new connection
         await self.save_config()
@@ -926,7 +926,7 @@ class Server:
         """Handle client disconnection event"""
         await self.event_bus.dispatch(
             event_type=EventType.CLIENT_DISCONNECTED,
-            data={"client_screen": client.screen_position, "streams": streams}
+            data=ClientDisconnectedEvent(client_screen=client.get_screen_position(), streams=streams)
         )
         await self.save_config()
         self._logger.info(f"Client {client.get_net_id()} disconnected from position {client.screen_position}")

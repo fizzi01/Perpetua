@@ -7,7 +7,7 @@ from network.data.exchange import MessageExchange, MessageExchangeConfig
 from model.client import ClientsManager, ClientObj
 
 from event.bus import EventBus
-from event import EventType
+from event import EventType, ActiveScreenChangedEvent, ClientDisconnectedEvent
 
 
 class UnidirectionalStreamHandler(StreamHandler):
@@ -79,11 +79,14 @@ class UnidirectionalStreamHandler(StreamHandler):
         """
         self.msg_exchange.register_handler(message_type, receive_callback)
 
-    async def _on_client_disconnected(self, data: dict):
+    async def _on_client_disconnected(self, data: Optional[ClientDisconnectedEvent], _):
         """
         Async event handler for when a client becomes inactive.
         """
-        client_screen = data.get("client_screen")
+        if data is None:
+            return
+
+        client_screen = data.client_screen
         if self._active_client is not None and self._active_client.get_screen_position() == client_screen:
             try:
                 self._active_client = None
@@ -91,13 +94,16 @@ class UnidirectionalStreamHandler(StreamHandler):
             finally:
                 self._clear_buffer()
 
-    async def _on_active_screen_changed(self, data: dict):
+    async def _on_active_screen_changed(self, data: Optional[ActiveScreenChangedEvent], _):
         """
         Async event handler for when the active screen changes.
         """
+        if data is None:
+            return
+
         try:
             # Get current active screen from event data
-            active_screen = data.get("active_screen")
+            active_screen = data.active_screen
 
             # Find corresponding client
             self._active_client = self.clients.get_client(screen_position=active_screen)
@@ -216,23 +222,29 @@ class BidirectionalStreamHandler(StreamHandler):
         """
         self.msg_exchange.register_handler(message_type, receive_callback)
 
-    async def _on_client_disconnected(self, data: dict):
+    async def _on_client_disconnected(self, data: Optional[ClientDisconnectedEvent], _):
         """
         Async event handler for when a client becomes inactive.
         """
-        client_screen = data.get("client_screen")
+        if data is None:
+            return
+
+        client_screen = data.client_screen
         if self._active_client is not None and self._active_client.screen_position == client_screen:
             self._active_client = None
             #self.logger.debug(f"Active client disconnected {client_screen}")
             await self.msg_exchange.set_transport(send_callback=None, receive_callback=None)
 
-    async def _on_active_screen_changed(self, data: dict):
+    async def _on_active_screen_changed(self, data: Optional[ActiveScreenChangedEvent], _):
         """
         Async event handler for when the active screen changes.
         """
+        if data is None:
+            return
+
         try:
             # Get current active screen from event data
-            active_screen = data.get("active_screen")
+            active_screen = data.active_screen
 
             # Find corresponding client
             self._active_client = self.clients.get_client(screen_position=active_screen)
@@ -379,13 +391,16 @@ class MulticastStreamHandler(StreamHandler):
         """
         self.msg_exchange.register_handler(message_type, receive_callback)
 
-    async def _on_client_connected(self, data: dict):
+    async def _on_client_connected(self, data, _):
         self._clients_connected += 1
 
-    async def _on_client_disconnected(self, data: dict):
+    async def _on_client_disconnected(self, data: Optional[ClientDisconnectedEvent], _):
         self._clients_connected -= 1
 
-        client_screen = data.get("client_screen")
+        if data is None:
+            return
+
+        client_screen = data.client_screen
         if self._active_client is not None and self._active_client.screen_position == client_screen:
             try:
                 self._active_client = None
@@ -394,13 +409,16 @@ class MulticastStreamHandler(StreamHandler):
             finally:
                 self._clear_buffer()
 
-    async def _on_active_screen_changed(self, data: dict):
+    async def _on_active_screen_changed(self, data: Optional[ActiveScreenChangedEvent], _):
         """
         Async event handler for when the active screen changes.
         """
+        if data is None:
+            return
+
         try:
             # Get current active screen from event data
-            active_screen = data.get("active_screen")
+            active_screen = data.active_screen
 
             # Find corresponding client
             self._active_client = self.clients.get_client(screen_position=active_screen)

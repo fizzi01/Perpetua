@@ -17,10 +17,11 @@ class ScreenPosition:
     BOTTOM = "bottom"
     LEFT = "left"
     RIGHT = "right"
-    NONE = "none"
+    UKNOWN = "unknown"
+    NONE = None
 
     @staticmethod
-    def is_valid(position: str) -> bool:
+    def is_valid(position: Optional[str]) -> bool:
         return position.lower() in {
             ScreenPosition.CENTER,
             ScreenPosition.TOP,

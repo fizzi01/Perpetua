@@ -1,7 +1,7 @@
 from abc import ABC
 from enum import IntEnum
 from time import time
-from typing import Optional
+from typing import Optional, Self
 
 from network.protocol.message import ProtocolMessage, MessageType
 
@@ -12,6 +12,10 @@ class EventType(IntEnum):
 
     Events:
     - ACTIVE_SCREEN_CHANGED: Dispatched when the active screen changes.
+    - CLIENT_CONNECTED: Dispatched when a new client connects.
+    - CLIENT_DISCONNECTED: Dispatched when a client disconnects.
+    - CLIENT_ACTIVE: Dispatched when the client becomes active.
+    - CLIENT_INACTIVE: Dispatched when the client becomes inactive.
     """
 
     ACTIVE_SCREEN_CHANGED = 1
@@ -20,6 +24,78 @@ class EventType(IntEnum):
     CLIENT_ACTIVE = 2
     CLIENT_INACTIVE = 3
 
+class BusEvent(ABC):
+    """
+    Base class for events dispatched on the EventBus.
+    """
+
+    def to_dict(self):
+        raise NotImplementedError
+
+class ActiveScreenChangedEvent(BusEvent):
+    """
+    Event dispatched when the active screen changes.
+    """
+
+    def __init__(self, active_screen: Optional[str], source: str = "", position: tuple[float, float] = (-1, -1)):
+        """
+        Represents a change in the active screen (e.g., when a server crosses to another client's screen).
+
+        Args:
+            active_screen: Optional[str]
+                Identifier for the active screen. Can be None if no active screen is set (so the server).
+            source: str, optional
+                Source information related to the object. Defaults to an empty string.
+            position: tuple[float, float], optional
+                A tuple defining the x and y coordinates of the object. Defaults to (-1.0, -1.0).
+        """
+        self.active_screen = active_screen
+        self.client = source
+        self.x = position[0]
+        self.y = position[1]
+
+    def to_dict(self) -> dict:
+        return {
+            "active_screen": self.active_screen,
+            "client": self.client,
+            "x": self.x,
+            "y": self.y
+        }
+
+class ClientConnectedEvent(BusEvent):
+    """
+    Event dispatched when a new client connects.
+    """
+
+    def __init__(self, client_screen: str, streams: Optional[list[int]] = None):
+        self.client_screen = client_screen
+        self.streams = streams
+
+
+    def to_dict(self) -> dict:
+        return {
+            "client_screen": self.client_screen,
+            "streams": self.streams
+        }
+
+class ClientDisconnectedEvent(ClientConnectedEvent):
+    """
+    Event dispatched when a client disconnects.
+    """
+    pass
+
+class ClientActiveEvent(BusEvent):
+    """
+    Event dispatched when the client becomes active.
+    """
+
+    def __init__(self, client_screen: str):
+        self.client_screen = client_screen
+
+    def to_dict(self) -> dict:
+        return {
+            "client_screen": self.client_screen
+        }
 
 class Event(ABC):
     """
@@ -94,10 +170,42 @@ class CommandEvent(Event):
         self.target = target    # Only when receiving commands
         self.params = params if params else {}
 
+    @classmethod
+    def from_command_event(cls, event: Self) -> Self:
+        pass
+
     def to_dict(self) -> dict:
         return {
             "command": self.command,
             "params": self.params
+        }
+
+class CrossScreenCommandEvent(CommandEvent):
+    """
+    Cross screen command event data structure.
+    """
+
+    def __init__(self, source: str = "", target: str = "", x: float | int = -1, y: float | int = -1):
+        super().__init__(command=CommandEvent.CROSS_SCREEN, source=source, target=target,
+                         params={"x": x, "y": y})
+
+    def get_position(self) -> tuple[float | int, float | int]:
+        return self.params.get("x", -1), self.params.get("y", -1)
+
+    @classmethod
+    def from_command_event(cls, event: CommandEvent) -> Self:
+        return cls(
+            source=event.source,
+            target=event.target,
+            x=event.params.get("x", -1),
+            y=event.params.get("y", -1)
+        )
+
+    def to_dict(self) -> dict:
+        return {
+            "command": self.command,
+            "x": self.params.get("x", -1),
+            "y": self.params.get("y", -1)
         }
 
 

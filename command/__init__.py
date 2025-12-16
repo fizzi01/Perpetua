@@ -2,7 +2,8 @@
 Contains the logic to handle client/server commands coming from command streams.
 """
 import asyncio
-from event import EventType, CommandEvent, EventMapper
+from event import EventType, CommandEvent, EventMapper, ActiveScreenChangedEvent, CrossScreenCommandEvent, \
+    ClientActiveEvent
 from event.bus import EventBus
 from network.stream import StreamHandler
 from network.protocol.message import MessageType
@@ -53,20 +54,19 @@ class CommandHandler:
         # If we are server we dispatch ACTIVE_SCREEN_CHANGED event
         # When client sends to server that it crossed the screen, it sends as data the normalized cursor position
         # Then the server should stop data sending to that client by just changing the active screen to None
-
-        if event.target == "server":
-            data_dict = event.params
-            # Add active_screen info to event params
-            data_dict["active_screen"] = None
-            data_dict["client"] = event.source
-
+        crs_event = CrossScreenCommandEvent().from_command_event(event)
+        if crs_event.target == "server":
             # Async dispatch
             await self.event_bus.dispatch(
                 # when ServerMouseController receives this event will set the correct cursor position
                 event_type=EventType.ACTIVE_SCREEN_CHANGED,
-                data=event.params
+                data=ActiveScreenChangedEvent(active_screen=None,
+                                             source=event.source,
+                                             position=crs_event.get_position())
             )
         else:
             # Dispatch CLIENT_ACTIVE event to notify that client itself is now active
             await self.event_bus.dispatch(
-                event_type=EventType.CLIENT_ACTIVE, data={"screen_position": event.target})
+                event_type=EventType.CLIENT_ACTIVE, data=ClientActiveEvent(
+                    client_screen=event.target,
+                ))

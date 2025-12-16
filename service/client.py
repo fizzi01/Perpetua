@@ -725,7 +725,7 @@ class Client:
         # Dispatch event
         await self.event_bus.dispatch(
             event_type=EventType.CLIENT_ACTIVE,
-            data={}
+            data=None
         )
 
         await self.save_config()
@@ -739,7 +739,7 @@ class Client:
         # Dispatch event
         await self.event_bus.dispatch(
             event_type=EventType.CLIENT_INACTIVE,
-            data={}
+            data=None
         )
 
         # Stop all stream handlers
