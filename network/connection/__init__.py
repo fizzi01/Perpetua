@@ -4,46 +4,177 @@ Handles server and client socket logic
 import asyncio
 from typing import Tuple, Dict, Optional
 
+class StreamWrapper:
+    """
+    Wraps an asyncio StreamReader and StreamWriter pair.
+    """
+
+    class StreamReader:
+        """
+        Wrapper for asyncio StreamReader.
+        """
+
+        def __init__(self, reader: asyncio.StreamReader):
+            self._reader: asyncio.StreamReader = reader
+
+        async def recv(self, size: int) -> bytes:
+            return await self._reader.read(size)
+
+        def close(self):
+            self._reader.feed_eof()
+
+        def is_closed(self) -> bool:
+            return self._reader.at_eof()
+
+    class StreamWriter:
+        """
+        Wrapper for asyncio StreamWriter.
+        """
+
+        def __init__(self, writer: asyncio.StreamWriter):
+            self._writer: asyncio.StreamWriter = writer
+
+        async def send(self, data: bytes):
+            self._writer.write(data)
+            await self._writer.drain()
+
+        async def close(self):
+            self._writer.close()
+            await self._writer.wait_closed()
+
+        def is_closed(self) -> bool:
+            return self._writer.is_closing()
+
+        def get_sockname(self) -> Tuple[str, int]:
+            return self._writer.get_extra_info('sockname', default=None)
+
+    def __init__(self, reader: asyncio.StreamReader, writer: asyncio.StreamWriter):
+        self.reader = self.StreamReader(reader)
+        self.writer = self.StreamWriter(writer)
+
+    def get_reader(self) -> 'StreamWrapper.StreamReader':
+        return self.reader
+
+    def get_reader_call(self):
+        """
+        Retrieves the callable function associated with the `recv` method of the
+        reader attribute.
+
+        Returns:
+            Callable: A callable function that represents the `recv` method of
+            the reader attribute.
+        """
+        return self.reader.recv
+
+    def get_writer(self) -> 'StreamWrapper.StreamWriter':
+        return self.writer
+
+    def get_writer_call(self):
+        """
+        Gets the callable method of the writer object to send data.
+
+        The method serves as an interface to retrieve the `send` method
+        from the `writer` attribute. It enables the calling of the writer’s
+        `send` function for dispatching data.
+
+        Returns:
+            Callable: The `send` method of the writer object.
+        """
+        return self.writer.send
+
+
+    async def close(self):
+        """
+        Close both the reader and writer streams.
+        """
+        await self.writer.close()
+        self.reader.close()
+
+    def is_open(self) -> bool:
+        """
+        Check if the writer is still open.
+        """
+        return not self.writer.is_closed()
+
+    def get_sockname(self) -> Tuple[str, int]:
+        """
+        Get the socket name (address) of the writer.
+
+        Returns:
+            Tuple[str, int]: The socket name as a tuple (host, port). If the socket name is not available,
+            returns ("", 0).
+        """
+        info = self.writer.get_sockname()
+        return info if info else ("", 0)
+
 
 class ClientConnection:
     """
-    Manages multiple asyncio streams for a client connection.
+    Represents a client connection managing multiple streams.
 
-    Compatible with asyncio StreamReader/StreamWriter instead of raw sockets.
+    This class provides functionality to manage streams associated
+    with a client connection. Streams can be added, retrieved, or
+    checked for availability based on their type. Additionally, this
+    class handles determining if the connection is still open and
+    ensures proper cleanup of streams when necessary. Intended for
+    use in asynchronous network-based applications.
+
+    Attributes:
+        client_addr (Tuple[str, int]): The address of the client in
+            the form of a tuple containing the host and port.
+        wrappers (Dict[int, StreamWrapper]): A dictionary mapping
+            stream types to their associated StreamWrapper instances.
+        _is_closed (bool): Indicates whether the client connection
+            has been closed.
     """
 
     def __init__(self, client_addr: Tuple[str, int]):
         self.client_addr = client_addr
-        self.readers: Dict[int, asyncio.StreamReader] = {}
-        self.writers: Dict[int, asyncio.StreamWriter] = {}
+        self.wrappers: Dict[int, StreamWrapper] = {}
         self._is_closed = False
 
-    def add_stream(self, stream_type: int, reader: asyncio.StreamReader,
-                   writer: asyncio.StreamWriter):
-        """Add a stream of the given type"""
-        self.readers[stream_type] = reader
-        self.writers[stream_type] = writer
+    def add_stream(self, stream_type: int, reader: Optional[asyncio.StreamReader] = None,
+                   writer: Optional[asyncio.StreamWriter] = None, stream: Optional[StreamWrapper] = None):
+        """
+        Add a stream of the given type
 
-    def get_reader(self, stream_type: int) -> Optional[asyncio.StreamReader]:
+        Args:
+            stream_type (int): The type of the stream
+            reader (Optional[asyncio.StreamReader]): The StreamReader for the stream
+            writer (Optional[asyncio.StreamWriter]): The StreamWriter for the stream
+            stream (Optional[StreamWrapper]): The StreamWrapper for the stream
+
+        Raises:
+            ValueError: If neither stream nor both reader and writer are provided
+        """
+        if not stream and (reader is None or writer is None):
+            raise ValueError("Either stream or both reader and writer must be provided")
+        if stream:
+            self.wrappers[stream_type] = stream
+        else:
+            self.wrappers[stream_type] = StreamWrapper(reader, writer)
+
+    def get_reader(self, stream_type: int) -> Optional[StreamWrapper.StreamReader]:
         """Get reader for stream type"""
-        return self.readers.get(stream_type)
+        st = self.wrappers.get(stream_type)
+        return st.get_reader() if st else None
 
-    def get_writer(self, stream_type: int) -> Optional[asyncio.StreamWriter]:
+    def get_writer(self, stream_type: int) -> Optional[StreamWrapper.StreamWriter]:
         """Get writer for stream type"""
-        return self.writers.get(stream_type)
+        st = self.wrappers.get(stream_type)
+        return st.get_writer() if st and st.get_writer() else None
 
-
-    def get_stream(self, stream_type: int) -> tuple[Optional[asyncio.StreamReader], Optional[asyncio.StreamWriter]]:
+    def get_stream(self, stream_type: int) -> Optional[StreamWrapper]:
         """Get both reader and writer for stream type"""
-        return self.readers.get(stream_type), self.writers.get(stream_type)
+        return self.wrappers.get(stream_type)
 
     def has_stream(self, stream_type: int) -> bool:
         """Check if stream type exists"""
-        return stream_type in self.writers
+        return stream_type in self.wrappers
 
     def get_available_stream_types(self) -> list[int]:
         """Get list of available stream types"""
-        return list(self.writers.keys())
+        return list(self.wrappers.keys())
 
     def is_open(self) -> bool:
         """
@@ -52,50 +183,58 @@ class ClientConnection:
         Returns:
             True if at least one stream is open
         """
-        if not self.writers and not self.readers:
+        # If no streams exist, return False
+        if not self.wrappers:
             return False
 
         # Check if any writer is not closing
-        for writer in self.writers.values():
-            if writer and not writer.is_closing():
+        for stream in self.wrappers.values():
+            if stream.is_open():
                 return True
 
         return False
 
-    def close(self):
-        """Close all streams"""
-        for writer in self.writers.values():
-            if writer and not writer.is_closing():
-                writer.close()
-
-        for reader in self.readers.values():
-            if reader:
-                reader.feed_eof()
+    # def close(self):
+    #     """Close all streams"""
+    #     for writer in self.writers.values():
+    #         if writer and not writer.is_closing():
+    #             writer.close()
+    #
+    #     for reader in self.readers.values():
+    #         if reader:
+    #             reader.feed_eof()
 
     async def wait_closed(self):
-        """Wait for all streams to close"""
+        """
+        Closes all open streams and marks the connection as closed.
+
+        This asynchronous method ensures that all stream wrappers are properly
+        closed before marking the connection as closed. It collects the closing
+        tasks for all active streams and waits for their completion. Once all
+        tasks are finished or if there are no active streams, it clears the
+        stream wrappers and updates the internal state to indicate that the
+        connection is closed.
+
+        Raises:
+            Exception: If an error occurs while closing any of the streams, an
+                exception is raised with additional context.
+        """
         if self._is_closed:
             return
 
         try:
             tasks = []
-            for writer in list(self.writers.values()):
-                if writer and not writer.is_closing():
-                    writer.close()
-                    tasks.append(writer.wait_closed())
-
-            for reader in list(self.readers.values()):
-                if reader:
-                    reader.feed_eof()
+            for stream in self.wrappers.values():
+                tasks.append(stream.close())
 
             if tasks:
                 await asyncio.gather(*tasks, return_exceptions=True)
 
-                self.readers.clear()
-                self.writers.clear()
+                self.wrappers.clear()
 
             self._is_closed = True
         except asyncio.CancelledError:
             pass
-        except Exception:
-            pass
+        except Exception as e:
+            raise Exception(f"Error while closing connection -> {e}") from e
+

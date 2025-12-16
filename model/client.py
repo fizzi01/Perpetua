@@ -6,6 +6,8 @@ screen resolution, and client name. But also additional optional config paramete
 """
 from typing import Optional
 
+from network.connection import ClientConnection
+
 class ScreenPosition:
     """
     Enum-like class for screen positions.
@@ -15,6 +17,7 @@ class ScreenPosition:
     BOTTOM = "bottom"
     LEFT = "left"
     RIGHT = "right"
+    NONE = "none"
 
     @staticmethod
     def is_valid(position: str) -> bool:
@@ -23,7 +26,7 @@ class ScreenPosition:
             ScreenPosition.TOP,
             ScreenPosition.BOTTOM,
             ScreenPosition.LEFT,
-            ScreenPosition.RIGHT
+            ScreenPosition.RIGHT,
         }
 
 class ClientObj:
@@ -40,7 +43,7 @@ class ClientObj:
                  screen_resolution: str = "1x1",
                  client_name: str = "Unknown",
                  ssl: bool = False,
-                 conn_socket: Optional[object] = None,
+                 conn_socket: Optional['ClientConnection'] = None,
                  additional_params: dict = None):
 
         if hostname and not self._check_hostname(hostname):
@@ -65,6 +68,38 @@ class ClientObj:
         self.conn_socket = conn_socket
         self.is_connected = is_connected
         self.additional_params = additional_params if additional_params is not None else {}
+
+    def get_connection(self) -> Optional['ClientConnection']:
+        """
+        Returns the connection socket associated with the client.
+        """
+        return self.conn_socket
+
+    def set_connection(self, connection: Optional['ClientConnection']) -> None:
+        """
+        Sets the connection socket for the client.
+        """
+        self.conn_socket = connection
+
+    def get_screen_position(self) -> str:
+        """
+        Returns the screen position of the client.
+        """
+        return self.screen_position
+
+    def set_screen_position(self, screen_position: str) -> None:
+        """
+        Sets the screen position of the client.
+
+        Args:
+            screen_position: The new screen position to set.
+
+        Raises:
+            ValueError: If the provided screen position is invalid.
+        """
+        if not ScreenPosition.is_valid(screen_position):
+            raise ValueError(f"Invalid screen position: {screen_position}")
+        self.screen_position = screen_position
 
     @staticmethod
     def _check_ip(ip_address: str) -> bool:

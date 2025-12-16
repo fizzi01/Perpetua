@@ -502,7 +502,8 @@ class Client:
             stream_type=StreamType.COMMAND,
             clients=self.clients_manager,
             event_bus=self.event_bus,
-            handler_id="ClientCommandStreamHandler"
+            handler_id="ClientCommandStreamHandler",
+            active_only=True # We send commands only when client is active
         )
         # Force enable command stream
         await self.enable_stream(StreamType.COMMAND)
@@ -514,7 +515,7 @@ class Client:
             event_bus=self.event_bus,
             handler_id="ClientMouseStreamHandler",
             sender=False,  # Client receives mouse data
-            active_only=True
+            active_only=True # Only when client is active
         )
 
         # Keyboard stream (receiver)
@@ -524,7 +525,7 @@ class Client:
             event_bus=self.event_bus,
             handler_id="ClientKeyboardStreamHandler",
             sender=False,  # Client receives keyboard data
-            active_only=True
+            active_only=True # Only when client is active
         )
 
         # Clipboard stream (bidirectional)
@@ -532,7 +533,8 @@ class Client:
             stream_type=StreamType.CLIPBOARD,
             clients=self.clients_manager,
             event_bus=self.event_bus,
-            handler_id="ClientClipboardStreamHandler"
+            handler_id="ClientClipboardStreamHandler",
+            active_only=False # Clipboard may be active even if client is inactive
         )
 
     async def _initialize_components(self):

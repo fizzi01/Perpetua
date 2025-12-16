@@ -6,11 +6,13 @@ import ssl
 from typing import Optional, Callable, Any
 
 from model.client import ClientsManager, ClientObj
-from network.connection import ClientConnection
 from network.data.exchange import MessageExchange, MessageExchangeConfig
 from network.protocol.message import MessageType
 from network.stream import StreamType
+
 from utils.logging import Logger, get_logger
+
+from . import ClientConnection, StreamWrapper
 
 
 class ConnectionHandler:
@@ -24,8 +26,10 @@ class ConnectionHandler:
     resource management.
     """
 
+    CONNECTION_ATTEMPT_TIMEOUT = 10  # seconds
     RECONNECTION_DELAY = 10  # seconds
     HANDSHAKE_DELAY = 0.2  # seconds
+    HANDSHAKE_MSG_TIMEOUT = 5.0  # seconds
 
     def __init__(self, connected_callback: Optional[Callable[['ClientObj'], Any]] = None,
                  disconnected_callback: Optional[Callable[['ClientObj'], Any]] = None,
@@ -80,12 +84,9 @@ class ConnectionHandler:
         self._heartbeat_task: Optional[asyncio.Task] = None
 
         # Streams
-        self._command_reader: Optional[asyncio.StreamReader] = None
-        self._command_writer: Optional[asyncio.StreamWriter] = None
-        self._stream_readers: dict = {}
-        self._stream_writers: dict = {}
+        self._command_stream: Optional[StreamWrapper] = None
 
-        # MessageExchange (uno per client)
+        # MessageExchange
         self._msg_exchange: Optional[MessageExchange] = None
 
         # Client object
@@ -129,6 +130,9 @@ class ConnectionHandler:
 
     async def stop(self):
         """Stop the handler and close all connections"""
+        if not self._running: # Already stopped
+            return True
+
         self._running = False
 
         # Cancel core task
@@ -177,8 +181,8 @@ class ConnectionHandler:
 
                         # Set first client connection socket
                         client = self.clients.get_client()
-                        client.conn_socket = ClientConnection(("", 0)) #TODO: Better initialization
-                        client.conn_socket.add_stream(StreamType.COMMAND, self._command_reader, self._command_writer)
+                        client.set_connection(ClientConnection(("", 0)))
+                        client.get_connection().add_stream(stream_type=StreamType.COMMAND,stream=self._command_stream)
                         self.clients.update_client(client)
 
                         # Perform handshake
@@ -190,7 +194,7 @@ class ConnectionHandler:
 
                             # Update client status
                             self._client_obj.is_connected = True
-                            self._client_obj.ip_address = self._command_writer.get_extra_info('sockname')[0]
+                            self._client_obj.ip_address = self._command_stream.get_sockname()[0]
                             self.clients.update_client(self._client_obj)
 
                             # Call connected callback
@@ -258,10 +262,12 @@ class ConnectionHandler:
         """Establish command stream connection"""
         try:
             # Connect to server
-            self._command_reader, self._command_writer = await asyncio.wait_for(
+            _command_reader, _command_writer = await asyncio.wait_for(
                 asyncio.open_connection(self.host, self.port),
-                timeout=5.0
+                timeout=self.CONNECTION_ATTEMPT_TIMEOUT
             )
+            self._command_stream = StreamWrapper(reader=_command_reader,
+                                                 writer=_command_writer)
 
             self._logger.log(f"Connected to {self.host}:{self.port}", Logger.DEBUG)
             return True
@@ -277,7 +283,7 @@ class ConnectionHandler:
             return False
 
     async def _handshake(self) -> bool:
-        """Perform handshake with server using MessageExchange asyncio"""
+        """Perform handshake with server"""
         try:
             # Create MessageExchange for this client
             config = MessageExchangeConfig(
@@ -286,16 +292,8 @@ class ConnectionHandler:
                 auto_dispatch=False,  # We want to control message handling manually
             )
             self._msg_exchange = MessageExchange(config)
-
-            # Setup transport callbacks
-            async def async_send(data: bytes):
-                self._command_writer.write(data)
-                await self._command_writer.drain()
-
-            async def async_recv(size: int) -> bytes:
-                return await self._command_reader.read(size)
-
-            await self._msg_exchange.set_transport(async_send, async_recv)
+            await self._msg_exchange.set_transport(self._command_stream.get_writer_call(),
+                                                   self._command_stream.get_reader_call())
 
             # Start receive loop
             await self._msg_exchange.start()
@@ -304,8 +302,8 @@ class ConnectionHandler:
             self._logger.log("Waiting for handshake request from server...", Logger.DEBUG)
 
             handshake_req = await asyncio.wait_for(
-                self._msg_exchange.get_received_message(timeout=1.0),
-                timeout=5.0
+                self._msg_exchange.get_received_message(),
+                timeout=self.HANDSHAKE_MSG_TIMEOUT
             )
 
             if not handshake_req or handshake_req.message_type != MessageType.EXCHANGE:
@@ -337,14 +335,16 @@ class ConnectionHandler:
             # Receive handshake acknowledgment from server
             handshake_ack = await asyncio.wait_for(
                 self._msg_exchange.get_received_message(),
-                timeout=5.0
+                timeout=self.HANDSHAKE_MSG_TIMEOUT
             )
             # Update client info from handshake
             if not handshake_ack or handshake_ack.message_type != MessageType.EXCHANGE or not handshake_ack.payload.get("ack", False):
                 self._logger.log("Handshake failed, invalid acknowledgment from server", Logger.ERROR)
                 return False
 
-            self._client_obj.screen_position = handshake_ack.payload.get("screen_position", "unknown")
+            self._client_obj.set_screen_position(
+                handshake_ack.payload.get("screen_position", "unknown")
+            )
 
             # Open additional streams
             if self.open_streams:
@@ -352,16 +352,6 @@ class ConnectionHandler:
                 if not success:
                     self._logger.log("Failed to open additional streams", Logger.ERROR)
                     return False
-
-                # Add additional streams to client connection socket
-                for stream_type in self.open_streams:
-                    reader = self._stream_readers.get(stream_type)
-                    writer = self._stream_writers.get(stream_type)
-                    if reader and writer:
-                        client = self.clients.get_client()
-                        if client.conn_socket is not None and isinstance(client.conn_socket, ClientConnection):
-                            client.conn_socket.add_stream(stream_type, reader, writer)
-                        self.clients.update_client(client)
 
             self._logger.log("Handshake completed successfully", Logger.INFO)
             await self._msg_exchange.stop()
@@ -390,15 +380,20 @@ class ConnectionHandler:
                 # Connect to server for this stream
                 reader, writer = await asyncio.wait_for(
                     asyncio.open_connection(self.host, self.port),
-                    timeout=10.0
+                    timeout=self.CONNECTION_ATTEMPT_TIMEOUT
                 )
 
                 # Upgrade to TLS if needed
                 if self.use_ssl and ssl_context:
-                    await asyncio.wait_for(writer.start_tls(sslcontext=ssl_context), timeout=10.0)
+                    await asyncio.wait_for(writer.start_tls(sslcontext=ssl_context),
+                                           timeout=self.CONNECTION_ATTEMPT_TIMEOUT)
 
-                self._stream_readers[stream_type] = reader
-                self._stream_writers[stream_type] = writer
+                # Store connected stream readers and writers in ClientConnection
+                client = self.clients.get_client()
+                if client.get_connection() is not None:
+                    client.get_connection().add_stream(stream_type=stream_type,
+                                                       reader=reader, writer=writer)
+                self.clients.update_client(client)
 
                 self._logger.log(f"Stream {stream_type} connected", Logger.DEBUG)
 
@@ -418,18 +413,18 @@ class ConnectionHandler:
                 await asyncio.sleep(self.heartbeat_interval)
 
                 # Check if command stream is still alive
-                if not self._command_writer or self._command_writer.is_closing():
+                if not self._command_stream or not self._command_stream.is_open():
                     raise ConnectionResetError("Command stream closed")
 
                 # Send heartbeat message
                 await self._msg_exchange.send_custom_message(message_type="HEARTBEAT", payload={})
                 # Get reader from client connection and check if eof is reached
                 client = self.clients.get_client()
-                if client.conn_socket is not None and isinstance(client.conn_socket, ClientConnection):
-                    command_reader = client.conn_socket.get_reader(StreamType.COMMAND)
-                    if command_reader.at_eof():
+                c_conn = client.get_connection()
+                if c_conn is not None and c_conn.has_stream(StreamType.COMMAND):
+                    command_reader = c_conn.get_reader(StreamType.COMMAND)
+                    if command_reader.is_closed():
                         raise ConnectionResetError("Command stream EOF reached")
-
 
             except asyncio.CancelledError:
                 break
@@ -473,28 +468,13 @@ class ConnectionHandler:
 
     async def _close_all_streams(self):
         """Close all stream connections"""
-        # Close command stream
-        if self._command_writer and not self._command_writer.is_closing():
-            self._command_writer.close()
-            try:
-                await self._command_writer.wait_closed()
-            except Exception:
-                pass
-
-        self._command_reader = None
-        self._command_writer = None
-
-        # Close additional streams
-        for stream_type, writer in list(self._stream_writers.items()):
-            if writer and not writer.is_closing():
-                writer.close()
-                try:
-                    await writer.wait_closed()
-                except Exception:
-                    pass
-
-        self._stream_readers.clear()
-        self._stream_writers.clear()
+        try:
+            # Get current client
+            client = self.clients.get_client()
+            if client.get_connection() is not None:
+                await client.get_connection().wait_closed()
+        except Exception as e:
+            self._logger.warning(f"Error closing streams -> {e}")
 
     def is_connected(self) -> bool:
         """Check if client is connected"""

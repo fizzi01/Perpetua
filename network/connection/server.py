@@ -14,7 +14,7 @@ from utils.logging import Logger, get_logger
 
 from ..stream import StreamType
 
-from . import ClientConnection
+from . import ClientConnection, StreamWrapper
 
 
 class ConnectionHandler:
@@ -36,6 +36,8 @@ class ConnectionHandler:
     """
 
     HANDSHAKE_DELAY = 0.2 # sec
+    HANDSHAKE_MSG_TIMEOUT = 5.0 # sec
+    CONNECTION_ATTEMPT_TIMEOUT = 10 # sec
 
     def __init__(self, connected_callback: Optional[Callable[['ClientObj', list], Any]] = None,
                  disconnected_callback: Optional[Callable[['ClientObj', list], Any]] = None,
@@ -81,9 +83,9 @@ class ConnectionHandler:
 
             return True
         except Exception as e:
-            self._logger.log(f"Failed to start async server => {e}", Logger.CRITICAL)
-            # import traceback
-            # self.logger.log(traceback.format_exc(), Logger.ERROR)
+            self._logger.log(f"Failed to start async server -> {e}", Logger.CRITICAL)
+            import traceback
+            self._logger.log(traceback.format_exc(), Logger.ERROR)
             self._running = False
             return False
 
@@ -112,7 +114,7 @@ class ConnectionHandler:
             self._client_tasks.clear()
 
         # Disconnetti tutti i client
-        for client in self.clients.clients:
+        for client in self.clients.get_clients():
             await self.force_disconnect_client(client)
 
         # Chiudi il server
@@ -127,15 +129,15 @@ class ConnectionHandler:
         """
         Forced disconnection of a specific client.
         """
-        if client.is_connected and client.conn_socket is not None:
+        if client.is_connected and client.get_connection() is not None:
             try:
-                #await client.conn_socket.close()
-                await client.conn_socket.wait_closed() # type: ignore
+                await client.get_connection().wait_closed() # type: ignore
+                await asyncio.sleep(0.1)  # Small delay to ensure closure
                 self._logger.log(f"Force disconnected client {client.get_net_id()}", Logger.INFO)
             except Exception as e:
                 self._logger.log(f"Error force disconnecting client {client.get_net_id()} -> {e}", Logger.ERROR)
             client.is_connected = False
-            client.conn_socket = None
+            client.set_connection(None)
             self.clients.update_client(client)
 
             if self.disconnected_callback:
@@ -215,16 +217,9 @@ class ConnectionHandler:
                 auto_dispatch=False, # We want to control message handling manually
             )
             client_msg_exchange = MessageExchange(config, id=f"Handshake_{client_addr}")
+            cur_stream = StreamWrapper(reader=reader, writer=writer)
 
-            # Setup transport callbacks asyncio
-            async def async_send(data: bytes):
-                writer.write(data)
-                await writer.drain()
-
-            async def async_recv(size: int) -> bytes:
-                return await reader.read(size)
-
-            await client_msg_exchange.set_transport(async_send, async_recv)
+            await client_msg_exchange.set_transport(cur_stream.get_writer_call(), cur_stream.get_reader_call())
 
             # Invia handshake request
             self._logger.log(f"Sending handshake request to client {client_addr}", Logger.DEBUG)
@@ -241,8 +236,8 @@ class ConnectionHandler:
             # Attendi risposta con timeout
             try:
                 response = await asyncio.wait_for(
-                    client_msg_exchange.get_received_message(timeout=1.0),
-                    timeout=5.0
+                    client_msg_exchange.get_received_message(),
+                    timeout=self.HANDSHAKE_MSG_TIMEOUT
                 )
             except asyncio.TimeoutError:
                 self._logger.log(f"Handshake timeout for client {client_addr}", Logger.WARNING)
@@ -268,16 +263,14 @@ class ConnectionHandler:
                     )
                     await asyncio.sleep(self.HANDSHAKE_DELAY)
                     await client_msg_exchange.stop()
-                    writer.close()
-                    await writer.wait_closed()
+                    await cur_stream.close()
                     return False
 
                 if not self._check_client(client_obj=client, address=client_addr): # Client is not allowed
                     # Stop handshake if client not allowed
                     self._logger.log(f"Client {client.get_net_id()} not allowed to connect.", Logger.WARNING)
                     await client_msg_exchange.stop()
-                    writer.close()
-                    await writer.wait_closed()
+                    await cur_stream.close()
                     return False
 
                 # Normal flow: update client info
@@ -289,8 +282,8 @@ class ConnectionHandler:
                 self._logger.log(f"Client {client.get_net_id()} info: resolution={client.screen_resolution}, ssl={client.ssl}, streams={requested_streams}", Logger.DEBUG)
 
                 # Crea AsyncClientConnection per gestire multiple streams asyncio
-                client.conn_socket = ClientConnection(client_addr)
-                client.conn_socket.add_stream(StreamType.COMMAND, reader, writer)
+                client.set_connection(ClientConnection(client_addr))
+                client.get_connection().add_stream(stream_type=StreamType.COMMAND, stream=cur_stream)
 
                 # Send position info back to client
                 await client_msg_exchange.send_handshake_message(
@@ -318,19 +311,19 @@ class ConnectionHandler:
                             # Il future verrà risolto in _handle_client quando arriva la connessione
                             stream_reader, stream_writer = await asyncio.wait_for(
                                 stream_future,
-                                timeout=10.0
+                                timeout=self.CONNECTION_ATTEMPT_TIMEOUT
                             )
 
                             stream_addr = stream_writer.get_extra_info('peername')
 
-                            # Wrap con SSL se richiesto (già gestito da asyncio transport)
+                            # Wrap SSL
                             if client.ssl and self.certfile and self.keyfile:
                                 await asyncio.wait_for(stream_writer.start_tls(self._get_ssl_context()),
-                                                       timeout=10.0
+                                                       timeout=self.CONNECTION_ATTEMPT_TIMEOUT
                                                        )
                                 self._logger.log(f"SSL stream connection for {stream_type} from {stream_addr}", Logger.INFO)
 
-                            client.conn_socket.add_stream(stream_type, stream_reader, stream_writer)
+                            client.get_connection().add_stream(stream_type=stream_type, reader=stream_reader, writer=stream_writer)
                             client.ports[stream_type] = stream_addr[1]
 
                             self._logger.log(f"Stream {stream_type} connected from {stream_addr}", Logger.DEBUG)
@@ -368,16 +361,16 @@ class ConnectionHandler:
                 if self.connected_callback:
                     try:
                         if asyncio.iscoroutinefunction(self.connected_callback):
-                            await self.connected_callback(client, client.conn_socket.get_available_stream_types()) #type: ignore
+                            await self.connected_callback(client, client.get_connection().get_available_stream_types()) #type: ignore
                         else:
-                            self.connected_callback(client,client.conn_socket.get_available_stream_types()) #type: ignore
+                            self.connected_callback(client,client.get_connection().get_available_stream_types()) #type: ignore
                     except Exception as e:
                         self._logger.log(f"Error in connected callback -> {e}", Logger.ERROR)
 
                 self._logger.log(f"Client {client.get_net_id()} connected and handshake completed.", Logger.INFO)
                 return True
             else:
-                self._logger.log(f"Invalid handshake response from client {client.ip_address}", Logger.WARNING)
+                self._logger.log(f"Invalid handshake response from client {client.get_net_id()}", Logger.WARNING)
                 await client_msg_exchange.stop()
                 return False
 
@@ -386,8 +379,8 @@ class ConnectionHandler:
             raise
         except Exception as e:
             self._logger.log(f"Handshake error with client {client_addr} -> {e}", Logger.ERROR)
-            import traceback
-            self._logger.log(traceback.format_exc(), Logger.ERROR)
+            # import traceback
+            # self._logger.log(traceback.format_exc(), Logger.ERROR)
             return False
 
 
@@ -404,41 +397,39 @@ class ConnectionHandler:
             while self._running:
                 await asyncio.sleep(self.heartbeat_interval)
 
-                for client in self.clients.clients:
-                    if client.is_connected and client.conn_socket is not None:
+                for client in self.clients.get_clients():
+                    if client.is_connected and client.get_connection() is not None:
                         try:
-                            # Use is_open() for AsyncClientConnection
-                            if not client.conn_socket.is_open():
+                            if not client.get_connection().is_open():
                                 raise ConnectionResetError
 
+                            client_conn = client.get_connection()
                             # Send heartbeat message
-                            client_msg_exchange = MessageExchange(config, id=f"Heartbeat_{client.ip_address}")
-                            command_writer = client.conn_socket.get_writer(StreamType.COMMAND)
+                            client_msg_exchange = MessageExchange(config, id=f"Heartbeat_{client.get_net_id()}")
+                            cmd_stream = client_conn.get_stream(StreamType.COMMAND)
+                            if cmd_stream is None:
+                                raise ConnectionResetError
 
-                            async def async_send(data: bytes):
-                                command_writer.write(data)
-                                await command_writer.drain()
-
-                            await client_msg_exchange.set_transport(async_send, None)
+                            await client_msg_exchange.set_transport(cmd_stream.get_writer_call(), None)
                             await client_msg_exchange.send_custom_message(message_type="HEARTBEAT", payload={})
 
                             # Check eof on reader
-                            command_reader = client.conn_socket.get_reader(StreamType.COMMAND)
-                            if command_reader.at_eof():
+                            command_reader = client_conn.get_reader(StreamType.COMMAND)
+                            if command_reader.is_closed():
                                 raise ConnectionResetError
 
                             # Update active time
                             client.connection_time += self.heartbeat_interval
                         except (ConnectionResetError, OSError):
-                            self._logger.log(f"Client {client.ip_address} disconnected (heartbeat failed).", Logger.WARNING)
+                            self._logger.log(f"Client {client.get_net_id()} disconnected (heartbeat failed).", Logger.WARNING)
                             client.is_connected = False
 
                             try:
-                                await client.conn_socket.wait_closed()
-                            except Exception:
-                                pass
+                                await client.get_connection().wait_closed()
+                            except Exception as e:
+                                self._logger.warning(f"Error while waiting for client {client.get_net_id()} connection to close -> {e}")
 
-                            client.conn_socket = None
+                            client.set_connection(None)
                             self.clients.update_client(client)
 
                             if self.disconnected_callback:
@@ -450,7 +441,7 @@ class ConnectionHandler:
                                 except Exception as e:
                                     self._logger.log(f"Error in disconnected callback -> {e}", Logger.ERROR)
                         except Exception as e:
-                            self._logger.log(f"Heartbeat error for client {client.ip_address} -> {e}", Logger.CRITICAL)
+                            self._logger.log(f"Heartbeat error for client {client.get_net_id()} -> {e}", Logger.CRITICAL)
         except asyncio.CancelledError:
             self._logger.log("Heartbeat loop cancelled.", Logger.INFO)
             await self.stop()

@@ -211,7 +211,8 @@ class MessageExchange:
         Set the transport layer callback for sending messages.
 
         Args:
-            send_callback: Function that sends bytes over the network
+            send_callback: Async function that sends bytes over the network
+            receive_callback: Async function that receives bytes from the network
         """
         self._send_callback = send_callback
         self._receive_callback = receive_callback
@@ -334,7 +335,7 @@ class MessageExchange:
             else:
                 self._send_callback(data)
 
-    async def get_received_message(self, timeout: float = 0) -> Optional[ProtocolMessage]:
+    async def get_received_message(self) -> Optional[ProtocolMessage]:
         """
         Preleva un messaggio dalla coda di ricezione se disponibile.
         I chunk sono già gestiti nel processo di ricezione.
