@@ -38,6 +38,7 @@ class ConnectionHandler:
     HANDSHAKE_DELAY = 0.2 # sec
     HANDSHAKE_MSG_TIMEOUT = 5.0 # sec
     CONNECTION_ATTEMPT_TIMEOUT = 10 # sec
+    MAX_HEARTBEAT_MISSES = 3
 
     def __init__(self, connected_callback: Optional[Callable[['ClientObj', list], Any]] = None,
                  disconnected_callback: Optional[Callable[['ClientObj', list], Any]] = None,
@@ -357,6 +358,7 @@ class ConnectionHandler:
                 await client_msg_exchange.stop()
 
                 client.is_connected = True
+                client.set_first_connection()
                 self.clients.update_client(client)
 
                 if self.connected_callback:
@@ -384,6 +386,27 @@ class ConnectionHandler:
             # self._logger.log(traceback.format_exc(), Logger.ERROR)
             return False
 
+    async def _handle_hartbeat_failure(self, client: ClientObj):
+        """Gestisce il fallimento del heartbeat per un client"""
+        self._logger.log(f"Client {client.get_net_id()} disconnected (heartbeat failed).", Logger.WARNING)
+        client.is_connected = False
+
+        try:
+            await client.get_connection().wait_closed()
+        except Exception as e:
+            self._logger.warning(f"Error while waiting for client {client.get_net_id()} connection to close -> {e}")
+
+        client.set_connection(None)
+        self.clients.update_client(client)
+
+        if self.disconnected_callback:
+            try:
+                if asyncio.iscoroutinefunction(self.disconnected_callback):
+                    await self.disconnected_callback(client, [])
+                else:
+                    self.disconnected_callback(client, [])
+            except Exception as e:
+                self._logger.log(f"Error in disconnected callback -> {e}", Logger.ERROR)
 
     async def _heartbeat_loop(self):
         """Loop di heartbeat per verificare le connessioni e aggiornare metriche"""
@@ -394,11 +417,16 @@ class ConnectionHandler:
                 auto_chunk=True,
                 auto_dispatch=False,  # We want to control message handling manually
             )
+            heartbeat_trials = {} # We store trials per client so we can implement a retry mechanism
 
             while self._running:
                 await asyncio.sleep(self.heartbeat_interval)
 
                 for client in self.clients.get_clients():
+                    # Add heartbeat trials tracking
+                    if client.get_net_id() not in heartbeat_trials:
+                        heartbeat_trials[client.get_net_id()] = 0
+
                     if client.is_connected and client.get_connection() is not None:
                         try:
                             if not client.get_connection().is_open():
@@ -420,27 +448,14 @@ class ConnectionHandler:
                                 raise ConnectionResetError
 
                             # Update active time
-                            client.connection_time += self.heartbeat_interval
+                            client.set_last_connection()
                         except (ConnectionResetError, OSError):
-                            self._logger.log(f"Client {client.get_net_id()} disconnected (heartbeat failed).", Logger.WARNING)
-                            client.is_connected = False
-
-                            try:
-                                await client.get_connection().wait_closed()
-                            except Exception as e:
-                                self._logger.warning(f"Error while waiting for client {client.get_net_id()} connection to close -> {e}")
-
-                            client.set_connection(None)
-                            self.clients.update_client(client)
-
-                            if self.disconnected_callback:
-                                try:
-                                    if asyncio.iscoroutinefunction(self.disconnected_callback):
-                                        await self.disconnected_callback(client, [])
-                                    else:
-                                        self.disconnected_callback(client, [])
-                                except Exception as e:
-                                    self._logger.log(f"Error in disconnected callback -> {e}", Logger.ERROR)
+                            if heartbeat_trials[client.get_net_id()] < self.MAX_HEARTBEAT_MISSES:
+                                heartbeat_trials[client.get_net_id()] += 1
+                                self._logger.log(f"Heartbeat missed for client {client.get_net_id()} (trial {heartbeat_trials[client.get_net_id()]}/{self.MAX_HEARTBEAT_MISSES})", Logger.WARNING)
+                            else:
+                                await self._handle_hartbeat_failure(client)
+                                heartbeat_trials[client.get_net_id()] = 0
                         except Exception as e:
                             self._logger.log(f"Heartbeat error for client {client.get_net_id()} -> {e}", Logger.CRITICAL)
         except asyncio.CancelledError:

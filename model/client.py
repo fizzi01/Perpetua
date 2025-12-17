@@ -75,6 +75,19 @@ class ClientObj:
         self.additional_params = additional_params if additional_params is not None else {}
 
     def set_first_connection(self):
+        """
+        Sets the first connection date for the current instance. If the first connection date
+        is already set, the function exits without making changes. Otherwise, it records
+        the current date and time in the format "YYYY-MM-DD HH:MM:SS".
+
+        Raises:
+            None
+
+        Returns:
+            None
+        """
+        if self.first_connection_date is not None:
+            return
         from datetime import datetime
         self.first_connection_date = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
 
@@ -172,6 +185,8 @@ class ClientObj:
         c.host_name = data.get("host_name", None)
         c.ip_address = data.get("ip_address", None)
         c.connection_time = data.get("connection_time", 0.0)
+        c.first_connection_date = data.get("first_connection_date", None)
+        c.last_connection_date = data.get("last_connection_date", None)
         c.screen_position = data.get("screen_position", ScreenPosition.CENTER)
         c.screen_resolution = data.get("screen_resolution", "1x1")
         c.ssl = data.get("ssl", False)
@@ -183,6 +198,8 @@ class ClientObj:
             "host_name": self.host_name,
             "ip_address": self.ip_address,
             "connection_time": self.connection_time,
+            "first_connection_date": self.first_connection_date,
+            "last_connection_date": self.last_connection_date,
             "screen_position": self.screen_position,
             "screen_resolution": self.screen_resolution,
             "ssl": self.ssl,

@@ -30,6 +30,7 @@ class ConnectionHandler:
     RECONNECTION_DELAY = 10  # seconds
     HANDSHAKE_DELAY = 0.2  # seconds
     HANDSHAKE_MSG_TIMEOUT = 5.0  # seconds
+    MAX_HEARTBEAT_MISSES = 3
 
     def __init__(self, connected_callback: Optional[Callable[['ClientObj'], Any]] = None,
                  disconnected_callback: Optional[Callable[['ClientObj'], Any]] = None,
@@ -408,6 +409,7 @@ class ConnectionHandler:
 
     async def _heartbeat_loop(self):
         """Monitor connection health"""
+        heartbeat_trials = 0
         while self._running and self._connected:
             try:
                 await asyncio.sleep(self.heartbeat_interval)
@@ -429,9 +431,14 @@ class ConnectionHandler:
             except asyncio.CancelledError:
                 break
             except ConnectionResetError:
-                self._logger.log("Heartbeat detected disconnection", Logger.WARNING)
-                await self._handle_disconnection()
-                break
+                if heartbeat_trials < self.MAX_HEARTBEAT_MISSES:
+                    heartbeat_trials += 1
+                    self._logger.log(f"Heartbeat missed {heartbeat_trials}/{self.MAX_HEARTBEAT_MISSES}", Logger.WARNING)
+                    continue
+                else:
+                    self._logger.log("Heartbeat detected disconnection", Logger.WARNING)
+                    await self._handle_disconnection()
+                    break
             except Exception as e:
                 self._logger.log(f"Heartbeat error -> {e}", Logger.ERROR)
                 await self._handle_disconnection()
