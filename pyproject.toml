@@ -23,7 +23,8 @@ dependencies = [
     "cryptography (>=46.0.3)",
     "pyjwt (>=2.10.1)",
     "aiofiles (>=25.1.0)",
-    "nuitka (>=2.8.9,<3.0.0)"
+    "nuitka (>=2.8.9,<3.0.0)",
+    "pylint (>=4.0.4,<5.0.0)"
 
 ]
 
