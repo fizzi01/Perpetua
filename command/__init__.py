@@ -59,7 +59,7 @@ class CommandHandler:
             # Async dispatch
             await self.event_bus.dispatch(
                 # when ServerMouseController receives this event will set the correct cursor position
-                event_type=EventType.ACTIVE_SCREEN_CHANGED,
+                event_type=EventType.SCREEN_CHANGE_GUARD, # We first notify the cursor guard (cursor handler)
                 data=ActiveScreenChangedEvent(active_screen=None,
                                              source=event.source,
                                              position=crs_event.get_position())

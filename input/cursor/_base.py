@@ -10,7 +10,7 @@ from multiprocessing import Queue, Pipe, Process
 from multiprocessing.connection import Connection
 from typing import Optional
 
-from event import EventType, MouseEvent, ActiveScreenChangedEvent, ClientDisconnectedEvent
+from event import EventType, MouseEvent, ActiveScreenChangedEvent, ClientDisconnectedEvent, BusEvent
 from event.bus import EventBus
 
 from network.stream import StreamHandler
@@ -322,30 +322,32 @@ class CursorHandlerWorker(object):
         self._is_running = False
         self._mouse_data_task = None  # Async task instead of thread
 
-        self._active_client = None
+        self._active_client: Optional[str] = None
+        self._last_event: Optional[BusEvent] = None
 
         self.window_class = window_class
 
         self._logger = get_logger(self.__class__.__name__)
 
         # Register to active_screen with async callbacks
-        self.event_bus.subscribe(event_type=EventType.ACTIVE_SCREEN_CHANGED, callback=self._on_active_screen_changed)
+        self.event_bus.subscribe(event_type=EventType.SCREEN_CHANGE_GUARD, callback=self._on_screen_change_guard)
         self.event_bus.subscribe(event_type=EventType.CLIENT_DISCONNECTED, callback=self._on_client_disconnected)
 
-    async def _on_active_screen_changed(self, data: Optional[ActiveScreenChangedEvent]):
+    async def _on_screen_change_guard(self, data: Optional[ActiveScreenChangedEvent]):
         """Async callback for active screen changed"""
 
         if data is None:
             return
 
         active_screen = data.active_screen
+        self._last_event = data
 
         if active_screen:
             # Start capture cursor
-            await asyncio.get_event_loop().run_in_executor(None, self.enable_capture) #type: ignore
+            await self.enable_capture()
             self._active_client = active_screen
         else:
-            await asyncio.get_event_loop().run_in_executor(None, self.disable_capture) #type: ignore
+            await self.disable_capture()
             self._active_client = None
 
     async def _on_client_disconnected(self, data: Optional[ClientDisconnectedEvent]):
@@ -471,7 +473,7 @@ class CursorHandlerWorker(object):
             raise RuntimeError("Window process not running")
         self.command_queue.put(command)
 
-    def get_result(self, timeout: float = 1.0):
+    def get_result(self, timeout: float = 0.1):
         """Riceve un risultato dalla window"""
         try:
             return self.result_queue.get(timeout=timeout)
@@ -488,15 +490,26 @@ class CursorHandlerWorker(object):
             results.append(result)
         return results
 
-    def enable_capture(self):
+    async def enable_capture(self):
         """Abilita la cattura del mouse"""
         self.send_command({'type': 'enable_capture'})
-        return self.get_result()
+        res = self.get_result() # FIXME: This can slow down the async flow
+        # dispatch event if needed
+        await self.event_bus.dispatch(
+            # when ServerMouseController receives this event will set the correct cursor position
+            event_type=EventType.ACTIVE_SCREEN_CHANGED,
+            data=self._last_event
+        )
 
-    def disable_capture(self):
+    async def disable_capture(self):
         """Disabilita la cattura del mouse"""
         self.send_command({'type': 'disable_capture'})
-        return self.get_result()
+        res = self.get_result() # FIXME: This can slow down the async flow
+        await self.event_bus.dispatch(
+            # when ServerMouseController receives this event will set the correct cursor position
+            event_type=EventType.ACTIVE_SCREEN_CHANGED,
+            data=self._last_event
+        )
 
     def set_message(self, message):
         """Imposta un messaggio nella window"""

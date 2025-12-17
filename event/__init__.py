@@ -5,22 +5,28 @@ from typing import Optional, Self
 
 from network.protocol.message import ProtocolMessage, MessageType
 
-#TODO: Standardize event payloads
 class EventType(IntEnum):
     """
     Events type to subscribe to and dispatch.
 
     Events:
     - ACTIVE_SCREEN_CHANGED: Dispatched when the active screen changes.
+    - SCREEN_CHANGE_GUARD: Internal event to notify the cursor guard about screen changes.
+
     - CLIENT_CONNECTED: Dispatched when a new client connects.
     - CLIENT_DISCONNECTED: Dispatched when a client disconnects.
     - CLIENT_ACTIVE: Dispatched when the client becomes active.
     - CLIENT_INACTIVE: Dispatched when the client becomes inactive.
     """
 
-    ACTIVE_SCREEN_CHANGED = 1
+    # Both uses ActiveScreenChangedEvent as data
+    ACTIVE_SCREEN_CHANGED = 1 # Dispatched when the active screen effectively changes (after guard check)
+    SCREEN_CHANGE_GUARD = 6 # Internal event to notify the cursor guard about screen changes
+
     CLIENT_CONNECTED = 4
     CLIENT_DISCONNECTED = 5
+
+    # Client only events
     CLIENT_ACTIVE = 2
     CLIENT_INACTIVE = 3
 

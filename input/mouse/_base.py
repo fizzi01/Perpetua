@@ -395,7 +395,7 @@ class ServerMouseListener(object):
 
                 # We notify the system that an active screen change has occurred
                 await self.event_bus.dispatch(
-                    event_type=EventType.ACTIVE_SCREEN_CHANGED,
+                    event_type=EventType.SCREEN_CHANGE_GUARD, # We first notify the cursor guard (cursor handler)
                     data=ActiveScreenChangedEvent(active_screen=screen)
                 )
 
