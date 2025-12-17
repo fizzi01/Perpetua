@@ -57,8 +57,8 @@ class DebugOverlayPanel(wx.Panel):
 
 class CursorHandlerWindow(_base.CursorHandlerWindow):
 
-    def __init__(self, command_deque, result_deque, mouse_conn: Connection, debug: bool = False):
-        super().__init__(command_deque, result_deque, mouse_conn, debug, style=wx.STAY_ON_TOP | wx.FRAME_NO_TASKBAR | wx.NO_BORDER)
+    def __init__(self, command_queue: Queue, result_queue: Queue, mouse_conn: Connection, debug: bool = False):
+        super().__init__(command_queue, result_queue, mouse_conn, debug, style=wx.STAY_ON_TOP | wx.FRAME_NO_TASKBAR | wx.NO_BORDER)
 
         # Panel principale
         self.panel = None
