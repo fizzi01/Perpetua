@@ -344,6 +344,12 @@ class CursorHandlerWorker(object):
 
         if active_screen:
             # Start capture cursor
+            # dispatch event before enabling capture to set correct cursor position
+            await self.event_bus.dispatch(
+                # when ServerMouseController receives this event will set the correct cursor position
+                event_type=EventType.ACTIVE_SCREEN_CHANGED,
+                data=self._last_event
+            )
             await self.enable_capture()
             self._active_client = active_screen
         else:
@@ -357,7 +363,7 @@ class CursorHandlerWorker(object):
 
         if self._active_client and data.client_screen == self._active_client:
             self._active_client = None
-            await asyncio.get_event_loop().run_in_executor(None, self.disable_capture) #type: ignore
+            await self.disable_capture() #type: ignore
 
     def start(self, wait_ready=True, timeout=1) -> bool:
         """Avvia il processo della window"""
@@ -494,12 +500,6 @@ class CursorHandlerWorker(object):
         """Abilita la cattura del mouse"""
         self.send_command({'type': 'enable_capture'})
         res = self.get_result() # FIXME: This can slow down the async flow
-        # dispatch event if needed
-        await self.event_bus.dispatch(
-            # when ServerMouseController receives this event will set the correct cursor position
-            event_type=EventType.ACTIVE_SCREEN_CHANGED,
-            data=self._last_event
-        )
 
     async def disable_capture(self):
         """Disabilita la cattura del mouse"""
