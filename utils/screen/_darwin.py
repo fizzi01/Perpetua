@@ -6,8 +6,8 @@ from . import _base
 
 class Screen(_base.Screen):
 
-    @staticmethod
-    def get_size() -> tuple[int, int]:
+    @classmethod
+    def get_size(cls) -> tuple[int, int]:
         """
         Returns the size of the primary screen as a tuple (width, height).
         """
