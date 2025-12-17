@@ -350,10 +350,15 @@ class CursorHandlerWorker(object):
                 event_type=EventType.ACTIVE_SCREEN_CHANGED,
                 data=self._last_event
             )
-            await self.enable_capture()
+            self.enable_capture()
             self._active_client = active_screen
         else:
-            await self.disable_capture()
+            self.disable_capture()
+            await self.event_bus.dispatch(
+                # when ServerMouseController receives this event will set the correct cursor position
+                event_type=EventType.ACTIVE_SCREEN_CHANGED,
+                data=self._last_event
+            )
             self._active_client = None
 
     async def _on_client_disconnected(self, data: Optional[ClientDisconnectedEvent]):
@@ -363,7 +368,7 @@ class CursorHandlerWorker(object):
 
         if self._active_client and data.client_screen == self._active_client:
             self._active_client = None
-            await self.disable_capture() #type: ignore
+            self.disable_capture() #type: ignore
 
     def start(self, wait_ready=True, timeout=1) -> bool:
         """Avvia il processo della window"""
@@ -496,20 +501,15 @@ class CursorHandlerWorker(object):
             results.append(result)
         return results
 
-    async def enable_capture(self):
+    def enable_capture(self):
         """Abilita la cattura del mouse"""
         self.send_command({'type': 'enable_capture'})
         res = self.get_result() # FIXME: This can slow down the async flow
 
-    async def disable_capture(self):
+    def disable_capture(self):
         """Disabilita la cattura del mouse"""
         self.send_command({'type': 'disable_capture'})
         res = self.get_result() # FIXME: This can slow down the async flow
-        await self.event_bus.dispatch(
-            # when ServerMouseController receives this event will set the correct cursor position
-            event_type=EventType.ACTIVE_SCREEN_CHANGED,
-            data=self._last_event
-        )
 
     def set_message(self, message):
         """Imposta un messaggio nella window"""
