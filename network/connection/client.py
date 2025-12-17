@@ -419,7 +419,7 @@ class ConnectionHandler:
                     raise ConnectionResetError("Command stream closed")
 
                 # Send heartbeat message
-                await self._msg_exchange.send_custom_message(message_type="HEARTBEAT", payload={})
+                # await self._msg_exchange.send_custom_message(message_type="HEARTBEAT", payload={})
                 # Get reader from client connection and check if eof is reached
                 client = self.clients.get_client()
                 c_conn = client.get_connection()

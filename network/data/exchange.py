@@ -8,6 +8,7 @@ from time import time
 from typing import Callable, Dict, Optional, Any, List
 
 from config import ApplicationConfig
+from network.data import MissingTransportError
 from network.protocol.message import ProtocolMessage, MessageBuilder
 from network.stream import StreamType
 from utils.logging import Logger, get_logger
@@ -350,7 +351,7 @@ class MessageExchange:
         # Cycle through all send callbacks
         for tr_id, send_callback in self._send_callbacks.items(): # Round-robin
             if not send_callback:
-                raise RuntimeError("Transport layer not configured. Call set_transport() first.")
+                raise MissingTransportError("Transport layer not configured. Call set_transport() first.")
 
             # Set target if not already set
             message.target = message.target if message.target else tr_id

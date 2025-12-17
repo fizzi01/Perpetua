@@ -354,7 +354,8 @@ class CursorHandlerWorker(object):
             self._active_client = active_screen
         else:
             self.disable_capture()
-            await asyncio.sleep(0)
+            await asyncio.sleep(0) # yield control to event loop
+            # dispatch event after disabling capture
             await self.event_bus.dispatch(
                 # when ServerMouseController receives this event will set the correct cursor position
                 event_type=EventType.ACTIVE_SCREEN_CHANGED,

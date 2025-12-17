@@ -59,7 +59,8 @@ class ConnectionHandler:
         self.server = None
         self._running = False
         self._heartbeat_task = None
-        self._client_tasks = {}  # Task di gestione per ogni client
+        self._server_task = None
+        #self._client_tasks = {}
         self._pending_streams = {}  # {ip_address: {stream_type: Future}}
 
         self._logger = get_logger(self.__class__.__name__)
@@ -76,6 +77,8 @@ class ConnectionHandler:
                 self.port,
                 #ssl=self._get_ssl_context() Choose it based on client request in handshake
             )
+            # Serve forever in background
+            self._server_task = asyncio.create_task(self._serve_forever())
 
             self._logger.log(f"Started on {self.host}:{self.port}", Logger.INFO)
 
@@ -105,27 +108,56 @@ class ConnectionHandler:
             except asyncio.CancelledError:
                 pass
 
-        # Cancella tutti i task dei client
-        for task in self._client_tasks.values():
-            if not task.done():
-                task.cancel()
-
-        if self._client_tasks:
-            await asyncio.gather(*self._client_tasks.values(), return_exceptions=True)
-            self._client_tasks.clear()
+        # # Cancella tutti i task dei client
+        # for task in self._client_tasks.values():
+        #     if not task.done():
+        #         task.cancel()
+        #
+        # if self._client_tasks:
+        #     await asyncio.gather(*self._client_tasks.values(), return_exceptions=True)
+        #     self._client_tasks.clear()
 
         # Disconnetti tutti i client
         for client in self.clients.get_clients():
             await self.force_disconnect_client(client)
 
-        # Chiudi il server
-        if self.server:
-            self.server.close()
-            # Not working properly in 3.12 (but yes in 3.11)
-            #await self.server.wait_closed()
+        # Cancella server task
+        if self._server_task and not self._server_task.done():
+            self._server_task.cancel()
+            try:
+                if self.server:
+                    self.server.close()
+                    # Not working properly in 3.12 (but yes in 3.11)
+                    try:
+                        await asyncio.wait_for(self.server.wait_closed(), timeout=5.0)
+                    except asyncio.TimeoutError:
+                        self._logger.log("Timeout while waiting for server to close.", Logger.WARNING)
+                self._server_task.cancel()
+                #await self._server_task
+            except asyncio.TimeoutError:
+                self._logger.log("Timeout while closing server.", Logger.WARNING)
+            except asyncio.CancelledError:
+                pass
+
 
         self._logger.log("Stopped.", Logger.INFO)
         return True
+
+    async def _serve_forever(self):
+        """Serve forever loop"""
+        if self.server is None:
+            self._logger.log("Server not started.", Logger.ERROR)
+            return
+
+        try:
+            async with self.server:
+                await self.server.serve_forever()
+        except asyncio.CancelledError:
+            self._logger.log("Server loop cancelled.", Logger.INFO)
+        except Exception:
+            self._logger.log("Server encountered an error.", Logger.CRITICAL)
+            import traceback
+            self._logger.log(traceback.format_exc(), Logger.ERROR)
 
     async def force_disconnect_client(self, client: ClientObj):
         """
@@ -386,9 +418,9 @@ class ConnectionHandler:
             # self._logger.log(traceback.format_exc(), Logger.ERROR)
             return False
 
-    async def _handle_hartbeat_failure(self, client: ClientObj):
+    async def _handle_hartbeat_failure(self, client: ClientObj, err: Optional[Exception] = None):
         """Gestisce il fallimento del heartbeat per un client"""
-        self._logger.log(f"Client {client.get_net_id()} disconnected (heartbeat failed).", Logger.WARNING)
+        self._logger.log(f"Client {client.get_net_id()} disconnected ({err}).", Logger.WARNING)
         client.is_connected = False
 
         try:
@@ -408,6 +440,7 @@ class ConnectionHandler:
             except Exception as e:
                 self._logger.log(f"Error in disconnected callback -> {e}", Logger.ERROR)
 
+    # TODO: need a reconnection mechanism for single client's streams
     async def _heartbeat_loop(self):
         """Loop di heartbeat per verificare le connessioni e aggiornare metriche"""
         try:
@@ -430,31 +463,31 @@ class ConnectionHandler:
                     if client.is_connected and client.get_connection() is not None:
                         try:
                             if not client.get_connection().is_open():
-                                raise ConnectionResetError
+                                raise ConnectionResetError("Connection is closed")
 
                             client_conn = client.get_connection()
                             # Send heartbeat message
                             client_msg_exchange = MessageExchange(config, id=f"Heartbeat_{client.get_net_id()}")
                             cmd_stream = client_conn.get_stream(StreamType.COMMAND)
                             if cmd_stream is None:
-                                raise ConnectionResetError
+                                raise ConnectionResetError("Command stream not found")
 
-                            await client_msg_exchange.set_transport(cmd_stream.get_writer_call(), None)
-                            await client_msg_exchange.send_custom_message(message_type="HEARTBEAT", payload={})
+                            # await client_msg_exchange.set_transport(cmd_stream.get_writer_call(), None)
+                            # await client_msg_exchange.send_custom_message(message_type="HEARTBEAT", payload={})
 
                             # Check eof on reader
                             command_reader = client_conn.get_reader(StreamType.COMMAND)
                             if command_reader.is_closed():
-                                raise ConnectionResetError
+                                raise ConnectionResetError("Command stream reader is closed")
 
                             # Update active time
                             client.set_last_connection()
-                        except (ConnectionResetError, OSError):
+                        except (ConnectionResetError, OSError) as e:
                             if heartbeat_trials[client.get_net_id()] < self.MAX_HEARTBEAT_MISSES:
                                 heartbeat_trials[client.get_net_id()] += 1
                                 self._logger.log(f"Heartbeat missed for client {client.get_net_id()} (trial {heartbeat_trials[client.get_net_id()]}/{self.MAX_HEARTBEAT_MISSES})", Logger.WARNING)
                             else:
-                                await self._handle_hartbeat_failure(client)
+                                await self._handle_hartbeat_failure(client, err=e)
                                 heartbeat_trials[client.get_net_id()] = 0
                         except Exception as e:
                             self._logger.log(f"Heartbeat error for client {client.get_net_id()} -> {e}", Logger.CRITICAL)

@@ -1,6 +1,7 @@
 import asyncio
 from typing import Optional
 
+from network.data import MissingTransportError
 from utils.logging import Logger, get_logger
 from network.stream import StreamHandler
 from network.data.exchange import MessageExchange, MessageExchangeConfig
@@ -170,10 +171,15 @@ class UnidirectionalStreamHandler(StreamHandler):
                 except AttributeError:
                     # Active client became None during await
                     self._active_client = None
+                    await asyncio.sleep(0)  # yield control
                 except (BrokenPipeError, ConnectionResetError) as e:
                     self._logger.warning(f"Connection error -> {e}")
                     # Set active client to None on connection errors
                     self._active_client = None
+                    await asyncio.sleep(0)  # yield control
+                except MissingTransportError:
+                    self._logger.warning(f"Missing transport")
+                    await asyncio.sleep(0) #yield control
                 except Exception as e:
                     self._logger.error(f"Error in core loop -> {e}")
                     await asyncio.sleep(self._waiting_time)
@@ -310,11 +316,15 @@ class BidirectionalStreamHandler(StreamHandler):
                     # Active client became None during await
                     self._logger.debug(
                         f"No valid stream for active client {self._active_client.screen_position}")
-                    pass
+                    await asyncio.sleep(0) #yield control
                 except (BrokenPipeError, ConnectionResetError) as e:
                     self._logger.warning(f"Connection error -> {e}")
                     # Set active client to None on connection errors
                     self._active_client = None
+                    await asyncio.sleep(0)  # yield control
+                except MissingTransportError:
+                    self._logger.warning(f"Missing transport")
+                    await asyncio.sleep(0) #yield control
                 except Exception as e:
                     self._logger.error(f"Error in core loop -> {e}")
                     await asyncio.sleep(self._waiting_time)
@@ -510,10 +520,15 @@ class MulticastStreamHandler(StreamHandler):
                 except AttributeError:
                     # Active client became None during await
                     self._active_client = None
+                    await asyncio.sleep(0)  # yield control
                 except (BrokenPipeError, ConnectionResetError) as e:
                     self._logger.warning(f"Connection error -> {e}")
                     # Set active client to None on connection errors
                     self._active_client = None
+                    await asyncio.sleep(0)  # yield control
+                except MissingTransportError:
+                    self._logger.warning(f"Missing transport")
+                    await asyncio.sleep(0) #yield control
                 except Exception as e:
                     self._logger.error(f"Error in core loop -> {e}")
                     await asyncio.sleep(self._waiting_time)
