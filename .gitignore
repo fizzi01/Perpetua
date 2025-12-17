@@ -148,3 +148,6 @@ OLD/
 *.key
 
 _test_config/
+
+# Poetry
+poetry.lock

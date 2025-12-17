@@ -1,12 +1,12 @@
 [project]
-name = "pycontinuity-master"
+name = "pycontinuity"
 version = "0.1.0"
 description = ""
 authors = [
-    {name = "fizzi01",email = "federico.izzi@studenti.unisalento.it"}
+    {name = "fizzi01"}
 ]
 readme = "README.md"
-requires-python = ">=3.11,<4.0"
+requires-python = ">=3.11,<3.13"
 dependencies = [
     "keyboard (>=0.13.5)",
     "packaging (>=24.2)",
@@ -28,7 +28,6 @@ dependencies = [
 ]
 
 [tool.poetry]
-name = "pycontinuity-master"
 packages = [
     { include = "command" },
     { include ="config" },
@@ -39,7 +38,6 @@ packages = [
     { include ="service" },
     { include ="utils" }
 ]
-
 
 [build-system]
 requires = ["poetry-core>=2.0.0,<3.0.0"]
