@@ -1,7 +1,7 @@
 keyboard>=0.13.5,<0.14.0
 packaging>=24.2,<26.0.0
 pynput>=1.7.7,<2.0.0
-screeninfo>=0.8.1,<1.0.0
+#screeninfo>=0.8.1,<1.0.0
 zeroconf>=0.136.2,<1.0.0
 pywin32>=308,<400.0.0
 comtypes>=1.4.8,<2.0.0

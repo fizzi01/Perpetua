@@ -8,21 +8,20 @@ authors = [
 readme = "README.md"
 requires-python = ">=3.11,<3.13"
 dependencies = [
-    "keyboard (>=0.13.5)",
-    "packaging (>=24.2)",
-    "pynput (>=1.7.7)",
-    "pyobjc (>=10.2) ; sys_platform == 'darwin'",
+    "keyboard (>=0.13.5,<0.14.0)",
+    "packaging (>=24.2,<26.0.0)",
+    "pynput (>=1.7.7,<2.0.0)",
+    "pyobjc (>=10.2,<13.0) ; sys_platform == 'darwin'",
     "pywin32 (>=308,<400.0.0) ; sys_platform == 'win32'",
     "comtypes (>=1.4.8,<2.0.0) ; sys_platform == 'win32'",
-    "screeninfo (>=0.8.1)",
-    "zeroconf (>=0.136.2)",
-    "wxpython (>=4.2.2)",
-    "netifaces (>=0.11.0)",
+    "zeroconf (>=0.136.2,<1.0.0)",
+    "wxpython (>=4.2.2,<5.0.0)",
+    "netifaces (>=0.11.0,<1.0.0)",
     "attrs (>=25.4.0,<26.0.0)",
-    "copykitten (>=2.0.0)",
-    "cryptography (>=46.0.3)",
-    "pyjwt (>=2.10.1)",
-    "aiofiles (>=25.1.0)",
+    "copykitten (>=2.0.0,<3.0.0)",
+    "cryptography (>=46.0.3,<47.0.0)",
+    "pyjwt (>=2.10.1,<3.0.0)",
+    "aiofiles (>=25.1.0,<26.0.0)",
     "nuitka (>=2.8.9,<3.0.0)",
     "pylint (>=4.0.4,<5.0.0)"
 
