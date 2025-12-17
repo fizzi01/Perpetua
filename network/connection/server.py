@@ -120,7 +120,8 @@ class ConnectionHandler:
         # Chiudi il server
         if self.server:
             self.server.close()
-            await self.server.wait_closed()
+            # Not working properly in 3.12 (but yes in 3.11)
+            #await self.server.wait_closed()
 
         self._logger.log("Stopped.", Logger.INFO)
         return True
