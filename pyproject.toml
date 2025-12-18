@@ -24,7 +24,8 @@ dependencies = [
     "aiofiles (>=25.1.0,<26.0.0)",
     "nuitka (>=2.8.9,<3.0.0)",
     "pylint (>=4.0.4,<5.0.0)",
-    "uvloop (!=0.22.1)"
+    "uvloop (!=0.22.1) ; sys_platform == 'darwin'",
+    "winloop (<1.0.0) ; sys_platform == 'win32'"
 
 ]
 

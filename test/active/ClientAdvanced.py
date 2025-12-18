@@ -2,7 +2,12 @@
 Advanced Client Example - Runtime management of streams and SSL
 Demonstrates how to enable/disable streams during execution and manage SSL certificates
 """
-import uvloop
+import sys
+
+if sys.platform in ("win32", "cygwin", 'cli'):
+    import winloop as loop
+else:
+    import uvloop as loop
 import asyncio
 from socket import gethostname
 
@@ -33,16 +38,17 @@ async def interactive_client():
     app_config = ApplicationConfig()
     app_config.config_path = "_test_config/"
     client_config = ClientConfig(app_config, config_file=None)
+    client_config.sync_load()
 
     # Set server connection
-    client_config.set_server_connection(
-        host=input("Enter server host (default: localhost): ").strip() or "localhost",
-        port=int(input("Enter server port (default: 5555): ").strip() or "5555"),
-        auto_reconnect=True
-    )
-    client_config.set_hostname(gethostname())
+    # client_config.set_server_connection(
+    #     host=input("Enter server host (default: localhost): ").strip() or "localhost",
+    #     port=int(input("Enter server port (default: 5555): ").strip() or "5555"),
+    #     auto_reconnect=True
+    # )
+    # client_config.set_hostname(gethostname())
     # Set logging
-    client_config.set_logging(level=Logger.DEBUG)
+    # client_config.set_logging(level=Logger.DEBUG)
 
     client = Client(
         app_config=app_config,
@@ -307,7 +313,7 @@ async def main():
 
 if __name__ == "__main__":
     try:
-        uvloop.run(main())
+        loop.run(main())
     except KeyboardInterrupt:
         print("\nShutdown complete")
     except RuntimeError as e:

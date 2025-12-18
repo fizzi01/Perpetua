@@ -2,7 +2,12 @@
 Advanced Server Example - Gestione runtime degli stream
 Dimostra come abilitare/disabilitare stream durante l'esecuzione
 """
-import uvloop
+import sys
+
+if sys.platform in ("win32", "cygwin", 'cli'):
+    import winloop as loop
+else:
+    import uvloop as loop
 import asyncio
 from socket import gethostname
 
@@ -44,7 +49,7 @@ async def interactive_server():
     server_config.enable_ssl()
 
     # Set logging
-    server_config.set_logging(level=Logger.INFO)
+    server_config.set_logging(level=Logger.DEBUG)
 
     server = Server(
         app_config=app_config,
@@ -168,7 +173,7 @@ async def main():
 
 if __name__ == "__main__":
     try:
-        uvloop.run(main())
+        loop.run(main())
     except KeyboardInterrupt:
         print("\nShutdown complete")
     except RuntimeError as e:
