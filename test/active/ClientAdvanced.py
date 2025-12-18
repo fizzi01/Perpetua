@@ -2,6 +2,7 @@
 Advanced Client Example - Runtime management of streams and SSL
 Demonstrates how to enable/disable streams during execution and manage SSL certificates
 """
+import uvloop
 import asyncio
 from socket import gethostname
 
@@ -306,7 +307,7 @@ async def main():
 
 if __name__ == "__main__":
     try:
-        asyncio.run(main())
+        uvloop.run(main())
     except KeyboardInterrupt:
         print("\nShutdown complete")
     except RuntimeError as e:

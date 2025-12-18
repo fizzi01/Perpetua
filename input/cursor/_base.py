@@ -350,11 +350,18 @@ class CursorHandlerWorker(object):
                 event_type=EventType.ACTIVE_SCREEN_CHANGED,
                 data=self._last_event
             )
-            self.enable_capture()
+
+            try:
+                self.enable_capture()
+            except Exception as e:
+                self._logger.error(f"Error enabling cursor capture: {e}")
             self._active_client = active_screen
         else:
-            self.disable_capture()
-            await asyncio.sleep(0) # yield control to event loop
+            try:
+                self.disable_capture()
+            except Exception as e:
+                self._logger.error(f"Error disabling cursor capture: {e}")
+
             # dispatch event after disabling capture
             await self.event_bus.dispatch(
                 # when ServerMouseController receives this event will set the correct cursor position
@@ -506,12 +513,12 @@ class CursorHandlerWorker(object):
     def enable_capture(self):
         """Abilita la cattura del mouse"""
         self.send_command({'type': 'enable_capture'})
-        res = self.get_result() # FIXME: This can slow down the async flow
+        return self.get_result() # FIXME: This can slow down the async flow
 
     def disable_capture(self):
         """Disabilita la cattura del mouse"""
         self.send_command({'type': 'disable_capture'})
-        res = self.get_result() # FIXME: This can slow down the async flow
+        return self.get_result() # FIXME: This can slow down the async flow
 
     def set_message(self, message):
         """Imposta un messaggio nella window"""

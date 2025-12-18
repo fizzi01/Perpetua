@@ -2,6 +2,7 @@
 Advanced Server Example - Gestione runtime degli stream
 Dimostra come abilitare/disabilitare stream durante l'esecuzione
 """
+import uvloop
 import asyncio
 from socket import gethostname
 
@@ -167,7 +168,7 @@ async def main():
 
 if __name__ == "__main__":
     try:
-        asyncio.run(main())
+        uvloop.run(main())
     except KeyboardInterrupt:
         print("\nShutdown complete")
     except RuntimeError as e:

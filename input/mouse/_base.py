@@ -402,9 +402,7 @@ class ServerMouseListener(object):
                 # Attendi il completamento dell'invio dei messaggi
                 await self.command_stream.send(CrossScreenCommandEvent())
                 await self.stream.send(mouse_event)
-
-                # Piccolo delay per garantire che i messaggi siano stati processati
-                await asyncio.sleep(0.05)
+                await asyncio.sleep(0)
 
         except Exception as e:
             self._logger.error(f"Error handling cross-screen -> {e}")
@@ -476,9 +474,9 @@ class ServerMouseController(object):
                 if x > -1 and y > -1:
                     # We need to asyncronously position the cursor multiple times to ensure it works across platforms
                     for _ in range(3):
-                        asyncio.create_task(self.position_cursor(x, y))
+                        self.position_cursor(x, y)
 
-    async def position_cursor(self, x: float | int, y: float | int):
+    def position_cursor(self, x: float | int, y: float | int):
         """
         Position the mouse cursor to the specified (x, y) coordinates.
         """
