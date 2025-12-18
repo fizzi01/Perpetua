@@ -59,6 +59,21 @@ class BaseLogger(ABC):
     ERROR = 3
     CRITICAL = 4
 
+    def _parse_level(self, level: int) -> int:
+        """Convert custom level to logging module level"""
+        if level == self.DEBUG:
+            return logging.DEBUG
+        elif level == self.INFO:
+            return logging.INFO
+        elif level == self.WARNING:
+            return logging.WARNING
+        elif level == self.ERROR:
+            return logging.ERROR
+        elif level == self.CRITICAL:
+            return logging.CRITICAL
+        else:
+            return logging.INFO
+
     @abstractmethod
     def log(self, message: str, level: int = 0, **kw: Any):
         pass
@@ -188,16 +203,8 @@ class Logger(BaseLogger):
         Args:
             level: Priority level (DEBUG=0, INFO=1, WARNING=2, ERROR=3, CRITICAL=4)
         """
-        # Mappa custom priority ai livelli logging
-        level_map = {
-            self.DEBUG: logging.DEBUG,
-            self.INFO: logging.INFO,
-            self.WARNING: logging.WARNING,
-            self.ERROR: logging.ERROR,
-            self.CRITICAL: logging.CRITICAL
-        }
 
-        logging_level = level_map.get(level, logging.INFO)
+        logging_level = self._parse_level(level)
 
         # Imposta il livello del logger
         self._logger.setLevel(logging_level)
@@ -462,7 +469,7 @@ class StructLogger(BaseLogger):
         self._logger.exception(message, **kw)
 
     def set_level(self, level: int):
-        structlog.get_config()['wrapper_class'] = structlog.make_filtering_bound_logger(level)
+        structlog.get_config()['wrapper_class'] = structlog.make_filtering_bound_logger(self._parse_level(level))
 
 
 
