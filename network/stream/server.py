@@ -115,6 +115,11 @@ class UnidirectionalStreamHandler(StreamHandler):
                 cl_conn = self._active_client.get_connection()
                 if cl_conn is not None:
                     cl_stream = cl_conn.get_stream(self.stream_type)
+                    if cl_stream is None:
+                        await self.msg_exchange.set_transport(send_callback=None, receive_callback=None)
+                        await self.msg_exchange.stop()
+                        await asyncio.sleep(0)
+                        return
 
                     if cl_stream.get_writer() is None:  # We avoid sending if no writer is available
                         self._logger.debug("No writer available for active client")
@@ -180,6 +185,15 @@ class UnidirectionalStreamHandler(StreamHandler):
                 except MissingTransportError:
                     self._logger.warning(f"Missing transport")
                     await asyncio.sleep(0) #yield control
+                except RuntimeError as e:
+                    # uv/winloop runtime error on closed tcp transport
+                    if "closed=True" in str(e):
+                        self._logger.warning(f"Transport closed")
+                        self._active_client = None
+                        await asyncio.sleep(0)  # yield control
+                    else:
+                        self._logger.error(f"Runtime error in core loop -> {e}")
+                        await asyncio.sleep(self._waiting_time)
                 except Exception as e:
                     self._logger.error(f"Error in core loop -> {e}")
                     await asyncio.sleep(self._waiting_time)
@@ -261,6 +275,11 @@ class BidirectionalStreamHandler(StreamHandler):
                 cl_conn = self._active_client.get_connection()
                 if cl_conn is not None:
                     cl_stream = cl_conn.get_stream(self.stream_type)
+                    if cl_stream is None:
+                        await self.msg_exchange.set_transport(send_callback=None, receive_callback=None)
+                        await self.msg_exchange.stop()
+                        await asyncio.sleep(0)
+                        return
 
                     if cl_stream.get_writer() is None:  # We avoid sending if no writer is available
                         self._logger.debug("No writer available for active client")
@@ -325,6 +344,15 @@ class BidirectionalStreamHandler(StreamHandler):
                 except MissingTransportError:
                     self._logger.warning(f"Missing transport")
                     await asyncio.sleep(0) #yield control
+                except RuntimeError as e:
+                    # uv/winloop runtime error on closed tcp transport
+                    if "closed=True" in str(e):
+                        self._logger.warning(f"Transport closed")
+                        self._active_client = None
+                        await asyncio.sleep(0)  # yield control
+                    else:
+                        self._logger.error(f"Runtime error in core loop -> {e}")
+                        await asyncio.sleep(self._waiting_time)
                 except Exception as e:
                     self._logger.error(f"Error in core loop -> {e}")
                     await asyncio.sleep(self._waiting_time)
@@ -415,6 +443,10 @@ class MulticastStreamHandler(StreamHandler):
                 cl_conn = client.get_connection()
                 if cl_conn is not None:
                     cl_stream = cl_conn.get_stream(self.stream_type)
+                    if cl_stream is None:
+                        await asyncio.sleep(0)
+                        return
+
                     await self.msg_exchange.set_transport(
                         send_callback=cl_stream.get_writer_call(),
                         receive_callback=cl_stream.get_reader_call(),
@@ -461,6 +493,11 @@ class MulticastStreamHandler(StreamHandler):
                 cl_conn = self._active_client.get_connection()
                 if cl_conn is not None:
                     cl_stream = cl_conn.get_stream(self.stream_type)
+                    if cl_stream is None:
+                        await self.msg_exchange.set_transport(send_callback=None, receive_callback=None)
+                        await self.msg_exchange.stop()
+                        await asyncio.sleep(0)
+                        return
 
                     if cl_stream.get_writer() is None:  # We avoid sending if no writer is available
                         self._logger.debug("No writer available for active client")
@@ -529,6 +566,15 @@ class MulticastStreamHandler(StreamHandler):
                 except MissingTransportError:
                     self._logger.warning(f"Missing transport")
                     await asyncio.sleep(0) #yield control
+                except RuntimeError as e:
+                    # uv/winloop runtime error on closed tcp transport
+                    if "closed=True" in str(e):
+                        self._logger.warning(f"Transport closed")
+                        self._active_client = None
+                        await asyncio.sleep(0)  # yield control
+                    else:
+                        self._logger.error(f"Runtime error in core loop -> {e}")
+                        await asyncio.sleep(self._waiting_time)
                 except Exception as e:
                     self._logger.error(f"Error in core loop -> {e}")
                     await asyncio.sleep(self._waiting_time)

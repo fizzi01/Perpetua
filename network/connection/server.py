@@ -38,7 +38,7 @@ class ConnectionHandler:
     HANDSHAKE_DELAY = 0.2 # sec
     HANDSHAKE_MSG_TIMEOUT = 5.0 # sec
     CONNECTION_ATTEMPT_TIMEOUT = 10 # sec
-    MAX_HEARTBEAT_MISSES = 3
+    MAX_HEARTBEAT_MISSES = 1
 
     def __init__(self, connected_callback: Optional[Callable[['ClientObj', list], Any]] = None,
                  disconnected_callback: Optional[Callable[['ClientObj', list], Any]] = None,
