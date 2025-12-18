@@ -10,9 +10,8 @@ from typing import Optional, Callable, Any
 from model.client import ClientsManager, ClientObj
 from network.data.exchange import MessageExchange, MessageExchangeConfig
 from network.protocol.message import MessageType
+from network.stream import StreamType
 from utils.logging import Logger, get_logger
-
-from ..stream import StreamType
 
 from . import ClientConnection, StreamWrapper
 
@@ -313,7 +312,7 @@ class ConnectionHandler:
                 client.ssl = response.payload.get("ssl", False)
                 requested_streams = response.payload.get("streams", [])
 
-                self._logger.log(f"Client {client.get_net_id()} info: resolution={client.screen_resolution}, ssl={client.ssl}, streams={requested_streams}", Logger.DEBUG)
+                self._logger.log(f"Client {client.get_net_id()}", Logger.DEBUG, client=client.to_dict())
 
                 # Crea AsyncClientConnection per gestire multiple streams asyncio
                 client.set_connection(ClientConnection(client_addr))

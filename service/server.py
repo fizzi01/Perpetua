@@ -105,8 +105,7 @@ class Server:
             self.config.sync_load()
 
         # Set logging level
-        self._logger = get_logger(self.__class__.__name__)
-        self._logger.set_level(self.config.log_level)
+        self._logger = get_logger(self.__class__.__name__, level=self.config.log_level, is_root=True)
 
         # Log loaded clients
         self._load_authorized_clients()

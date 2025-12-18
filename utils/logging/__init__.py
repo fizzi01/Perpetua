@@ -59,17 +59,18 @@ class BaseLogger(ABC):
     ERROR = 3
     CRITICAL = 4
 
-    def _parse_level(self, level: int) -> int:
+    @classmethod
+    def _parse_level(cls, level: int) -> int:
         """Convert custom level to logging module level"""
-        if level == self.DEBUG:
+        if level == cls.DEBUG:
             return logging.DEBUG
-        elif level == self.INFO:
+        elif level == cls.INFO:
             return logging.INFO
-        elif level == self.WARNING:
+        elif level == cls.WARNING:
             return logging.WARNING
-        elif level == self.ERROR:
+        elif level == cls.ERROR:
             return logging.ERROR
-        elif level == self.CRITICAL:
+        elif level == cls.CRITICAL:
             return logging.CRITICAL
         else:
             return logging.INFO
@@ -114,13 +115,14 @@ class Logger(BaseLogger):
     _app_namespace = 'PyContinuity'
     _shared_handler = None
 
-    def __init__(self, name=None, verbose=True, stdout=None):
+    def __init__(self, name=None, verbose=True, level: Optional[int] = None, stdout=None):
         """
         Inizializza un logger per un modulo specifico.
 
         Args:
             name: Nome del logger (tipicamente __name__ del modulo). Se None, usa 'pyContinuity'
             verbose: Se True usa ColoredFormatter con DEBUG, altrimenti SilentFormatter con INFO
+            level: Livello di logging iniziale (Logger.DEBUG, Logger.INFO, ecc.). Se None, usa DEBUG se verbose è True, altrimenti INFO
             stdout: Funzione di output custom (deprecato, mantenuto per compatibilità)
         """
         self.logging_enabled = verbose
@@ -158,6 +160,9 @@ class Logger(BaseLogger):
             self._logger.setLevel(logging.DEBUG)
         else:
             self._logger.setLevel(logging.INFO)
+
+        if level is not None:
+            self.set_level(level)
 
     def _configure_app_logger(self, log=True):
         """Configura il logger dell'applicazione una sola volta"""
@@ -267,8 +272,21 @@ class StructLogger(BaseLogger):
     """
     _lock = threading.Lock()
     _app_namespace = 'PyContinuity'
+    _configured = False
+    _global_config = {
+        'verbose': True,
+        'level': None
+    }
 
-    COLORS = {
+    level_map = {
+        'debug': logging.DEBUG,
+        'info': logging.INFO,
+        'warning': logging.WARNING,
+        'error': logging.ERROR,
+        'critical': logging.CRITICAL,
+    }
+
+    color_map = {
         'debug': '\033[92m',    # Green
         'info': '\033[94m',     # Blue
         'warning': '\033[93m',  # Yellow
@@ -276,7 +294,7 @@ class StructLogger(BaseLogger):
         'critical': '\033[1;4;31m', # Critical underlined and bold
     }
 
-    def __init__(self, name: Optional[str] = None, verbose: bool = True, **initial_context):
+    def __init__(self, name: Optional[str] = None, verbose: bool = True, level: Optional[int] = None, is_root: bool = False, **initial_context):
         """
         Initializes the logger instance with the specified properties. Configures the internal logging
         mechanism, including the logger name, verbosity, and optional initial context. Utilizes the
@@ -293,6 +311,9 @@ class StructLogger(BaseLogger):
                 to the application namespace.
             verbose: bool
                 Indicates whether verbose logging is enabled. Defaults to True.
+            level: int
+                The initial logging level (Logger.DEBUG, Logger.INFO, etc.). If not
+                provided, defaults to DEBUG if verbose is True, otherwise INFO.
             **initial_context: Keyword arguments
                 Initial key-value pairs to bind to the logger for structured logging.
         """
@@ -306,19 +327,24 @@ class StructLogger(BaseLogger):
 
         # Configure structlog in a thread-safe manner
         with self._lock:
-            self._configure_structlog(verbose)
+            if not StructLogger._configured or is_root:
+                StructLogger._global_config['verbose'] = verbose
+                StructLogger._global_config['level'] = level
+                self._configure_structlog(verbose, level)
+                StructLogger._configured = True
+            else:
+                verbose = StructLogger._global_config['verbose']
+                level = StructLogger._global_config['level']
+                self._configure_structlog(verbose, level)
 
-            # Get the bound logger
-            self._logger = structlog.get_logger().bind(logger=self.logger_name)
+        # Get the bound logger
+        self._logger = structlog.get_logger().bind(logger=self.logger_name)
 
-            # Bind context
-            if initial_context:
-                self._logger = self._logger.bind(**initial_context)
+        # Bind context
+        if initial_context:
+            self._logger = self._logger.bind(**initial_context)
 
-            # Default logging level
-            logging.root.setLevel(logging.DEBUG if verbose else logging.INFO)
-
-    def _configure_structlog(self, verbose: bool = True):
+    def _configure_structlog(self, verbose: bool = True, level: Optional[int] = None):
         """
         Configure structlog with processors and renderers based on verbosity.
 
@@ -332,14 +358,50 @@ class StructLogger(BaseLogger):
                             color and detailed information. If False, configures for
                             silent output with minimal information.
         """
+        # We capture the configured level for use in the filter processor
+        configured_level = StructLogger._global_config.get('level')
+
+        def filter_by_level(logger, method_name, event_dict):
+            """
+            Filter log messages based on the configured logging level.
+
+            This processor checks the logging level of each log message against the
+            configured minimum logging level. If the message's level is lower than
+            the configured level, it is filtered out (not logged).
+
+            Args:
+                logger: The logger instance.
+                method_name: The name of the logging method (e.g., 'debug', 'info').
+                event_dict: The dictionary containing log event data.
+
+            Returns:
+                dict or None: The original event_dict if the message should be logged,
+                              otherwise None to filter it out.
+            """
+            if configured_level is None:
+                raise ValueError("Logging level is not configured.")
+
+            message_level = StructLogger.level_map.get(method_name, logging.INFO)
+
+            if message_level >= configured_level:
+                return event_dict
+            else:
+                return None
 
         # Processori comuni - rimuovo add_logger_name che richiede stdlib logger
         shared_processors = [
             structlog.contextvars.merge_contextvars,
             structlog.stdlib.add_log_level,
+            filter_by_level,
             structlog.processors.TimeStamper(fmt="[%H:%M:%S.%f]", utc=False),
             structlog.processors.StackInfoRenderer(),
         ]
+
+        if level is not None:
+            logging_level = self._parse_level(level)
+            wrapper_cls = structlog.make_filtering_bound_logger(logging_level)
+        else:
+            wrapper_cls = structlog.make_filtering_bound_logger(logging.DEBUG if verbose else logging.INFO)
 
         if verbose:
             # Modalità verbose: output colorato con tutti i dettagli
@@ -349,10 +411,10 @@ class StructLogger(BaseLogger):
                     structlog.dev.ConsoleRenderer(
                         colors=True,
                         pad_event=30,
-                        level_styles=self.COLORS,
+                        level_styles=self.color_map,
                     )
                 ],
-                wrapper_class=structlog.make_filtering_bound_logger(logging.DEBUG),
+                wrapper_class=wrapper_cls,
                 logger_factory=structlog.WriteLoggerFactory(),
                 cache_logger_on_first_use=True,
             )
@@ -366,7 +428,7 @@ class StructLogger(BaseLogger):
                         pad_event=30,
                     )
                 ],
-                wrapper_class=structlog.make_filtering_bound_logger(logging.INFO),
+                wrapper_class=wrapper_cls,
                 logger_factory=structlog.WriteLoggerFactory(),
                 cache_logger_on_first_use=True,
             )
@@ -469,11 +531,19 @@ class StructLogger(BaseLogger):
         self._logger.exception(message, **kw)
 
     def set_level(self, level: int):
-        structlog.get_config()['wrapper_class'] = structlog.make_filtering_bound_logger(self._parse_level(level))
+        # Fixme: it does not work
+        # cfg = structlog.get_config()
+        # wrapper_cls = cfg.get('wrapper_class')
+        # wrapper_cls = structlog.make_filtering_bound_logger(self._parse_level(level))
+        # cfg['wrapper_class'] = wrapper_cls
+        # # Unbind e rebind per applicare il nuovo livello
+        # structlog.configure(**cfg)
+        # self._logger = structlog.get_logger().bind(logger=self.logger_name)
+        pass
 
 
 
-def get_logger(name=None, verbose=True, structured: bool = True, **initial_context: Any) -> BaseLogger:
+def get_logger(name=None, verbose=True, structured: bool = True, level: Optional[int] = None, is_root: bool = False, **initial_context: Any) -> BaseLogger:
     """
     Creates and returns a logger instance.
 
@@ -486,6 +556,7 @@ def get_logger(name=None, verbose=True, structured: bool = True, **initial_conte
         verbose (bool): Indicates if verbose logging is enabled. Defaults to True.
         structured (bool): Indicates if a structured logger should be created.
             Defaults to True.
+        level (int): The initial logging level (Logger.DEBUG, Logger.INFO, etc.). Defaults to None.
         **initial_context (Any): Additional keyword arguments defining initial logging
             context.
 
@@ -506,5 +577,5 @@ def get_logger(name=None, verbose=True, structured: bool = True, **initial_conte
         simple_logger.info("Simple log message")
     """
     if structured:
-        return StructLogger(name=name, verbose=verbose, **initial_context)
-    return Logger(name=name, verbose=verbose)
+        return StructLogger(name=name, verbose=verbose, level=level, is_root=is_root, **initial_context)
+    return Logger(name=name, verbose=verbose, level=level)

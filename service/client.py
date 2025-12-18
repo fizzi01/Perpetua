@@ -82,8 +82,7 @@ class Client:
             self.config.sync_load()
 
         # Set logging level
-        self._logger = get_logger(self.__class__.__name__)
-        self._logger.set_level(self.config.log_level)
+        self._logger = get_logger(self.__class__.__name__, level=self.config.log_level, is_root=True)
 
         # Initialize certificate manager
         self._cert_manager = CertificateManager(cert_dir=self.app_config.get_certificate_path())
