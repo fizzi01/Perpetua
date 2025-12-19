@@ -37,7 +37,7 @@ def backend_module(package: str, platform_map: dict = None):
     except ImportError as e:
         # Fallback on _base if specific module not found
         try:
-            module = importlib.import_module(f'._base', package=package)
+            module = importlib.import_module('._base', package=package)
             return module
         except ImportError:
             raise ImportError(f"Unable to load module for {platform} -> {e}")

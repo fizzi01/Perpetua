@@ -22,6 +22,8 @@ class ScreenPosition:
 
     @staticmethod
     def is_valid(position: Optional[str]) -> bool:
+        if position is None:
+            return True
         return position.lower() in {
             ScreenPosition.CENTER,
             ScreenPosition.TOP,
@@ -37,24 +39,24 @@ class ClientObj:
     def __init__(self,
                  ip_address: Optional[str] = None,
                  hostname: Optional[str] = None,
-                 ports: dict[int, int] = None,
+                 ports: Optional[dict[int, int]] = None,
                  connection_time: float = 0.0, # FixME: Use datetime and first and last. This connection_time can increase indefinitely !!!
-                 first_connection_date: str = None,
-                 last_connection_date: str = None,
+                 first_connection_date: Optional[str] = None,
+                 last_connection_date: Optional[str] = None,
                  is_connected: bool = False,
                  screen_position: str = ScreenPosition.CENTER,
                  screen_resolution: str = "1x1",
                  client_name: str = "Unknown",
                  ssl: bool = False,
                  conn_socket: Optional['ClientConnection'] = None,
-                 additional_params: dict = None):
+                 additional_params: Optional[dict] = None):
 
-        if hostname and not self._check_hostname(hostname):
+        if hostname is not None and not self._check_hostname(hostname):
             raise ValueError(f"Invalid hostname: {hostname}")
         self.host_name = hostname
 
         # We prioritize hostname validation over IP address validation
-        if ip_address and not self._check_ip(ip_address) and not self.host_name:
+        if ip_address is not None and not self._check_ip(ip_address) and not self.host_name:
             raise ValueError(f"Invalid IP address: {ip_address}")
         self.ip_address = ip_address
 
@@ -73,6 +75,14 @@ class ClientObj:
         self.conn_socket = conn_socket
         self.is_connected = is_connected
         self.additional_params = additional_params if additional_params is not None else {}
+
+    def set_connection_status(self, status: bool) -> None:
+        """
+        Sets the connection status of the client.
+        Args:
+            status: A boolean indicating the connection status to set.
+        """
+        self.is_connected = status
 
     def set_first_connection(self):
         """
@@ -170,11 +180,11 @@ class ClientObj:
         allowed = re.compile(r"(?!-)[A-Z\d-]{1,63}(?<!-)$", re.IGNORECASE)
         return all(allowed.match(x) for x in hostname.split("."))
 
-    def get_net_id(self) -> str:
+    def get_net_id(self) -> Optional[str]:
         """
         Returns a unique identifier for the client, prioritizing hostname over IP address.
         """
-        return self.host_name if self.host_name else self.ip_address
+        return self.host_name if self.host_name is not None else self.ip_address
 
     def to_dict(self) -> dict:
         return self.__dict__()

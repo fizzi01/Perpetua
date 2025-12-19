@@ -3,9 +3,7 @@ Provides mouse input support for macOS (Darwin) systems.
 """
 
 import Quartz
-from AppKit import (NSPasteboard,
-                    NSFilenamesPboardType,
-                    NSEventTypeGesture,
+from AppKit import (NSEventTypeGesture,
                     NSEventTypeBeginGesture,
                     NSEventTypeSwipe, NSEventTypeRotate,
                     NSEventTypeMagnify)

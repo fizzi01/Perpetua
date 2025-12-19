@@ -134,7 +134,7 @@ class ClientConnection:
         self._is_closed = False
 
     def add_stream(self, stream_type: int, reader: Optional[asyncio.StreamReader] = None,
-                   writer: Optional[asyncio.StreamWriter] = None, stream: Optional[StreamWrapper] = None):
+                   writer: Optional[asyncio.StreamWriter] = None, stream: Optional[StreamWrapper] = None) -> None:
         """
         Add a stream of the given type
 
@@ -147,20 +147,36 @@ class ClientConnection:
         Raises:
             ValueError: If neither stream nor both reader and writer are provided
         """
-        if not stream and (reader is None or writer is None):
-            raise ValueError("Either stream or both reader and writer must be provided")
         if stream:
             self.wrappers[stream_type] = stream
-        else:
+        elif reader and writer:
             self.wrappers[stream_type] = StreamWrapper(reader, writer)
+        else:
+            raise ValueError("Either stream or both reader and writer must be provided")
 
     def get_reader(self, stream_type: int) -> Optional[StreamWrapper.StreamReader]:
-        """Get reader for stream type"""
+        """
+        Get reader for stream type
+
+        Args:
+            stream_type (int): The type of the stream
+
+        Returns:
+            Optional[StreamWrapper.StreamReader]: The StreamReader if exists, else None
+        """
         st = self.wrappers.get(stream_type)
         return st.get_reader() if st else None
 
     def get_writer(self, stream_type: int) -> Optional[StreamWrapper.StreamWriter]:
-        """Get writer for stream type"""
+        """
+        Get writer for stream type
+
+        Args:
+            stream_type (int): The type of the stream
+
+        Returns:
+            Optional[StreamWrapper.StreamWriter]: The StreamWriter if exists, else None
+        """
         st = self.wrappers.get(stream_type)
         return st.get_writer() if st and st.get_writer() else None
 

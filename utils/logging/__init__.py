@@ -80,23 +80,23 @@ class BaseLogger(ABC):
         pass
 
     @abstractmethod
-    def debug(self, message: str):
+    def debug(self, message: str, **kw: Any):
         pass
 
     @abstractmethod
-    def info(self, message: str):
+    def info(self, message: str, **kw: Any):
         pass
 
     @abstractmethod
-    def warning(self, message: str):
+    def warning(self, message: str, **kw: Any):
         pass
 
     @abstractmethod
-    def error(self, message: str):
+    def error(self, message: str, **kw: Any):
         pass
 
     @abstractmethod
-    def critical(self, message: str):
+    def critical(self, message: str, **kw: Any):
         pass
 
     @abstractmethod
@@ -242,23 +242,23 @@ class Logger(BaseLogger):
             self._logger.info(message)
 
     # Metodi di convenience per compatibilità
-    def debug(self, message):
+    def debug(self, message: str, **kw: Any):
         """Log a debug level"""
         self.log(message, self.DEBUG)
 
-    def info(self, message):
+    def info(self, message: str, **kw: Any):
         """Log a info level"""
         self.log(message, self.INFO)
 
-    def warning(self, message):
+    def warning(self, message: str, **kw: Any):
         """Log a warning level"""
         self.log(message, self.WARNING)
 
-    def error(self, message):
+    def error(self,message: str, **kw: Any):
         """Log a error level"""
         self.log(message, self.ERROR)
 
-    def critical(self, message):
+    def critical(self, message: str, **kw: Any):
         """Log a critical level"""
         self.log(message, self.CRITICAL)
 
@@ -273,9 +273,9 @@ class StructLogger(BaseLogger):
     _lock = threading.Lock()
     _app_namespace = 'PyContinuity'
     _configured = False
-    _global_config = {
+    _global_config: dict[str, bool | int] = {
         'verbose': True,
-        'level': None
+        'level': -1,  # -1 indicates not set
     }
 
     level_map = {
@@ -325,6 +325,9 @@ class StructLogger(BaseLogger):
         else:
             self.logger_name = name
 
+        if level is None:
+            level = self.DEBUG if verbose else self.INFO
+
         # Configure structlog in a thread-safe manner
         with self._lock:
             if not StructLogger._configured or is_root:
@@ -332,8 +335,8 @@ class StructLogger(BaseLogger):
                 StructLogger._global_config['level'] = level
                 self._configure_structlog(verbose, level)
                 StructLogger._configured = True
-            else:
-                verbose = StructLogger._global_config['verbose']
+            elif StructLogger._global_config is not None:
+                verbose: bool = StructLogger._global_config['verbose']  # ty:ignore[invalid-assignment]
                 level = StructLogger._global_config['level']
                 self._configure_structlog(verbose, level)
 

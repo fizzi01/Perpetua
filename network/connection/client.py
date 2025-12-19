@@ -40,8 +40,8 @@ class ConnectionHandler:
                  heartbeat_interval: int = 10,
                  max_errors: int = 10,
                  clients: Optional[ClientsManager] = None,
-                 open_streams: list[int] = None,
-                 certfile: str = None,
+                 open_streams: Optional[list[int]] = None,
+                 certfile: Optional[str] = None,
                  auto_reconnect: bool = True):
         """
         Manages client connections to server.
@@ -107,11 +107,7 @@ class ConnectionHandler:
             # Initialize client object
             self._client_obj = self.clients.get_client()
             if not self._client_obj:
-                self._client_obj = ClientObj(
-                    ssl=self.use_ssl,
-                    screen_position="unknown"
-                )
-                self.clients.add_client(self._client_obj)
+                raise Exception("Missing client object in ClientsManager")
 
             self._client_obj.ssl = self.use_ssl
             self.clients.update_client(self._client_obj)
@@ -181,10 +177,13 @@ class ConnectionHandler:
                         self._logger.log("Connection established, performing handshake...", Logger.INFO)
 
                         # Set first client connection socket
-                        client = self.clients.get_client()
-                        client.set_connection(ClientConnection(("", 0)))
-                        client.get_connection().add_stream(stream_type=StreamType.COMMAND,stream=self._command_stream)
-                        self.clients.update_client(client)
+                        if self._client_obj is None:
+                            raise Exception("Client not connected")
+
+                        conn = ClientConnection(("", 0))
+                        conn.add_stream(stream_type=StreamType.COMMAND, stream=self._command_stream)
+                        self._client_obj.set_connection(connection=conn)
+                        self.clients.update_client(self._client_obj)
 
                         # Perform handshake
                         if await self._handshake():
@@ -194,7 +193,10 @@ class ConnectionHandler:
                             self._logger.log("Handshake successful, client connected", Logger.INFO)
 
                             # Update client status
-                            self._client_obj.is_connected = True
+                            self._client_obj.set_connection_status(status=True)
+                            if self._command_stream is None:
+                                raise Exception("Command stream is None after handshake")
+
                             self._client_obj.ip_address = self._command_stream.get_sockname()[0]
                             self.clients.update_client(self._client_obj)
 
@@ -293,6 +295,9 @@ class ConnectionHandler:
                 auto_dispatch=False,  # We want to control message handling manually
             )
             self._msg_exchange = MessageExchange(config)
+            if self._command_stream is None:
+                raise Exception("Command stream is None during handshake")
+
             await self._msg_exchange.set_transport(self._command_stream.get_writer_call(),
                                                    self._command_stream.get_reader_call())
 
@@ -316,6 +321,9 @@ class ConnectionHandler:
                 return False
 
             self._logger.log("Received valid handshake request from server", Logger.DEBUG)
+
+            if self._client_obj is None:
+                raise Exception("Client object is None during handshake")
 
             # Send handshake response
             await self._msg_exchange.send_handshake_message(
@@ -390,11 +398,14 @@ class ConnectionHandler:
                                            timeout=self.CONNECTION_ATTEMPT_TIMEOUT)
 
                 # Store connected stream readers and writers in ClientConnection
-                client = self.clients.get_client()
-                if client.get_connection() is not None:
-                    client.get_connection().add_stream(stream_type=stream_type,
+                if self._client_obj is None:
+                    raise Exception("Client object is None when opening additional streams")
+                conn = self._client_obj.get_connection()
+                if conn is not None:
+                    conn.add_stream(stream_type=stream_type,
                                                        reader=reader, writer=writer)
-                self.clients.update_client(client)
+                self._client_obj.set_connection(connection=conn)
+                self.clients.update_client( self._client_obj)
 
                 self._logger.log(f"Stream {stream_type} connected", Logger.DEBUG)
 
@@ -421,11 +432,13 @@ class ConnectionHandler:
                 # Send heartbeat message
                 # await self._msg_exchange.send_custom_message(message_type="HEARTBEAT", payload={})
                 # Get reader from client connection and check if eof is reached
-                client = self.clients.get_client()
-                c_conn = client.get_connection()
+                if self._client_obj is None:
+                    raise Exception("Client object is None during heartbeat")
+
+                c_conn =  self._client_obj.get_connection()
                 if c_conn is not None and c_conn.has_stream(StreamType.COMMAND):
                     command_reader = c_conn.get_reader(StreamType.COMMAND)
-                    if command_reader.is_closed():
+                    if command_reader is None or command_reader.is_closed():
                         raise ConnectionResetError("Command stream EOF reached")
 
             except asyncio.CancelledError:
@@ -477,9 +490,11 @@ class ConnectionHandler:
         """Close all stream connections"""
         try:
             # Get current client
-            client = self.clients.get_client()
-            if client.get_connection() is not None:
-                await client.get_connection().wait_closed()
+            if self._client_obj is not None:
+                conn = self._client_obj.get_connection()
+                if conn is not None:
+                    await conn.wait_closed()
+
         except Exception as e:
             self._logger.warning(f"Error closing streams -> {e}")
 

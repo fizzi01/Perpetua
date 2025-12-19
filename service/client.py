@@ -196,7 +196,7 @@ class Client:
     def _remove_certificate(self) -> None:
         """Remove loaded SSL certificate. It will disable SSL connection."""
         if self.has_certificate():
-            self._logger.info(f"Removing certificate and disabling SSL connection")
+            self._logger.info("Removing certificate and disabling SSL connection")
             # Certificate removal would be handled by CertificateManager
             self.disable_ssl()
         else:
@@ -271,7 +271,7 @@ class Client:
                 self._cert_manager.extend_mapping(source_id=self._cert_receiver.get_resolved_host(), cert_filename=cur_name)
             self.config.enable_ssl()
 
-            self._logger.info(f"Certificate received and saved successfully")
+            self._logger.info("Certificate received and saved successfully")
             return True
 
         except Exception as e:
@@ -817,7 +817,7 @@ async def main():
         print("Failed to start client")
         return
 
-    print(f"Client started successfully")
+    print("Client started successfully")
     print(f"Connecting to {client.config.get_server_host()}:{client.config.get_server_port()}")
     print(f"Enabled streams: {client.get_enabled_streams()}")
 

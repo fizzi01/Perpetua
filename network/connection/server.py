@@ -44,7 +44,7 @@ class ConnectionHandler:
                  host: str = "0.0.0.0", port: int = 5001,
                  heartbeat_interval: int = 2,
                  allowlist: Optional[ClientsManager] = None,
-                 certfile: str = None, keyfile: str = None):
+                 certfile: Optional[str] = None, keyfile: Optional[str] = None):
         # Nota: msg_exchange non usato, ogni client ha il proprio
         self.certfile = certfile
         self.keyfile = keyfile
@@ -235,7 +235,7 @@ class ConnectionHandler:
         return client_obj.ip_address == address
 
     async def _handshake(self, reader: asyncio.StreamReader, writer: asyncio.StreamWriter,
-                         client_addr, client: ClientObj) -> bool:
+                         client_addr, client: Optional[ClientObj]) -> bool:
         """
         Esegue l'handshake con il client usando MessageExchange asyncio.
 
@@ -315,8 +315,9 @@ class ConnectionHandler:
                 self._logger.log(f"Client {client.get_net_id()}", Logger.DEBUG, client=client.to_dict())
 
                 # Crea AsyncClientConnection per gestire multiple streams asyncio
-                client.set_connection(ClientConnection(client_addr))
-                client.get_connection().add_stream(stream_type=StreamType.COMMAND, stream=cur_stream)
+                conn = ClientConnection(client_addr)
+                conn.add_stream(stream_type=StreamType.COMMAND, stream=cur_stream)
+                client.set_connection(connection=conn)
 
                 # Send position info back to client
                 await client_msg_exchange.send_handshake_message(
@@ -356,7 +357,11 @@ class ConnectionHandler:
                                                        )
                                 self._logger.log(f"SSL stream connection for {stream_type} from {stream_addr}", Logger.INFO)
 
-                            client.get_connection().add_stream(stream_type=stream_type, reader=stream_reader, writer=stream_writer)
+                            conn = client.get_connection()
+                            if conn is None:
+                                raise ConnectionError("Client connection lost during handshake")
+                            conn.add_stream(stream_type=stream_type, reader=stream_reader, writer=stream_writer)
+                            client.set_connection(connection=conn)
                             client.ports[stream_type] = stream_addr[1]
 
                             self._logger.log(f"Stream {stream_type} connected from {stream_addr}", Logger.DEBUG)
@@ -371,7 +376,6 @@ class ConnectionHandler:
                             await client_msg_exchange.stop()
                             return False
                         except Exception as e:
-                            import traceback
                             self._logger.log(f"Error accepting stream {stream_type} -> {e}", Logger.ERROR)
                             # Pulisci i pending streams
                             if client.ip_address in self._pending_streams:
@@ -403,8 +407,12 @@ class ConnectionHandler:
 
                 self._logger.log(f"Client {client.get_net_id()} connected and handshake completed.", Logger.INFO)
                 return True
-            else:
+            elif client is not None:
                 self._logger.log(f"Invalid handshake response from client {client.get_net_id()}", Logger.WARNING)
+                await client_msg_exchange.stop()
+                return False
+            else:
+                self._logger.log(f"Invalid handshake response from unknown client {client_addr}", Logger.WARNING)
                 await client_msg_exchange.stop()
                 return False
 
@@ -423,7 +431,9 @@ class ConnectionHandler:
         client.is_connected = False
 
         try:
-            await client.get_connection().wait_closed()
+            conn = client.get_connection()
+            if conn is not None:
+                await conn.wait_closed()
         except Exception as e:
             self._logger.warning(f"Error while waiting for client {client.get_net_id()} connection to close -> {e}")
 
@@ -443,12 +453,12 @@ class ConnectionHandler:
     async def _heartbeat_loop(self):
         """Loop di heartbeat per verificare le connessioni e aggiornare metriche"""
         try:
-            # Init MessageExchange config one time
-            config = MessageExchangeConfig(
-                max_chunk_size=4096,
-                auto_chunk=True,
-                auto_dispatch=False,  # We want to control message handling manually
-            )
+            # # Init MessageExchange config one time
+            # config = MessageExchangeConfig(
+            #     max_chunk_size=4096,
+            #     auto_chunk=True,
+            #     auto_dispatch=False,  # We want to control message handling manually
+            # )
             heartbeat_trials = {} # We store trials per client so we can implement a retry mechanism
 
             while self._running:
@@ -461,22 +471,25 @@ class ConnectionHandler:
 
                     if client.is_connected and client.get_connection() is not None:
                         try:
-                            if not client.get_connection().is_open():
+                            client_conn = client.get_connection()
+                            if client_conn is None:
+                                raise ConnectionResetError("No connection found")
+
+                            if not client_conn.is_open():
                                 raise ConnectionResetError("Connection is closed")
 
-                            client_conn = client.get_connection()
                             # Send heartbeat message
-                            client_msg_exchange = MessageExchange(config, id=f"Heartbeat_{client.get_net_id()}")
                             cmd_stream = client_conn.get_stream(StreamType.COMMAND)
                             if cmd_stream is None:
                                 raise ConnectionResetError("Command stream not found")
 
+                            # client_msg_exchange = MessageExchange(config, id=f"Heartbeat_{client.get_net_id()}")
                             # await client_msg_exchange.set_transport(cmd_stream.get_writer_call(), None)
                             # await client_msg_exchange.send_custom_message(message_type="HEARTBEAT", payload={})
 
                             # Check eof on reader
                             command_reader = client_conn.get_reader(StreamType.COMMAND)
-                            if command_reader.is_closed():
+                            if command_reader is None or command_reader.is_closed():
                                 raise ConnectionResetError("Command stream reader is closed")
 
                             # Update active time
@@ -515,5 +528,7 @@ class ConnectionHandler:
     def _ssl_wrap(self, client_socket):
         """Wrap del socket con SSL"""
         context = self._get_ssl_context()
+        if context is None:
+            return client_socket
         ssl_socket = context.wrap_socket(client_socket, server_side=True)
         return ssl_socket

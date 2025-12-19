@@ -225,7 +225,7 @@ class MessageBuilder:
         return chunks
 
     @staticmethod
-    def reconstruct_from_chunks(chunks: List[ProtocolMessage]) -> ProtocolMessage:
+    def reconstruct_from_chunks(chunks: List[Optional[ProtocolMessage]]) -> ProtocolMessage:
         """
         Reconstruct original message from ProtocolMessage chunks.
 
@@ -241,6 +241,9 @@ class MessageBuilder:
         if len(chunks) == 1 and not chunks[0].is_chunk:
             # Single message, no chunking
             return chunks[0]
+
+        # Avoid None chunks
+        chunks: list[ProtocolMessage] = [c for c in chunks if c is not None]
 
         # Sort chunks by index
         sorted_chunks = sorted(chunks, key=lambda c: c.chunk_index)
@@ -312,8 +315,8 @@ class MessageBuilder:
         )
 
     def create_mouse_message(self, x: float = 0, y: float = 0, dx: float = 0, dy: float = 0, event: str = "",
-                             is_pressed: bool = False, source: str = None,
-                             target: str = None, **kwargs) -> ProtocolMessage:
+                             is_pressed: bool = False, source: Optional[str] = None,
+                             target: Optional[str] = None, **kwargs) -> ProtocolMessage:
         """Create a mouse event message with timestamp."""
         return ProtocolMessage(
             message_type=MessageType.MOUSE,
@@ -333,7 +336,7 @@ class MessageBuilder:
         )
 
     def create_keyboard_message(self, key: str, event: str,
-                                source: str = None, target: str = None) -> ProtocolMessage:
+                                source: Optional[str] = None, target: Optional[str] = None) -> ProtocolMessage:
         """Create a keyboard event message with timestamp."""
         return ProtocolMessage(
             message_type=MessageType.KEYBOARD,
@@ -348,7 +351,7 @@ class MessageBuilder:
         )
 
     def create_clipboard_message(self, content: str, content_type: str = "text",
-                                 source: str = None, target: str = None) -> ProtocolMessage:
+                                 source: Optional[str] = None, target: Optional[str] = None) -> ProtocolMessage:
         """Create a clipboard message with timestamp."""
         return ProtocolMessage(
             message_type=MessageType.CLIPBOARD,
@@ -362,8 +365,8 @@ class MessageBuilder:
             target=target
         )
 
-    def create_screen_message(self, command: str, data: Dict[str, Any] = None,
-                              source: str = None, target: str = None) -> ProtocolMessage:
+    def create_screen_message(self, command: str, data: Optional[Dict[str, Any] ] = None,
+                              source: Optional[str] = None, target: Optional[str] = None) -> ProtocolMessage:
         """Create a screen notification message with timestamp."""
         return ProtocolMessage(
             message_type=MessageType.SCREEN,
@@ -377,8 +380,8 @@ class MessageBuilder:
             target=target
         )
 
-    def create_command_message(self, command: str, params: Dict[str, Any] = None,
-                               source: str = None, target: str = None) -> ProtocolMessage:
+    def create_command_message(self, command: str, params: Optional[Dict[str, Any] ] = None,
+                               source: Optional[str] = None, target: Optional[str] = None) -> ProtocolMessage:
         """Create a command message with timestamp."""
         return ProtocolMessage(
             message_type=MessageType.COMMAND,
@@ -393,7 +396,7 @@ class MessageBuilder:
         )
 
     def create_file_message(self, command: str, data: Dict[str, Any],
-                            source: str = None, target: str = None) -> ProtocolMessage:
+                            source: Optional[str] = None, target: Optional[str] = None) -> ProtocolMessage:
         """Create a file transfer message with timestamp."""
         return ProtocolMessage(
             message_type=MessageType.FILE,
@@ -407,10 +410,10 @@ class MessageBuilder:
             target=target
         )
 
-    def create_handshake_message(self, client_name: str, screen_resolution: str,
-                                 screen_position: str, additional_params: Dict[str, Any] = None,
-                                 ack: bool = True, ssl: bool = True, streams: List[int] = None,
-                                 source: str = None, target: str = None) -> ProtocolMessage:
+    def create_handshake_message(self, client_name: Optional[str], screen_resolution: Optional[str],
+                                 screen_position: Optional[str] = None, additional_params: Optional[Dict[str, Any]] = None,
+                                 ack: bool = True, ssl: bool = True, streams: Optional[List[int]] = None,
+                                 source: Optional[str] = None, target: Optional[str] = None) -> ProtocolMessage:
         """Create a handshake message with timestamp."""
         return ProtocolMessage(
             message_type=MessageType.EXCHANGE,

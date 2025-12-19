@@ -2,7 +2,7 @@ import asyncio
 from typing import Optional
 
 from network.data import MissingTransportError
-from utils.logging import Logger, get_logger
+from utils.logging import get_logger
 from network.stream import StreamHandler
 from network.data.exchange import MessageExchange, MessageExchangeConfig
 from model.client import ClientsManager, ClientObj
@@ -183,12 +183,12 @@ class UnidirectionalStreamHandler(StreamHandler):
                     self._active_client = None
                     await asyncio.sleep(0)  # yield control
                 except MissingTransportError:
-                    self._logger.warning(f"Missing transport")
+                    self._logger.warning("Missing transport")
                     await asyncio.sleep(0) #yield control
                 except RuntimeError as e:
                     # uv/winloop runtime error on closed tcp transport
                     if "closed=True" in str(e):
-                        self._logger.warning(f"Transport closed")
+                        self._logger.warning("Transport closed")
                         self._active_client = None
                         await asyncio.sleep(0)  # yield control
                     else:
@@ -342,12 +342,12 @@ class BidirectionalStreamHandler(StreamHandler):
                     self._active_client = None
                     await asyncio.sleep(0)  # yield control
                 except MissingTransportError:
-                    self._logger.warning(f"Missing transport")
+                    self._logger.warning("Missing transport")
                     await asyncio.sleep(0) #yield control
                 except RuntimeError as e:
                     # uv/winloop runtime error on closed tcp transport
                     if "closed=True" in str(e):
-                        self._logger.warning(f"Transport closed")
+                        self._logger.warning("Transport closed")
                         self._active_client = None
                         await asyncio.sleep(0)  # yield control
                     else:
@@ -564,12 +564,12 @@ class MulticastStreamHandler(StreamHandler):
                     self._active_client = None
                     await asyncio.sleep(0)  # yield control
                 except MissingTransportError:
-                    self._logger.warning(f"Missing transport")
+                    self._logger.warning("Missing transport")
                     await asyncio.sleep(0) #yield control
                 except RuntimeError as e:
                     # uv/winloop runtime error on closed tcp transport
                     if "closed=True" in str(e):
-                        self._logger.warning(f"Transport closed")
+                        self._logger.warning("Transport closed")
                         self._active_client = None
                         await asyncio.sleep(0)  # yield control
                     else:

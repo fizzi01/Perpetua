@@ -1,7 +1,6 @@
 """
 Logic to handle cursor visibility on Windows systems.
 """
-from queue import Empty
 from typing import Optional
 import wx
 
@@ -131,7 +130,7 @@ class CursorHandlerWindow(_base.CursorHandlerWindow):
     def update_ui(self, panel_obj, data, call):
         try:
             call(data)
-        except Exception as e:
+        except Exception:
             pass
 
 

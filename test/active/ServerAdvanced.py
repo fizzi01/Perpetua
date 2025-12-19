@@ -49,7 +49,7 @@ async def interactive_server():
     server_config.enable_ssl()
 
     # Set logging
-    server_config.set_logging(level=Logger.DEBUG)
+    server_config.set_logging(level=Logger.INFO)
 
     server = Server(
         app_config=app_config,

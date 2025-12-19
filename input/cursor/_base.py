@@ -1,8 +1,9 @@
 from queue import Empty
-from time import time
 import asyncio
 
 import wx
+from wx.core import Point
+
 import time
 import threading
 
@@ -37,7 +38,7 @@ class CursorHandlerWindow(wx.Frame):
 
         self._debug = debug
         self.mouse_captured = False
-        self.center_pos = None
+        self.center_pos: Optional[Point] = None
 
         self.command_queue: Queue = command_queue
         self.result_queue: Queue = result_queue
@@ -92,13 +93,6 @@ class CursorHandlerWindow(wx.Frame):
                             'type': 'stats',
                             'is_captured': self.mouse_captured,
                         })
-
-                    elif cmd_type == 'set_message':
-                        message = command.get('message', '')
-                        if self.panel is not None and hasattr(self.panel, 'info_text'):
-                            self.panel.info_text.SetLabel(message)
-                        self.result_queue.put({'type': 'message_set', 'success': True})
-
                     elif cmd_type == 'quit':
                         self._running = False
                         self.Close()
@@ -186,7 +180,7 @@ class CursorHandlerWindow(wx.Frame):
             # Calcola il centro della finestra
             size = self.GetSize()
             pos = self.GetPosition()
-            self.center_pos = (pos.x + size.width // 2, pos.y + size.height // 2)
+            self.center_pos: Point = Point(pos.x + size.width // 2, pos.y + size.height // 2)
 
             # Nascondi il cursore
             self.handle_cursor_visibility(False)
@@ -194,11 +188,6 @@ class CursorHandlerWindow(wx.Frame):
             # Cattura il mouse
             self.CaptureMouse()
             self.reset_mouse_position()
-
-            # Aggiorna UI
-            if self._debug and self.panel is not None and hasattr(self.panel, 'status_text'):
-                self.update_ui(self.panel, "Mouse Capture: ATTIVO", self.panel.status_text.SetLabel)
-                self.update_ui(self.panel, wx.Colour(100, 255, 100), self.panel.status_text.SetForegroundColour)
 
     def disable_mouse_capture(self):
         """
@@ -214,18 +203,13 @@ class CursorHandlerWindow(wx.Frame):
             # Ripristina il cursore
             self.handle_cursor_visibility(True)
 
-            # Aggiorna UI
-            if self._debug and self.panel is not None and hasattr(self.panel, 'status_text'):
-                self.update_ui(self.panel, "Mouse Capture: DISATTIVO", self.panel.status_text.SetLabel)
-                self.update_ui(self.panel, wx.Colour(255, 100, 100), self.panel.status_text.SetForegroundColour)
-
             self.HideOverlay()
 
     def reset_mouse_position(self):
         """
         Reset mouse position to center.
         """
-        if self.mouse_captured and self.center_pos:
+        if self.mouse_captured and self.center_pos is not None:
             # Sposta il cursore al centro della finestra
             client_center = self.ScreenToClient(self.center_pos)
             self.WarpPointer(client_center.x, client_center.y)
@@ -234,7 +218,7 @@ class CursorHandlerWindow(wx.Frame):
         """
         Handle mouse movement events.
         """
-        if not self.mouse_captured:
+        if not self.mouse_captured or self.center_pos is None:
             event.Skip()
             return
 
@@ -242,14 +226,14 @@ class CursorHandlerWindow(wx.Frame):
         mouse_pos = wx.GetMousePosition()
 
         # Calcola delta rispetto al centro
-        delta_x = mouse_pos.x - self.center_pos[0]
-        delta_y = mouse_pos.y - self.center_pos[1]
+        delta_x = mouse_pos.x - self.center_pos.x
+        delta_y = mouse_pos.y - self.center_pos.y
 
         # Processa solo se c'è movimento
         if delta_x != 0 or delta_y != 0:
             try:
                 self.mouse_conn.send((delta_x, delta_y))
-            except Exception as e:
+            except Exception:
                 pass
 
             # Resetta posizione
@@ -330,10 +314,10 @@ class CursorHandlerWorker(object):
         self._logger = get_logger(self.__class__.__name__)
 
         # Register to active_screen with async callbacks
-        self.event_bus.subscribe(event_type=EventType.SCREEN_CHANGE_GUARD, callback=self._on_screen_change_guard)
-        self.event_bus.subscribe(event_type=EventType.CLIENT_DISCONNECTED, callback=self._on_client_disconnected)
+        self.event_bus.subscribe(event_type=EventType.SCREEN_CHANGE_GUARD, callback=self._on_screen_change_guard)  # ty:ignore[invalid-argument-type]
+        self.event_bus.subscribe(event_type=EventType.CLIENT_DISCONNECTED, callback=self._on_client_disconnected)  # ty:ignore[invalid-argument-type]
 
-    async def _on_screen_change_guard(self, data: Optional[ActiveScreenChangedEvent]):
+    async def _on_screen_change_guard(self, data: Optional[ActiveScreenChangedEvent]) -> None:
         """Async callback for active screen changed"""
 
         if data is None:
@@ -463,7 +447,7 @@ class CursorHandlerWorker(object):
         """
         loop = asyncio.get_running_loop()
 
-        while self._is_running:
+        while self._is_running and self.stream is not None:
             try:
                 # Poll non-bloccante
                 has_data = await loop.run_in_executor(None, self.mouse_conn_rec.poll, 0.0000001)
@@ -484,7 +468,7 @@ class CursorHandlerWorker(object):
 
             except EOFError:
                 break
-            except Exception as e:
+            except Exception:
                 await asyncio.sleep(0.01)
 
     def send_command(self, command):

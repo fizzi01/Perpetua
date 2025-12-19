@@ -234,6 +234,9 @@ class Server:
                 return certfile, keyfile
             else:
                 certfile, keyfile = self._cert_manager.get_server_credentials()
+                if not certfile or not keyfile:
+                    raise RuntimeError("SSL certificates found but failed to load")
+
                 self._logger.info("SSL certificates found and loaded")
                 return certfile, keyfile
         except Exception as e:
@@ -382,7 +385,7 @@ class Server:
             screen_position=screen_position
         )
         if client:
-            if self._running:  # If server is running, disconnect client first
+            if self._running and self.connection_handler is not None:  # If server is running, disconnect client first
                 await self.connection_handler.force_disconnect_client(client)
             # Finally remove from allowlist
             self.config.remove_client(client=client)

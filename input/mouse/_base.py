@@ -8,8 +8,7 @@ from threading import Event
 from pynput.mouse import Button, Controller as MouseController
 from pynput.mouse import Listener as MouseListener
 
-from event import EventType, MouseEvent, EventMapper, CrossScreenCommandEvent, ActiveScreenChangedEvent, BusEvent, \
-    ClientConnectedEvent, ClientDisconnectedEvent, ClientActiveEvent
+from event import EventType, MouseEvent, EventMapper, CrossScreenCommandEvent, ActiveScreenChangedEvent, ClientConnectedEvent, ClientDisconnectedEvent, ClientActiveEvent
 from event.bus import EventBus
 from model.client import ScreenPosition
 
@@ -591,7 +590,7 @@ class ClientMouseController(object):
         Async worker task to handle mouse events.
         Replaces the multiprocessing worker.
         """
-        loop = asyncio.get_running_loop()
+        #loop = asyncio.get_running_loop()
 
         while self._running:
             try:

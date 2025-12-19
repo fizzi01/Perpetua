@@ -149,7 +149,7 @@ class OrderedMessageProcessor:
                 self._callback_thread.start()
 
                 self._started = True
-            except Exception as e:
+            except Exception:
                 self._started = False
                 raise
 
@@ -187,7 +187,7 @@ class OrderedMessageProcessor:
         index = message.sequence_id % self.parallel_processors
         try:
             self._input_queues[index].put_nowait(message)
-        except:
+        except Exception:
             # Queue full, skip or handle based on requirements
             pass
 
@@ -200,7 +200,7 @@ class OrderedMessageProcessor:
                     msg_type, messages = self._output_queue.get(timeout=0.05)
                     for message in messages:
                         self.process_callback(message)
-                except:
+                except Exception:
                     pass  # Timeout, continue checking stop event
 
             except Exception as e:
@@ -224,7 +224,7 @@ class OrderedMessageProcessor:
                 try:
                     message = input_queue.get(timeout=0.01)
                     queue.put(message)
-                except:
+                except Exception:
                     pass
 
                 # Get ready messages

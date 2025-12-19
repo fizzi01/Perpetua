@@ -1,7 +1,6 @@
 """
 Logic to handle cursor visibility on macOS systems.
 """
-from queue import Empty
 from typing import Optional
 
 import wx
@@ -17,7 +16,6 @@ from Quartz import kCGMaximumWindowLevel
 
 
 from AppKit import (
-    NSCursor,
     NSApplication,
     NSWindowCollectionBehaviorCanJoinAllSpaces,
     NSScreenSaverWindowLevel,
@@ -26,19 +24,11 @@ from AppKit import (
     NSApplicationActivateIgnoringOtherApps,
     NSApplicationPresentationAutoHideDock,
     NSApplicationPresentationAutoHideMenuBar,
-    NSWindowCollectionBehaviorParticipatesInCycle,
     NSWindowCollectionBehaviorStationary,
-    NSWindowCollectionBehaviorFullScreenAuxiliary,
-    NSWindowCollectionBehaviorMoveToActiveSpace
+    NSWindowCollectionBehaviorFullScreenAuxiliary
 )
 
 # Accessibility API
-from ApplicationServices import (
-    AXUIElementCreateApplication,
-    AXUIElementCopyAttributeValue,
-    AXUIElementSetAttributeValue,
-    kAXWindowsAttribute
-)
 
 
 from event.bus import EventBus
@@ -195,7 +185,7 @@ class CursorHandlerWindow(_base.CursorHandlerWindow):
     def update_ui(self, panel_obj, data, call):
         try:
             call(data)
-        except Exception as e:
+        except Exception:
             pass
 
 

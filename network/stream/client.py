@@ -1,7 +1,7 @@
 import asyncio
 from typing import Optional
 
-from utils.logging import Logger, get_logger
+from utils.logging import get_logger
 from event import EventType, ClientActiveEvent
 from network.stream import StreamHandler
 from network.data.exchange import MessageExchange, MessageExchangeConfig
@@ -61,7 +61,7 @@ class UnidirectionalStreamHandler(StreamHandler):
         self._main_client: Optional[ClientObj] = self.clients.get_client()
 
         if self._main_client is None:
-            self._logger.error(f"No main client found in ClientsManager")
+            self._logger.error("No main client found in ClientsManager")
             raise ValueError(f"[{self.handler_id}] No main client found in ClientsManager")
 
         # Subscribe with async callbacks
@@ -104,8 +104,8 @@ class UnidirectionalStreamHandler(StreamHandler):
                 await self.msg_exchange.start()
                 #self.logger.debug(f"[{self.handler_id}] Client is active")
             else:
-                self._logger.error(f"No valid stream for main client")
-                raise ValueError(f"No valid stream for main client")
+                self._logger.error("No valid stream for main client")
+                raise ValueError("No valid stream for main client")
         finally:
             self._clear_buffer()
 
@@ -203,7 +203,7 @@ class BidirectionalStreamHandler(StreamHandler):
         self._main_client: Optional[ClientObj] = self.clients.get_client()
 
         if self._main_client is None:
-            self._logger.error(f"No main client found in ClientsManager")
+            self._logger.error("No main client found in ClientsManager")
             raise ValueError(f"[{self.handler_id}] No main client found in ClientsManager")
 
         self._logger = get_logger(self.handler_id)
@@ -249,8 +249,8 @@ class BidirectionalStreamHandler(StreamHandler):
                 await self.msg_exchange.start()
                 # self.logger.debug(f"[{self.handler_id}] Client is active")
             else:
-                self._logger.error(f"No valid stream for main client")
-                raise ValueError(f"No valid stream for main client")
+                self._logger.error("No valid stream for main client")
+                raise ValueError("No valid stream for main client")
         finally:
             self._clear_buffer()
 

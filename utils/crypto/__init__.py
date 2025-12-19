@@ -246,7 +246,7 @@ class CertificateManager:
             self._logger.log(f"Error saving CA data: {e}", Logger.ERROR)
             return False
 
-    def extend_mapping(self, source_id: str, cert_filename: Optional[str]) -> bool:
+    def extend_mapping(self, source_id: Optional[str], cert_filename: Optional[str]) -> bool:
         """
         Extends the certificate mapping by adding or updating the mapping between
         a source ID and a certificate filename. Validates that neither of the

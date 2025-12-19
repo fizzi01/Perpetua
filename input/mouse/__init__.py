@@ -2,7 +2,7 @@ from utils import backend_module
 from typing import TYPE_CHECKING
 
 if TYPE_CHECKING:
-    from ._base import *
+    from ._base import ServerMouseListener, ServerMouseController, ClientMouseController
 else:
     # Load platform-specific mouse module
     _mouse_module = backend_module(__name__)
