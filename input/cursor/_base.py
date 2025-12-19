@@ -11,12 +11,19 @@ from multiprocessing import Queue, Pipe, Process
 from multiprocessing.connection import Connection
 from typing import Optional
 
-from event import EventType, MouseEvent, ActiveScreenChangedEvent, ClientDisconnectedEvent, BusEvent
+from event import (
+    EventType,
+    MouseEvent,
+    ActiveScreenChangedEvent,
+    ClientDisconnectedEvent,
+    BusEvent,
+)
 from event.bus import EventBus
 
 from network.stream import StreamHandler
 
 from utils.logging import get_logger
+
 
 # TODO : We need to check if a mouse is available
 class CursorHandlerWindow(wx.Frame):
@@ -24,7 +31,15 @@ class CursorHandlerWindow(wx.Frame):
     Base class for cursor handling window.
     Derived classes must implement platform-specific methods.
     """
-    def __init__(self, command_queue: Queue, result_queue:  Queue, mouse_conn: Connection, debug: bool = False, **frame_kwargs):
+
+    def __init__(
+        self,
+        command_queue: Queue,
+        result_queue: Queue,
+        mouse_conn: Connection,
+        debug: bool = False,
+        **frame_kwargs,
+    ):
         """
         Initialize the cursor handler window.
         Args:
@@ -49,11 +64,15 @@ class CursorHandlerWindow(wx.Frame):
 
         # Start command processing thread
         self._running = True
-        self.command_thread = threading.Thread(target=self._process_commands, daemon=True)
+        self.command_thread = threading.Thread(
+            target=self._process_commands, daemon=True
+        )
         self.command_thread.start()
 
         # Panel principale
-        self.panel: Optional[wx.Panel] = None # Placeholder for derived classes to customize
+        self.panel: Optional[wx.Panel] = (
+            None  # Placeholder for derived classes to customize
+        )
 
         if not self._debug:
             self.SetTransparent(0)
@@ -79,21 +98,27 @@ class CursorHandlerWindow(wx.Frame):
             while self._running:
                 try:
                     command = self.command_queue.get(timeout=0.1)
-                    cmd_type = command.get('type')
+                    cmd_type = command.get("type")
 
-                    if cmd_type == 'enable_capture':
+                    if cmd_type == "enable_capture":
                         wx.CallAfter(self.enable_mouse_capture)
-                        self.result_queue.put({'type': 'capture_enabled', 'success': True})
+                        self.result_queue.put(
+                            {"type": "capture_enabled", "success": True}
+                        )
 
-                    elif cmd_type == 'disable_capture':
+                    elif cmd_type == "disable_capture":
                         wx.CallAfter(self.disable_mouse_capture)
-                        self.result_queue.put({'type': 'capture_disabled', 'success': True})
-                    elif cmd_type == 'get_stats':
-                        self.result_queue.put({
-                            'type': 'stats',
-                            'is_captured': self.mouse_captured,
-                        })
-                    elif cmd_type == 'quit':
+                        self.result_queue.put(
+                            {"type": "capture_disabled", "success": True}
+                        )
+                    elif cmd_type == "get_stats":
+                        self.result_queue.put(
+                            {
+                                "type": "stats",
+                                "is_captured": self.mouse_captured,
+                            }
+                        )
+                    elif cmd_type == "quit":
                         self._running = False
                         self.Close()
                 except Empty:
@@ -117,7 +142,7 @@ class CursorHandlerWindow(wx.Frame):
         """
         try:
             self.RestorePreviousApp()
-            #self.panel.Hide()
+            # self.panel.Hide()
             self.Hide()
             # Resize to 0x0 to avoid interaction
             self.SetSize((0, 0))
@@ -144,7 +169,7 @@ class CursorHandlerWindow(wx.Frame):
                     self.enable_mouse_capture()
             elif key_code == wx.WXK_ESCAPE:
                 self.disable_mouse_capture()
-            elif key_code == ord('Q') or key_code == ord('q'):
+            elif key_code == ord("Q") or key_code == ord("q"):
                 self.Close()
             else:
                 event.Skip()
@@ -157,7 +182,9 @@ class CursorHandlerWindow(wx.Frame):
         If visible is False, hide the cursor. If True, show the cursor.
         Implement platform-specific cursor hiding/showing here.
         """
-        raise NotImplementedError("Derived classes must implement handle_cursor_visibility")
+        raise NotImplementedError(
+            "Derived classes must implement handle_cursor_visibility"
+        )
 
     def update_ui(self, panel_obj, data, call):
         """
@@ -180,7 +207,9 @@ class CursorHandlerWindow(wx.Frame):
             # Calcola il centro della finestra
             size = self.GetSize()
             pos = self.GetPosition()
-            self.center_pos: Point = Point(pos.x + size.width // 2, pos.y + size.height // 2)
+            self.center_pos: Point = Point(
+                pos.x + size.width // 2, pos.y + size.height // 2
+            )
 
             # Nascondi il cursore
             self.handle_cursor_visibility(False)
@@ -249,12 +278,20 @@ class CursorHandlerWindow(wx.Frame):
         self.disable_mouse_capture()
         self.Destroy()
 
+
 class _CursorHandlerProcess:
     """
     Internal class to run the cursor handler window in a separate process.
     """
 
-    def __init__(self, command_queue, result_queue, mouse_conn: Connection, debug: bool = False, window_class=CursorHandlerWindow):
+    def __init__(
+        self,
+        command_queue,
+        result_queue,
+        mouse_conn: Connection,
+        debug: bool = False,
+        window_class=CursorHandlerWindow,
+    ):
         self.command_queue = command_queue
         self.result_queue = result_queue
         self.mouse_conn = mouse_conn
@@ -266,14 +303,19 @@ class _CursorHandlerProcess:
 
     def run(self):
         self.app = wx.App()
-        self.window = self.window_class(command_queue=self.command_queue, result_queue=self.result_queue,
-                                        mouse_conn=self.mouse_conn, debug=self._debug)
+        self.window = self.window_class(
+            command_queue=self.command_queue,
+            result_queue=self.result_queue,
+            mouse_conn=self.mouse_conn,
+            debug=self._debug,
+        )
 
         # Notify that the window is ready
-        self.result_queue.put({'type': 'window_ready'})
+        self.result_queue.put({"type": "window_ready"})
         self.running = True
         self.app.MainLoop()
-        self.result_queue.put({'type': 'process_ended'})
+        self.result_queue.put({"type": "process_ended"})
+
 
 class CursorHandlerWorker(object):
     """
@@ -281,8 +323,14 @@ class CursorHandlerWorker(object):
     Manages the cursor handler window process and communication.
     There is no platform-specific code here, all platform specifics are in the window class.
     """
-    def __init__(self, event_bus: EventBus, stream: Optional[StreamHandler] = None,
-                 debug: bool = False, window_class=CursorHandlerWindow):
+
+    def __init__(
+        self,
+        event_bus: EventBus,
+        stream: Optional[StreamHandler] = None,
+        debug: bool = False,
+        window_class=CursorHandlerWindow,
+    ):
         """
         Initialize the cursor handler worker.
 
@@ -314,10 +362,18 @@ class CursorHandlerWorker(object):
         self._logger = get_logger(self.__class__.__name__)
 
         # Register to active_screen with async callbacks
-        self.event_bus.subscribe(event_type=EventType.SCREEN_CHANGE_GUARD, callback=self._on_screen_change_guard)  # ty:ignore[invalid-argument-type]
-        self.event_bus.subscribe(event_type=EventType.CLIENT_DISCONNECTED, callback=self._on_client_disconnected)  # ty:ignore[invalid-argument-type]
+        self.event_bus.subscribe(
+            event_type=EventType.SCREEN_CHANGE_GUARD,
+            callback=self._on_screen_change_guard,
+        )  # ty:ignore[invalid-argument-type]
+        self.event_bus.subscribe(
+            event_type=EventType.CLIENT_DISCONNECTED,
+            callback=self._on_client_disconnected,
+        )  # ty:ignore[invalid-argument-type]
 
-    async def _on_screen_change_guard(self, data: Optional[ActiveScreenChangedEvent]) -> None:
+    async def _on_screen_change_guard(
+        self, data: Optional[ActiveScreenChangedEvent]
+    ) -> None:
         """Async callback for active screen changed"""
 
         if data is None:
@@ -332,7 +388,7 @@ class CursorHandlerWorker(object):
             await self.event_bus.dispatch(
                 # when ServerMouseController receives this event will set the correct cursor position
                 event_type=EventType.ACTIVE_SCREEN_CHANGED,
-                data=self._last_event
+                data=self._last_event,
             )
 
             try:
@@ -350,7 +406,7 @@ class CursorHandlerWorker(object):
             await self.event_bus.dispatch(
                 # when ServerMouseController receives this event will set the correct cursor position
                 event_type=EventType.ACTIVE_SCREEN_CHANGED,
-                data=self._last_event
+                data=self._last_event,
             )
             self._active_client = None
 
@@ -361,18 +417,22 @@ class CursorHandlerWorker(object):
 
         if self._active_client and data.client_screen == self._active_client:
             self._active_client = None
-            self.disable_capture() #type: ignore
+            self.disable_capture()  # type: ignore
 
     def start(self, wait_ready=True, timeout=1) -> bool:
         """Avvia il processo della window"""
         if self._is_running:
             return True
 
-        self.process = Process(target=_CursorHandlerProcess(command_queue=self.command_queue,
-                                                            result_queue=self.result_queue,
-                                                            mouse_conn=self.mouse_conn_send,
-                                                            window_class=self.window_class,
-                                                            debug=self._debug).run)
+        self.process = Process(
+            target=_CursorHandlerProcess(
+                command_queue=self.command_queue,
+                result_queue=self.result_queue,
+                mouse_conn=self.mouse_conn_send,
+                window_class=self.window_class,
+                debug=self._debug,
+            ).run
+        )
         self.process.start()
         self._is_running = True
 
@@ -391,7 +451,7 @@ class CursorHandlerWorker(object):
             while time.time() - start_time < timeout:
                 try:
                     result = self.result_queue.get(timeout=0.1)
-                    if result.get('type') == 'window_ready':
+                    if result.get("type") == "window_ready":
                         self._logger.debug("Started")
                         return True
                 except Empty:
@@ -415,7 +475,7 @@ class CursorHandlerWorker(object):
                 pass
             self._mouse_data_task = None
 
-        self.send_command({'type': 'quit'})
+        self.send_command({"type": "quit"})
 
         if self.process:
             # Run process join in executor to avoid blocking
@@ -450,11 +510,15 @@ class CursorHandlerWorker(object):
         while self._is_running and self.stream is not None:
             try:
                 # Poll non-bloccante
-                has_data = await loop.run_in_executor(None, self.mouse_conn_rec.poll, 0.0000001)
+                has_data = await loop.run_in_executor(
+                    None, self.mouse_conn_rec.poll, 0.0000001
+                )
 
                 if has_data:
                     # Leggi dal pipe in executor
-                    delta_x, delta_y = await loop.run_in_executor(None, self.mouse_conn_rec.recv) #type: ignore
+                    delta_x, delta_y = await loop.run_in_executor(
+                        None, self.mouse_conn_rec.recv
+                    )  # type: ignore
 
                     mouse_event = MouseEvent(action=MouseEvent.MOVE_ACTION)
                     mouse_event.dx = delta_x
@@ -496,15 +560,15 @@ class CursorHandlerWorker(object):
 
     def enable_capture(self):
         """Abilita la cattura del mouse"""
-        self.send_command({'type': 'enable_capture'})
-        return self.get_result() # FIXME: This can slow down the async flow
+        self.send_command({"type": "enable_capture"})
+        return self.get_result()  # FIXME: This can slow down the async flow
 
     def disable_capture(self):
         """Disabilita la cattura del mouse"""
-        self.send_command({'type': 'disable_capture'})
-        return self.get_result() # FIXME: This can slow down the async flow
+        self.send_command({"type": "disable_capture"})
+        return self.get_result()  # FIXME: This can slow down the async flow
 
     def set_message(self, message):
         """Imposta un messaggio nella window"""
-        self.send_command({'type': 'set_message', 'message': message})
+        self.send_command({"type": "set_message", "message": message})
         return self.get_result()

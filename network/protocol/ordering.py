@@ -1,6 +1,7 @@
 """
 Message ordering and processing for time-sensitive data.
 """
+
 import heapq
 import multiprocessing
 from threading import Thread
@@ -38,9 +39,8 @@ class OrderedMessageQueue:
         # Limit queue size to prevent memory issues
         if len(self._buffer) > self.max_queue_size:
             # Remove oldest messages if queue is full
-            self._buffer = self._buffer[:self.max_queue_size]
+            self._buffer = self._buffer[: self.max_queue_size]
             heapq.heapify(self._buffer)
-
 
     def get_ready_messages(self) -> List[ProtocolMessage]:
         """
@@ -53,8 +53,7 @@ class OrderedMessageQueue:
         # Process messages that are older than delay tolerance
         threshold_time = current_time - self.max_delay_tolerance
 
-        while (self._buffer and
-               self._buffer[0][0] <= threshold_time):
+        while self._buffer and self._buffer[0][0] <= threshold_time:
             timestamp, seq_id, message = heapq.heappop(self._buffer)
             ready_messages.append(message)
             self._last_processed_timestamp = message.timestamp
@@ -97,8 +96,12 @@ class OrderedMessageProcessor:
     Processor that handles ordered message processing with timing constraints.
     """
 
-    def __init__(self, process_callback: Callable[[ProtocolMessage], None],
-                 max_delay_tolerance: float = 0.1, parallel_processors: int = 1):
+    def __init__(
+        self,
+        process_callback: Callable[[ProtocolMessage], None],
+        max_delay_tolerance: float = 0.1,
+        parallel_processors: int = 1,
+    ):
         """
         Initialize processor.
 
@@ -138,9 +141,14 @@ class OrderedMessageProcessor:
                     self._stop_events[i].clear()
                     worker = Process(
                         target=self._worker_process,
-                        args=(i, self._input_queues[i], self._output_queue,
-                              self._stop_events[i], self.max_delay_tolerance),
-                        daemon=True
+                        args=(
+                            i,
+                            self._input_queues[i],
+                            self._output_queue,
+                            self._stop_events[i],
+                            self.max_delay_tolerance,
+                        ),
+                        daemon=True,
                     )
                     worker.start()
                     self._workers.append(worker)
@@ -208,8 +216,13 @@ class OrderedMessageProcessor:
                 time.sleep(0.1)
 
     @staticmethod
-    def _worker_process(worker_id: int, input_queue: Queue, output_queue: Queue,
-                        stop_event: Event, max_delay_tolerance: float):
+    def _worker_process(
+        worker_id: int,
+        input_queue: Queue,
+        output_queue: Queue,
+        stop_event: Event,
+        max_delay_tolerance: float,
+    ):
         """
         Worker process that handles message ordering.
         Runs in separate process to avoid GIL limitations.
@@ -230,14 +243,14 @@ class OrderedMessageProcessor:
                 # Get ready messages
                 ready_messages = queue.get_ready_messages()
                 if ready_messages:
-                    output_queue.put(('ready', ready_messages))
+                    output_queue.put(("ready", ready_messages))
 
                 # Periodic flush
                 current_time = time.time()
                 if current_time - last_flush_time > flush_interval:
                     old_messages = queue.force_flush_old_messages()
                     if old_messages:
-                        output_queue.put(('flushed', old_messages))
+                        output_queue.put(("flushed", old_messages))
                     last_flush_time = current_time
 
                 # Dynamic sleep based on activity

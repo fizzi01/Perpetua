@@ -2,6 +2,7 @@
 Unified Client API
 Provides a clean interface to configure and manage client components.
 """
+
 import asyncio
 import os
 from pathlib import Path
@@ -14,7 +15,7 @@ from event import EventType
 from network.connection.client import ConnectionHandler
 from network.stream.client import (
     UnidirectionalStreamHandler,
-    BidirectionalStreamHandler
+    BidirectionalStreamHandler,
 )
 from network.stream import StreamType, StreamHandler
 from command import CommandHandler
@@ -42,7 +43,7 @@ class Client:
         self,
         app_config: Optional[ApplicationConfig] = None,
         client_config: Optional[ClientConfig] = None,
-        auto_load_config: bool = True
+        auto_load_config: bool = True,
     ):
         """
         Initializes an instance of the class by setting up configurations, core components, and registries
@@ -82,15 +83,21 @@ class Client:
             self.config.sync_load()
 
         # Set logging level
-        self._logger = get_logger(self.__class__.__name__, level=self.config.log_level, is_root=True)
+        self._logger = get_logger(
+            self.__class__.__name__, level=self.config.log_level, is_root=True
+        )
 
         # Initialize certificate manager
-        self._cert_manager = CertificateManager(cert_dir=self.app_config.get_certificate_path())
+        self._cert_manager = CertificateManager(
+            cert_dir=self.app_config.get_certificate_path()
+        )
         self._cert_receiver: Optional[CertificateReceiver] = None
 
         # Load certificate if available and SSL is enabled
         if self.config.ssl_enabled:
-            if self._cert_manager.certificate_exist(source_id=self.config.get_server_host()):
+            if self._cert_manager.certificate_exist(
+                source_id=self.config.get_server_host()
+            ):
                 self._load_certificate()
 
         # Initialize core components
@@ -175,7 +182,9 @@ class Client:
 
     def has_certificate(self) -> bool:
         """Check if certificate exists for the server"""
-        return self._cert_manager.certificate_exist(source_id=self.config.get_server_host())
+        return self._cert_manager.certificate_exist(
+            source_id=self.config.get_server_host()
+        )
 
     def _load_certificate(self) -> Optional[str]:
         """
@@ -204,11 +213,11 @@ class Client:
 
     # TODO: If an hostname is provided we should save the corresponding IP addr too
     async def receive_certificate(
-            self,
-            otp: str,
-            server_host: Optional[str] = None,
-            server_port: int = 5556,
-            timeout: int = 30
+        self,
+        otp: str,
+        server_host: Optional[str] = None,
+        server_port: int = 5556,
+        timeout: int = 30,
     ) -> bool:
         """
         Receive CA certificate from server using OTP.
@@ -238,14 +247,14 @@ class Client:
         if server_host is None:
             server_host = self.config.get_server_host()
 
-        self._logger.info(f"Attempting to receive certificate from {server_host}:{server_port}")
+        self._logger.info(
+            f"Attempting to receive certificate from {server_host}:{server_port}"
+        )
 
         try:
             # Create receiver
             self._cert_receiver = CertificateReceiver(
-                server_host=server_host,
-                server_port=server_port,
-                timeout=timeout
+                server_host=server_host, server_port=server_port, timeout=timeout
             )
 
             # Receive certificate
@@ -260,7 +269,9 @@ class Client:
                 return False
 
             # Save certificate
-            if not self._cert_manager.save_ca_data(data=cert_data, source_id=self.config.get_server_host()):
+            if not self._cert_manager.save_ca_data(
+                data=cert_data, source_id=self.config.get_server_host()
+            ):
                 self._logger.error("Failed to save received certificate")
                 return False
 
@@ -268,7 +279,10 @@ class Client:
             cur_path = self._load_certificate()
             if cur_path:
                 cur_name = os.path.basename(cur_path)
-                self._cert_manager.extend_mapping(source_id=self._cert_receiver.get_resolved_host(), cert_filename=cur_name)
+                self._cert_manager.extend_mapping(
+                    source_id=self._cert_receiver.get_resolved_host(),
+                    cert_filename=cur_name,
+                )
             self.config.enable_ssl()
 
             self._logger.info("Certificate received and saved successfully")
@@ -277,6 +291,7 @@ class Client:
         except Exception as e:
             self._logger.error(f"Error receiving certificate -> {e}")
             import traceback
+
             self._logger.error(traceback.format_exc())
             return False
 
@@ -288,7 +303,9 @@ class Client:
             Path to received certificate or None if not received yet
         """
         if self.has_certificate():
-            return self._cert_manager.get_ca_cert_path(source_id=self.config.get_server_host())
+            return self._cert_manager.get_ca_cert_path(
+                source_id=self.config.get_server_host()
+            )
         return None
 
     # ==================== Stream Management ====================
@@ -302,7 +319,9 @@ class Client:
     async def disable_stream(self, stream_type: int) -> None:
         """Disable a specific stream type (applies before start or at runtime)"""
         if StreamType.COMMAND == stream_type:
-            self._logger.warning("Command stream is always enabled and cannot be disabled")
+            self._logger.warning(
+                "Command stream is always enabled and cannot be disabled"
+            )
             return
         self.config.disable_stream(stream_type)
         await self.config.save()
@@ -349,7 +368,9 @@ class Client:
         """Disable a stream at runtime"""
         # If client is connected and running, we don't provide runtime enabling
         if self._running and self._connected:
-            self._logger.error("Cannot disable streams at runtime while connected to server")
+            self._logger.error(
+                "Cannot disable streams at runtime while connected to server"
+            )
             return False
 
         if not self._running or not self.is_stream_enabled(stream_type):
@@ -400,7 +421,9 @@ class Client:
         # Get certificate path if SSL is enabled
         certfile = None
         if self.config.ssl_enabled and self.has_certificate():
-            certfile = self._cert_manager.get_ca_cert_path(source_id=self.config.get_server_host())
+            certfile = self._cert_manager.get_ca_cert_path(
+                source_id=self.config.get_server_host()
+            )
 
         # Initialize connection handler
         self.connection_handler = ConnectionHandler(
@@ -423,7 +446,9 @@ class Client:
         self._running = True
         server_host = self.config.get_server_host()
         server_port = self.config.get_server_port()
-        self._logger.info(f"Client started and connecting to {server_host}:{server_port}")
+        self._logger.info(
+            f"Client started and connecting to {server_host}:{server_port}"
+        )
         return True
 
     async def stop(self):
@@ -437,7 +462,7 @@ class Client:
         # Stop all components
         for component_name, component in list(self._components.items()):
             try:
-                if hasattr(component, 'stop'):
+                if hasattr(component, "stop"):
                     if asyncio.iscoroutinefunction(component.stop):
                         await component.stop()
                     else:
@@ -448,7 +473,7 @@ class Client:
         # Stop all stream handlers
         for stream_type, handler in list(self._stream_handlers.items()):
             try:
-                if hasattr(handler, 'stop'):
+                if hasattr(handler, "stop"):
                     await handler.stop()
             except Exception as e:
                 self._logger.error(f"Error stopping stream handler {stream_type}: {e}")
@@ -502,7 +527,7 @@ class Client:
             clients=self.clients_manager,
             event_bus=self.event_bus,
             handler_id="ClientCommandStreamHandler",
-            active_only=True # We send commands only when client is active
+            active_only=True,  # We send commands only when client is active
         )
         # Force enable command stream
         await self.enable_stream(StreamType.COMMAND)
@@ -514,7 +539,7 @@ class Client:
             event_bus=self.event_bus,
             handler_id="ClientMouseStreamHandler",
             sender=False,  # Client receives mouse data
-            active_only=True # Only when client is active
+            active_only=True,  # Only when client is active
         )
 
         # Keyboard stream (receiver)
@@ -524,7 +549,7 @@ class Client:
             event_bus=self.event_bus,
             handler_id="ClientKeyboardStreamHandler",
             sender=False,  # Client receives keyboard data
-            active_only=True # Only when client is active
+            active_only=True,  # Only when client is active
         )
 
         # Clipboard stream (bidirectional)
@@ -533,7 +558,7 @@ class Client:
             clients=self.clients_manager,
             event_bus=self.event_bus,
             handler_id="ClientClipboardStreamHandler",
-            active_only=False # Clipboard may be active even if client is inactive
+            active_only=False,  # Clipboard may be active even if client is inactive
         )
 
     async def _initialize_components(self):
@@ -566,13 +591,12 @@ class Client:
             await self._ensure_stream_active(StreamType.COMMAND, command_stream)
 
         # Command Handler - handles incoming commands from server
-        command_handler = self._components.get('command_handler')
+        command_handler = self._components.get("command_handler")
         if not command_handler:
             command_handler = CommandHandler(
-                event_bus=self.event_bus,
-                stream=command_stream
+                event_bus=self.event_bus, stream=command_stream
             )
-            self._components['command_handler'] = command_handler
+            self._components["command_handler"] = command_handler
 
     async def _enable_mouse_stream(self):
         """Enable mouse stream and components at runtime"""
@@ -590,23 +614,23 @@ class Client:
         command_stream = self._stream_handlers[StreamType.COMMAND]
 
         # Mouse Controller - handles incoming mouse events from server
-        mouse_controller = self._components.get('mouse_controller')
+        mouse_controller = self._components.get("mouse_controller")
         if not mouse_controller:
             mouse_controller = ClientMouseController(
                 event_bus=self.event_bus,
                 stream_handler=mouse_stream,
-                command_stream=command_stream
+                command_stream=command_stream,
             )
             if is_enabled and self._connected:
                 await mouse_controller.start()
-            self._components['mouse_controller'] = mouse_controller
+            self._components["mouse_controller"] = mouse_controller
         elif is_enabled and self._connected and not mouse_controller.is_alive():
             await mouse_controller.start()
 
     async def _disable_mouse_stream(self):
         """Disable mouse stream and components at runtime"""
         # Stop mouse controller
-        mouse_controller = self._components.get('mouse_controller')
+        mouse_controller = self._components.get("mouse_controller")
         if mouse_controller:
             await mouse_controller.stop()
 
@@ -631,23 +655,23 @@ class Client:
         command_stream = self._stream_handlers[StreamType.COMMAND]
 
         # Keyboard Controller - handles incoming keyboard events from server
-        keyboard_controller = self._components.get('keyboard_controller')
+        keyboard_controller = self._components.get("keyboard_controller")
         if not keyboard_controller:
             keyboard_controller = ClientKeyboardController(
                 event_bus=self.event_bus,
                 stream_handler=keyboard_stream,
-                command_stream=command_stream
+                command_stream=command_stream,
             )
             if is_enabled and self._connected:
                 await keyboard_controller.start()
-            self._components['keyboard_controller'] = keyboard_controller
+            self._components["keyboard_controller"] = keyboard_controller
         elif is_enabled and self._connected and not keyboard_controller.is_alive():
             await keyboard_controller.start()
 
     async def _disable_keyboard_stream(self):
         """Disable keyboard stream and components at runtime"""
         # Stop keyboard controller
-        keyboard_controller = self._components.get('keyboard_controller')
+        keyboard_controller = self._components.get("keyboard_controller")
         if keyboard_controller:
             await keyboard_controller.stop()
 
@@ -672,33 +696,33 @@ class Client:
         command_stream = self._stream_handlers[StreamType.COMMAND]
 
         # Clipboard Listener - monitors clipboard changes and sends to server
-        clipboard_listener = self._components.get('clipboard_listener')
+        clipboard_listener = self._components.get("clipboard_listener")
         if not clipboard_listener:
             clipboard_listener = ClipboardListener(
                 event_bus=self.event_bus,
                 stream_handler=clipboard_stream,
-                command_stream=command_stream
+                command_stream=command_stream,
             )
             if is_enabled and self._connected:
                 await clipboard_listener.start()
-            self._components['clipboard_listener'] = clipboard_listener
+            self._components["clipboard_listener"] = clipboard_listener
         elif is_enabled and self._connected and not clipboard_listener.is_alive():
             await clipboard_listener.start()
 
         # Clipboard Controller - handles incoming clipboard updates from server
-        clipboard_controller = self._components.get('clipboard_controller')
+        clipboard_controller = self._components.get("clipboard_controller")
         if not clipboard_controller and clipboard_listener:
             clipboard_controller = ClipboardController(
                 event_bus=self.event_bus,
                 clipboard=clipboard_listener.get_clipboard_context(),
-                stream_handler=clipboard_stream
+                stream_handler=clipboard_stream,
             )
-            self._components['clipboard_controller'] = clipboard_controller
+            self._components["clipboard_controller"] = clipboard_controller
 
     async def _disable_clipboard_stream(self):
         """Disable clipboard stream and components at runtime"""
         # Stop clipboard listener
-        clipboard_listener = self._components.get('clipboard_listener')
+        clipboard_listener = self._components.get("clipboard_listener")
         if clipboard_listener:
             await clipboard_listener.stop()
 
@@ -722,10 +746,7 @@ class Client:
                     self._logger.error(f"Failed to start stream handler: {stream_type}")
 
         # Dispatch event
-        await self.event_bus.dispatch(
-            event_type=EventType.CLIENT_ACTIVE,
-            data=None
-        )
+        await self.event_bus.dispatch(event_type=EventType.CLIENT_ACTIVE, data=None)
 
         await self.save_config()
 
@@ -736,10 +757,7 @@ class Client:
         self._connected = False
 
         # Dispatch event
-        await self.event_bus.dispatch(
-            event_type=EventType.CLIENT_INACTIVE,
-            data=None
-        )
+        await self.event_bus.dispatch(event_type=EventType.CLIENT_INACTIVE, data=None)
 
         # Stop all stream handlers
         for stream_type, handler in list(self._stream_handlers.items()):
@@ -751,7 +769,7 @@ class Client:
         # Stop all components
         for component_name, component in list(self._components.items()):
             try:
-                if hasattr(component, 'stop'):
+                if hasattr(component, "stop"):
                     if asyncio.iscoroutinefunction(component.stop):
                         await component.stop()
                     else:
@@ -781,10 +799,13 @@ class Client:
 
     def get_active_streams(self) -> list[int]:
         """Get list of currently active stream types"""
-        return [st for st, handler in self._stream_handlers.items() if handler.is_active()]
+        return [
+            st for st, handler in self._stream_handlers.items() if handler.is_active()
+        ]
 
 
 # ==================== Example Usage ====================
+
 
 async def main():
     """Example usage of Client API with unified ClientConfig"""
@@ -795,9 +816,7 @@ async def main():
 
     # Configure client
     client.config.set_server_connection(
-        host="192.168.1.74",
-        port=5555,
-        auto_reconnect=True
+        host="192.168.1.74", port=5555, auto_reconnect=True
     )
     client.config.set_logging(level=Logger.INFO)
 
@@ -818,7 +837,9 @@ async def main():
         return
 
     print("Client started successfully")
-    print(f"Connecting to {client.config.get_server_host()}:{client.config.get_server_port()}")
+    print(
+        f"Connecting to {client.config.get_server_host()}:{client.config.get_server_port()}"
+    )
     print(f"Enabled streams: {client.get_enabled_streams()}")
 
     try:

@@ -1,6 +1,7 @@
 """
 Async Client Connection Handler using asyncio.
 """
+
 import asyncio
 import ssl
 from typing import Optional, Callable, Any
@@ -32,17 +33,20 @@ class ConnectionHandler:
     HANDSHAKE_MSG_TIMEOUT = 5.0  # seconds
     MAX_HEARTBEAT_MISSES = 1
 
-    def __init__(self, connected_callback: Optional[Callable[['ClientObj'], Any]] = None,
-                 disconnected_callback: Optional[Callable[['ClientObj'], Any]] = None,
-                 host: str = "127.0.0.1",
-                 port: int = 5001,
-                 wait: int = 5,
-                 heartbeat_interval: int = 10,
-                 max_errors: int = 10,
-                 clients: Optional[ClientsManager] = None,
-                 open_streams: Optional[list[int]] = None,
-                 certfile: Optional[str] = None,
-                 auto_reconnect: bool = True):
+    def __init__(
+        self,
+        connected_callback: Optional[Callable[["ClientObj"], Any]] = None,
+        disconnected_callback: Optional[Callable[["ClientObj"], Any]] = None,
+        host: str = "127.0.0.1",
+        port: int = 5001,
+        wait: int = 5,
+        heartbeat_interval: int = 10,
+        max_errors: int = 10,
+        clients: Optional[ClientsManager] = None,
+        open_streams: Optional[list[int]] = None,
+        certfile: Optional[str] = None,
+        auto_reconnect: bool = True,
+    ):
         """
         Manages client connections to server.
 
@@ -72,7 +76,9 @@ class ConnectionHandler:
         self.certfile = certfile
         self.use_ssl = bool(certfile)
 
-        self.clients = clients if clients is not None else ClientsManager(client_mode=True)
+        self.clients = (
+            clients if clients is not None else ClientsManager(client_mode=True)
+        )
 
         self.open_streams = open_streams if open_streams is not None else []
 
@@ -121,13 +127,14 @@ class ConnectionHandler:
         except Exception as e:
             self._logger.log(f"Failed to start -> {e}", Logger.ERROR)
             import traceback
+
             self._logger.log(traceback.format_exc(), Logger.ERROR)
             self._running = False
             return False
 
     async def stop(self):
         """Stop the handler and close all connections"""
-        if not self._running: # Already stopped
+        if not self._running:  # Already stopped
             return True
 
         self._running = False
@@ -170,18 +177,26 @@ class ConnectionHandler:
         while self._running:
             try:
                 if not self._connected:
-                    self._logger.log(f"Attempting to connect to {self.host}:{self.port}...", Logger.INFO)
+                    self._logger.log(
+                        f"Attempting to connect to {self.host}:{self.port}...",
+                        Logger.INFO,
+                    )
 
                     # Attempt connection
                     if await self._connect():
-                        self._logger.log("Connection established, performing handshake...", Logger.INFO)
+                        self._logger.log(
+                            "Connection established, performing handshake...",
+                            Logger.INFO,
+                        )
 
                         # Set first client connection socket
                         if self._client_obj is None:
                             raise Exception("Client not connected")
 
                         conn = ClientConnection(("", 0))
-                        conn.add_stream(stream_type=StreamType.COMMAND, stream=self._command_stream)
+                        conn.add_stream(
+                            stream_type=StreamType.COMMAND, stream=self._command_stream
+                        )
                         self._client_obj.set_connection(connection=conn)
                         self.clients.update_client(self._client_obj)
 
@@ -190,29 +205,42 @@ class ConnectionHandler:
                             self._connected = True
                             error_count = 0
 
-                            self._logger.log("Handshake successful, client connected", Logger.INFO)
+                            self._logger.log(
+                                "Handshake successful, client connected", Logger.INFO
+                            )
 
                             # Update client status
                             self._client_obj.set_connection_status(status=True)
                             if self._command_stream is None:
-                                raise Exception("Command stream is None after handshake")
+                                raise Exception(
+                                    "Command stream is None after handshake"
+                                )
 
-                            self._client_obj.ip_address = self._command_stream.get_sockname()[0]
+                            self._client_obj.ip_address = (
+                                self._command_stream.get_sockname()[0]
+                            )
                             self.clients.update_client(self._client_obj)
 
                             # Call connected callback
                             if self.connected_callback:
                                 try:
-                                    if asyncio.iscoroutinefunction(self.connected_callback):
+                                    if asyncio.iscoroutinefunction(
+                                        self.connected_callback
+                                    ):
                                         await self.connected_callback(self._client_obj)
                                     else:
                                         self.connected_callback(self._client_obj)
                                 except Exception as e:
-                                    self._logger.log(f"Error in connected callback -> {e}", Logger.ERROR)
+                                    self._logger.log(
+                                        f"Error in connected callback -> {e}",
+                                        Logger.ERROR,
+                                    )
 
                             # Start heartbeat monitoring
                             if not self._heartbeat_task or self._heartbeat_task.done():
-                                self._heartbeat_task = asyncio.create_task(self._heartbeat_loop())
+                                self._heartbeat_task = asyncio.create_task(
+                                    self._heartbeat_loop()
+                                )
                         else:
                             self._logger.log("Handshake failed", Logger.ERROR)
                             await self._close_all_streams()
@@ -222,8 +250,13 @@ class ConnectionHandler:
                         # Connection failed
                         error_count += 1
                         if error_count >= self.max_errors and self.auto_reconnect:
-                            self._logger.log("Max connection errors reached, going sleep mode", Logger.ERROR)
-                            await asyncio.sleep(self.RECONNECTION_DELAY) #TODO: Implement backoff strategy
+                            self._logger.log(
+                                "Max connection errors reached, going sleep mode",
+                                Logger.ERROR,
+                            )
+                            await asyncio.sleep(
+                                self.RECONNECTION_DELAY
+                            )  # TODO: Implement backoff strategy
                             # Optionally stop trying to reconnect
                             # self._running = False
                             # break
@@ -245,6 +278,7 @@ class ConnectionHandler:
             except Exception as e:
                 self._logger.log(f"Error in core loop -> {e}", Logger.ERROR)
                 import traceback
+
                 self._logger.log(traceback.format_exc(), Logger.ERROR)
 
                 # Handle disconnection
@@ -253,7 +287,10 @@ class ConnectionHandler:
 
                 error_count += 1
                 if error_count >= self.max_errors and not self.auto_reconnect:
-                    self._logger.log("Max errors reached and auto_reconnect disabled, stopping", Logger.ERROR)
+                    self._logger.log(
+                        "Max errors reached and auto_reconnect disabled, stopping",
+                        Logger.ERROR,
+                    )
                     self._running = False
                     break
 
@@ -267,19 +304,24 @@ class ConnectionHandler:
             # Connect to server
             _command_reader, _command_writer = await asyncio.wait_for(
                 asyncio.open_connection(self.host, self.port),
-                timeout=self.CONNECTION_ATTEMPT_TIMEOUT
+                timeout=self.CONNECTION_ATTEMPT_TIMEOUT,
             )
-            self._command_stream = StreamWrapper(reader=_command_reader,
-                                                 writer=_command_writer)
+            self._command_stream = StreamWrapper(
+                reader=_command_reader, writer=_command_writer
+            )
 
             self._logger.log(f"Connected to {self.host}:{self.port}", Logger.DEBUG)
             return True
 
         except asyncio.TimeoutError:
-            self._logger.log(f"Connection timeout to {self.host}:{self.port}", Logger.WARNING)
+            self._logger.log(
+                f"Connection timeout to {self.host}:{self.port}", Logger.WARNING
+            )
             return False
         except ConnectionRefusedError:
-            self._logger.log(f"Connection refused by {self.host}:{self.port}", Logger.WARNING)
+            self._logger.log(
+                f"Connection refused by {self.host}:{self.port}", Logger.WARNING
+            )
             return False
         except Exception as e:
             self._logger.log(f"Connection error -> {e}", Logger.ERROR)
@@ -298,18 +340,22 @@ class ConnectionHandler:
             if self._command_stream is None:
                 raise Exception("Command stream is None during handshake")
 
-            await self._msg_exchange.set_transport(self._command_stream.get_writer_call(),
-                                                   self._command_stream.get_reader_call())
+            await self._msg_exchange.set_transport(
+                self._command_stream.get_writer_call(),
+                self._command_stream.get_reader_call(),
+            )
 
             # Start receive loop
             await self._msg_exchange.start()
 
             # Wait for handshake request from server
-            self._logger.log("Waiting for handshake request from server...", Logger.DEBUG)
+            self._logger.log(
+                "Waiting for handshake request from server...", Logger.DEBUG
+            )
 
             handshake_req = await asyncio.wait_for(
                 self._msg_exchange.get_received_message(),
-                timeout=self.HANDSHAKE_MSG_TIMEOUT
+                timeout=self.HANDSHAKE_MSG_TIMEOUT,
             )
 
             if not handshake_req or handshake_req.message_type != MessageType.EXCHANGE:
@@ -317,10 +363,15 @@ class ConnectionHandler:
                 return False
 
             if handshake_req.source != "server":
-                self._logger.log(f"Handshake source is not server: {handshake_req.source}", Logger.ERROR)
+                self._logger.log(
+                    f"Handshake source is not server: {handshake_req.source}",
+                    Logger.ERROR,
+                )
                 return False
 
-            self._logger.log("Received valid handshake request from server", Logger.DEBUG)
+            self._logger.log(
+                "Received valid handshake request from server", Logger.DEBUG
+            )
 
             if self._client_obj is None:
                 raise Exception("Client object is None during handshake")
@@ -344,11 +395,17 @@ class ConnectionHandler:
             # Receive handshake acknowledgment from server
             handshake_ack = await asyncio.wait_for(
                 self._msg_exchange.get_received_message(),
-                timeout=self.HANDSHAKE_MSG_TIMEOUT
+                timeout=self.HANDSHAKE_MSG_TIMEOUT,
             )
             # Update client info from handshake
-            if not handshake_ack or handshake_ack.message_type != MessageType.EXCHANGE or not handshake_ack.payload.get("ack", False):
-                self._logger.log("Handshake failed, invalid acknowledgment from server", Logger.ERROR)
+            if (
+                not handshake_ack
+                or handshake_ack.message_type != MessageType.EXCHANGE
+                or not handshake_ack.payload.get("ack", False)
+            ):
+                self._logger.log(
+                    "Handshake failed, invalid acknowledgment from server", Logger.ERROR
+                )
                 return False
 
             self._client_obj.set_screen_position(
@@ -374,6 +431,7 @@ class ConnectionHandler:
         except Exception as e:
             self._logger.log(f"Handshake error -> {e}", Logger.ERROR)
             import traceback
+
             self._logger.log(traceback.format_exc(), Logger.ERROR)
             return False
 
@@ -389,31 +447,40 @@ class ConnectionHandler:
                 # Connect to server for this stream
                 reader, writer = await asyncio.wait_for(
                     asyncio.open_connection(self.host, self.port),
-                    timeout=self.CONNECTION_ATTEMPT_TIMEOUT
+                    timeout=self.CONNECTION_ATTEMPT_TIMEOUT,
                 )
 
                 # Upgrade to TLS if needed
                 if self.use_ssl and ssl_context:
-                    await asyncio.wait_for(writer.start_tls(sslcontext=ssl_context),
-                                           timeout=self.CONNECTION_ATTEMPT_TIMEOUT)
+                    await asyncio.wait_for(
+                        writer.start_tls(sslcontext=ssl_context),
+                        timeout=self.CONNECTION_ATTEMPT_TIMEOUT,
+                    )
 
                 # Store connected stream readers and writers in ClientConnection
                 if self._client_obj is None:
-                    raise Exception("Client object is None when opening additional streams")
+                    raise Exception(
+                        "Client object is None when opening additional streams"
+                    )
                 conn = self._client_obj.get_connection()
                 if conn is not None:
-                    conn.add_stream(stream_type=stream_type,
-                                                       reader=reader, writer=writer)
+                    conn.add_stream(
+                        stream_type=stream_type, reader=reader, writer=writer
+                    )
                 self._client_obj.set_connection(connection=conn)
-                self.clients.update_client( self._client_obj)
+                self.clients.update_client(self._client_obj)
 
                 self._logger.log(f"Stream {stream_type} connected", Logger.DEBUG)
 
             except asyncio.TimeoutError:
-                self._logger.log(f"Timeout connecting stream {stream_type}", Logger.ERROR)
+                self._logger.log(
+                    f"Timeout connecting stream {stream_type}", Logger.ERROR
+                )
                 return False
             except Exception as e:
-                self._logger.log(f"Failed to connect stream {stream_type} -> {e}", Logger.ERROR)
+                self._logger.log(
+                    f"Failed to connect stream {stream_type} -> {e}", Logger.ERROR
+                )
                 return False
 
         return True
@@ -435,7 +502,7 @@ class ConnectionHandler:
                 if self._client_obj is None:
                     raise Exception("Client object is None during heartbeat")
 
-                c_conn =  self._client_obj.get_connection()
+                c_conn = self._client_obj.get_connection()
                 if c_conn is not None and c_conn.has_stream(StreamType.COMMAND):
                     command_reader = c_conn.get_reader(StreamType.COMMAND)
                     if command_reader is None or command_reader.is_closed():
@@ -446,7 +513,10 @@ class ConnectionHandler:
             except ConnectionResetError:
                 if heartbeat_trials < self.MAX_HEARTBEAT_MISSES:
                     heartbeat_trials += 1
-                    self._logger.log(f"Heartbeat missed {heartbeat_trials}/{self.MAX_HEARTBEAT_MISSES}", Logger.WARNING)
+                    self._logger.log(
+                        f"Heartbeat missed {heartbeat_trials}/{self.MAX_HEARTBEAT_MISSES}",
+                        Logger.WARNING,
+                    )
                     continue
                 else:
                     self._logger.log("Heartbeat detected disconnection", Logger.WARNING)
@@ -514,4 +584,3 @@ class ConnectionHandler:
             raise ConnectionError("Not connected to server")
 
         await self._msg_exchange.send_stream_type_message(message_type, **kwargs)
-

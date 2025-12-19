@@ -10,15 +10,21 @@ from model.client import ClientsManager, ClientObj
 from event.bus import EventBus
 
 
-
 class UnidirectionalStreamHandler(StreamHandler):
     """
     A custom async stream handler for managing connection streams. (Unidirectional: Client -> Server)
     Fully async with optimized performance.
     """
 
-    def __init__(self, stream_type: int, clients: ClientsManager, event_bus: EventBus, handler_id: Optional[str] = None,
-                 sender: bool = True, active_only: bool = False):
+    def __init__(
+        self,
+        stream_type: int,
+        clients: ClientsManager,
+        event_bus: EventBus,
+        handler_id: Optional[str] = None,
+        sender: bool = True,
+        active_only: bool = False,
+    ):
         """
         It handles stream management and event subscription for the client.
 
@@ -41,19 +47,24 @@ class UnidirectionalStreamHandler(StreamHandler):
         Raises:
             ValueError: Raised when no main client is available in the provided ClientsManager.
         """
-        super().__init__(stream_type=stream_type, clients=clients, event_bus=event_bus, sender=sender)
+        super().__init__(
+            stream_type=stream_type, clients=clients, event_bus=event_bus, sender=sender
+        )
 
-        self._is_active = False # Track if current client is active
+        self._is_active = False  # Track if current client is active
 
-        self.handler_id = handler_id if handler_id else f"{self.__class__.__name__}-{self.stream_type}"
+        self.handler_id = (
+            handler_id
+            if handler_id
+            else f"{self.__class__.__name__}-{self.stream_type}"
+        )
         self._active_only = active_only
 
         self._logger = get_logger(self.handler_id)
 
         # Create a MessageExchange object
         self.msg_exchange = MessageExchange(
-            conf=MessageExchangeConfig(auto_dispatch=True),
-            id=self.handler_id
+            conf=MessageExchangeConfig(auto_dispatch=True), id=self.handler_id
         )
 
         # Get main client
@@ -62,17 +73,23 @@ class UnidirectionalStreamHandler(StreamHandler):
 
         if self._main_client is None:
             self._logger.error("No main client found in ClientsManager")
-            raise ValueError(f"[{self.handler_id}] No main client found in ClientsManager")
+            raise ValueError(
+                f"[{self.handler_id}] No main client found in ClientsManager"
+            )
 
         # Subscribe with async callbacks
-        event_bus.subscribe(event_type=EventType.CLIENT_ACTIVE, callback=self._on_client_active)
-        event_bus.subscribe(event_type=EventType.CLIENT_INACTIVE, callback=self._on_client_inactive)
+        event_bus.subscribe(
+            event_type=EventType.CLIENT_ACTIVE, callback=self._on_client_active
+        )
+        event_bus.subscribe(
+            event_type=EventType.CLIENT_INACTIVE, callback=self._on_client_inactive
+        )
 
     async def stop(self):
         await super().stop()
         await self.msg_exchange.stop()
 
-    async def _on_client_active(self,  data: Optional[ClientActiveEvent]):
+    async def _on_client_active(self, data: Optional[ClientActiveEvent]):
         """
         Async event handler for when a client becomes active.
         """
@@ -87,29 +104,35 @@ class UnidirectionalStreamHandler(StreamHandler):
             if cl_conn is not None:
                 cl_stream = cl_conn.get_stream(self.stream_type)
 
-                if cl_stream.get_writer() is None:  # We avoid sending if no writer is available
+                if (
+                    cl_stream.get_writer() is None
+                ):  # We avoid sending if no writer is available
                     self._active_client = None
                     return
 
-                if cl_stream.get_reader() is None:  # We stop receiving if no reader is available
-                    await self.msg_exchange.set_transport(send_callback=cl_stream.get_writer_call(), receive_callback=None)
+                if (
+                    cl_stream.get_reader() is None
+                ):  # We stop receiving if no reader is available
+                    await self.msg_exchange.set_transport(
+                        send_callback=cl_stream.get_writer_call(), receive_callback=None
+                    )
                     await self.msg_exchange.stop()
                     return
 
                 await self.msg_exchange.set_transport(
                     send_callback=cl_stream.get_writer_call(),
-                    receive_callback=cl_stream.get_reader_call()
+                    receive_callback=cl_stream.get_reader_call(),
                 )
                 # Start msg exchange listener (always runs for async dispatch)
                 await self.msg_exchange.start()
-                #self.logger.debug(f"[{self.handler_id}] Client is active")
+                # self.logger.debug(f"[{self.handler_id}] Client is active")
             else:
                 self._logger.error("No valid stream for main client")
                 raise ValueError("No valid stream for main client")
         finally:
             self._clear_buffer()
 
-    async def _on_client_inactive(self,  data: Optional[ClientActiveEvent]):
+    async def _on_client_inactive(self, data: Optional[ClientActiveEvent]):
         """
         Async event handler for when a client becomes inactive.
         """
@@ -117,7 +140,7 @@ class UnidirectionalStreamHandler(StreamHandler):
             self._is_active = False
             # Stop msg exchange listener
             await self.msg_exchange.stop()
-            #self.logger.debug(f"[{self.handler_id}] Client is inactive")
+            # self.logger.debug(f"[{self.handler_id}] Client is inactive")
         finally:
             self._clear_buffer()
 
@@ -146,7 +169,7 @@ class UnidirectionalStreamHandler(StreamHandler):
                     stream_type=self.stream_type,
                     source=self._main_client.screen_position,
                     target="server",
-                    **data
+                    **data,
                 )
             except asyncio.TimeoutError:
                 await asyncio.sleep(self._waiting_time)
@@ -167,8 +190,14 @@ class BidirectionalStreamHandler(StreamHandler):
     Fully async with optimized performance.
     """
 
-    def __init__(self, stream_type: int, clients: ClientsManager, event_bus: EventBus, handler_id: Optional[str] = None,
-                 active_only: bool = False):
+    def __init__(
+        self,
+        stream_type: int,
+        clients: ClientsManager,
+        event_bus: EventBus,
+        handler_id: Optional[str] = None,
+        active_only: bool = False,
+    ):
         """
         Initializes an instance of the class to manage stream handling and event subscription.
 
@@ -185,17 +214,22 @@ class BidirectionalStreamHandler(StreamHandler):
                 generates one based on the stream type and class name.
             active_only (bool): If True, only handles events when the client is active. Defaults to False.
         """
-        super().__init__(stream_type=stream_type, clients=clients, event_bus=event_bus, sender=True)
+        super().__init__(
+            stream_type=stream_type, clients=clients, event_bus=event_bus, sender=True
+        )
 
-        self._is_active = False # Track if current client is active
+        self._is_active = False  # Track if current client is active
 
-        self.handler_id = handler_id if handler_id else f"{self.__class__.__name__}-{self.stream_type}"
+        self.handler_id = (
+            handler_id
+            if handler_id
+            else f"{self.__class__.__name__}-{self.stream_type}"
+        )
         self._active_only = active_only
 
         # Create a MessageExchange object
         self.msg_exchange = MessageExchange(
-            conf=MessageExchangeConfig(auto_dispatch=True),
-            id=self.handler_id
+            conf=MessageExchangeConfig(auto_dispatch=True), id=self.handler_id
         )
 
         # Get main client
@@ -204,19 +238,25 @@ class BidirectionalStreamHandler(StreamHandler):
 
         if self._main_client is None:
             self._logger.error("No main client found in ClientsManager")
-            raise ValueError(f"[{self.handler_id}] No main client found in ClientsManager")
+            raise ValueError(
+                f"[{self.handler_id}] No main client found in ClientsManager"
+            )
 
         self._logger = get_logger(self.handler_id)
 
         # Subscribe with async callbacks
-        event_bus.subscribe(event_type=EventType.CLIENT_ACTIVE, callback=self._on_client_active)
-        event_bus.subscribe(event_type=EventType.CLIENT_INACTIVE, callback=self._on_client_inactive)
+        event_bus.subscribe(
+            event_type=EventType.CLIENT_ACTIVE, callback=self._on_client_active
+        )
+        event_bus.subscribe(
+            event_type=EventType.CLIENT_INACTIVE, callback=self._on_client_inactive
+        )
 
     async def stop(self):
         await super().stop()
         await self.msg_exchange.stop()
 
-    async def _on_client_active(self,  data: Optional[ClientActiveEvent]):
+    async def _on_client_active(self, data: Optional[ClientActiveEvent]):
         """
         Async event handler for when a client becomes active.
         """
@@ -231,19 +271,24 @@ class BidirectionalStreamHandler(StreamHandler):
             if cl_conn is not None:
                 cl_stream = cl_conn.get_stream(self.stream_type)
 
-                if cl_stream.get_writer() is None:  # We avoid sending if no writer is available
+                if (
+                    cl_stream.get_writer() is None
+                ):  # We avoid sending if no writer is available
                     self._active_client = None
                     return
 
-                if cl_stream.get_reader() is None:  # We stop receiving if no reader is available
-                    await self.msg_exchange.set_transport(send_callback=cl_stream.get_writer_call(),
-                                                          receive_callback=None)
+                if (
+                    cl_stream.get_reader() is None
+                ):  # We stop receiving if no reader is available
+                    await self.msg_exchange.set_transport(
+                        send_callback=cl_stream.get_writer_call(), receive_callback=None
+                    )
                     await self.msg_exchange.stop()
                     return
 
                 await self.msg_exchange.set_transport(
                     send_callback=cl_stream.get_writer_call(),
-                    receive_callback=cl_stream.get_reader_call()
+                    receive_callback=cl_stream.get_reader_call(),
                 )
                 # Start msg exchange listener (always runs for async dispatch)
                 await self.msg_exchange.start()
@@ -254,7 +299,7 @@ class BidirectionalStreamHandler(StreamHandler):
         finally:
             self._clear_buffer()
 
-    async def _on_client_inactive(self,  data: Optional[ClientActiveEvent]):
+    async def _on_client_inactive(self, data: Optional[ClientActiveEvent]):
         """
         Async event handler for when a client becomes inactive.
         """
@@ -262,8 +307,8 @@ class BidirectionalStreamHandler(StreamHandler):
         if self._active_only:
             self._is_active = False
             self._clear_buffer()
-        #await self.msg_exchange.set_transport(send_callback=None, receive_callback=None)
-        #await self.msg_exchange.stop()
+        # await self.msg_exchange.set_transport(send_callback=None, receive_callback=None)
+        # await self.msg_exchange.stop()
 
     def register_receive_callback(self, receive_callback, message_type: str):
         """
@@ -290,7 +335,7 @@ class BidirectionalStreamHandler(StreamHandler):
                     stream_type=self.stream_type,
                     source=self._main_client.screen_position,
                     target="server",
-                    **data
+                    **data,
                 )
             except asyncio.TimeoutError:
                 await asyncio.sleep(self._waiting_time)

@@ -11,11 +11,12 @@ from utils.logging import Logger, get_logger
 @dataclass
 class StreamType:
     """Tipi di stream QUIC con priorità"""
-    COMMAND = 0      # Alta priorità - comandi bidirezionali
-    KEYBOARD = 4     # Alta priorità - eventi tastiera
-    MOUSE = 1        # Media priorità - movimenti mouse (alta frequenza)
-    CLIPBOARD = 12   # Bassa priorità - clipboard
-    FILE = 16        # Bassa priorità - trasferimenti file
+
+    COMMAND = 0  # Alta priorità - comandi bidirezionali
+    KEYBOARD = 4  # Alta priorità - eventi tastiera
+    MOUSE = 1  # Media priorità - movimenti mouse (alta frequenza)
+    CLIPBOARD = 12  # Bassa priorità - clipboard
+    FILE = 16  # Bassa priorità - trasferimenti file
 
 
 class StreamHandler:
@@ -23,8 +24,13 @@ class StreamHandler:
     A generic async stream handler class for managing network streams.
     """
 
-    def __init__(self, stream_type: int, clients: ClientsManager, event_bus: EventBus,
-                 sender: bool = True):
+    def __init__(
+        self,
+        stream_type: int,
+        clients: ClientsManager,
+        event_bus: EventBus,
+        sender: bool = True,
+    ):
         """
         Attributes:
             stream_type (int): The type of stream (e.g., mouse, keyboard, command).
@@ -79,9 +85,15 @@ class StreamHandler:
                 except asyncio.CancelledError:
                     pass
                 except asyncio.TimeoutError:
-                    self._logger.log(f"StreamHandler for {self.stream_type} sender task did not stop in time", Logger.WARNING)
+                    self._logger.log(
+                        f"StreamHandler for {self.stream_type} sender task did not stop in time",
+                        Logger.WARNING,
+                    )
             except Exception as e:
-                self._logger.log(f"Error stopping StreamHandler for {self.stream_type}: {e}", Logger.ERROR)
+                self._logger.log(
+                    f"Error stopping StreamHandler for {self.stream_type}: {e}",
+                    Logger.ERROR,
+                )
                 return False
 
         self._logger.log(f"StreamHandler for {self.stream_type} stopped.", Logger.DEBUG)

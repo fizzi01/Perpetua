@@ -1,19 +1,30 @@
 import asyncio
 from typing import Optional
 
-from event import EventType, EventMapper, KeyboardEvent, ActiveScreenChangedEvent, ClientConnectedEvent, \
-    ClientDisconnectedEvent, ClientActiveEvent
+from event import (
+    EventType,
+    EventMapper,
+    KeyboardEvent,
+    ActiveScreenChangedEvent,
+    ClientConnectedEvent,
+    ClientDisconnectedEvent,
+    ClientActiveEvent,
+)
 from event.bus import EventBus
 
-from pynput.keyboard import (Key, KeyCode,
-                             Listener as KeyboardListener,
-                             Controller as KeyboardController)
+from pynput.keyboard import (
+    Key,
+    KeyCode,
+    Listener as KeyboardListener,
+    Controller as KeyboardController,
+)
 import keyboard as hotkey_controller
 
 from network.stream import StreamHandler
 
 from utils.logging import get_logger
 from utils.screen import Screen
+
 
 class KeyUtilities:
     """
@@ -55,8 +66,13 @@ class ServerKeyboardListener(object):
     Base class for server-side keyboard listeners.
     """
 
-    def __init__(self, event_bus: EventBus, stream_handler: StreamHandler, command_stream: StreamHandler,
-                 filtering: bool = True):
+    def __init__(
+        self,
+        event_bus: EventBus,
+        stream_handler: StreamHandler,
+        command_stream: StreamHandler,
+        filtering: bool = True,
+    ):
         """
         Initializes the server keyboard listener.
 
@@ -80,11 +96,14 @@ class ServerKeyboardListener(object):
         if filtering:
             try:
                 import platform
+
                 current_platform = platform.system()
                 if current_platform == "Darwin":
                     self._filter_args["darwin_intercept"] = self._darwin_suppress_filter
                 elif current_platform == "Windows":
-                    self._filter_args["win32_event_filter"] = self._win32_suppress_filter
+                    self._filter_args["win32_event_filter"] = (
+                        self._win32_suppress_filter
+                    )
             except Exception:
                 pass
 
@@ -100,16 +119,25 @@ class ServerKeyboardListener(object):
             self._loop = None
 
         # Subscribe with async callbacks
-        self.event_bus.subscribe(event_type=EventType.ACTIVE_SCREEN_CHANGED, callback=self._on_active_screen_changed)
-        self.event_bus.subscribe(event_type=EventType.CLIENT_CONNECTED, callback=self._on_client_connected)
-        self.event_bus.subscribe(event_type=EventType.CLIENT_DISCONNECTED, callback=self._on_client_disconnected)
+        self.event_bus.subscribe(
+            event_type=EventType.ACTIVE_SCREEN_CHANGED,
+            callback=self._on_active_screen_changed,
+        )
+        self.event_bus.subscribe(
+            event_type=EventType.CLIENT_CONNECTED, callback=self._on_client_connected
+        )
+        self.event_bus.subscribe(
+            event_type=EventType.CLIENT_DISCONNECTED,
+            callback=self._on_client_disconnected,
+        )
 
     def _create_listener(self) -> KeyboardListener:
         """
         Creates a new keyboard listener instance.
         """
-        return KeyboardListener(on_press=self.on_press, on_release=self.on_release,
-                                          **self._filter_args)
+        return KeyboardListener(
+            on_press=self.on_press, on_release=self.on_release, **self._filter_args
+        )
 
     def start(self) -> bool:
         """
@@ -120,7 +148,9 @@ class ServerKeyboardListener(object):
             try:
                 self._loop = asyncio.get_running_loop()
             except RuntimeError:
-                self._logger.warning("No event loop running when starting keyboard listener. Async operations may fail.")
+                self._logger.warning(
+                    "No event loop running when starting keyboard listener. Async operations may fail."
+                )
 
         if not self.is_alive():
             self._listener = self._create_listener()
@@ -211,9 +241,13 @@ class ServerKeyboardListener(object):
                 if loop.is_running():
                     asyncio.run_coroutine_threadsafe(coro, loop)
                 else:
-                    self._logger.warning("Event loop not running, cannot schedule async operation")
+                    self._logger.warning(
+                        "Event loop not running, cannot schedule async operation"
+                    )
             except Exception as e:
-                self._logger.warning(f"No event loop available for async operation -> {e}")
+                self._logger.warning(
+                    f"No event loop available for async operation -> {e}"
+                )
 
     @staticmethod
     def _get_key(key: Key | KeyCode) -> str:
@@ -235,7 +269,9 @@ class ServerKeyboardListener(object):
             return
 
         try:
-            event = KeyboardEvent(key=self._get_key(key), action=KeyboardEvent.PRESS_ACTION)
+            event = KeyboardEvent(
+                key=self._get_key(key), action=KeyboardEvent.PRESS_ACTION
+            )
             self._schedule_async(self.stream.send(event))
         except Exception as e:
             self._logger.error(f"Error handling key press -> {e}")
@@ -248,7 +284,9 @@ class ServerKeyboardListener(object):
             return
 
         try:
-            event = KeyboardEvent(key=self._get_key(key), action=KeyboardEvent.RELEASE_ACTION)
+            event = KeyboardEvent(
+                key=self._get_key(key), action=KeyboardEvent.RELEASE_ACTION
+            )
             self._schedule_async(self.stream.send(event))
         except Exception as e:
             self._logger.error(f"Error handling key release -> {e}")
@@ -259,7 +297,12 @@ class ClientKeyboardController(object):
     Base class for client-side keyboard controllers.
     """
 
-    def __init__(self, event_bus: EventBus, stream_handler: StreamHandler, command_stream: StreamHandler):
+    def __init__(
+        self,
+        event_bus: EventBus,
+        stream_handler: StreamHandler,
+        command_stream: StreamHandler,
+    ):
         """
         Initializes the client keyboard controller.
 
@@ -290,11 +333,17 @@ class ClientKeyboardController(object):
         self._running = False
 
         # Register to receive mouse events from the stream (async callback)
-        self.stream.register_receive_callback(self._key_event_callback, message_type="keyboard")
+        self.stream.register_receive_callback(
+            self._key_event_callback, message_type="keyboard"
+        )
 
         # Subscribe with async callbacks
-        self.event_bus.subscribe(event_type=EventType.CLIENT_ACTIVE, callback=self._on_client_active)
-        self.event_bus.subscribe(event_type=EventType.CLIENT_INACTIVE, callback=self._on_client_inactive)
+        self.event_bus.subscribe(
+            event_type=EventType.CLIENT_ACTIVE, callback=self._on_client_active
+        )
+        self.event_bus.subscribe(
+            event_type=EventType.CLIENT_INACTIVE, callback=self._on_client_inactive
+        )
 
     async def start(self):
         """
@@ -334,7 +383,11 @@ class ClientKeyboardController(object):
         """
         Checks if the async mouse controller worker task is running.
         """
-        return self._running and self._worker_task is not None and not self._worker_task.done()
+        return (
+            self._running
+            and self._worker_task is not None
+            and not self._worker_task.done()
+        )
 
     async def _run_worker(self):
         """
@@ -352,11 +405,7 @@ class ClientKeyboardController(object):
                 if not isinstance(event, KeyboardEvent):
                     continue
 
-                await loop.run_in_executor(
-                    None,
-                    self._key_event_action,
-                    event
-                )
+                await loop.run_in_executor(None, self._key_event_action, event)
 
             except asyncio.TimeoutError:
                 continue
@@ -377,7 +426,7 @@ class ClientKeyboardController(object):
         if not self._running:
             await self.start()
 
-    async def _on_client_inactive(self,  data: Optional[ClientActiveEvent]):
+    async def _on_client_inactive(self, data: Optional[ClientActiveEvent]):
         """
         Async event handler for when a client becomes inactive.
         """
@@ -407,7 +456,7 @@ class ClientKeyboardController(object):
         if event.action == KeyboardEvent.PRESS_ACTION:
             # Handl Caps Lock toggle
             if key == Key.caps_lock:
-                if self.caps_lock_state: # TODO: Better handling of caps lock state
+                if self.caps_lock_state:  # TODO: Better handling of caps lock state
                     self._controller.release(key)
                 else:
                     self._controller.press(key)
@@ -422,4 +471,6 @@ class ClientKeyboardController(object):
             self.pressed_keys.add(key)
         elif event.action == KeyboardEvent.RELEASE_ACTION:
             self._controller.release(key)
-            self.pressed_keys.discard(key)  # We don't need to check cause discard doesn't raise
+            self.pressed_keys.discard(
+                key
+            )  # We don't need to check cause discard doesn't raise

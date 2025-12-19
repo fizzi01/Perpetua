@@ -2,6 +2,7 @@
 Unified configuration management system for PyContinuity.
 Handles server and client configurations with persistent storage support.
 """
+
 from dataclasses import dataclass, field
 from typing import Optional, Dict, Any, List
 import json
@@ -12,13 +13,14 @@ import aiofiles
 from model.client import ClientObj, ClientsManager
 from utils.logging import Logger
 
+
 @dataclass
 class ApplicationConfig:
     """Application-wide configuration settings"""
 
     service_name: str = "PyContinuity"
     app_name: str = "PyContinuity"
-    main_path: str = "" # Main application save path
+    main_path: str = ""  # Main application save path
 
     ssl_path: str = "ssl/"
     ssl_certfile: str = "certfile.pem"
@@ -58,7 +60,7 @@ class ApplicationConfig:
         return os.path.join(self.get_save_path(), self.config_path)
 
     def get_certificate_path(self) -> str:
-        return os.path.join(self.get_config_dir(),self.ssl_path)
+        return os.path.join(self.get_config_dir(), self.ssl_path)
 
 
 class ServerConfig:
@@ -73,7 +75,11 @@ class ServerConfig:
     DEFAULT_HEARTBEAT_INTERVAL = 1
     DEFAULT_LOG_LEVEL = Logger.INFO
 
-    def __init__(self, app_config: Optional[ApplicationConfig] = None, config_file: Optional[str] = None):
+    def __init__(
+        self,
+        app_config: Optional[ApplicationConfig] = None,
+        config_file: Optional[str] = None,
+    ):
         """
         Initializes the ServerConfig with default settings.
 
@@ -83,8 +89,7 @@ class ServerConfig:
         """
         self.app_config = app_config or ApplicationConfig()
         self.config_file = config_file or os.path.join(
-            self.app_config.get_config_dir(),
-            self.app_config.server_config_file
+            self.app_config.get_config_dir(), self.app_config.server_config_file
         )
 
         # Connection settings
@@ -136,7 +141,7 @@ class ServerConfig:
         self,
         host: Optional[str] = None,
         port: Optional[int] = None,
-        heartbeat_interval: Optional[int] = None
+        heartbeat_interval: Optional[int] = None,
     ) -> None:
         """Update connection parameters"""
         if host is not None:
@@ -151,7 +156,7 @@ class ServerConfig:
         self,
         level: Optional[int] = None,
         log_to_file: Optional[bool] = None,
-        log_file_path: Optional[str] = None
+        log_file_path: Optional[str] = None,
     ) -> None:
         """Configure logging settings"""
         if level is not None:
@@ -167,7 +172,7 @@ class ServerConfig:
         client: Optional[ClientObj] = None,
         ip_address: Optional[str] = None,
         hostname: Optional[str] = None,
-        screen_position: str = "top"
+        screen_position: str = "top",
     ) -> ClientObj:
         """
         Add a client to the authorized list.
@@ -185,7 +190,7 @@ class ServerConfig:
             client = ClientObj(
                 ip_address=ip_address,
                 hostname=hostname,
-                screen_position=screen_position
+                screen_position=screen_position,
             )
 
         self.clients_manager.add_client(client)
@@ -196,7 +201,7 @@ class ServerConfig:
         client: Optional[ClientObj] = None,
         ip_address: Optional[str] = None,
         hostname: Optional[str] = None,
-        screen_position: Optional[str] = None
+        screen_position: Optional[str] = None,
     ) -> bool:
         """
         Remove a client from the authorized list.
@@ -214,7 +219,7 @@ class ServerConfig:
             client = self.clients_manager.get_client(
                 ip_address=ip_address,
                 hostname=hostname,
-                screen_position=screen_position
+                screen_position=screen_position,
             )
 
         if client:
@@ -226,7 +231,7 @@ class ServerConfig:
         self,
         ip_address: Optional[str] = None,
         hostname: Optional[str] = None,
-        screen_position: Optional[str] = None
+        screen_position: Optional[str] = None,
     ) -> Optional[ClientObj]:
         """
         Get a specific client.
@@ -240,9 +245,7 @@ class ServerConfig:
             ClientObj if found, None otherwise
         """
         return self.clients_manager.get_client(
-            ip_address=ip_address,
-            hostname=hostname,
-            screen_position=screen_position
+            ip_address=ip_address, hostname=hostname, screen_position=screen_position
         )
 
     def get_clients(self) -> List[ClientObj]:
@@ -259,8 +262,7 @@ class ServerConfig:
         """Convert configuration to dictionary for serialization"""
         # Sync clients from ClientsManager to authorized_clients list
         self.authorized_clients = [
-            client.to_dict()
-            for client in self.clients_manager.get_clients()
+            client.to_dict() for client in self.clients_manager.get_clients()
         ]
 
         return {
@@ -272,14 +274,16 @@ class ServerConfig:
             "log_level": self.log_level,
             "log_to_file": self.log_to_file,
             "log_file_path": self.log_file_path,
-            "authorized_clients": self.authorized_clients
+            "authorized_clients": self.authorized_clients,
         }
 
     def from_dict(self, data: Dict[str, Any]) -> None:
         """Load configuration from dictionary"""
         self.host = data.get("host", self.host)
         self.port = data.get("port", self.port)
-        self.heartbeat_interval = data.get("heartbeat_interval", self.heartbeat_interval)
+        self.heartbeat_interval = data.get(
+            "heartbeat_interval", self.heartbeat_interval
+        )
 
         # Load streams and convert string keys to int if necessary
         streams = data.get("streams_enabled", {})
@@ -315,7 +319,7 @@ class ServerConfig:
         if dir_path:
             os.makedirs(dir_path, exist_ok=True)
 
-        async with aiofiles.open(file_path, mode='w') as f:
+        async with aiofiles.open(file_path, mode="w") as f:
             await f.write(json.dumps(self.to_dict(), indent=4))
 
     def sync_load(self, file_path: Optional[str] = None) -> bool:
@@ -333,7 +337,7 @@ class ServerConfig:
             return False
 
         try:
-            with open(file_path, 'r') as f:
+            with open(file_path, "r") as f:
                 data = json.load(f)
             self.from_dict(data)
             return True
@@ -357,7 +361,7 @@ class ServerConfig:
             return False
 
         try:
-            async with aiofiles.open(file_path, 'r') as f:
+            async with aiofiles.open(file_path, "r") as f:
                 content = await f.read()
                 data = json.loads(content)
             self.from_dict(data)
@@ -384,6 +388,7 @@ class ClientConfig:
         """
         Manages server connection information for the client.
         """
+
         def __init__(
             self,
             host: str = "127.0.0.1",
@@ -391,7 +396,7 @@ class ClientConfig:
             heartbeat_interval: int = 1,
             auto_reconnect: bool = True,
             ssl: bool = False,
-            additional_params: Optional[Dict[str, Any]] = None
+            additional_params: Optional[Dict[str, Any]] = None,
         ):
             self.host = host
             self.port = port
@@ -408,11 +413,11 @@ class ClientConfig:
                 "heartbeat_interval": self.heartbeat_interval,
                 "auto_reconnect": self.auto_reconnect,
                 "ssl": self.ssl,
-                "additional_params": self.additional_params
+                "additional_params": self.additional_params,
             }
 
         @classmethod
-        def from_dict(cls, data: Dict[str, Any]) -> 'ClientConfig.ServerInfo':
+        def from_dict(cls, data: Dict[str, Any]) -> "ClientConfig.ServerInfo":
             """Create ServerInfo from dictionary"""
             return cls(
                 host=data.get("host", "127.0.0.1"),
@@ -420,10 +425,14 @@ class ClientConfig:
                 heartbeat_interval=data.get("heartbeat_interval", 1),
                 auto_reconnect=data.get("auto_reconnect", True),
                 ssl=data.get("ssl", False),
-                additional_params=data.get("additional_params", {})
+                additional_params=data.get("additional_params", {}),
             )
 
-    def __init__(self, app_config: Optional[ApplicationConfig] = None, config_file: Optional[str] = None):
+    def __init__(
+        self,
+        app_config: Optional[ApplicationConfig] = None,
+        config_file: Optional[str] = None,
+    ):
         """
         Initializes the ClientConfig with default settings.
 
@@ -433,14 +442,15 @@ class ClientConfig:
         """
         self.app_config = app_config or ApplicationConfig()
         self.config_file = config_file or os.path.join(
-            self.app_config.get_config_dir(),
-            self.app_config.client_config_file
+            self.app_config.get_config_dir(), self.app_config.client_config_file
         )
 
         # Server connection information
-        self.server_info = self.ServerInfo(host=self.DEFAULT_SERVER_HOST,
-                                           port=self.DEFAULT_SERVER_PORT,
-                                           heartbeat_interval=self.DEFAULT_HEARTBEAT_INTERVAL)
+        self.server_info = self.ServerInfo(
+            host=self.DEFAULT_SERVER_HOST,
+            port=self.DEFAULT_SERVER_PORT,
+            heartbeat_interval=self.DEFAULT_HEARTBEAT_INTERVAL,
+        )
 
         # Client-specific settings
         self.client_hostname: Optional[str] = None
@@ -489,7 +499,7 @@ class ClientConfig:
         heartbeat_interval: Optional[int] = None,
         auto_reconnect: Optional[bool] = None,
         ssl: Optional[bool] = None,
-        additional_params: Optional[Dict[str, Any]] = None
+        additional_params: Optional[Dict[str, Any]] = None,
     ) -> None:
         """Update server connection parameters"""
         if host is not None:
@@ -537,7 +547,7 @@ class ClientConfig:
         self,
         level: Optional[int] = None,
         log_to_file: Optional[bool] = None,
-        log_file_path: Optional[str] = None
+        log_file_path: Optional[str] = None,
     ) -> None:
         """Configure logging settings"""
         if level is not None:
@@ -546,7 +556,6 @@ class ClientConfig:
             self.log_to_file = log_to_file
         if log_file_path is not None:
             self.log_file_path = log_file_path
-
 
     # Serialization
     def to_dict(self) -> Dict[str, Any]:
@@ -558,7 +567,7 @@ class ClientConfig:
             "ssl_enabled": self.ssl_enabled,
             "log_level": self.log_level,
             "log_to_file": self.log_to_file,
-            "log_file_path": self.log_file_path
+            "log_file_path": self.log_file_path,
         }
 
     def from_dict(self, data: Dict[str, Any]) -> None:
@@ -603,7 +612,7 @@ class ClientConfig:
         if dir_path:
             os.makedirs(dir_path, exist_ok=True)
 
-        async with aiofiles.open(file_path, mode='w') as f:
+        async with aiofiles.open(file_path, mode="w") as f:
             await f.write(json.dumps(self.to_dict(), indent=4))
 
     def sync_load(self, file_path: Optional[str] = None) -> bool:
@@ -621,7 +630,7 @@ class ClientConfig:
             return False
 
         try:
-            with open(file_path, 'r') as f:
+            with open(file_path, "r") as f:
                 data = json.load(f)
             self.from_dict(data)
             return True
@@ -645,7 +654,7 @@ class ClientConfig:
             return False
 
         try:
-            async with aiofiles.open(file_path, 'r') as f:
+            async with aiofiles.open(file_path, "r") as f:
                 content = await f.read()
                 data = json.loads(content)
             self.from_dict(data)
@@ -653,6 +662,3 @@ class ClientConfig:
         except Exception as e:
             print(f"Error loading configuration from {file_path}: {e}")
             return False
-
-
-

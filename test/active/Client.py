@@ -2,6 +2,7 @@
 Complete client logic suite for active tests.
 Fully async implementation using AsyncEventBus and async connection handlers.
 """
+
 import asyncio
 from event import EventType
 from model.client import ClientObj, ClientsManager
@@ -10,7 +11,10 @@ from event.bus import AsyncEventBus  # Changed to AsyncEventBus
 from command import CommandHandler
 
 from network.connection.client import ConnectionHandler  # Changed to async
-from network.stream.client import UnidirectionalStreamHandler, BidirectionalStreamHandler
+from network.stream.client import (
+    UnidirectionalStreamHandler,
+    BidirectionalStreamHandler,
+)
 from network.stream import StreamType
 
 from input.mouse import ClientMouseController
@@ -21,8 +25,8 @@ from utils.logging import Logger
 
 Logger().set_level(Logger.DEBUG)  # Set log level to reduce output during tests
 
-class ActiveClient:
 
+class ActiveClient:
     def __init__(self, server_ip: str, server_port: int):
         self.clients_manager = ClientsManager(client_mode=True)
         self.clients_manager.add_client(ClientObj(ip_address=server_ip, ssl=False))
@@ -35,7 +39,7 @@ class ActiveClient:
             stream_type=StreamType.COMMAND,
             clients=self.clients_manager,
             event_bus=self.event_bus,
-            handler_id="ClientCommandStreamHandler"
+            handler_id="ClientCommandStreamHandler",
         )
 
         self.mouse_stream_handler = UnidirectionalStreamHandler(
@@ -44,7 +48,7 @@ class ActiveClient:
             event_bus=self.event_bus,
             handler_id="ClientMouseStreamHandler",
             sender=False,  # Mouse data is received from server
-            active_only=True
+            active_only=True,
         )
 
         self.keyboard_stream_handler = UnidirectionalStreamHandler(
@@ -53,17 +57,22 @@ class ActiveClient:
             event_bus=self.event_bus,
             handler_id="ClientKeyboardStreamHandler",
             sender=False,  # Keyboard data is received from server
-            active_only=True
+            active_only=True,
         )
 
         self.clipboard_stream_handler = BidirectionalStreamHandler(
             stream_type=StreamType.CLIPBOARD,
             clients=self.clients_manager,
             event_bus=self.event_bus,
-            handler_id="ClientClipboardStreamHandler"
+            handler_id="ClientClipboardStreamHandler",
         )
 
-        self.open_streams = [StreamType.MOUSE, StreamType.COMMAND, StreamType.KEYBOARD, StreamType.CLIPBOARD]
+        self.open_streams = [
+            StreamType.MOUSE,
+            StreamType.COMMAND,
+            StreamType.KEYBOARD,
+            StreamType.CLIPBOARD,
+        ]
 
         # Create Async Client Connection Handler
         self.client = ConnectionHandler(
@@ -73,48 +82,43 @@ class ActiveClient:
             clients=self.clients_manager,
             open_streams=self.open_streams,
             connected_callback=self.connected_callback,
-            disconnected_callback=self.disconnected_callback
+            disconnected_callback=self.disconnected_callback,
         )
 
         # Create Command Handler
         self.command_handler = CommandHandler(
-            event_bus=self.event_bus,
-            stream=self.command_stream_handler
+            event_bus=self.event_bus, stream=self.command_stream_handler
         )
 
         # Create Mouse Controller
         self.mouse_controller = ClientMouseController(
             event_bus=self.event_bus,
             stream_handler=self.mouse_stream_handler,
-            command_stream=self.command_stream_handler
+            command_stream=self.command_stream_handler,
         )
 
         # Create Keyboard Controller
         self.keyboard_controller = ClientKeyboardController(
             event_bus=self.event_bus,
             stream_handler=self.keyboard_stream_handler,
-            command_stream=self.command_stream_handler
+            command_stream=self.command_stream_handler,
         )
 
         # Create Clipboard Listener and Controller
         self.clipboard_listener = ClipboardListener(
             event_bus=self.event_bus,
             stream_handler=self.clipboard_stream_handler,
-            command_stream=self.command_stream_handler
+            command_stream=self.command_stream_handler,
         )
         self.clipboard_controller = ClipboardController(
             event_bus=self.event_bus,
             clipboard=self.clipboard_listener.get_clipboard_context(),
-            stream_handler=self.clipboard_stream_handler
+            stream_handler=self.clipboard_stream_handler,
         )
-
 
     async def connected_callback(self, client):
         """Async callback for connection"""
-        await self.event_bus.dispatch(
-            event_type=EventType.CLIENT_ACTIVE,
-            data={}
-        )
+        await self.event_bus.dispatch(event_type=EventType.CLIENT_ACTIVE, data={})
 
         await self.mouse_stream_handler.start()
         await self.command_stream_handler.start()
@@ -123,10 +127,7 @@ class ActiveClient:
 
     async def disconnected_callback(self, client):
         """Async callback for disconnection"""
-        await self.event_bus.dispatch(
-            event_type=EventType.CLIENT_INACTIVE,
-            data={}
-        )
+        await self.event_bus.dispatch(event_type=EventType.CLIENT_INACTIVE, data={})
 
         await self.mouse_stream_handler.stop()
         await self.command_stream_handler.stop()
@@ -182,7 +183,7 @@ async def main():
     await active_client.stop()
 
 
-if __name__ == '__main__':
+if __name__ == "__main__":
     try:
         asyncio.run(main())
     except KeyboardInterrupt:

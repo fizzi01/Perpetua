@@ -1,8 +1,10 @@
 """
 Handles server and client socket logic
 """
+
 import asyncio
 from typing import Tuple, Dict, Optional
+
 
 class StreamWrapper:
     """
@@ -46,13 +48,13 @@ class StreamWrapper:
             return self._writer.is_closing()
 
         def get_sockname(self) -> Tuple[str, int]:
-            return self._writer.get_extra_info('sockname', default=None)
+            return self._writer.get_extra_info("sockname", default=None)
 
     def __init__(self, reader: asyncio.StreamReader, writer: asyncio.StreamWriter):
         self.reader = self.StreamReader(reader)
         self.writer = self.StreamWriter(writer)
 
-    def get_reader(self) -> 'StreamWrapper.StreamReader':
+    def get_reader(self) -> "StreamWrapper.StreamReader":
         return self.reader
 
     def get_reader_call(self):
@@ -66,7 +68,7 @@ class StreamWrapper:
         """
         return self.reader.recv
 
-    def get_writer(self) -> 'StreamWrapper.StreamWriter':
+    def get_writer(self) -> "StreamWrapper.StreamWriter":
         return self.writer
 
     def get_writer_call(self):
@@ -81,7 +83,6 @@ class StreamWrapper:
             Callable: The `send` method of the writer object.
         """
         return self.writer.send
-
 
     async def close(self):
         """
@@ -133,8 +134,13 @@ class ClientConnection:
         self.wrappers: Dict[int, StreamWrapper] = {}
         self._is_closed = False
 
-    def add_stream(self, stream_type: int, reader: Optional[asyncio.StreamReader] = None,
-                   writer: Optional[asyncio.StreamWriter] = None, stream: Optional[StreamWrapper] = None) -> None:
+    def add_stream(
+        self,
+        stream_type: int,
+        reader: Optional[asyncio.StreamReader] = None,
+        writer: Optional[asyncio.StreamWriter] = None,
+        stream: Optional[StreamWrapper] = None,
+    ) -> None:
         """
         Add a stream of the given type
 
@@ -253,4 +259,3 @@ class ClientConnection:
             pass
         except Exception as e:
             raise Exception(f"Error while closing connection -> {e}") from e
-

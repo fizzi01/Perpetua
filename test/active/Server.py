@@ -2,6 +2,7 @@
 Complete server logic suite for active tests.
 Fully async implementation using AsyncEventBus and async connection handlers.
 """
+
 import asyncio
 from event import EventType
 from network.data.exchange import MessageExchange
@@ -15,7 +16,11 @@ from model.client import ClientObj, ClientsManager
 from event.bus import AsyncEventBus  # Changed to AsyncEventBus
 
 from network.connection.server import ConnectionHandler  # Changed to async
-from network.stream.server import UnidirectionalStreamHandler, BidirectionalStreamHandler, MulticastStreamHandler
+from network.stream.server import (
+    UnidirectionalStreamHandler,
+    BidirectionalStreamHandler,
+    MulticastStreamHandler,
+)
 from network.stream import StreamType
 
 from command import CommandHandler
@@ -28,6 +33,7 @@ from input.clipboard import ClipboardListener, ClipboardController
 from utils.logging import Logger
 
 Logger().set_level(Logger.DEBUG)  # Set log level to reduce output during tests
+
 
 class ActiveServer:
     def __init__(self, host: str, port: int, client_address: str):
@@ -45,7 +51,7 @@ class ActiveServer:
             stream_type=StreamType.COMMAND,
             clients=self.clients_manager,
             event_bus=self.event_bus,
-            handler_id="ServerCommandStreamHandler"
+            handler_id="ServerCommandStreamHandler",
         )
         self._stream_handlers.append(self.command_stream_handler)
 
@@ -54,7 +60,7 @@ class ActiveServer:
             clients=self.clients_manager,
             event_bus=self.event_bus,
             handler_id="ServerMouseStreamHandler",
-            sender=True  # Mouse data is sent from server to client
+            sender=True,  # Mouse data is sent from server to client
         )
         self._stream_handlers.append(self.mouse_stream_handler)
 
@@ -63,7 +69,7 @@ class ActiveServer:
             clients=self.clients_manager,
             event_bus=self.event_bus,
             handler_id="ServerKeyboardStreamHandler",
-            sender=True  # Keyboard data is sent from server to client
+            sender=True,  # Keyboard data is sent from server to client
         )
         self._stream_handlers.append(self.keyboard_stream_handler)
 
@@ -71,15 +77,13 @@ class ActiveServer:
             stream_type=StreamType.CLIPBOARD,
             clients=self.clients_manager,
             event_bus=self.event_bus,
-            handler_id="ServerClipboardStreamHandler"
+            handler_id="ServerClipboardStreamHandler",
         )
         self._stream_handlers.append(self.clipboard_stream_handler)
 
         # Create Cursor Handler Worker
         self.cursor_handler_worker = CursorHandlerWorker(
-            event_bus=self.event_bus,
-            stream=self.mouse_stream_handler,
-            debug=False
+            event_bus=self.event_bus, stream=self.mouse_stream_handler, debug=False
         )
 
         # Create Async Connection Handler
@@ -89,13 +93,12 @@ class ActiveServer:
             host=host,
             port=port,
             heartbeat_interval=1,
-            allowlist=self.clients_manager
+            allowlist=self.clients_manager,
         )
 
         # Create Command Handler
         self.command_handler = CommandHandler(
-            event_bus=self.event_bus,
-            stream=self.command_stream_handler
+            event_bus=self.event_bus, stream=self.command_stream_handler
         )
 
         # Create Mouse Listener and Controller
@@ -104,26 +107,26 @@ class ActiveServer:
             event_bus=self.event_bus,
             stream_handler=self.mouse_stream_handler,
             command_stream=self.command_stream_handler,
-            filtering=False
+            filtering=False,
         )
 
         # Create Keyboard Listener
         self.keyboard_listener = ServerKeyboardListener(
             event_bus=self.event_bus,
             stream_handler=self.keyboard_stream_handler,
-            command_stream=self.command_stream_handler
+            command_stream=self.command_stream_handler,
         )
 
         # Create Clipboard Listener and Controller
         self.clipboard_listener = ClipboardListener(
             event_bus=self.event_bus,
             stream_handler=self.clipboard_stream_handler,
-            command_stream=self.command_stream_handler
+            command_stream=self.command_stream_handler,
         )
         self.clipboard_controller = ClipboardController(
             event_bus=self.event_bus,
             clipboard=self.clipboard_listener.get_clipboard_context(),
-            stream_handler=self.clipboard_stream_handler
+            stream_handler=self.clipboard_stream_handler,
         )
 
     async def on_client_connected(self, client: ClientObj, streams: list[int]):
@@ -131,7 +134,7 @@ class ActiveServer:
         client_pos = client.screen_position
         await self.event_bus.dispatch(
             event_type=EventType.CLIENT_CONNECTED,
-            data={"client_screen": client_pos, "streams": streams}
+            data={"client_screen": client_pos, "streams": streams},
         )
 
     async def on_client_disconnected(self, client: ClientObj, streams: list[int]):
@@ -139,7 +142,7 @@ class ActiveServer:
         client_pos = client.screen_position
         await self.event_bus.dispatch(
             event_type=EventType.CLIENT_DISCONNECTED,
-            data={"client_screen": client_pos, "streams": streams}
+            data={"client_screen": client_pos, "streams": streams},
         )
 
     async def start(self) -> bool:
@@ -194,7 +197,6 @@ class ActiveServer:
             await handler.stop()
 
 
-
 async def main():
     """Async main function"""
     server = ActiveServer(host="192.168.1.62", port=5555, client_address="192.168.1.74")
@@ -222,4 +224,3 @@ if __name__ == "__main__":
         asyncio.run(main())
     except KeyboardInterrupt:
         print("\nServer shutdown complete")
-

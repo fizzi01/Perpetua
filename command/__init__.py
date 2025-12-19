@@ -1,9 +1,16 @@
 """
 Contains the logic to handle client/server commands coming from command streams.
 """
+
 import asyncio
-from event import EventType, CommandEvent, EventMapper, ActiveScreenChangedEvent, CrossScreenCommandEvent, \
-    ClientActiveEvent
+from event import (
+    EventType,
+    CommandEvent,
+    EventMapper,
+    ActiveScreenChangedEvent,
+    CrossScreenCommandEvent,
+    ClientActiveEvent,
+)
 from event.bus import EventBus
 from network.stream import StreamHandler
 from network.protocol.message import MessageType
@@ -23,7 +30,9 @@ class CommandHandler:
         self._logger = get_logger(self.__class__.__name__)
 
         # Register async callback for command messages
-        self.stream.register_receive_callback(self.handle_command, message_type=MessageType.COMMAND)
+        self.stream.register_receive_callback(
+            self.handle_command, message_type=MessageType.COMMAND
+        )
 
     async def handle_command(self, message):
         """
@@ -59,14 +68,18 @@ class CommandHandler:
             # Async dispatch
             await self.event_bus.dispatch(
                 # when ServerMouseController receives this event will set the correct cursor position
-                event_type=EventType.SCREEN_CHANGE_GUARD, # We first notify the cursor guard (cursor handler)
-                data=ActiveScreenChangedEvent(active_screen=None,
-                                             source=event.source,
-                                             position=crs_event.get_position())
+                event_type=EventType.SCREEN_CHANGE_GUARD,  # We first notify the cursor guard (cursor handler)
+                data=ActiveScreenChangedEvent(
+                    active_screen=None,
+                    source=event.source,
+                    position=crs_event.get_position(),
+                ),
             )
         else:
             # Dispatch CLIENT_ACTIVE event to notify that client itself is now active
             await self.event_bus.dispatch(
-                event_type=EventType.CLIENT_ACTIVE, data=ClientActiveEvent(
+                event_type=EventType.CLIENT_ACTIVE,
+                data=ClientActiveEvent(
                     client_screen=event.target,
-                ))
+                ),
+            )

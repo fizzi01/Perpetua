@@ -5,23 +5,32 @@ from typing import Optional, Callable, Any
 from copykitten import copy, paste, CopykittenError
 import hashlib
 
-from event import ClipboardEvent, EventType, EventMapper, ClientConnectedEvent, ClientDisconnectedEvent, \
-    ClientActiveEvent
+from event import (
+    ClipboardEvent,
+    EventType,
+    EventMapper,
+    ClientConnectedEvent,
+    ClientDisconnectedEvent,
+    ClientActiveEvent,
+)
 from event.bus import EventBus
 from network.stream import StreamHandler
 
 from utils.logging import get_logger
 
+
 class ClipboardType(enum.Enum):
     """
     Enum for different clipboard content types.
     """
+
     TEXT = "text"
     URL = "url"
     FILE = "file"
     IMAGE = "image"
     EMPTY = "empty"
     ERROR = "error"
+
 
 class Clipboard:
     """
@@ -37,7 +46,7 @@ class Clipboard:
         self,
         on_change: Optional[Callable[[str, ClipboardType], Any]] = None,
         poll_interval: float = 0.5,
-        content_types: Optional[list[ClipboardType]] = None
+        content_types: Optional[list[ClipboardType]] = None,
     ):
         """
         Initialize the clipboard listener.
@@ -68,7 +77,7 @@ class Clipboard:
         if not content:
             return ""
         # Ensure we're encoding to bytes properly
-        content_bytes = content.encode('utf-8', errors='ignore')
+        content_bytes = content.encode("utf-8", errors="ignore")
         return hashlib.md5(content_bytes).hexdigest()
 
     @staticmethod
@@ -77,7 +86,6 @@ class Clipboard:
         Os-specific logic to get a complete file path from clipboard content.
         """
         return file
-
 
     async def _get_clipboard_content(self) -> tuple[Optional[str], ClipboardType]:
         """
@@ -90,7 +98,7 @@ class Clipboard:
             # Run blocking clipboard operation in executor to avoid blocking event loop
             loop = asyncio.get_running_loop()
             try:
-                content = await loop.run_in_executor(None, paste) #type: ignore
+                content = await loop.run_in_executor(None, paste)  # type: ignore
             except CopykittenError:
                 return None, ClipboardType.EMPTY
             except Exception as e:
@@ -102,7 +110,7 @@ class Clipboard:
             content = self._try_get_clip_file(content)
             if isinstance(content, str):
                 # Could check for URLs, file paths, etc.
-                if content.startswith(('http://', 'https://')):
+                if content.startswith(("http://", "https://")):
                     content_type = ClipboardType.URL
                 elif os.path.isfile(content):
                     content_type = ClipboardType.FILE
@@ -175,7 +183,9 @@ class Clipboard:
                                 else:
                                     # Support sync callbacks too
                                     loop = asyncio.get_running_loop()
-                                    await loop.run_in_executor(None, self.on_change, content, content_type)
+                                    await loop.run_in_executor(
+                                        None, self.on_change, content, content_type
+                                    )
                             except Exception as e:
                                 self._logger.error(f"Error in callback -> {e}")
 
@@ -287,12 +297,20 @@ class Clipboard:
             self._logger.error(f"Error writing to clipboard (debug) -> {e}")
             return False
 
+
 class ClipboardListener:
     """
     Base clipboard listener that integrates with an event bus and stream handlers.
     Listens for clipboard changes and dispatches events to connected clients.
     """
-    def __init__(self, event_bus: EventBus, stream_handler: StreamHandler, command_stream: StreamHandler, clipboard = Clipboard):
+
+    def __init__(
+        self,
+        event_bus: EventBus,
+        stream_handler: StreamHandler,
+        command_stream: StreamHandler,
+        clipboard=Clipboard,
+    ):
         """
         Initialize the clipboard listener.
         Args:
@@ -302,7 +320,9 @@ class ClipboardListener:
             clipboard: Clipboard monitoring class (default to Os-specific Clipboard)
         """
         self.event_bus = event_bus
-        self.stream_handler = stream_handler # Can be a broadcast stream handler or unidirectional
+        self.stream_handler = (
+            stream_handler  # Can be a broadcast stream handler or unidirectional
+        )
         self.command_stream = command_stream
 
         self._active_screens = {}
@@ -312,12 +332,21 @@ class ClipboardListener:
 
         self._logger = get_logger(self.__class__.__name__)
 
-        self.clipboard = clipboard(on_change=self._on_clipboard_change,
-                                       content_types=[ClipboardType.TEXT, ClipboardType.URL, ClipboardType.FILE])
+        self.clipboard = clipboard(
+            on_change=self._on_clipboard_change,
+            content_types=[ClipboardType.TEXT, ClipboardType.URL, ClipboardType.FILE],
+        )
 
-        self.event_bus.subscribe(event_type=EventType.CLIENT_CONNECTED, callback=self._on_client_connected)
-        self.event_bus.subscribe(event_type=EventType.CLIENT_DISCONNECTED, callback=self._on_client_disconnected)
-        self.event_bus.subscribe(event_type=EventType.CLIENT_ACTIVE, callback=self._on_client_active)
+        self.event_bus.subscribe(
+            event_type=EventType.CLIENT_CONNECTED, callback=self._on_client_connected
+        )
+        self.event_bus.subscribe(
+            event_type=EventType.CLIENT_DISCONNECTED,
+            callback=self._on_client_disconnected,
+        )
+        self.event_bus.subscribe(
+            event_type=EventType.CLIENT_ACTIVE, callback=self._on_client_active
+        )
         # Behavior change: We do not stop listening on inactive clients
         # self.event_bus.subscribe(event_type=EventType.CLIENT_INACTIVE, callback=self._on_client_inactive)
 
@@ -326,7 +355,9 @@ class ClipboardListener:
         Start the clipboard listener.
         """
         # We start the listener only when there is at least one connected client
-        if not self.clipboard.is_listening() and self._listening: # We resume listening if needed
+        if (
+            not self.clipboard.is_listening() and self._listening
+        ):  # We resume listening if needed
             await self.clipboard.start()
         self._logger.debug("Started")
         return True
@@ -412,12 +443,19 @@ class ClipboardListener:
         """
         return self.clipboard
 
+
 class ClipboardController:
     """
     Base clipboard controller that handles incoming clipboard events from clients.
     Updates the local clipboard based on received events.
     """
-    def __init__(self, event_bus: EventBus, stream_handler: StreamHandler, clipboard: Optional[Clipboard] = None):
+
+    def __init__(
+        self,
+        event_bus: EventBus,
+        stream_handler: StreamHandler,
+        clipboard: Optional[Clipboard] = None,
+    ):
         """
         Initialize the clipboard controller.
         Args:
@@ -429,12 +467,16 @@ class ClipboardController:
         self.stream_handler = stream_handler
 
         if clipboard is None:
-            raise ValueError("Clipboard instance must be provided to ClipboardController")
+            raise ValueError(
+                "Clipboard instance must be provided to ClipboardController"
+            )
 
         self.clipboard = clipboard
 
-        #self.event_bus.subscribe(event_type=EventType.CLIPBOARD_EVENT, callback=self._on_clipboard_event)
-        self.stream_handler.register_receive_callback(self._on_clipboard_event, "clipboard")
+        # self.event_bus.subscribe(event_type=EventType.CLIPBOARD_EVENT, callback=self._on_clipboard_event)
+        self.stream_handler.register_receive_callback(
+            self._on_clipboard_event, "clipboard"
+        )
 
     async def start(self) -> bool:
         """

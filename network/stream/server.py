@@ -8,7 +8,12 @@ from network.data.exchange import MessageExchange, MessageExchangeConfig
 from model.client import ClientsManager, ClientObj
 
 from event.bus import EventBus
-from event import EventType, ActiveScreenChangedEvent, ClientDisconnectedEvent, ClientConnectedEvent
+from event import (
+    EventType,
+    ActiveScreenChangedEvent,
+    ClientDisconnectedEvent,
+    ClientConnectedEvent,
+)
 
 
 class UnidirectionalStreamHandler(StreamHandler):
@@ -17,8 +22,15 @@ class UnidirectionalStreamHandler(StreamHandler):
     Fully async with optimized performance.
     """
 
-    def __init__(self, stream_type: int, clients: ClientsManager, event_bus: EventBus, handler_id: Optional[str] = None,
-                 source: str = "server", sender: bool = True):
+    def __init__(
+        self,
+        stream_type: int,
+        clients: ClientsManager,
+        event_bus: EventBus,
+        handler_id: Optional[str] = None,
+        source: str = "server",
+        sender: bool = True,
+    ):
         """
         Initializes and configures an instance responsible for managing the interaction between
         a specified stream type, connected clients, and event-driven communication. This
@@ -51,23 +63,34 @@ class UnidirectionalStreamHandler(StreamHandler):
                 - ACTIVE_SCREEN_CHANGED
                 - CLIENT_DISCONNECTED
         """
-        super().__init__(stream_type=stream_type, clients=clients, event_bus=event_bus, sender=sender)
+        super().__init__(
+            stream_type=stream_type, clients=clients, event_bus=event_bus, sender=sender
+        )
 
         self._active_client: Optional[ClientObj] = None
-        self.handler_id = handler_id if handler_id else f"{self.__class__.__name__}-{self.stream_type}"
+        self.handler_id = (
+            handler_id
+            if handler_id
+            else f"{self.__class__.__name__}-{self.stream_type}"
+        )
         self.source = source
 
         # Create a MessageExchange object
         self.msg_exchange = MessageExchange(
-            conf=MessageExchangeConfig(auto_dispatch=True),
-            id=self.handler_id
+            conf=MessageExchangeConfig(auto_dispatch=True), id=self.handler_id
         )
 
         self._logger = get_logger(self.handler_id)
 
         # Subscribe with async callbacks
-        self.event_bus.subscribe(event_type=EventType.ACTIVE_SCREEN_CHANGED, callback=self._on_active_screen_changed)
-        self.event_bus.subscribe(event_type=EventType.CLIENT_DISCONNECTED, callback=self._on_client_disconnected)
+        self.event_bus.subscribe(
+            event_type=EventType.ACTIVE_SCREEN_CHANGED,
+            callback=self._on_active_screen_changed,
+        )
+        self.event_bus.subscribe(
+            event_type=EventType.CLIENT_DISCONNECTED,
+            callback=self._on_client_disconnected,
+        )
 
     async def stop(self):
         await super().stop()
@@ -88,10 +111,15 @@ class UnidirectionalStreamHandler(StreamHandler):
             return
 
         client_screen = data.client_screen
-        if self._active_client is not None and self._active_client.get_screen_position() == client_screen:
+        if (
+            self._active_client is not None
+            and self._active_client.get_screen_position() == client_screen
+        ):
             try:
                 self._active_client = None
-                await self.msg_exchange.set_transport(send_callback=None, receive_callback=None)
+                await self.msg_exchange.set_transport(
+                    send_callback=None, receive_callback=None
+                )
             finally:
                 self._clear_buffer()
 
@@ -116,19 +144,28 @@ class UnidirectionalStreamHandler(StreamHandler):
                 if cl_conn is not None:
                     cl_stream = cl_conn.get_stream(self.stream_type)
                     if cl_stream is None:
-                        await self.msg_exchange.set_transport(send_callback=None, receive_callback=None)
+                        await self.msg_exchange.set_transport(
+                            send_callback=None, receive_callback=None
+                        )
                         await self.msg_exchange.stop()
                         await asyncio.sleep(0)
                         return
 
-                    if cl_stream.get_writer() is None:  # We avoid sending if no writer is available
+                    if (
+                        cl_stream.get_writer() is None
+                    ):  # We avoid sending if no writer is available
                         self._logger.debug("No writer available for active client")
                         self._active_client = None
                         return
 
-                    if cl_stream.get_reader() is None:  # We stop receiving if no reader is available
+                    if (
+                        cl_stream.get_reader() is None
+                    ):  # We stop receiving if no reader is available
                         self._logger.debug("No reader available for active client")
-                        await self.msg_exchange.set_transport(send_callback=cl_stream.get_writer_call(), receive_callback=None)
+                        await self.msg_exchange.set_transport(
+                            send_callback=cl_stream.get_writer_call(),
+                            receive_callback=None,
+                        )
                         await self.msg_exchange.stop()
                         return
 
@@ -140,12 +177,17 @@ class UnidirectionalStreamHandler(StreamHandler):
                     await self.msg_exchange.start()
                 else:
                     self._logger.debug(
-                        f"No valid stream for active client {self._active_client.screen_position}")
-                    await self.msg_exchange.set_transport(send_callback=None, receive_callback=None)
+                        f"No valid stream for active client {self._active_client.screen_position}"
+                    )
+                    await self.msg_exchange.set_transport(
+                        send_callback=None, receive_callback=None
+                    )
                     await self.msg_exchange.stop()
 
             else:
-                await self.msg_exchange.set_transport(send_callback=None, receive_callback=None)
+                await self.msg_exchange.set_transport(
+                    send_callback=None, receive_callback=None
+                )
                 await self.msg_exchange.stop()
         finally:
             self._clear_buffer()
@@ -157,7 +199,9 @@ class UnidirectionalStreamHandler(StreamHandler):
         while self._active:
             if self._active_client is not None and self._active_client.is_connected:
                 try:
-                    screen = self._active_client.get_screen_position() # Before the first await to avoid missing active client
+                    screen = (
+                        self._active_client.get_screen_position()
+                    )  # Before the first await to avoid missing active client
                     # Process sending queued data
                     data = await self._send_queue.get()
                     # If data is not dict call .to_dict()
@@ -167,7 +211,7 @@ class UnidirectionalStreamHandler(StreamHandler):
                         stream_type=self.stream_type,
                         source=self.source,
                         target=screen,
-                        **data
+                        **data,
                     )
 
                 except asyncio.TimeoutError:
@@ -184,7 +228,7 @@ class UnidirectionalStreamHandler(StreamHandler):
                     await asyncio.sleep(0)  # yield control
                 except MissingTransportError:
                     self._logger.warning("Missing transport")
-                    await asyncio.sleep(0) #yield control
+                    await asyncio.sleep(0)  # yield control
                 except RuntimeError as e:
                     # uv/winloop runtime error on closed tcp transport
                     if "closed=True" in str(e):
@@ -207,29 +251,46 @@ class BidirectionalStreamHandler(StreamHandler):
     Fully async with optimized performance.
     """
 
-    def __init__(self, stream_type: int, clients: ClientsManager, event_bus: EventBus, handler_id: Optional[str] = None,
-                 source: str = "server"):
+    def __init__(
+        self,
+        stream_type: int,
+        clients: ClientsManager,
+        event_bus: EventBus,
+        handler_id: Optional[str] = None,
+        source: str = "server",
+    ):
         """
         Args:
             source (str): The source identifier for messages.
         """
-        super().__init__(stream_type=stream_type, clients=clients, event_bus=event_bus, sender=True)
+        super().__init__(
+            stream_type=stream_type, clients=clients, event_bus=event_bus, sender=True
+        )
 
         self._active_client = None
-        self.handler_id = handler_id if handler_id else f"{self.__class__.__name__}-{self.stream_type}"
+        self.handler_id = (
+            handler_id
+            if handler_id
+            else f"{self.__class__.__name__}-{self.stream_type}"
+        )
         self.source = source
 
         # Create a MessageExchange object
         self.msg_exchange = MessageExchange(
-            conf=MessageExchangeConfig(auto_dispatch=True),
-            id=self.handler_id
+            conf=MessageExchangeConfig(auto_dispatch=True), id=self.handler_id
         )
 
         self._logger = get_logger(self.handler_id)
 
         # Subscribe with async callbacks
-        self.event_bus.subscribe(event_type=EventType.ACTIVE_SCREEN_CHANGED, callback=self._on_active_screen_changed)
-        self.event_bus.subscribe(event_type=EventType.CLIENT_DISCONNECTED, callback=self._on_client_disconnected)
+        self.event_bus.subscribe(
+            event_type=EventType.ACTIVE_SCREEN_CHANGED,
+            callback=self._on_active_screen_changed,
+        )
+        self.event_bus.subscribe(
+            event_type=EventType.CLIENT_DISCONNECTED,
+            callback=self._on_client_disconnected,
+        )
 
     async def stop(self):
         await super().stop()
@@ -250,10 +311,15 @@ class BidirectionalStreamHandler(StreamHandler):
             return
 
         client_screen = data.client_screen
-        if self._active_client is not None and self._active_client.screen_position == client_screen:
+        if (
+            self._active_client is not None
+            and self._active_client.screen_position == client_screen
+        ):
             self._active_client = None
-            #self.logger.debug(f"Active client disconnected {client_screen}")
-            await self.msg_exchange.set_transport(send_callback=None, receive_callback=None)
+            # self.logger.debug(f"Active client disconnected {client_screen}")
+            await self.msg_exchange.set_transport(
+                send_callback=None, receive_callback=None
+            )
 
     async def _on_active_screen_changed(self, data: Optional[ActiveScreenChangedEvent]):
         """
@@ -276,19 +342,28 @@ class BidirectionalStreamHandler(StreamHandler):
                 if cl_conn is not None:
                     cl_stream = cl_conn.get_stream(self.stream_type)
                     if cl_stream is None:
-                        await self.msg_exchange.set_transport(send_callback=None, receive_callback=None)
+                        await self.msg_exchange.set_transport(
+                            send_callback=None, receive_callback=None
+                        )
                         await self.msg_exchange.stop()
                         await asyncio.sleep(0)
                         return
 
-                    if cl_stream.get_writer() is None:  # We avoid sending if no writer is available
+                    if (
+                        cl_stream.get_writer() is None
+                    ):  # We avoid sending if no writer is available
                         self._logger.debug("No writer available for active client")
                         self._active_client = None
                         return
 
-                    if cl_stream.get_reader() is None:  # We stop receiving if no reader is available
+                    if (
+                        cl_stream.get_reader() is None
+                    ):  # We stop receiving if no reader is available
                         self._logger.debug("No reader available for active client")
-                        await self.msg_exchange.set_transport(send_callback=cl_stream.get_writer_call(), receive_callback=None)
+                        await self.msg_exchange.set_transport(
+                            send_callback=cl_stream.get_writer_call(),
+                            receive_callback=None,
+                        )
                         await self.msg_exchange.stop()
                         return
 
@@ -300,12 +375,17 @@ class BidirectionalStreamHandler(StreamHandler):
                     await self.msg_exchange.start()
                 else:
                     self._logger.debug(
-                        f"No valid stream for active client {self._active_client.screen_position}")
-                    await self.msg_exchange.set_transport(send_callback=None, receive_callback=None)
+                        f"No valid stream for active client {self._active_client.screen_position}"
+                    )
+                    await self.msg_exchange.set_transport(
+                        send_callback=None, receive_callback=None
+                    )
                     await self.msg_exchange.stop()
 
             else:
-                await self.msg_exchange.set_transport(send_callback=None, receive_callback=None)
+                await self.msg_exchange.set_transport(
+                    send_callback=None, receive_callback=None
+                )
                 await self.msg_exchange.stop()
         finally:
             self._clear_buffer()
@@ -317,7 +397,9 @@ class BidirectionalStreamHandler(StreamHandler):
         while self._active:
             if self._active_client is not None and self._active_client.is_connected:
                 try:
-                    screen = self._active_client.get_screen_position()  # Before the first await to avoid missing active client
+                    screen = (
+                        self._active_client.get_screen_position()
+                    )  # Before the first await to avoid missing active client
                     # Process sending queued data
                     data = await self._send_queue.get()
                     if not isinstance(data, dict) and hasattr(data, "to_dict"):
@@ -326,7 +408,7 @@ class BidirectionalStreamHandler(StreamHandler):
                         stream_type=self.stream_type,
                         source=self.source,
                         target=screen,
-                        **data
+                        **data,
                     )
                 except asyncio.TimeoutError:
                     await asyncio.sleep(self._waiting_time)
@@ -334,8 +416,9 @@ class BidirectionalStreamHandler(StreamHandler):
                 except AttributeError:
                     # Active client became None during await
                     self._logger.debug(
-                        f"No valid stream for active client {self._active_client.screen_position}")
-                    await asyncio.sleep(0) #yield control
+                        f"No valid stream for active client {self._active_client.screen_position}"
+                    )
+                    await asyncio.sleep(0)  # yield control
                 except (BrokenPipeError, ConnectionResetError) as e:
                     self._logger.warning(f"Connection error -> {e}")
                     # Set active client to None on connection errors
@@ -343,7 +426,7 @@ class BidirectionalStreamHandler(StreamHandler):
                     await asyncio.sleep(0)  # yield control
                 except MissingTransportError:
                     self._logger.warning("Missing transport")
-                    await asyncio.sleep(0) #yield control
+                    await asyncio.sleep(0)  # yield control
                 except RuntimeError as e:
                     # uv/winloop runtime error on closed tcp transport
                     if "closed=True" in str(e):
@@ -359,7 +442,8 @@ class BidirectionalStreamHandler(StreamHandler):
             else:
                 await asyncio.sleep(self._waiting_time)
 
-#TODO: Similar to BidirectionalStreamHandler, maybe refactor common code into a base class or BidirectionalStreamHandler too
+
+# TODO: Similar to BidirectionalStreamHandler, maybe refactor common code into a base class or BidirectionalStreamHandler too
 class MulticastStreamHandler(StreamHandler):
     """
     A custom async bidirectional stream handler for broadcasting messages to all connected clients,
@@ -368,8 +452,14 @@ class MulticastStreamHandler(StreamHandler):
     It will target all connected (not only active) clients.
     """
 
-    def __init__(self, stream_type: int, clients: ClientsManager, event_bus: EventBus, handler_id: Optional[str] = None,
-                 source: str = "server"):
+    def __init__(
+        self,
+        stream_type: int,
+        clients: ClientsManager,
+        event_bus: EventBus,
+        handler_id: Optional[str] = None,
+        source: str = "server",
+    ):
         """
         It initializes an instance responsible for managing bidirectional communication
         across multiple clients for a specified stream type. This involves setting up message
@@ -401,15 +491,21 @@ class MulticastStreamHandler(StreamHandler):
             source (str): Identifier specifying the source of the stream,
                 defaults to "server".
         """
-        super().__init__(stream_type=stream_type, clients=clients, event_bus=event_bus, sender=True)
+        super().__init__(
+            stream_type=stream_type, clients=clients, event_bus=event_bus, sender=True
+        )
 
         self._active_client = None
-        self.handler_id = handler_id if handler_id else f"{self.__class__.__name__}-{self.stream_type}"
+        self.handler_id = (
+            handler_id
+            if handler_id
+            else f"{self.__class__.__name__}-{self.stream_type}"
+        )
         self.source = source
 
         self.msg_exchange = MessageExchange(
             conf=MessageExchangeConfig(auto_dispatch=True, multicast=True),
-            id=self.handler_id
+            id=self.handler_id,
         )
 
         self._clients_connected = 0
@@ -417,10 +513,15 @@ class MulticastStreamHandler(StreamHandler):
         self._logger = get_logger(self.handler_id)
 
         # Subscribe with async callbacks
-        self.event_bus.subscribe(event_type=EventType.CLIENT_CONNECTED, callback=self._on_client_connected)
-        self.event_bus.subscribe(event_type=EventType.CLIENT_DISCONNECTED, callback=self._on_client_disconnected)
+        self.event_bus.subscribe(
+            event_type=EventType.CLIENT_CONNECTED, callback=self._on_client_connected
+        )
+        self.event_bus.subscribe(
+            event_type=EventType.CLIENT_DISCONNECTED,
+            callback=self._on_client_disconnected,
+        )
         # We don't need active screen changed for multicast
-        #self.event_bus.subscribe(event_type=EventType.ACTIVE_SCREEN_CHANGED, callback=self._on_active_screen_changed)
+        # self.event_bus.subscribe(event_type=EventType.ACTIVE_SCREEN_CHANGED, callback=self._on_active_screen_changed)
 
     def register_receive_callback(self, receive_callback, message_type: str):
         """
@@ -450,7 +551,7 @@ class MulticastStreamHandler(StreamHandler):
                     await self.msg_exchange.set_transport(
                         send_callback=cl_stream.get_writer_call(),
                         receive_callback=cl_stream.get_reader_call(),
-                        tr_id=client_screen
+                        tr_id=client_screen,
                     )
         finally:
             if self._clients_connected == 1:
@@ -464,10 +565,10 @@ class MulticastStreamHandler(StreamHandler):
 
         client_screen = data.client_screen
         try:
-            #self.logger.log(f"Active client disconnected {client_screen}", Logger.INFO)
-            await self.msg_exchange.set_transport(send_callback=None,
-                                                  receive_callback=None,
-                                                  tr_id=client_screen)
+            # self.logger.log(f"Active client disconnected {client_screen}", Logger.INFO)
+            await self.msg_exchange.set_transport(
+                send_callback=None, receive_callback=None, tr_id=client_screen
+            )
         finally:
             if self._clients_connected == 0:
                 await self.msg_exchange.stop()
@@ -494,39 +595,52 @@ class MulticastStreamHandler(StreamHandler):
                 if cl_conn is not None:
                     cl_stream = cl_conn.get_stream(self.stream_type)
                     if cl_stream is None:
-                        await self.msg_exchange.set_transport(send_callback=None, receive_callback=None)
+                        await self.msg_exchange.set_transport(
+                            send_callback=None, receive_callback=None
+                        )
                         await self.msg_exchange.stop()
                         await asyncio.sleep(0)
                         return
 
-                    if cl_stream.get_writer() is None:  # We avoid sending if no writer is available
+                    if (
+                        cl_stream.get_writer() is None
+                    ):  # We avoid sending if no writer is available
                         self._logger.debug("No writer available for active client")
                         self._active_client = None
                         return
 
-                    if cl_stream.get_reader() is None:  # We stop receiving if no reader is available
+                    if (
+                        cl_stream.get_reader() is None
+                    ):  # We stop receiving if no reader is available
                         self._logger.debug("No reader available for active client")
-                        await self.msg_exchange.set_transport(send_callback=cl_stream.get_writer_call(),
-                                                              receive_callback=None,
-                                                              tr_id=active_screen)
+                        await self.msg_exchange.set_transport(
+                            send_callback=cl_stream.get_writer_call(),
+                            receive_callback=None,
+                            tr_id=active_screen,
+                        )
                         await self.msg_exchange.stop()
                         return
 
                     await self.msg_exchange.set_transport(
                         send_callback=cl_stream.get_writer_call(),
                         receive_callback=cl_stream.get_reader_call(),
-                        tr_id=active_screen
+                        tr_id=active_screen,
                     )
                     # Start msg exchange listener (always runs for async dispatch)
                     await self.msg_exchange.start()
                 else:
                     self._logger.debug(
-                        f"No valid stream for active client {self._active_client.screen_position}")
-                    await self.msg_exchange.set_transport(send_callback=None, receive_callback=None, tr_id=active_screen)
+                        f"No valid stream for active client {self._active_client.screen_position}"
+                    )
+                    await self.msg_exchange.set_transport(
+                        send_callback=None, receive_callback=None, tr_id=active_screen
+                    )
                     await self.msg_exchange.stop()
 
             else:
-                await self.msg_exchange.set_transport(send_callback=None, receive_callback=None, tr_id=active_screen)
+                await self.msg_exchange.set_transport(
+                    send_callback=None, receive_callback=None, tr_id=active_screen
+                )
                 await self.msg_exchange.stop()
         finally:
             self._clear_buffer()
@@ -547,8 +661,8 @@ class MulticastStreamHandler(StreamHandler):
                     await self.msg_exchange.send_stream_type_message(
                         stream_type=self.stream_type,
                         source=self.source,
-                        #target=client.screen_position, # Let the multicast message exchange handle all targets
-                        **data
+                        # target=client.screen_position, # Let the multicast message exchange handle all targets
+                        **data,
                     )
 
                 except asyncio.TimeoutError:
@@ -565,7 +679,7 @@ class MulticastStreamHandler(StreamHandler):
                     await asyncio.sleep(0)  # yield control
                 except MissingTransportError:
                     self._logger.warning("Missing transport")
-                    await asyncio.sleep(0) #yield control
+                    await asyncio.sleep(0)  # yield control
                 except RuntimeError as e:
                     # uv/winloop runtime error on closed tcp transport
                     if "closed=True" in str(e):
@@ -590,5 +704,3 @@ class MulticastStreamHandler(StreamHandler):
         if self._clients_connected > 0:
             await self.msg_exchange.start()
         return st
-
-

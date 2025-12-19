@@ -1,4 +1,3 @@
 """
 Data message passing protocol
 """
-

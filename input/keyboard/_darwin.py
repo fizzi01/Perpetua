@@ -5,9 +5,15 @@ from network.stream import StreamHandler
 
 from . import _base
 
+
 class ServerKeyboardListener(_base.ServerKeyboardListener):
-    def __init__(self, event_bus: EventBus, stream_handler: StreamHandler, command_stream: StreamHandler,
-                 filtering: bool = True):
+    def __init__(
+        self,
+        event_bus: EventBus,
+        stream_handler: StreamHandler,
+        command_stream: StreamHandler,
+        filtering: bool = True,
+    ):
         super().__init__(event_bus, stream_handler, command_stream, filtering)
 
     def _darwin_suppress_filter(self, event_type, event):
@@ -30,5 +36,10 @@ class ServerKeyboardListener(_base.ServerKeyboardListener):
 
 
 class ClientKeyboardController(_base.ClientKeyboardController):
-    def __init__(self, event_bus: EventBus, stream_handler: StreamHandler, command_stream: StreamHandler):
+    def __init__(
+        self,
+        event_bus: EventBus,
+        stream_handler: StreamHandler,
+        command_stream: StreamHandler,
+    ):
         super().__init__(event_bus, stream_handler, command_stream)

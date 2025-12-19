@@ -9,6 +9,7 @@ Questo benchmark testa l'intera pipeline:
 
 Test con connessione reale TCP tra server e client.
 """
+
 import asyncio
 import logging
 import time
@@ -32,6 +33,7 @@ logging.basicConfig(level=logging.DEBUG)
 # ============================================================================
 # STATISTICS COLLECTOR
 # ============================================================================
+
 
 class BenchmarkStats:
     """Collects and analyzes benchmark statistics"""
@@ -72,31 +74,37 @@ class BenchmarkStats:
             "received": self.received_count,
             "duration": duration,
             "throughput": throughput,
-            "loss_rate": (self.sent_count - self.received_count) / self.sent_count if self.sent_count > 0 else 0,
+            "loss_rate": (self.sent_count - self.received_count) / self.sent_count
+            if self.sent_count > 0
+            else 0,
         }
 
         if self.latencies:
-            report.update({
-                "latency_mean": mean(self.latencies) * 1000,  # ms
-                "latency_median": median(self.latencies) * 1000,
-                "latency_min": min(self.latencies) * 1000,
-                "latency_max": max(self.latencies) * 1000,
-                "latency_stdev": stdev(self.latencies) * 1000 if len(self.latencies) > 1 else 0,
-            })
+            report.update(
+                {
+                    "latency_mean": mean(self.latencies) * 1000,  # ms
+                    "latency_median": median(self.latencies) * 1000,
+                    "latency_min": min(self.latencies) * 1000,
+                    "latency_max": max(self.latencies) * 1000,
+                    "latency_stdev": stdev(self.latencies) * 1000
+                    if len(self.latencies) > 1
+                    else 0,
+                }
+            )
 
         return report
 
     def print_report(self):
         report = self.get_report()
 
-        print("\n" + "="*70)
+        print("\n" + "=" * 70)
         print("BENCHMARK RESULTS")
-        print("="*70)
+        print("=" * 70)
         print(f"Messages Sent:     {report['sent']:,}")
         print(f"Messages Received: {report['received']:,}")
         print(f"Duration:          {report['duration']:.2f}s")
         print(f"Throughput:        {report['throughput']:.0f} msgs/sec")
-        print(f"Loss Rate:         {report['loss_rate']*100:.2f}%")
+        print(f"Loss Rate:         {report['loss_rate'] * 100:.2f}%")
 
         if "latency_mean" in report:
             print(f"\nLatency Statistics:")
@@ -106,12 +114,13 @@ class BenchmarkStats:
             print(f"  Max:    {report['latency_max']:.2f}ms")
             print(f"  StdDev: {report['latency_stdev']:.2f}ms")
 
-        print("="*70 + "\n")
+        print("=" * 70 + "\n")
 
 
 # ============================================================================
 # BENCHMARK RUNNER
 # ============================================================================
+
 
 class StreamHandlerBenchmark:
     """Complete benchmark for stream handlers with real server/client connection"""
@@ -150,9 +159,7 @@ class StreamHandlerBenchmark:
 
         # Create test client entry for whitelist
         test_client = ClientObj(
-            ip_address=self.host,
-            screen_position="right",
-            screen_resolution="1920x1080"
+            ip_address=self.host, screen_position="right", screen_resolution="1920x1080"
         )
         self.server_clients.add_client(test_client)
 
@@ -167,7 +174,7 @@ class StreamHandlerBenchmark:
                 event_bus=self.server_event_bus,
                 handler_id="ServerCommandHandler",
                 source="server",
-                sender=False  # Server receives in this test
+                sender=False,  # Server receives in this test
             )
 
             # Register message handlers
@@ -185,8 +192,7 @@ class StreamHandlerBenchmark:
 
             # Trigger event to activate client
             await self.server_event_bus.dispatch(
-                EventType.ACTIVE_SCREEN_CHANGED,
-                data={"active_screen": "right"}
+                EventType.ACTIVE_SCREEN_CHANGED, data={"active_screen": "right"}
             )
 
             self.connection_established.set()
@@ -197,7 +203,7 @@ class StreamHandlerBenchmark:
             host=self.host,
             port=self.port,
             heartbeat_interval=30,
-            allowlist=self.server_clients
+            allowlist=self.server_clients,
         )
 
         await self.server.start()
@@ -216,7 +222,7 @@ class StreamHandlerBenchmark:
         client_obj = ClientObj(
             ip_address=self.host,
             screen_position="client",
-            screen_resolution="1920x1080"
+            screen_resolution="1920x1080",
         )
         self.client_clients.add_client(client_obj)
 
@@ -231,7 +237,7 @@ class StreamHandlerBenchmark:
                 event_bus=self.client_event_bus,
                 handler_id="ClientCommandHandler",
                 sender=True,  # Client sends in this test
-                active_only=False
+                active_only=False,
             )
 
             # Start stream handler
@@ -239,8 +245,7 @@ class StreamHandlerBenchmark:
 
             # Activate client
             await self.client_event_bus.dispatch(
-                EventType.CLIENT_ACTIVE,
-                data={"active": True}
+                EventType.CLIENT_ACTIVE, data={"active": True}
             )
 
             self.client_ready.set()
@@ -251,7 +256,7 @@ class StreamHandlerBenchmark:
             clients=self.client_clients,
             host=self.host,
             port=self.port,
-            heartbeat_interval=30
+            heartbeat_interval=30,
         )
 
         await self.client.start()
@@ -272,7 +277,9 @@ class StreamHandlerBenchmark:
         # Send messages
         print(f"[Benchmark] Sending {num_messages} messages...")
         for i in range(num_messages):
-            message_data = CommandEvent(command="TEST", target="server", params={"i": i})
+            message_data = CommandEvent(
+                command="TEST", target="server", params={"i": i}
+            )
 
             await self.stats.mark_sent(i)
             await self.client_stream_handler.send(message_data)
@@ -280,7 +287,7 @@ class StreamHandlerBenchmark:
             # Small delay every 100 messages to avoid overwhelming
             if (i + 1) % 100 == 0:
                 await asyncio.sleep(0.01)
-                print(f"  Sent {i+1}/{num_messages} messages...")
+                print(f"  Sent {i + 1}/{num_messages} messages...")
 
         print("[Benchmark] All messages sent, waiting for reception...")
 
@@ -313,11 +320,12 @@ class StreamHandlerBenchmark:
 # TEST SCENARIOS
 # ============================================================================
 
+
 async def test_small_messages():
     """Test with small messages (high frequency)"""
-    print("\n" + "="*70)
+    print("\n" + "=" * 70)
     print("TEST 1: Small Messages (100 bytes, 1000 messages)")
-    print("="*70)
+    print("=" * 70)
 
     benchmark = StreamHandlerBenchmark(port=28101)
 
@@ -338,9 +346,9 @@ async def test_small_messages():
 
 async def test_large_messages():
     """Test with large messages"""
-    print("\n" + "="*70)
+    print("\n" + "=" * 70)
     print("TEST 2: Large Messages (10KB, 500 messages)")
-    print("="*70)
+    print("=" * 70)
 
     benchmark = StreamHandlerBenchmark(port=28102)
 
@@ -361,9 +369,9 @@ async def test_large_messages():
 
 async def test_high_throughput():
     """Test high throughput (many messages)"""
-    print("\n" + "="*70)
+    print("\n" + "=" * 70)
     print("TEST 3: High Throughput (1KB, 5000 messages)")
-    print("="*70)
+    print("=" * 70)
 
     benchmark = StreamHandlerBenchmark(port=28103)
 
@@ -386,12 +394,13 @@ async def test_high_throughput():
 # MAIN
 # ============================================================================
 
+
 async def main():
     """Run all benchmark tests"""
-    print("\n" + "="*70)
+    print("\n" + "=" * 70)
     print("STREAM HANDLER BENCHMARK SUITE")
     print("Testing: Send → Receive → Dispatch with Real TCP Connection")
-    print("="*70)
+    print("=" * 70)
 
     # Run tests
     await test_small_messages()
@@ -402,9 +411,9 @@ async def main():
 
     await test_high_throughput()
 
-    print("\n" + "="*70)
+    print("\n" + "=" * 70)
     print("ALL BENCHMARKS COMPLETED")
-    print("="*70)
+    print("=" * 70)
 
 
 if __name__ == "__main__":
@@ -415,5 +424,5 @@ if __name__ == "__main__":
     except Exception as e:
         print(f"\n\nBenchmark failed with error: {e}")
         import traceback
-        traceback.print_exc()
 
+        traceback.print_exc()

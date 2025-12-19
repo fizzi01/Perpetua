@@ -17,12 +17,13 @@ from utils.logging import Logger, get_logger
 @dataclass
 class MessageExchangeConfig:
     """Configuration for MessageExchange layer."""
+
     max_delay_tolerance: float = ApplicationConfig.max_delay_tolerance
     max_chunk_size: int = ApplicationConfig.max_chunk_size  # bytes
     auto_chunk: bool = ApplicationConfig.auto_chunk
     auto_dispatch: bool = True
     receive_buffer_size: int = 65536  # bytes for asyncio receive buffer
-    multicast: bool = False # Whether to use multicast transport
+    multicast: bool = False  # Whether to use multicast transport
 
 
 class MessageExchange:
@@ -33,7 +34,7 @@ class MessageExchange:
 
     DEFAULT_TRANSPORT_ID = "default"
 
-    def __init__(self, conf: Optional[MessageExchangeConfig] = None, id = "default"):
+    def __init__(self, conf: Optional[MessageExchangeConfig] = None, id="default"):
         """
         Initialize MessageExchange layer.
 
@@ -53,8 +54,7 @@ class MessageExchange:
         # Transport layer callbacks
         # We support multiple transports for multicast scenarios
         self._send_callbacks: Dict[str, Optional[Callable[[bytes], Any]]] = {}
-        self._receive_callbacks:  Dict[str, Optional[Callable[[int], Any]]] = {}
-
+        self._receive_callbacks: Dict[str, Optional[Callable[[int], Any]]] = {}
 
         # Asyncio components
         self._receive_task: Optional[asyncio.Task] = None
@@ -105,7 +105,10 @@ class MessageExchange:
         max_msg_size = self.config.max_chunk_size * 100
 
         while self._running:
-            for tr_id, receive_callback in self._receive_callbacks.items(): # Round-robin
+            for (
+                tr_id,
+                receive_callback,
+            ) in self._receive_callbacks.items():  # Round-robin
                 if receive_callback is None:
                     await asyncio.sleep(0)
                     continue
@@ -113,7 +116,9 @@ class MessageExchange:
                 try:
                     # Ricevi nuovi dati in modo non bloccante
                     async with self._lock:
-                        new_data = await receive_callback(self.config.receive_buffer_size)
+                        new_data = await receive_callback(
+                            self.config.receive_buffer_size
+                        )
                     if not new_data:
                         await asyncio.sleep(0)  # Breve pausa per evitare busy waiting
                         continue
@@ -126,12 +131,16 @@ class MessageExchange:
                     while offset + prefix_len <= buffer_len:
                         try:
                             # Verifica marker "PY" prima di leggere il prefisso
-                            if persistent_buffer[offset + 4:offset + 6] != b'PY':
+                            if persistent_buffer[offset + 4 : offset + 6] != b"PY":
                                 # Cerca il prossimo marker valido
-                                next_marker = persistent_buffer.find(b'PY', offset + 1)
+                                next_marker = persistent_buffer.find(b"PY", offset + 1)
                                 if next_marker == -1 or next_marker < 4:
                                     # Nessun marker trovato, mantieni ultimi 5 byte
-                                    persistent_buffer = persistent_buffer[-5:] if buffer_len > 5 else bytearray()
+                                    persistent_buffer = (
+                                        persistent_buffer[-5:]
+                                        if buffer_len > 5
+                                        else bytearray()
+                                    )
                                     await asyncio.sleep(0)
                                     break
                                 offset = next_marker - 4
@@ -139,7 +148,7 @@ class MessageExchange:
 
                             # Leggi lunghezza messaggio
                             msg_length = ProtocolMessage.read_lenght_prefix(
-                                bytes(persistent_buffer[offset:offset + prefix_len])
+                                bytes(persistent_buffer[offset : offset + prefix_len])
                             )
 
                             if msg_length > max_msg_size:
@@ -157,7 +166,9 @@ class MessageExchange:
                                 break
 
                             # Estrai e processa il messaggio completo
-                            message_data = bytes(persistent_buffer[offset:offset + total_length])
+                            message_data = bytes(
+                                persistent_buffer[offset : offset + total_length]
+                            )
                             message = ProtocolMessage.from_bytes(message_data)
                             message.timestamp = time()
 
@@ -177,7 +188,7 @@ class MessageExchange:
                                 if self.config.auto_dispatch:
                                     await self.dispatch_message(message)
                                 else:
-                                    await self._message_queue.put(message) # ty:ignore[possibly-missing-attribute]
+                                    await self._message_queue.put(message)  # ty:ignore[possibly-missing-attribute]
 
                             offset += total_length
                             # await asyncio.sleep(0)
@@ -195,34 +206,57 @@ class MessageExchange:
                     break
                 except AttributeError:
                     # Transport layer disconnected
-                    self._logger.log("Transport layer disconnected, stopping receive loop.", Logger.WARNING)
+                    self._logger.log(
+                        "Transport layer disconnected, stopping receive loop.",
+                        Logger.WARNING,
+                    )
                     self._running = False
                     break
                 except RuntimeError as e:
-                    self._logger.log(f"Error in receive loop {self._id} -> {e}", Logger.CRITICAL)
+                    self._logger.log(
+                        f"Error in receive loop {self._id} -> {e}", Logger.CRITICAL
+                    )
                     self._running = False
                     break
                 except Exception as e:
                     # Catch broken pipe or connection reset errors
-                    if isinstance(e, (ConnectionResetError, BrokenPipeError, ConnectionError, ConnectionAbortedError)):
-                        self._logger.log(f"Connection error in receive loop -> {e}", Logger.ERROR)
+                    if isinstance(
+                        e,
+                        (
+                            ConnectionResetError,
+                            BrokenPipeError,
+                            ConnectionError,
+                            ConnectionAbortedError,
+                        ),
+                    ):
+                        self._logger.log(
+                            f"Connection error in receive loop -> {e}", Logger.ERROR
+                        )
                         self._running = False
                         break
                     # Avoid infinite loop if no receive callback is set
                     if receive_callback is None:
-                        self._logger.log("Receive callback is None, stopping receive loop.", Logger.DEBUG)
+                        self._logger.log(
+                            "Receive callback is None, stopping receive loop.",
+                            Logger.DEBUG,
+                        )
                         self._running = False
                         break
                     import traceback
+
                     traceback.print_exc()
-                    self._logger.log(f"Error in receive loop {self._id} -> {e}", Logger.ERROR)
+                    self._logger.log(
+                        f"Error in receive loop {self._id} -> {e}", Logger.ERROR
+                    )
                     await asyncio.sleep(0)
                     continue
 
-
-    async def set_transport(self, send_callback: Optional[Callable] = None,
-                            receive_callback: Optional[Callable] = None,
-                            tr_id: Optional[str] = None):
+    async def set_transport(
+        self,
+        send_callback: Optional[Callable] = None,
+        receive_callback: Optional[Callable] = None,
+        tr_id: Optional[str] = None,
+    ):
         """
         Sets the transport callbacks for sending and receiving messages. If the
         configuration is for a single transport, the callbacks are set to a default
@@ -237,13 +271,15 @@ class MessageExchange:
                 The transport ID associated with the callbacks, required in multicast
                 configurations.
         """
-        #async with self._lock: # Protect transport callbacks assignment
-        if not self.config.multicast: # Single transport
+        # async with self._lock: # Protect transport callbacks assignment
+        if not self.config.multicast:  # Single transport
             self._send_callbacks[self.DEFAULT_TRANSPORT_ID] = send_callback
             self._receive_callbacks[self.DEFAULT_TRANSPORT_ID] = receive_callback
         else:
             if tr_id is None:
-                raise ValueError("Transport ID must be provided for multicast configuration.")
+                raise ValueError(
+                    "Transport ID must be provided for multicast configuration."
+                )
 
             self._send_callbacks[tr_id] = send_callback
             self._receive_callbacks[tr_id] = receive_callback
@@ -258,41 +294,101 @@ class MessageExchange:
         """
         self._handlers[message_type] = handler
 
-    async def send_mouse_data(self, x: float, y: float,event: str, dx: float, dy: float,
-                        is_pressed: bool = False, source: Optional[str] = None, target: Optional[str] = None, **kwargs):
+    async def send_mouse_data(
+        self,
+        x: float,
+        y: float,
+        event: str,
+        dx: float,
+        dy: float,
+        is_pressed: bool = False,
+        source: Optional[str] = None,
+        target: Optional[str] = None,
+        **kwargs,
+    ):
         """Send a mouse event message."""
-        message = self.builder.create_mouse_message(x, y, dx, dy, event, is_pressed, source=source, target=target, **kwargs)
+        message = self.builder.create_mouse_message(
+            x, y, dx, dy, event, is_pressed, source=source, target=target, **kwargs
+        )
         await self._send_message(message)
 
-    async def send_keyboard_data(self, key: str, event: str, source: Optional[str] = None, target: Optional[str] = None):
+    async def send_keyboard_data(
+        self,
+        key: str,
+        event: str,
+        source: Optional[str] = None,
+        target: Optional[str] = None,
+    ):
         """Send a keyboard event message."""
-        message = self.builder.create_keyboard_message(key, event,source=source, target=target)
+        message = self.builder.create_keyboard_message(
+            key, event, source=source, target=target
+        )
         await self._send_message(message)
 
-    async def send_clipboard_data(self, content: str, content_type: str = "text",source: Optional[str] = None, target: Optional[str] = None):
+    async def send_clipboard_data(
+        self,
+        content: str,
+        content_type: str = "text",
+        source: Optional[str] = None,
+        target: Optional[str] = None,
+    ):
         """Send clipboard data message."""
-        message = self.builder.create_clipboard_message(content, content_type,source=source, target=target)
+        message = self.builder.create_clipboard_message(
+            content, content_type, source=source, target=target
+        )
         await self._send_message(message)
 
-    async def send_file_data(self, command: str, data: Dict[str, Any],source: Optional[str] = None, target: Optional[str] = None):
+    async def send_file_data(
+        self,
+        command: str,
+        data: Dict[str, Any],
+        source: Optional[str] = None,
+        target: Optional[str] = None,
+    ):
         """Send file transfer message."""
-        message = self.builder.create_file_message(command, data,source=source, target=target)
+        message = self.builder.create_file_message(
+            command, data, source=source, target=target
+        )
         await self._send_message(message)
 
-    async def send_screen_command(self, command: str, data: Optional[Dict[str, Any]] = None,source: Optional[str] = None, target: Optional[str] = None):
+    async def send_screen_command(
+        self,
+        command: str,
+        data: Optional[Dict[str, Any]] = None,
+        source: Optional[str] = None,
+        target: Optional[str] = None,
+    ):
         """Send screen command message."""
-        message = self.builder.create_screen_message(command, data,source=source, target=target)
+        message = self.builder.create_screen_message(
+            command, data, source=source, target=target
+        )
         await self._send_message(message)
 
-    async def send_command_message(self, command: str, params: Optional[Dict[str, Any]] = None, source: Optional[str] = None, target: Optional[str] = None):
+    async def send_command_message(
+        self,
+        command: str,
+        params: Optional[Dict[str, Any]] = None,
+        source: Optional[str] = None,
+        target: Optional[str] = None,
+    ):
         """Send a generic command message."""
-        message = self.builder.create_command_message(command, params, source=source, target=target)
+        message = self.builder.create_command_message(
+            command, params, source=source, target=target
+        )
         await self._send_message(message)
 
-    async def send_handshake_message(self, client_name: Optional[str] = None, screen_resolution: Optional[str] = None,
-                                 screen_position: Optional[str] = None, additional_params: Optional[Dict[str, Any]] = None,
-                                 ack: bool = True, ssl: bool = False, streams: Optional[List[int]] = None,
-                                 source: Optional[str] = None, target: Optional[str] = None):
+    async def send_handshake_message(
+        self,
+        client_name: Optional[str] = None,
+        screen_resolution: Optional[str] = None,
+        screen_position: Optional[str] = None,
+        additional_params: Optional[Dict[str, Any]] = None,
+        ack: bool = True,
+        ssl: bool = False,
+        streams: Optional[List[int]] = None,
+        source: Optional[str] = None,
+        target: Optional[str] = None,
+    ):
         """Send handshake message."""
         message = self.builder.create_handshake_message(
             client_name,
@@ -303,11 +399,17 @@ class MessageExchange:
             ssl=ssl,
             streams=streams,
             source=source,
-            target=target
+            target=target,
         )
         await self._send_message(message)
 
-    async def send_stream_type_message(self, stream_type: int, source: Optional[str] = None, target: Optional[str] = None, **kwargs):
+    async def send_stream_type_message(
+        self,
+        stream_type: int,
+        source: Optional[str] = None,
+        target: Optional[str] = None,
+        **kwargs,
+    ):
         """Send stream type message."""
 
         if stream_type == StreamType.MOUSE:
@@ -329,7 +431,13 @@ class MessageExchange:
             self._logger.log(f"Unknown stream type: {stream_type}", Logger.ERROR)
             return
 
-    async def send_custom_message(self, message_type: str, payload: Dict[str, Any],source: Optional[str] = None, target: Optional[str] = None):
+    async def send_custom_message(
+        self,
+        message_type: str,
+        payload: Dict[str, Any],
+        source: Optional[str] = None,
+        target: Optional[str] = None,
+    ):
         """Send a custom message with arbitrary payload."""
         # noinspection PyProtectedMember
         message = ProtocolMessage(
@@ -338,7 +446,7 @@ class MessageExchange:
             sequence_id=self.builder._next_sequence_id(),
             payload=payload,
             source=source,
-            target=target
+            target=target,
         )
         await self._send_message(message)
 
@@ -349,16 +457,23 @@ class MessageExchange:
         Handles automatic chunking if enabled.
         """
         # Cycle through all send callbacks
-        for tr_id, send_callback in self._send_callbacks.items(): # Round-robin
+        for tr_id, send_callback in self._send_callbacks.items():  # Round-robin
             if not send_callback:
-                raise MissingTransportError("Transport layer not configured. Call set_transport() first.")
+                raise MissingTransportError(
+                    "Transport layer not configured. Call set_transport() first."
+                )
 
             # Set target if not already set
             message.target = message.target if message.target else tr_id
 
             # Check if chunking is needed
-            if self.config.auto_chunk and message.get_serialized_size() > self.config.max_chunk_size:
-                chs = self.builder.create_chunked_message(message, self.config.max_chunk_size)
+            if (
+                self.config.auto_chunk
+                and message.get_serialized_size() > self.config.max_chunk_size
+            ):
+                chs = self.builder.create_chunked_message(
+                    message, self.config.max_chunk_size
+                )
                 for ch in chs:
                     data = ch.to_bytes()
                     if asyncio.iscoroutinefunction(send_callback):
@@ -401,7 +516,9 @@ class MessageExchange:
         """
         message_id = chunk.message_id
         if message_id is None:
-            self._logger.debug("Received chunk without message_id", data=chunk.to_dict())
+            self._logger.debug(
+                "Received chunk without message_id", data=chunk.to_dict()
+            )
             return None
 
         if message_id not in self._chunk_buffer:
@@ -430,8 +547,12 @@ class MessageExchange:
                 else:
                     handler(message)
             except Exception as e:
-                self._logger.log(f"Error in message handler for {message.message_type}: {e}", Logger.ERROR)
+                self._logger.log(
+                    f"Error in message handler for {message.message_type}: {e}",
+                    Logger.ERROR,
+                )
         else:
-            self._logger.log(f"No handler registered for message type: {message.message_type}", Logger.DEBUG)
-
-
+            self._logger.log(
+                f"No handler registered for message type: {message.message_type}",
+                Logger.DEBUG,
+            )

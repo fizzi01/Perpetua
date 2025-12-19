@@ -12,12 +12,16 @@ from ._base import ClipboardType
 
 from utils.logging import get_logger
 
-class Clipboard(_base.Clipboard):
 
+class Clipboard(_base.Clipboard):
     __logger = get_logger(__name__)
 
-    def __init__(self, on_change: Optional[Callable[[str, ClipboardType], Any]] = None, poll_interval: float = 0.5,
-                 content_types: Optional[list[ClipboardType]] = None):
+    def __init__(
+        self,
+        on_change: Optional[Callable[[str, ClipboardType], Any]] = None,
+        poll_interval: float = 0.5,
+        content_types: Optional[list[ClipboardType]] = None,
+    ):
         super().__init__(on_change, poll_interval, content_types)
 
     @staticmethod
@@ -30,11 +34,15 @@ class Clipboard(_base.Clipboard):
             if files:
                 # search for the file in the clipboard files
                 for path, ftype in files:
-                    if ftype == "file" and os.path.basename(path) == os.path.basename(file):
+                    if ftype == "file" and os.path.basename(path) == os.path.basename(
+                        file
+                    ):
                         return path
             return file
         except Exception as e:
-            Clipboard.__logger.critical(f"Could not retrieve files from clipboard -> {e}")
+            Clipboard.__logger.critical(
+                f"Could not retrieve files from clipboard -> {e}"
+            )
             return file
 
     @staticmethod
@@ -64,12 +72,18 @@ class Clipboard(_base.Clipboard):
             win32clipboard.CloseClipboard()
 
 
-
 class ClipboardListener(_base.ClipboardListener):
-    def __init__(self, event_bus: EventBus, stream_handler: StreamHandler, command_stream: StreamHandler):
+    def __init__(
+        self,
+        event_bus: EventBus,
+        stream_handler: StreamHandler,
+        command_stream: StreamHandler,
+    ):
         super().__init__(event_bus, stream_handler, command_stream, Clipboard)
 
 
 class ClipboardController(_base.ClipboardController):
-    def __init__(self, event_bus: EventBus, stream_handler: StreamHandler, clipboard=Clipboard):
+    def __init__(
+        self, event_bus: EventBus, stream_handler: StreamHandler, clipboard=Clipboard
+    ):
         super().__init__(event_bus, stream_handler, clipboard)
