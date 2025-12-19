@@ -9,4 +9,3 @@ else:
 
     Screen = _backend_module.Screen
     del _backend_module
-

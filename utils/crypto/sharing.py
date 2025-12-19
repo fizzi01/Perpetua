@@ -1,6 +1,7 @@
 """
 Secure certificate sharing system with OTP and JWT
 """
+
 import asyncio
 import secrets
 import time
@@ -19,7 +20,13 @@ class CertificateSharing:
     Uses OTP (One-Time Password) to encrypt JWT containing the certificate.
     """
 
-    def __init__(self, cert_data: bytes, host: str = "0.0.0.0", port: int = 5556, timeout: int = 10):
+    def __init__(
+        self,
+        cert_data: bytes,
+        host: str = "0.0.0.0",
+        port: int = 5556,
+        timeout: int = 10,
+    ):
         """
         Initialize certificate sharing manager.
 
@@ -45,7 +52,7 @@ class CertificateSharing:
     @staticmethod
     def _generate_otp() -> str:
         """Generate a secure 6-digit OTP"""
-        return ''.join([str(secrets.randbelow(10)) for _ in range(6)])
+        return "".join([str(secrets.randbelow(10)) for _ in range(6)])
 
     def _create_jwt(self, otp: str) -> str:
         """
@@ -58,14 +65,18 @@ class CertificateSharing:
             Encrypted JWT token
         """
         payload = {
-            'cert': self._cert_data.decode('utf-8') if isinstance(self._cert_data, bytes) else self._cert_data,
-            'exp': datetime.now(timezone.utc) + timedelta(seconds=self._timeout),
-            'iat': datetime.now(timezone.utc)
+            "cert": self._cert_data.decode("utf-8")
+            if isinstance(self._cert_data, bytes)
+            else self._cert_data,
+            "exp": datetime.now(timezone.utc) + timedelta(seconds=self._timeout),
+            "iat": datetime.now(timezone.utc),
         }
 
-        return jwt.encode(payload, otp, algorithm='HS256')
+        return jwt.encode(payload, otp, algorithm="HS256")
 
-    async def _handle_client(self, reader: asyncio.StreamReader, writer: asyncio.StreamWriter):
+    async def _handle_client(
+        self, reader: asyncio.StreamReader, writer: asyncio.StreamWriter
+    ):
         """
         Handle client connection and send encrypted certificate.
 
@@ -73,20 +84,22 @@ class CertificateSharing:
             reader: Client stream reader
             writer: Client stream writer
         """
-        addr = writer.get_extra_info('peername')
+        addr = writer.get_extra_info("peername")
         self._logger.log(f"Client connected from {addr}", Logger.INFO)
 
         try:
             # Check if OTP is still valid
             if not self._is_otp_valid():
-                self._logger.log(f"OTP expired, rejecting client {addr}", Logger.WARNING)
+                self._logger.log(
+                    f"OTP expired, rejecting client {addr}", Logger.WARNING
+                )
                 writer.write(b"ERROR:OTP_EXPIRED\n")
                 await writer.drain()
                 return
 
             # Create and send JWT
             token = self._create_jwt(self._otp)
-            writer.write(f"TOKEN:{token}\n".encode('utf-8'))
+            writer.write(f"TOKEN:{token}\n".encode("utf-8"))
             await writer.drain()
 
             self._shared = True
@@ -123,14 +136,17 @@ class CertificateSharing:
 
             # Start temporary server
             self._server = await asyncio.start_server(
-                self._handle_client,
-                self._host,
-                self._port
+                self._handle_client, self._host, self._port
             )
 
             self._running = True
-            self._logger.log(f"Certificate sharing server started on {self._host}:{self._port}", Logger.INFO)
-            self._logger.log(f"OTP: {self._otp} (valid for {self._timeout}s)", Logger.INFO)
+            self._logger.log(
+                f"Certificate sharing server started on {self._host}:{self._port}",
+                Logger.INFO,
+            )
+            self._logger.log(
+                f"OTP: {self._otp} (valid for {self._timeout}s)", Logger.INFO
+            )
 
             # Schedule automatic shutdown after timeout
             asyncio.create_task(self._auto_shutdown())
@@ -147,7 +163,9 @@ class CertificateSharing:
         """Automatically shutdown server after timeout"""
         await asyncio.sleep(self._timeout)
         if self._running:
-            self._logger.log("Timeout reached, shutting down sharing server", Logger.INFO)
+            self._logger.log(
+                "Timeout reached, shutting down sharing server", Logger.INFO
+            )
             await self.stop_sharing()
 
     async def stop_sharing(self):
@@ -189,7 +207,6 @@ class CertificateSharing:
         return self._shared
 
 
-
 class CertificateReceiver:
     """
     Client-side handler for receiving certificates with OTP verification.
@@ -209,7 +226,7 @@ class CertificateReceiver:
         self._timeout = timeout
 
         self._resolved_host: Optional[str] = None
-        
+
         self.__writer: Optional[asyncio.StreamWriter] = None
 
         self._logger = get_logger(self.__class__.__name__)
@@ -234,29 +251,30 @@ class CertificateReceiver:
             Tuple of (success, certificate_data). Certificate is None if failed.
         """
         try:
-            self._logger.log(f"Connecting to {self._server_host}:{self._server_port}...", Logger.INFO)
+            self._logger.log(
+                f"Connecting to {self._server_host}:{self._server_port}...", Logger.INFO
+            )
 
             # Connect to server (no SSL for this temporary connection)
             reader, writer = await asyncio.wait_for(
                 asyncio.open_connection(self._server_host, self._server_port),
-                timeout=self._timeout
+                timeout=self._timeout,
             )
             self.__writer = writer
 
             # Get resolved host
-            sock = writer.get_extra_info('socket')
+            sock = writer.get_extra_info("socket")
             if sock:
                 self._resolved_host = sock.getpeername()[0]
-                self._logger.log(f"Resolved server host: {self._resolved_host}", Logger.DEBUG)
+                self._logger.log(
+                    f"Resolved server host: {self._resolved_host}", Logger.DEBUG
+                )
 
             self._logger.log("Connected, waiting for certificate...", Logger.DEBUG)
 
             # Read response
-            response = await asyncio.wait_for(
-                reader.readline(),
-                timeout=self._timeout
-            )
-            response = response.decode('utf-8').strip()
+            response = await asyncio.wait_for(reader.readline(), timeout=self._timeout)
+            response = response.decode("utf-8").strip()
 
             if response.startswith("ERROR:"):
                 error_type = response.split(":", 1)[1]
@@ -272,10 +290,12 @@ class CertificateReceiver:
 
             # Decrypt JWT using OTP
             try:
-                payload = jwt.decode(token, otp, algorithms=['HS256'])
-                cert_data = payload['cert']
+                payload = jwt.decode(token, otp, algorithms=["HS256"])
+                cert_data = payload["cert"]
 
-                self._logger.log("Certificate received and decrypted successfully", Logger.INFO)
+                self._logger.log(
+                    "Certificate received and decrypted successfully", Logger.INFO
+                )
                 return True, cert_data
 
             except jwt.ExpiredSignatureError:
@@ -289,11 +309,15 @@ class CertificateReceiver:
             self._logger.log("Connection timeout", Logger.ERROR)
             return False, None
         except ConnectionRefusedError:
-            self._logger.log(f"Connection refused by {self._server_host}:{self._server_port}", Logger.ERROR)
+            self._logger.log(
+                f"Connection refused by {self._server_host}:{self._server_port}",
+                Logger.ERROR,
+            )
             return False, None
         except Exception as e:
             self._logger.log(f"Error receiving certificate -> {e}", Logger.ERROR)
             import traceback
+
             self._logger.log(traceback.format_exc(), Logger.ERROR)
             return False, None
         finally:

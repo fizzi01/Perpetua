@@ -1,10 +1,9 @@
-
 from win32api import GetSystemMetrics
 
 from . import _base
 
-class Screen(_base.Screen):
 
+class Screen(_base.Screen):
     @classmethod
     def get_size(cls) -> tuple[int, int]:
         """

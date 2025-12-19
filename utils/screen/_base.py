@@ -1,6 +1,4 @@
-
 class Screen:
-
     @classmethod
     def get_size(cls) -> tuple[int, int]:
         """

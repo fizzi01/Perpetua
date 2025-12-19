@@ -35,42 +35,48 @@ class CertificateManager:
         try:
             # Generate CA private key
             ca_key = rsa.generate_private_key(
-                public_exponent=65537,
-                key_size=4096,
-                backend=default_backend()
+                public_exponent=65537, key_size=4096, backend=default_backend()
             )
 
             # Create CA certificate
-            subject = issuer = x509.Name([
-                x509.NameAttribute(NameOID.COUNTRY_NAME, "IT"),
-                x509.NameAttribute(NameOID.ORGANIZATION_NAME, ApplicationConfig.service_name),
-                x509.NameAttribute(NameOID.COMMON_NAME, f"{ApplicationConfig.service_name} CA"),
-            ])
+            subject = issuer = x509.Name(
+                [
+                    x509.NameAttribute(NameOID.COUNTRY_NAME, "IT"),
+                    x509.NameAttribute(
+                        NameOID.ORGANIZATION_NAME, ApplicationConfig.service_name
+                    ),
+                    x509.NameAttribute(
+                        NameOID.COMMON_NAME, f"{ApplicationConfig.service_name} CA"
+                    ),
+                ]
+            )
 
-            ca_cert = x509.CertificateBuilder().subject_name(
-                subject
-            ).issuer_name(
-                issuer
-            ).public_key(
-                ca_key.public_key()
-            ).serial_number(
-                x509.random_serial_number()
-            ).not_valid_before(
-                datetime.datetime.now(datetime.UTC)
-            ).not_valid_after(
-                datetime.datetime.now(datetime.UTC) + datetime.timedelta(days=3650)
-            ).add_extension(
-                x509.BasicConstraints(ca=True, path_length=None),
-                critical=True,
-            ).sign(ca_key, hashes.SHA256(), default_backend())
+            ca_cert = (
+                x509.CertificateBuilder()
+                .subject_name(subject)
+                .issuer_name(issuer)
+                .public_key(ca_key.public_key())
+                .serial_number(x509.random_serial_number())
+                .not_valid_before(datetime.datetime.now(datetime.UTC))
+                .not_valid_after(
+                    datetime.datetime.now(datetime.UTC) + datetime.timedelta(days=3650)
+                )
+                .add_extension(
+                    x509.BasicConstraints(ca=True, path_length=None),
+                    critical=True,
+                )
+                .sign(ca_key, hashes.SHA256(), default_backend())
+            )
 
             # Save CA key and certificate
             with open(self.ca_key_path, "wb") as f:
-                f.write(ca_key.private_bytes(
-                    encoding=serialization.Encoding.PEM,
-                    format=serialization.PrivateFormat.PKCS8,
-                    encryption_algorithm=serialization.NoEncryption()
-                ))
+                f.write(
+                    ca_key.private_bytes(
+                        encoding=serialization.Encoding.PEM,
+                        format=serialization.PrivateFormat.PKCS8,
+                        encryption_algorithm=serialization.NoEncryption(),
+                    )
+                )
 
             with open(self.ca_cert_path, "wb") as f:
                 f.write(ca_cert.public_bytes(serialization.Encoding.PEM))
@@ -80,8 +86,9 @@ class CertificateManager:
             self._logger.log(f"CA generation error: {e}", Logger.ERROR)
             return False
 
-    def generate_server_certificate(self, hostname: str, ip_addresses: list[str],
-                                   force: bool = False) -> bool:
+    def generate_server_certificate(
+        self, hostname: str, ip_addresses: list[str], force: bool = False
+    ) -> bool:
         """Generate server certificate signed by CA"""
         if self.server_cert_path.exists() and not force:
             return True
@@ -94,15 +101,11 @@ class CertificateManager:
                 )
 
             with open(self.ca_cert_path, "rb") as f:
-                ca_cert = x509.load_pem_x509_certificate(
-                    f.read(), default_backend()
-                )
+                ca_cert = x509.load_pem_x509_certificate(f.read(), default_backend())
 
             # Generate server private key
             server_key = rsa.generate_private_key(
-                public_exponent=65537,
-                key_size=2048,
-                backend=default_backend()
+                public_exponent=65537, key_size=2048, backend=default_backend()
             )
 
             # Create Subject Alternative Names (SAN)
@@ -114,39 +117,46 @@ class CertificateManager:
                     san_list.append(x509.DNSName(ip))
 
             # Create server certificate
-            subject = x509.Name([
-                x509.NameAttribute(NameOID.COUNTRY_NAME, "IT"),
-                x509.NameAttribute(NameOID.ORGANIZATION_NAME, ApplicationConfig.service_name),
-                x509.NameAttribute(NameOID.COMMON_NAME, hostname),
-            ])
+            subject = x509.Name(
+                [
+                    x509.NameAttribute(NameOID.COUNTRY_NAME, "IT"),
+                    x509.NameAttribute(
+                        NameOID.ORGANIZATION_NAME, ApplicationConfig.service_name
+                    ),
+                    x509.NameAttribute(NameOID.COMMON_NAME, hostname),
+                ]
+            )
 
-            server_cert = x509.CertificateBuilder().subject_name(
-                subject
-            ).issuer_name(
-                ca_cert.subject
-            ).public_key(
-                server_key.public_key()
-            ).serial_number(
-                x509.random_serial_number()
-            ).not_valid_before(
-                datetime.datetime.now(datetime.UTC)
-            ).not_valid_after(
-                datetime.datetime.now(datetime.UTC) + datetime.timedelta(days=365)
-            ).add_extension(
-                x509.SubjectAlternativeName(san_list),
-                critical=False,
-            ).add_extension(
-                x509.BasicConstraints(ca=False, path_length=None),
-                critical=True,
-            ).sign(ca_key, hashes.SHA256(), default_backend())
+            server_cert = (
+                x509.CertificateBuilder()
+                .subject_name(subject)
+                .issuer_name(ca_cert.subject)
+                .public_key(server_key.public_key())
+                .serial_number(x509.random_serial_number())
+                .not_valid_before(datetime.datetime.now(datetime.UTC))
+                .not_valid_after(
+                    datetime.datetime.now(datetime.UTC) + datetime.timedelta(days=365)
+                )
+                .add_extension(
+                    x509.SubjectAlternativeName(san_list),
+                    critical=False,
+                )
+                .add_extension(
+                    x509.BasicConstraints(ca=False, path_length=None),
+                    critical=True,
+                )
+                .sign(ca_key, hashes.SHA256(), default_backend())
+            )
 
             # Save server key and certificate
             with open(self.server_key_path, "wb") as f:
-                f.write(server_key.private_bytes(
-                    encoding=serialization.Encoding.PEM,
-                    format=serialization.PrivateFormat.PKCS8,
-                    encryption_algorithm=serialization.NoEncryption()
-                ))
+                f.write(
+                    server_key.private_bytes(
+                        encoding=serialization.Encoding.PEM,
+                        format=serialization.PrivateFormat.PKCS8,
+                        encryption_algorithm=serialization.NoEncryption(),
+                    )
+                )
 
             with open(self.server_cert_path, "wb") as f:
                 f.write(server_cert.public_bytes(serialization.Encoding.PEM))
@@ -160,8 +170,12 @@ class CertificateManager:
         """
         Check if all certificates are already present (CA and server)
         """
-        return (self.ca_cert_path.exists() and self.ca_key_path.exists() and
-                self.server_cert_path.exists() and self.server_key_path.exists())
+        return (
+            self.ca_cert_path.exists()
+            and self.ca_key_path.exists()
+            and self.server_cert_path.exists()
+            and self.server_key_path.exists()
+        )
 
     def certificate_exist(self, source_id: Optional[str] = None) -> bool:
         """Check if CA certificate exists for a specific server"""
@@ -178,6 +192,7 @@ class CertificateManager:
         """Export CA certificate for distribution to clients"""
         try:
             import shutil
+
             shutil.copy(self.ca_cert_path, export_path)
             return True
         except Exception as e:
@@ -222,7 +237,7 @@ class CertificateManager:
         """Save CA certificate data from a specific server"""
         try:
             if isinstance(data, str):
-                data = data.encode('utf-8')
+                data = data.encode("utf-8")
 
             # Create a unique filename for this server
             cert_filename = f"ca_{source_id.replace(':', '_').replace('.', '_')}.crt"
@@ -240,13 +255,17 @@ class CertificateManager:
             mapping[source_id] = cert_filename
             self._save_cert_mapping(mapping)
 
-            self._logger.log(f"Saved CA certificate for server: {source_id}", Logger.INFO)
+            self._logger.log(
+                f"Saved CA certificate for server: {source_id}", Logger.INFO
+            )
             return True
         except Exception as e:
             self._logger.log(f"Error saving CA data: {e}", Logger.ERROR)
             return False
 
-    def extend_mapping(self, source_id: Optional[str], cert_filename: Optional[str]) -> bool:
+    def extend_mapping(
+        self, source_id: Optional[str], cert_filename: Optional[str]
+    ) -> bool:
         """
         Extends the certificate mapping by adding or updating the mapping between
         a source ID and a certificate filename. Validates that neither of the

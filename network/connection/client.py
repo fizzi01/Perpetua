@@ -384,7 +384,7 @@ class ConnectionHandler:
                 streams=self.open_streams,
                 screen_position=self._client_obj.screen_position,
                 screen_resolution=self._client_obj.screen_resolution,
-                ssl=self._client_obj.ssl,
+                ssl=self.use_ssl,
             )
 
             self._logger.log("Sent handshake response to server", Logger.DEBUG)

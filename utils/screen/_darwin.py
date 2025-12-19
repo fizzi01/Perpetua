@@ -1,11 +1,10 @@
-
 from Quartz import CGDisplayBounds
 from Quartz import CGMainDisplayID
 
 from . import _base
 
-class Screen(_base.Screen):
 
+class Screen(_base.Screen):
     @classmethod
     def get_size(cls) -> tuple[int, int]:
         """
