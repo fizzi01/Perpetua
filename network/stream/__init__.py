@@ -1,37 +1,33 @@
 import asyncio
-from typing import Any, Optional
-
-from attr import dataclass
+from enum import IntEnum
+from typing import Any
 
 from event.bus import EventBus
 from model.client import ClientsManager
 from utils.logging import Logger, get_logger
 
 
-@dataclass
-class StreamType:
+class StreamType(IntEnum):
     """
     Enumeration of different stream types with priority levels.
     """
 
-    COMMAND: int = 0  # High priority - bidirectional commands
-    KEYBOARD: int = 4  # High priority - keyboard events
-    MOUSE: int = 1  # High priority - mouse movements (high frequency)
-    CLIPBOARD: int = 12  # Low priority - clipboard
-    FILE: int = 16  # Low priority - file transfers
+    COMMAND = 0  # High priority - bidirectional commands
+    KEYBOARD = 4  # High priority - keyboard events
+    MOUSE = 1  # High priority - mouse movements (high frequency)
+    CLIPBOARD = 12  # Low priority - clipboard
+    FILE = 16  # Low priority - file transfers
 
     @classmethod
     def is_valid(cls, stream_type: int) -> bool:
         """
         Verify if the given stream type is valid.
         """
-        return stream_type in {
-            cls.COMMAND,
-            cls.KEYBOARD,
-            cls.MOUSE,
-            cls.CLIPBOARD,
-            cls.FILE,
-        }
+        try:
+            cls(stream_type)
+            return True
+        except ValueError:
+            return False
 
 
 class StreamHandler:
