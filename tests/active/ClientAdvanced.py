@@ -70,14 +70,18 @@ async def interactive_client():
 
     # Ask if user wants to start client immediately
     start_now = input("Start client now? (y/n, default: y): ").strip().lower()
-    if start_now != "n":
-        print("\nStarting client...")
-        if not await client.start():
-            print("Failed to start client")
-            return
-        print("Client started successfully!")
-    else:
-        print("\nClient created but not started. Use 'connect' command to start.")
+    try:
+        if start_now != "n":
+            print("\nStarting client...")
+            if not await client.start():
+                print("Failed to start client")
+                return
+            print("Client started successfully!")
+        else:
+            print("\nClient created but not started. Use 'connect' command to start.")
+    except Exception as e:
+        print(f"Error starting client: {e}")
+        return
 
     # Task to handle user input
     async def handle_commands():

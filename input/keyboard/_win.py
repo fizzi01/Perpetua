@@ -15,7 +15,8 @@ class ServerKeyboardListener(_base.ServerKeyboardListener):
         super().__init__(event_bus, stream_handler, command_stream, filtering)
 
     def _win32_suppress_filter(self, msg, data):
-        self._listener._suppress = self._listening
+        if self._listener is not None:
+            self._listener._suppress = self._listening
 
 
 class ClientKeyboardController(_base.ClientKeyboardController):

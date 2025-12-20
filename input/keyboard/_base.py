@@ -115,7 +115,7 @@ class ServerKeyboardListener(object):
             except Exception:
                 pass
 
-        self._listener = None
+        self._listener: Optional[KeyboardListener] = None
 
         self._logger = get_logger(self.__class__.__name__)
 

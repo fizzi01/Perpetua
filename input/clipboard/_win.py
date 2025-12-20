@@ -84,6 +84,6 @@ class ClipboardListener(_base.ClipboardListener):
 
 class ClipboardController(_base.ClipboardController):
     def __init__(
-        self, event_bus: EventBus, stream_handler: StreamHandler, clipboard=Clipboard
+        self, event_bus: EventBus, stream_handler: StreamHandler, clipboard: Clipboard
     ):
         super().__init__(event_bus, stream_handler, clipboard)
