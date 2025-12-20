@@ -1,3 +1,4 @@
+from cryptography.x509 import DNSName, IPAddress
 from pathlib import Path
 import json
 from typing import Tuple, Optional, Dict
@@ -109,7 +110,7 @@ class CertificateManager:
             )
 
             # Create Subject Alternative Names (SAN)
-            san_list = [x509.DNSName(hostname)]
+            san_list: list[DNSName | IPAddress] = [x509.DNSName(hostname)]
             for ip in ip_addresses:
                 try:
                     san_list.append(x509.IPAddress(ipaddress.ip_address(ip)))
@@ -145,7 +146,7 @@ class CertificateManager:
                     x509.BasicConstraints(ca=False, path_length=None),
                     critical=True,
                 )
-                .sign(ca_key, hashes.SHA256(), default_backend())
+                .sign(ca_key, hashes.SHA256(), default_backend())  # ty:ignore[invalid-argument-type]
             )
 
             # Save server key and certificate

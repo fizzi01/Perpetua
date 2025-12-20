@@ -24,6 +24,7 @@ from input.keyboard import ClientKeyboardController
 from input.clipboard import ClipboardListener, ClipboardController
 from utils.crypto import CertificateManager
 from utils.crypto.sharing import CertificateReceiver
+from utils.metrics import MetricsCollector, PerformanceMonitor
 from utils.screen import Screen
 from utils.logging import Logger, get_logger
 
@@ -119,6 +120,9 @@ class Client:
         self._components = {}
         self._running = False
         self._connected = False
+
+        self._metrics_collector = MetricsCollector()
+        self._performance_monitor = PerformanceMonitor(self._metrics_collector)
 
         # Connection handler
         self.connection_handler: Optional[ConnectionHandler] = None
@@ -802,6 +806,14 @@ class Client:
         return [
             st for st, handler in self._stream_handlers.items() if handler.is_active()
         ]
+
+    async def start_metrics_collection(self):
+        """Start metrics collection"""
+        await self._performance_monitor.start()
+
+    async def stop_metrics_collection(self):
+        """Stop metrics collection"""
+        await self._performance_monitor.stop()
 
 
 # ==================== Example Usage ====================

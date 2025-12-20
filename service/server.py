@@ -626,8 +626,6 @@ class Server:
             await self.stop()
             return False
 
-        await self._performance_monitor.start()
-
         self._running = True
         self._logger.info(f"Server started on {self.config.host}:{self.config.port}")
         return True
@@ -639,8 +637,6 @@ class Server:
             return
 
         self._logger.info("Stopping Server...")
-
-        await self._performance_monitor.stop()
 
         # Stop connection handler
         if self.connection_handler:
@@ -995,6 +991,14 @@ class Server:
     def get_active_streams(self) -> list[int]:
         """Get list of currently active stream types"""
         return list(self._stream_handlers.keys())
+
+    async def start_metrics_collection(self):
+        """Start metrics collection"""
+        await self._performance_monitor.start()
+
+    async def stop_metrics_collection(self):
+        """Stop metrics collection"""
+        await self._performance_monitor.stop()
 
 
 # ==================== Example Usage ====================
