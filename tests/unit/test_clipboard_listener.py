@@ -10,6 +10,7 @@ import pytest
 
 from input.clipboard import Clipboard, ClipboardType
 
+INIT_CONTENT = "INITIAL_CONTENT"
 
 # ============================================================================
 # Fixtures
@@ -127,6 +128,7 @@ class TestClipboardChangeDetection:
             content_types=[ClipboardType.TEXT, ClipboardType.URL, ClipboardType.FILE],
         )
 
+        await listener._debug_set_clipboard(INIT_CONTENT)
         await listener.start()
         await asyncio.sleep(0.2)  # Establish baseline
 
@@ -147,6 +149,7 @@ class TestClipboardChangeDetection:
 
         listener = Clipboard(on_change=on_change, poll_interval=0.1)
 
+        await listener._debug_set_clipboard(INIT_CONTENT)
         await listener.start()
         await asyncio.sleep(0.2)
 
@@ -174,11 +177,12 @@ class TestClipboardChangeDetection:
             content_types=[ClipboardType.TEXT, ClipboardType.URL],
         )
 
+        await listener._debug_set_clipboard(INIT_CONTENT)
         await listener.start()
         await asyncio.sleep(0.2)
 
         await listener._debug_set_clipboard("https://example.com")
-        await asyncio.sleep(0.15)
+        await asyncio.sleep(0.2)
 
         await listener.stop()
 
@@ -197,6 +201,7 @@ class TestClipboardChangeDetection:
 
         listener = Clipboard(on_change=failing_callback, poll_interval=0.1)
 
+        await listener._debug_set_clipboard(INIT_CONTENT)
         await listener.start()
         await asyncio.sleep(0.2)
 
@@ -244,6 +249,7 @@ class TestClipboardContent:
         # Before starting, should return None
         assert listener.get_last_content() is None
 
+        await listener._debug_set_clipboard(INIT_CONTENT)
         await listener.start()
         await asyncio.sleep(0.2)
 
@@ -287,6 +293,7 @@ class TestClipboardPerformance:
 
         listener = Clipboard(on_change=on_change, poll_interval=0.05)
 
+        await listener._debug_set_clipboard(INIT_CONTENT)
         await listener.start()
         await asyncio.sleep(0.1)
 
@@ -319,6 +326,7 @@ class TestClipboardPerformance:
 
         listener = Clipboard(on_change=on_change, poll_interval=0.1)
 
+        await listener._debug_set_clipboard(INIT_CONTENT)
         await listener.start()
 
         # Run for a few seconds
@@ -354,7 +362,8 @@ class TestMultipleListeners:
 
         listener1 = Clipboard(on_change=on_change_1, poll_interval=0.1)
         listener2 = Clipboard(on_change=on_change_2, poll_interval=0.15)
-
+        await listener1._debug_set_clipboard(INIT_CONTENT)
+        await listener2._debug_set_clipboard(INIT_CONTENT)
         await listener1.start()
         await listener2.start()
 
@@ -385,12 +394,14 @@ class TestMultipleListeners:
             poll_interval=0.1,
             content_types=[ClipboardType.TEXT],
         )
+        await listener_text._debug_set_clipboard(INIT_CONTENT)
 
         listener_url = Clipboard(
             on_change=on_url,
             poll_interval=0.1,
             content_types=[ClipboardType.URL],
         )
+        await listener_url._debug_set_clipboard(INIT_CONTENT)
 
         await listener_text.start()
         await listener_url.start()
@@ -427,6 +438,7 @@ class TestClipboardEdgeCases:
 
         listener = Clipboard(on_change=on_change, poll_interval=0.1)
 
+        await listener._debug_set_clipboard(INIT_CONTENT)
         await listener.start()
         await asyncio.sleep(0.2)
 
@@ -448,6 +460,7 @@ class TestClipboardEdgeCases:
 
         listener = Clipboard(on_change=on_change, poll_interval=0.1)
 
+        await listener._debug_set_clipboard(INIT_CONTENT)
         await listener.start()
         await asyncio.sleep(0.2)
 
@@ -470,6 +483,7 @@ class TestClipboardEdgeCases:
 
         listener = Clipboard(on_change=on_change, poll_interval=0.1)
 
+        await listener._debug_set_clipboard(INIT_CONTENT)
         await listener.start()
         await asyncio.sleep(0.2)
 
@@ -488,6 +502,7 @@ class TestClipboardEdgeCases:
         """Test that polling can be cancelled cleanly."""
         listener = Clipboard(poll_interval=0.1)
 
+        await listener._debug_set_clipboard(INIT_CONTENT)
         await listener.start()
         assert listener.is_listening()
 
@@ -519,6 +534,7 @@ class TestClipboardBenchmarks:
 
         listener = Clipboard(on_change=on_change, poll_interval=0.05)
 
+        await listener._debug_set_clipboard(INIT_CONTENT)
         await listener.start()
         await asyncio.sleep(0.15)
 
@@ -550,6 +566,7 @@ class TestClipboardBenchmarks:
         listener = Clipboard(poll_interval=0.05)
 
         start_time = asyncio.get_event_loop().time()
+        await listener._debug_set_clipboard(INIT_CONTENT)
         await listener.start()
 
         # Let it poll for a second
@@ -582,6 +599,7 @@ class TestClipboardWithMocks:
                 changes.append(content)
 
             listener = Clipboard(on_change=on_change, poll_interval=0.1)
+            await listener._debug_set_clipboard(INIT_CONTENT)
             await listener.start()
             await asyncio.sleep(0.25)
             await listener.stop()
@@ -596,6 +614,7 @@ class TestClipboardWithMocks:
             mock_paste.side_effect = CopykittenError("Clipboard error")
 
             listener = Clipboard(poll_interval=0.1)
+            await listener._debug_set_clipboard(INIT_CONTENT)
             await listener.start()
             await asyncio.sleep(0.15)
 
@@ -645,6 +664,7 @@ class TestContentTypeDetection:
             content_types=[ClipboardType.TEXT],
         )
 
+        await listener._debug_set_clipboard(INIT_CONTENT)
         await listener.start()
         await asyncio.sleep(0.15)
 
@@ -667,6 +687,7 @@ class TestContentTypeDetection:
             content_types=[ClipboardType.URL],
         )
 
+        await listener._debug_set_clipboard(INIT_CONTENT)
         await listener.start()
         await asyncio.sleep(0.15)
 
@@ -688,6 +709,7 @@ class TestContentTypeDetection:
             content_types=[ClipboardType.URL],
         )
 
+        await listener._debug_set_clipboard(INIT_CONTENT)
         await listener.start()
         await asyncio.sleep(0.15)
 
@@ -716,6 +738,7 @@ class TestContentTypeDetection:
             poll_interval=0.1,
             content_types=[ClipboardType.TEXT],
         )
+        await listener_text._debug_set_clipboard(INIT_CONTENT)
 
         # Listener that only accepts URL
         listener_url = Clipboard(
@@ -723,6 +746,7 @@ class TestContentTypeDetection:
             poll_interval=0.1,
             content_types=[ClipboardType.URL],
         )
+        await listener_url._debug_set_clipboard(INIT_CONTENT)
 
         await listener_text.start()
         await listener_url.start()
@@ -763,6 +787,7 @@ class TestSyncCallbacks:
 
         listener = Clipboard(on_change=sync_callback, poll_interval=0.1)
 
+        await listener._debug_set_clipboard(INIT_CONTENT)
         await listener.start()
         await asyncio.sleep(0.15)
 
@@ -784,6 +809,7 @@ class TestSyncCallbacks:
 
         listener = Clipboard(on_change=failing_sync_callback, poll_interval=0.1)
 
+        await listener._debug_set_clipboard(INIT_CONTENT)
         await listener.start()
         await asyncio.sleep(0.15)
 
@@ -810,6 +836,7 @@ class TestStateManagement:
         """Test that last hash is updated correctly."""
         listener = Clipboard(poll_interval=0.1)
 
+        await listener._debug_set_clipboard(INIT_CONTENT)
         await listener.start()
         await asyncio.sleep(0.15)
 
@@ -834,6 +861,7 @@ class TestStateManagement:
         """Test that last content is tracked correctly."""
         listener = Clipboard(poll_interval=0.1)
 
+        await listener._debug_set_clipboard(INIT_CONTENT)
         await listener.start()
         await asyncio.sleep(0.15)
 
@@ -855,6 +883,7 @@ class TestStateManagement:
         """Test that state is preserved when stopping and restarting."""
         listener = Clipboard(poll_interval=0.1)
 
+        await listener._debug_set_clipboard(INIT_CONTENT)
         await listener.start()
         await listener.set_clipboard("Test content")
         await asyncio.sleep(0.15)
@@ -900,6 +929,7 @@ class TestPollingInterval:
 
         listener = Clipboard(on_change=on_change, poll_interval=1.0)
 
+        await listener._debug_set_clipboard(INIT_CONTENT)
         await listener.start()
         await asyncio.sleep(0.5)
 
@@ -917,6 +947,7 @@ class TestPollingInterval:
         """Test changing poll interval while listener is running."""
         listener = Clipboard(poll_interval=0.5)
 
+        await listener._debug_set_clipboard(INIT_CONTENT)
         await listener.start()
         await asyncio.sleep(0.2)
 
@@ -943,6 +974,7 @@ class TestConcurrentOperations:
         """Test multiple concurrent set operations."""
         listener = Clipboard(poll_interval=0.1)
 
+        await listener._debug_set_clipboard(INIT_CONTENT)
         await listener.start()
         await asyncio.sleep(0.15)
 
@@ -968,6 +1000,7 @@ class TestConcurrentOperations:
 
         listener = Clipboard(on_change=on_change, poll_interval=0.1)
 
+        await listener._debug_set_clipboard(INIT_CONTENT)
         await listener.start()
         await asyncio.sleep(0.15)
 
@@ -997,6 +1030,7 @@ class TestSpecialCharacters:
 
         listener = Clipboard(on_change=on_change, poll_interval=0.1)
 
+        await listener._debug_set_clipboard(INIT_CONTENT)
         await listener.start()
         await asyncio.sleep(0.15)
 
@@ -1015,6 +1049,7 @@ class TestSpecialCharacters:
 
         listener = Clipboard(on_change=on_change, poll_interval=0.1)
 
+        await listener._debug_set_clipboard(INIT_CONTENT)
         await listener.start()
         await asyncio.sleep(0.15)
 
@@ -1033,6 +1068,7 @@ class TestSpecialCharacters:
 
         listener = Clipboard(on_change=on_change, poll_interval=0.1)
 
+        await listener._debug_set_clipboard(INIT_CONTENT)
         await listener.start()
         await asyncio.sleep(0.15)
 
@@ -1051,6 +1087,7 @@ class TestSpecialCharacters:
 
         listener = Clipboard(on_change=on_change, poll_interval=0.1)
 
+        await listener._debug_set_clipboard(INIT_CONTENT)
         await listener.start()
         await asyncio.sleep(0.15)
 

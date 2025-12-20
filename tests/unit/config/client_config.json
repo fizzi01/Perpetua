@@ -1,0 +1,24 @@
+{
+    "server_info": {
+        "host": "localhost",
+        "port": 5555,
+        "heartbeat_interval": 1,
+        "auto_reconnect": true,
+        "ssl": false,
+        "additional_params": {
+            "timeout": 30
+        }
+    },
+    "client_hostname": "test-client-hostname",
+    "streams_enabled": {
+        "1": true,
+        "4": true,
+        "12": true,
+        "16": false
+    },
+    "ssl_enabled": false,
+    "log_level": 0,
+    "log_to_file": false,
+    "log_file_path": null
+}
+

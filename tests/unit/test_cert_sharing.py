@@ -31,7 +31,10 @@ class TestCertificateSharing(unittest.TestCase):
 
         # Load CA certificate data
         ca_cert_path = self.cert_manager.get_ca_cert_path()
-        with open(ca_cert_path, "rb") as f:
+        if ca_cert_path is None:
+            self.fail("CA certificate path not found")
+
+        with open(file=ca_cert_path, mode="rb") as f:  # ty:ignore[no-matching-overload]
             self.cert_data = f.read()
 
         # Test configuration
@@ -137,8 +140,8 @@ class TestCertificateSharing(unittest.TestCase):
                 # Check success
                 self.assertTrue(success)
                 self.assertIsNotNone(otp)
-                self.assertEqual(len(otp), 6)
-                self.assertTrue(otp.isdigit())
+                self.assertEqual(len(otp), 6)  # ty:ignore[invalid-argument-type]
+                self.assertTrue(otp.isdigit())  # ty:ignore[possibly-missing-attribute]
 
                 # Check server is running
                 self.assertTrue(sharing.is_sharing_active())
@@ -247,7 +250,7 @@ class TestCertificateSharing(unittest.TestCase):
                     server_host=self.test_host, server_port=self.test_port, timeout=5
                 )
 
-                success, received_cert = await receiver.receive_certificate(otp)
+                success, received_cert = await receiver.receive_certificate(otp)  # ty:ignore[invalid-argument-type]
 
                 # Check success
                 self.assertTrue(success)

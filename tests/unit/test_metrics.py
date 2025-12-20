@@ -35,7 +35,7 @@ class TestConnectionMetrics:
         assert metrics.avg_latency == pytest.approx(0.002)
 
 
-@pytest.mark.asyncio
+@pytest.mark.anyio
 class TestMetricsCollector:
     async def test_register_connection(self):
         collector = MetricsCollector()
