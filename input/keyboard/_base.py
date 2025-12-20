@@ -44,6 +44,14 @@ class KeyUtilities:
         except KeyError:
             pass
 
+        # Check if it's a vk_ key
+        if key.startswith("vk_"):
+            try:
+                vk_code = int(key[3:])
+                return KeyCode.from_vk(vk_code)
+            except ValueError:
+                pass
+
         # Next check if it's a single character (KeyCode)
         try:
             return KeyCode.from_char(key)
