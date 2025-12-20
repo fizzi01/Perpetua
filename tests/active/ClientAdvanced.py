@@ -2,9 +2,10 @@
 Advanced Client Example - Runtime management of streams and SSL
 Demonstrates how to enable/disable streams during execution and manage SSL certificates
 """
+
 import sys
 
-if sys.platform in ("win32", "cygwin", 'cli'):
+if sys.platform in ("win32", "cygwin", "cli"):
     import winloop as loop
 else:
     import uvloop as loop
@@ -21,7 +22,9 @@ def helper():
     print("\nCommands:")
     print("  status    - Show connection status and active streams")
     print("  list      - List enabled streams")
-    print("  enable  <stream> - Enable a stream (use number: 1=MOUSE, 2=KEYBOARD, 3=CLIPBOARD)")
+    print(
+        "  enable  <stream> - Enable a stream (use number: 1=MOUSE, 2=KEYBOARD, 3=CLIPBOARD)"
+    )
     print("  disable <stream> - Disable a stream")
     print("  ssl       - Show SSL status")
     print("  cert      - Receive certificate from server (interactive)")
@@ -51,9 +54,7 @@ async def interactive_client():
     # client_config.set_logging(level=Logger.DEBUG)
 
     client = Client(
-        app_config=app_config,
-        client_config=client_config,
-        auto_load_config=False
+        app_config=app_config, client_config=client_config, auto_load_config=False
     )
 
     # Enable default streams
@@ -61,15 +62,15 @@ async def interactive_client():
     await client.enable_stream(StreamType.KEYBOARD)
     await client.enable_stream(StreamType.CLIPBOARD)
 
-    print("\n" + "="*60)
+    print("\n" + "=" * 60)
     print("PyContinuity Interactive Client")
-    print("="*60)
+    print("=" * 60)
     helper()
-    print("="*60 + "\n")
+    print("=" * 60 + "\n")
 
     # Ask if user wants to start client immediately
     start_now = input("Start client now? (y/n, default: y): ").strip().lower()
-    if start_now != 'n':
+    if start_now != "n":
         print("\nStarting client...")
         if not await client.start():
             print("Failed to start client")
@@ -93,11 +94,13 @@ async def interactive_client():
                     break
 
                 elif cmd == "status":
-                    print(f"\n{'='*40}")
+                    print(f"\n{'=' * 40}")
                     print(f"Connection Status:")
                     print(f"  Running: {client.is_running()}")
                     print(f"  Connected: {client.is_connected()}")
-                    print(f"  Server: {client.config.get_server_host()}:{client.config.get_server_port()}")
+                    print(
+                        f"  Server: {client.config.get_server_host()}:{client.config.get_server_port()}"
+                    )
                     print(f"  Auto-reconnect: {client.config.do_auto_reconnect()}")
                     print(f"\nStreams:")
                     print(f"  Enabled: {client.get_enabled_streams()}")
@@ -106,7 +109,7 @@ async def interactive_client():
                     print(f"  Certificate loaded: {client.has_certificate()}")
                     if client.has_certificate():
                         print(f"  Certificate path: {client.get_certificate_path()}")
-                    print(f"{'='*40}\n")
+                    print(f"{'=' * 40}\n")
 
                 elif cmd == "list":
                     print(f"\nEnabled streams: {client.get_enabled_streams()}")
@@ -118,23 +121,29 @@ async def interactive_client():
                     if client.has_certificate():
                         print(f"  Certificate path: {client.get_certificate_path()}")
                     else:
-                        print("  No certificate loaded. Use 'cert' command to receive one.")
+                        print(
+                            "  No certificate loaded. Use 'cert' command to receive one."
+                        )
                     print()
 
                 elif cmd == "cert":
-                    print("\n" + "="*60)
+                    print("\n" + "=" * 60)
                     print("Certificate Reception")
-                    print("="*60)
+                    print("=" * 60)
                     print("\nSteps:")
                     print("1. On the server, run: share ca")
                     print("2. The server will display a 6-digit OTP")
                     print("3. Enter that OTP below\n")
 
-                    cert_host = input(f"Certificate server host (default: {client.config.get_server_host()}): ").strip()
+                    cert_host = input(
+                        f"Certificate server host (default: {client.config.get_server_host()}): "
+                    ).strip()
                     if not cert_host:
                         cert_host = client.config.get_server_host()
 
-                    cert_port = input("Certificate server port (default: 5556): ").strip()
+                    cert_port = input(
+                        "Certificate server port (default: 5556): "
+                    ).strip()
                     cert_port = int(cert_port) if cert_port else 5556
 
                     otp = input("\nEnter 6-digit OTP from server: ").strip()
@@ -145,9 +154,7 @@ async def interactive_client():
 
                     print("\nReceiving certificate...")
                     success = await client.receive_certificate(
-                        otp=otp,
-                        server_host=cert_host,
-                        server_port=cert_port
+                        otp=otp, server_host=cert_host, server_port=cert_port
                     )
 
                     if success:
@@ -156,21 +163,29 @@ async def interactive_client():
 
                         # Ask if user wants to enable SSL now
                         if not client.is_running():
-                            enable = input("\nEnable SSL now? (y/n, default: y): ").strip().lower()
-                            if enable != 'n':
+                            enable = (
+                                input("\nEnable SSL now? (y/n, default: y): ")
+                                .strip()
+                                .lower()
+                            )
+                            if enable != "n":
                                 if client.enable_ssl():
                                     print("✓ SSL enabled")
                                 else:
                                     print("✗ Failed to enable SSL")
                         else:
-                            print("\nNote: Client is running. SSL will be used on next connection.")
+                            print(
+                                "\nNote: Client is running. SSL will be used on next connection."
+                            )
                     else:
                         print("✗ Failed to receive certificate")
                     print()
 
                 elif cmd == "connect":
                     if client.is_running():
-                        print("\n✗ Client already running. Use 'disconnect' first if you want to reconnect.\n")
+                        print(
+                            "\n✗ Client already running. Use 'disconnect' first if you want to reconnect.\n"
+                        )
                         continue
 
                     print("\nConnecting to server...")
@@ -179,7 +194,9 @@ async def interactive_client():
                         # Wait a bit for connection
                         await asyncio.sleep(2)
                         if client.is_connected():
-                            print(f"✓ Connected! Active streams: {client.get_active_streams()}")
+                            print(
+                                f"✓ Connected! Active streams: {client.get_active_streams()}"
+                            )
                         else:
                             print("⧗ Connection in progress...")
                     else:
@@ -205,7 +222,9 @@ async def interactive_client():
                         print("✓ Client restarted and connecting...")
                         await asyncio.sleep(2)
                         if client.is_connected():
-                            print(f"✓ Connected! Active streams: {client.get_active_streams()}")
+                            print(
+                                f"✓ Connected! Active streams: {client.get_active_streams()}"
+                            )
                     else:
                         print("✗ Failed to restart client")
                     print()
@@ -214,7 +233,9 @@ async def interactive_client():
                     try:
                         stream_type = int(cmd.split()[1])
                     except (ValueError, IndexError):
-                        print("✗ Invalid stream type. Use: 1=MOUSE, 4=KEYBOARD, 12=CLIPBOARD\n")
+                        print(
+                            "✗ Invalid stream type. Use: 1=MOUSE, 4=KEYBOARD, 12=CLIPBOARD\n"
+                        )
                         continue
 
                     stream_names = {1: "MOUSE", 4: "KEYBOARD", 12: "CLIPBOARD"}
@@ -232,7 +253,9 @@ async def interactive_client():
                             print(f"✓ {stream_name} stream enabled")
                             print(f"  Enabled streams: {client.get_enabled_streams()}")
                             if client.is_connected():
-                                print(f"  Active streams: {client.get_active_streams()}")
+                                print(
+                                    f"  Active streams: {client.get_active_streams()}"
+                                )
                         else:
                             print(f"✗ Failed to enable {stream_name} stream")
                     except Exception as e:
@@ -243,7 +266,9 @@ async def interactive_client():
                     try:
                         stream_type = int(cmd.split()[1])
                     except (ValueError, IndexError):
-                        print("✗ Invalid stream type. Use: 1=MOUSE, 4=KEYBOARD, 12=CLIPBOARD\n")
+                        print(
+                            "✗ Invalid stream type. Use: 1=MOUSE, 4=KEYBOARD, 12=CLIPBOARD\n"
+                        )
                         continue
 
                     if stream_type == 0:  # COMMAND stream
@@ -265,7 +290,9 @@ async def interactive_client():
                             print(f"✓ {stream_name} stream disabled")
                             print(f"  Enabled streams: {client.get_enabled_streams()}")
                             if client.is_connected():
-                                print(f"  Active streams: {client.get_active_streams()}")
+                                print(
+                                    f"  Active streams: {client.get_active_streams()}"
+                                )
                         else:
                             print(f"✗ Failed to disable {stream_name} stream")
                     except Exception as e:
@@ -285,6 +312,7 @@ async def interactive_client():
             except Exception as e:
                 print(f"Error: {e}\n")
                 import traceback
+
                 traceback.print_exc()
 
         return "quit"
@@ -304,9 +332,9 @@ async def main():
     """Entry point"""
     import sys
 
-    print("\n" + "="*60)
+    print("\n" + "=" * 60)
     print("PyContinuity Advanced Client Examples")
-    print("="*60)
+    print("=" * 60)
 
     await interactive_client()
 
@@ -318,4 +346,3 @@ if __name__ == "__main__":
         print("\nShutdown complete")
     except RuntimeError as e:
         print(f"\nRuntime error: {e}")
-

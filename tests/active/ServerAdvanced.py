@@ -2,9 +2,10 @@
 Advanced Server Example - Gestione runtime degli stream
 Dimostra come abilitare/disabilitare stream durante l'esecuzione
 """
+
 import sys
 
-if sys.platform in ("win32", "cygwin", 'cli'):
+if sys.platform in ("win32", "cygwin", "cli"):
     import winloop as loop
 else:
     import uvloop as loop
@@ -15,6 +16,7 @@ from network.stream import StreamType
 from service.server import Server
 from config import ServerConfig, ApplicationConfig
 from utils.logging import Logger
+
 
 def helper():
     print("\nCommands:")
@@ -40,10 +42,7 @@ async def interactive_server():
     server_config = ServerConfig(app_config, config_file=None)
 
     # Set connection parameters
-    server_config.set_connection_params(
-        host=gethostname(),
-        port=5555
-    )
+    server_config.set_connection_params(host=gethostname(), port=5555)
 
     # Enable SSL
     server_config.enable_ssl()
@@ -52,9 +51,7 @@ async def interactive_server():
     server_config.set_logging(level=Logger.INFO)
 
     server = Server(
-        app_config=app_config,
-        server_config=server_config,
-        auto_load_config=True
+        app_config=app_config, server_config=server_config, auto_load_config=True
     )
 
     # Aggiungi client
@@ -67,11 +64,11 @@ async def interactive_server():
         print("Failed to start server")
         return
 
-    print("\n" + "="*60)
+    print("\n" + "=" * 60)
     print("PyContinuity Interactive Server")
-    print("="*60)
+    print("=" * 60)
     helper()
-    print("="*60 + "\n")
+    print("=" * 60 + "\n")
 
     # Task per gestire input utente
     async def handle_commands():
@@ -96,13 +93,21 @@ async def interactive_server():
                     print(f"\nRegistered clients: {len(clients)}")
                     for client in clients:
                         status = "Connected" if client.is_connected else "Disconnected"
-                        print(f"  - {client.get_net_id()} ({client.screen_position}) - {status}")
+                        print(
+                            f"  - {client.get_net_id()} ({client.screen_position}) - {status}"
+                        )
                     print()
                 elif cmd == "add":
                     # Dynamic add client
                     hostname = input("Enter client hostname or IP: ").strip()
-                    position = input("Enter screen position (top/bottom/left/right): ").strip().lower()
-                    await server.add_client(hostname=hostname,ip_address=hostname, screen_position=position)
+                    position = (
+                        input("Enter screen position (top/bottom/left/right): ")
+                        .strip()
+                        .lower()
+                    )
+                    await server.add_client(
+                        hostname=hostname, ip_address=hostname, screen_position=position
+                    )
                     print(f"Client {hostname} added at position {position}\n")
                 elif cmd == "remove":
                     # Dynamic remove client
@@ -112,8 +117,16 @@ async def interactive_server():
                 elif cmd == "edit":
                     # Dynamic edit client
                     hostname = input("Enter client hostname or IP: ").strip()
-                    position = input("Enter new screen position (top/bottom/left/right): ").strip().lower()
-                    await server.edit_client(hostname=hostname, ip_address=hostname, new_screen_position=position)
+                    position = (
+                        input("Enter new screen position (top/bottom/left/right): ")
+                        .strip()
+                        .lower()
+                    )
+                    await server.edit_client(
+                        hostname=hostname,
+                        ip_address=hostname,
+                        new_screen_position=position,
+                    )
                     print(f"Client {hostname} updated to position {position}\n")
                 elif cmd.startswith("enable "):
                     stream_type = cmd.split()[1]
@@ -166,6 +179,7 @@ async def interactive_server():
         await server.stop()
         print("Server stopped")
 
+
 async def main():
     """Entry point"""
     await interactive_server()
@@ -178,4 +192,3 @@ if __name__ == "__main__":
         print("\nShutdown complete")
     except RuntimeError as e:
         print(f"\nRuntime error: {e}")
-
