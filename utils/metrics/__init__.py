@@ -125,7 +125,7 @@ class ConnectionMetrics:
         return {
             "bytes_per_sec": (self.bytes_sent + self.bytes_received) / duration,
             "messages_per_sec": (self.messages_sent + self.messages_received)
-            / duration,
+                                / duration,
             "uptime": duration,
         }
 
@@ -133,13 +133,13 @@ class ConnectionMetrics:
         throughput = self.get_throughput()
         return {
             "connection_id": self.connection_id,
-            "uptime": throughput["uptime"],
+            "uptime": throughput.get("uptime", 0),
             "bytes_sent": self.bytes_sent,
             "bytes_received": self.bytes_received,
             "messages_sent": self.messages_sent,
             "messages_received": self.messages_received,
-            "throughput_bytes_sec": throughput["bytes_per_sec"],
-            "throughput_msg_sec": throughput["messages_per_sec"],
+            "throughput_bytes_sec": throughput.get("bytes_per_sec", 0),
+            "throughput_msg_sec": throughput.get("messages_per_sec", 0),
             "latency_avg_ms": self.avg_latency * 1000,
             "latency_min_ms": self.min_latency * 1000
             if self.min_latency != float("inf")

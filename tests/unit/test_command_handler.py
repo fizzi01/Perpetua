@@ -73,7 +73,7 @@ def sample_cross_screen_event():
 # ============================================================================
 
 
-@pytest.mark.asyncio
+@pytest.mark.anyio
 class TestCommandHandlerInitialization:
     """Test CommandHandler initialization."""
 
@@ -105,7 +105,7 @@ class TestCommandHandlerInitialization:
 # ============================================================================
 
 
-@pytest.mark.asyncio
+@pytest.mark.anyio
 class TestHandleCommand:
     """Test handle_command method."""
 
@@ -202,7 +202,7 @@ class TestHandleCommand:
 # ============================================================================
 
 
-@pytest.mark.asyncio
+@pytest.mark.anyio
 class TestHandleCrossScreen:
     """Test handle_cross_screen method."""
 
@@ -313,7 +313,7 @@ class TestHandleCrossScreen:
 # ============================================================================
 
 
-@pytest.mark.asyncio
+@pytest.mark.anyio
 class TestCrossScreenEventConversion:
     """Test CrossScreenCommandEvent conversion."""
 
@@ -360,7 +360,7 @@ class TestCrossScreenEventConversion:
 # ============================================================================
 
 
-@pytest.mark.asyncio
+@pytest.mark.anyio
 class TestIntegrationScenarios:
     """Test integration scenarios."""
 
@@ -477,7 +477,7 @@ class TestIntegrationScenarios:
 # ============================================================================
 
 
-@pytest.mark.asyncio
+@pytest.mark.anyio
 class TestEdgeCases:
     """Test edge cases."""
 
@@ -570,7 +570,7 @@ class TestEdgeCases:
 # ============================================================================
 
 
-@pytest.mark.asyncio
+@pytest.mark.anyio
 class TestErrorRecovery:
     """Test error recovery and resilience."""
 
@@ -621,7 +621,7 @@ class TestErrorRecovery:
 # ============================================================================
 
 
-@pytest.mark.asyncio
+@pytest.mark.anyio
 class TestMessageTypeValidation:
     """Test message type validation."""
 
