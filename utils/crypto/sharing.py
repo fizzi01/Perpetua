@@ -98,7 +98,7 @@ class CertificateSharing:
                 return
 
             # Create and send JWT
-            token = self._create_jwt(self._otp)
+            token = self._create_jwt(self._otp)  # ty:ignore[invalid-argument-type]
             writer.write(f"TOKEN:{token}\n".encode("utf-8"))
             await writer.drain()
 
@@ -193,7 +193,7 @@ class CertificateSharing:
             OTP string if valid, None otherwise
         """
         if self._is_otp_valid():
-            remaining = int(self._otp_expiry - time.time())
+            remaining = int(self._otp_expiry - time.time())  # ty:ignore[unsupported-operator]
             self._logger.log(f"OTP valid for {remaining}s more", Logger.DEBUG)
             return self._otp
         return None

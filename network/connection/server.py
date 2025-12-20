@@ -4,6 +4,7 @@ Handles SSL and NON-SSL connections, heartbeats, and client management.
 """
 
 import asyncio
+from asyncio.futures import Future
 
 import ssl
 from typing import Optional, Callable, Any
@@ -42,8 +43,8 @@ class ConnectionHandler:
 
     def __init__(
         self,
-        connected_callback: Optional[Callable[["ClientObj", list], Any]] = None,
-        disconnected_callback: Optional[Callable[["ClientObj", list], Any]] = None,
+        connected_callback: Optional[Callable[["ClientObj", list[int]], Any]] = None,
+        disconnected_callback: Optional[Callable[["ClientObj", list[int]], Any]] = None,
         host: str = "0.0.0.0",
         port: int = 5001,
         heartbeat_interval: int = 2,
@@ -65,8 +66,9 @@ class ConnectionHandler:
         self._running = False
         self._heartbeat_task = None
         self._server_task = None
-        # self._client_tasks = {}
-        self._pending_streams = {}  # {ip_address: {stream_type: Future}}
+        self._pending_streams: dict[
+            str, dict[int, Future]
+        ] = {}  # {ip_address: {stream_type: Future}}
 
         self._logger = get_logger(self.__class__.__name__)
 
@@ -208,7 +210,10 @@ class ConnectionHandler:
         try:
             client_obj = self.clients.get_client(ip_address=addr[0])
             # Controlla se è uno stream aggiuntivo in attesa
-            if addr[0] in self._pending_streams and self._pending_streams[addr[0]]:
+            if (
+                addr[0] in self._pending_streams
+                and self._pending_streams[addr[0]] is not None
+            ):
                 # Questa è una connessione per uno stream aggiuntivo
                 # Prendi il primo stream type in attesa
                 pending = self._pending_streams[addr[0]]
@@ -398,11 +403,25 @@ class ConnectionHandler:
                         Logger.DEBUG,
                     )
 
+                    if client.ip_address is None or not isinstance(
+                        client.ip_address, str
+                    ):
+                        raise ValueError("Client IP address is None")
+
                     # Prepara i future per gli stream in arrivo
                     if client.ip_address not in self._pending_streams:
-                        self._pending_streams[client.ip_address] = {}
+                        self._pending_streams[client.ip_address] = {}  # ty:ignore[invalid-assignment]
 
                     for stream_type in requested_streams:
+                        if not isinstance(stream_type, int) or not StreamType.is_valid(
+                            stream_type
+                        ):
+                            self._logger.log(
+                                f"Invalid stream type requested: {stream_type}",
+                                Logger.WARNING,
+                            )
+                            continue
+
                         try:
                             # Crea un future per questo stream
                             stream_future = asyncio.Future()
@@ -454,9 +473,11 @@ class ConnectionHandler:
                             )
                             # Pulisci i pending streams
                             if client.ip_address in self._pending_streams:
-                                self._pending_streams[client.ip_address].pop(
+                                fut = self._pending_streams[client.ip_address].pop(
                                     stream_type, None
                                 )
+                                if fut and not fut.done():
+                                    fut.cancel()
                                 if not self._pending_streams[client.ip_address]:
                                     del self._pending_streams[client.ip_address]
                             await client_msg_exchange.stop()
@@ -468,9 +489,11 @@ class ConnectionHandler:
                             )
                             # Pulisci i pending streams
                             if client.ip_address in self._pending_streams:
-                                self._pending_streams[client.ip_address].pop(
+                                fut = self._pending_streams[client.ip_address].pop(
                                     stream_type, None
                                 )
+                                if fut and not fut.done():
+                                    fut.cancel()
                                 if not self._pending_streams[client.ip_address]:
                                     del self._pending_streams[client.ip_address]
                             await client_msg_exchange.stop()
@@ -489,15 +512,20 @@ class ConnectionHandler:
 
                 if self.connected_callback:
                     try:
+                        c_conn = client.get_connection()
+                        c_streams = []
+                        if c_conn is not None:
+                            c_streams = c_conn.get_available_stream_types()
+
                         if asyncio.iscoroutinefunction(self.connected_callback):
                             await self.connected_callback(
                                 client,
-                                client.get_connection().get_available_stream_types(),
+                                c_streams,
                             )  # type: ignore
                         else:
                             self.connected_callback(
                                 client,
-                                client.get_connection().get_available_stream_types(),
+                                c_streams,
                             )  # type: ignore
                     except Exception as e:
                         self._logger.log(

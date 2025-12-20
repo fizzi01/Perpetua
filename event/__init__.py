@@ -194,17 +194,19 @@ class CommandEvent(Event):
     def __init__(
         self,
         command: str,
-        source: str = "",
-        target: str = "",
+        source: str | None = "",
+        target: str | None = "",
         params: Optional[dict] = None,
     ):
         self.command = command
-        self.source = source  # Only when receiving commands
-        self.target = target  # Only when receiving commands
+        # Only when receiving commands
+        self.source = source if source else ""
+        # Only when receiving commands
+        self.target = target if target else ""
         self.params = params if params else {}
 
     @classmethod
-    def from_command_event(cls, event: Self) -> Self:
+    def from_command_event(cls, event: Self):
         pass
 
     def to_dict(self) -> dict:
@@ -266,7 +268,7 @@ class ClipboardEvent(Event):
     Clipboard event data structure.
     """
 
-    def __init__(self, content: str, content_type: str = "text"):
+    def __init__(self, content: str | None, content_type: str = "text"):
         self.content = content
         self.content_type = content_type
         self.timestamp = time()
@@ -287,10 +289,10 @@ class EventMapper:
 
         if event_type == MessageType.MOUSE:
             return MouseEvent(
-                x=message_payload.get("x"),
-                y=message_payload.get("y"),
-                dx=message_payload.get("dx"),
-                dy=message_payload.get("dy"),
+                x=message_payload.get("x", -1),
+                y=message_payload.get("y", -1),
+                dx=message_payload.get("dx", 0),
+                dy=message_payload.get("dy", 0),
                 button=message_payload.get("button"),
                 action=message_payload.get("event"),
                 is_presed=message_payload.get("is_pressed", False),
@@ -299,16 +301,17 @@ class EventMapper:
             return CommandEvent(
                 source=message.source,
                 target=message.target,
-                command=message_payload.get("command"),
+                command=message_payload.get("command", ""),
                 params=message_payload.get("params", {}),
             )
         elif event_type == MessageType.KEYBOARD:
             return KeyboardEvent(
-                key=message_payload.get("key"), action=message_payload.get("event")
+                key=message_payload.get("key", ""),
+                action=message_payload.get("event", ""),
             )
         elif event_type == MessageType.CLIPBOARD:
             return ClipboardEvent(
-                content=message_payload.get("content"),
+                content=message_payload.get("content", None),
                 content_type=message_payload.get("content_type", "text"),
             )
         else:

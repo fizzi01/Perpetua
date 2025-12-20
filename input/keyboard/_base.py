@@ -162,7 +162,7 @@ class ServerKeyboardListener(object):
         """
         Stops the mouse listener.
         """
-        if self.is_alive():
+        if self._listener and self.is_alive():
             self._listener.stop()
 
         self._logger.debug("Stopped.")
@@ -452,6 +452,9 @@ class ClientKeyboardController(object):
         Os-specific implementations should override this method.
         """
         key = KeyUtilities.map_key(event.key)
+        if key is None:
+            self._logger.warning(f"Unmapped key received: {event.key}")
+            return
 
         if event.action == KeyboardEvent.PRESS_ACTION:
             # Handl Caps Lock toggle

@@ -118,7 +118,7 @@ class ActiveClient:
 
     async def connected_callback(self, client):
         """Async callback for connection"""
-        await self.event_bus.dispatch(event_type=EventType.CLIENT_ACTIVE, data={})
+        await self.event_bus.dispatch(event_type=EventType.CLIENT_ACTIVE, data=None)
 
         await self.mouse_stream_handler.start()
         await self.command_stream_handler.start()
@@ -127,7 +127,7 @@ class ActiveClient:
 
     async def disconnected_callback(self, client):
         """Async callback for disconnection"""
-        await self.event_bus.dispatch(event_type=EventType.CLIENT_INACTIVE, data={})
+        await self.event_bus.dispatch(event_type=EventType.CLIENT_INACTIVE, data=None)
 
         await self.mouse_stream_handler.stop()
         await self.command_stream_handler.stop()

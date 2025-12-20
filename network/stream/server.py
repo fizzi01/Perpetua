@@ -2,7 +2,6 @@ import asyncio
 from typing import Optional
 
 from network.data import MissingTransportError
-from utils.logging import get_logger
 from network.stream import StreamHandler
 from network.data.exchange import MessageExchange, MessageExchangeConfig
 from model.client import ClientsManager, ClientObj
@@ -14,6 +13,9 @@ from event import (
     ClientDisconnectedEvent,
     ClientConnectedEvent,
 )
+
+from utils.metrics import MetricsCollector
+from utils.logging import get_logger
 
 
 class UnidirectionalStreamHandler(StreamHandler):
@@ -30,6 +32,7 @@ class UnidirectionalStreamHandler(StreamHandler):
         handler_id: Optional[str] = None,
         source: str = "server",
         sender: bool = True,
+        metrics_collector: Optional[MetricsCollector] = None,
     ):
         """
         Initializes and configures an instance responsible for managing the interaction between
@@ -64,7 +67,10 @@ class UnidirectionalStreamHandler(StreamHandler):
                 - CLIENT_DISCONNECTED
         """
         super().__init__(
-            stream_type=stream_type, clients=clients, event_bus=event_bus, sender=sender
+            stream_type=stream_type,
+            clients=clients,
+            event_bus=event_bus,
+            sender=sender,
         )
 
         self._active_client: Optional[ClientObj] = None
@@ -77,7 +83,9 @@ class UnidirectionalStreamHandler(StreamHandler):
 
         # Create a MessageExchange object
         self.msg_exchange = MessageExchange(
-            conf=MessageExchangeConfig(auto_dispatch=True), id=self.handler_id
+            conf=MessageExchangeConfig(auto_dispatch=True),
+            id=self.handler_id,
+            metrics_collector=metrics_collector,
         )
 
         self._logger = get_logger(self.handler_id)
@@ -258,6 +266,7 @@ class BidirectionalStreamHandler(StreamHandler):
         event_bus: EventBus,
         handler_id: Optional[str] = None,
         source: str = "server",
+        metrics_collector: Optional[MetricsCollector] = None,
     ):
         """
         Args:
@@ -277,7 +286,9 @@ class BidirectionalStreamHandler(StreamHandler):
 
         # Create a MessageExchange object
         self.msg_exchange = MessageExchange(
-            conf=MessageExchangeConfig(auto_dispatch=True), id=self.handler_id
+            conf=MessageExchangeConfig(auto_dispatch=True),
+            id=self.handler_id,
+            metrics_collector=metrics_collector,
         )
 
         self._logger = get_logger(self.handler_id)
@@ -459,6 +470,7 @@ class MulticastStreamHandler(StreamHandler):
         event_bus: EventBus,
         handler_id: Optional[str] = None,
         source: str = "server",
+        metrics_collector: Optional[MetricsCollector] = None,
     ):
         """
         It initializes an instance responsible for managing bidirectional communication
@@ -506,6 +518,7 @@ class MulticastStreamHandler(StreamHandler):
         self.msg_exchange = MessageExchange(
             conf=MessageExchangeConfig(auto_dispatch=True, multicast=True),
             id=self.handler_id,
+            metrics_collector=metrics_collector,
         )
 
         self._clients_connected = 0

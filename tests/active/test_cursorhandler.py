@@ -8,6 +8,7 @@ from input.cursor import CursorHandlerWorker
 
 class MockStreamHandler:
     """Mock stream handler per il benchmark"""
+
     def __init__(self):
         self.received_events = []
         self.receive_times = []
@@ -32,7 +33,7 @@ class MockStreamHandler:
         # Calcola latenze tra eventi consecutivi
         latencies = []
         for i in range(1, len(self.receive_times)):
-            latency_ms = (self.receive_times[i] - self.receive_times[i-1]) * 1000
+            latency_ms = (self.receive_times[i] - self.receive_times[i - 1]) * 1000
             latencies.append(latency_ms)
 
         if latencies:
@@ -48,15 +49,15 @@ class MockStreamHandler:
             avg_latency = min_latency = max_latency = p50 = p95 = p99 = 0
 
         return {
-            'total_events': self.total_events,
-            'elapsed_time': elapsed,
-            'throughput': throughput,
-            'avg_latency_ms': avg_latency,
-            'min_latency_ms': min_latency,
-            'max_latency_ms': max_latency,
-            'p50_latency_ms': p50,
-            'p95_latency_ms': p95,
-            'p99_latency_ms': p99,
+            "total_events": self.total_events,
+            "elapsed_time": elapsed,
+            "throughput": throughput,
+            "avg_latency_ms": avg_latency,
+            "min_latency_ms": min_latency,
+            "max_latency_ms": max_latency,
+            "p50_latency_ms": p50,
+            "p95_latency_ms": p95,
+            "p99_latency_ms": p99,
         }
 
     def reset(self):
@@ -84,7 +85,9 @@ async def __main():
         print("-" * 80)
         print("TEST 1: Benchmark Cattura Mouse (muovi il mouse per 10 secondi)")
         print("-" * 80)
-        result = await controller._on_active_screen_changed(data=ActiveScreenChangedEvent(active_screen="test_screen"))
+        result = await controller._on_screen_change_guard(
+            data=ActiveScreenChangedEvent(active_screen="test_screen")
+        )
         print(f"✓ Cattura mouse abilitata: {result}")
         print("\n>>> MUOVI IL MOUSE VELOCEMENTE PER 10 SECONDI <<<\n")
 
@@ -102,11 +105,15 @@ async def __main():
                 elapsed = current_time - start_benchmark
                 events_count = mock_stream.total_events
                 rate = events_count / elapsed if elapsed > 0 else 0
-                print(f"  [{elapsed:.1f}s] Eventi ricevuti: {events_count:5d} | Rate: {rate:6.1f} eventi/s")
+                print(
+                    f"  [{elapsed:.1f}s] Eventi ricevuti: {events_count:5d} | Rate: {rate:6.1f} eventi/s"
+                )
                 last_report = current_time
 
         # Disabilita cattura
-        result = await controller._on_active_screen_changed(data=ActiveScreenChangedEvent(active_screen=None))
+        result = await controller._on_screen_change_guard(
+            data=ActiveScreenChangedEvent(active_screen=None)
+        )
         print(f"\n✓ Cattura mouse disabilitata: {result}\n")
 
         # Statistiche finali
@@ -117,7 +124,9 @@ async def __main():
             print("-" * 80)
             print(f"  Eventi totali:           {stats['total_events']:,}")
             print(f"  Tempo trascorso:         {stats['elapsed_time']:.3f} secondi")
-            print(f"  Throughput medio:        {stats['throughput']:.2f} eventi/secondo")
+            print(
+                f"  Throughput medio:        {stats['throughput']:.2f} eventi/secondo"
+            )
             print(f"\n  Latenza media:           {stats['avg_latency_ms']:.3f} ms")
             print(f"  Latenza minima:          {stats['min_latency_ms']:.3f} ms")
             print(f"  Latenza massima:         {stats['max_latency_ms']:.3f} ms")
@@ -128,16 +137,16 @@ async def __main():
 
             # Valutazione performance
             print(f"\n  VALUTAZIONE:")
-            if stats['throughput'] > 100:
+            if stats["throughput"] > 100:
                 print(f"    ✓ Throughput ECCELLENTE (>{100} eventi/s)")
-            elif stats['throughput'] > 50:
+            elif stats["throughput"] > 50:
                 print(f"    ✓ Throughput BUONO (>{50} eventi/s)")
             else:
                 print(f"    ⚠ Throughput BASSO (<{50} eventi/s)")
 
-            if stats['p95_latency_ms'] < 10:
+            if stats["p95_latency_ms"] < 10:
                 print(f"    ✓ Latenza ECCELLENTE (P95 <10ms)")
-            elif stats['p95_latency_ms'] < 20:
+            elif stats["p95_latency_ms"] < 20:
                 print(f"    ✓ Latenza BUONA (P95 <20ms)")
             else:
                 print(f"    ⚠ Latenza ALTA (P95 >{20}ms)")
@@ -154,10 +163,14 @@ async def __main():
         cycles = 1
 
         for i in range(cycles):
-            print(f"  Ciclo {i+1}/{cycles}: Enable -> Wait -> Disable")
-            await controller._on_active_screen_changed(data=ActiveScreenChangedEvent(active_screen="test_screen"))
+            print(f"  Ciclo {i + 1}/{cycles}: Enable -> Wait -> Disable")
+            await controller._on_screen_change_guard(
+                data=ActiveScreenChangedEvent(active_screen="test_screen")
+            )
             await asyncio.sleep(2)
-            await controller._on_active_screen_changed(data=ActiveScreenChangedEvent(active_screen=None))
+            await controller._on_screen_change_guard(
+                data=ActiveScreenChangedEvent(active_screen=None)
+            )
             await asyncio.sleep(0.5)
 
         print(f"✓ Completati {cycles} cicli di enable/disable\n")
@@ -165,6 +178,7 @@ async def __main():
     except Exception as e:
         print(f"\n✗ Errore durante il benchmark: {e}")
         import traceback
+
         traceback.print_exc()
 
     finally:
@@ -174,6 +188,7 @@ async def __main():
         await controller.stop()
         print("✓ Benchmark completato!")
         print("=" * 80)
+
 
 if __name__ == "__main__":
     asyncio.run(__main())

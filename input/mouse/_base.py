@@ -138,7 +138,7 @@ class EdgeDetector:
         y: float | int,
         screen_size: tuple,
         edge: ScreenEdge,
-        screen: str,
+        screen: str | None,
     ) -> tuple[float, float]:
         """
         Get the coordinates when crossing back from client to server.
@@ -152,7 +152,7 @@ class EdgeDetector:
         Returns:
             tuple[float, float]: The normalized crossing coordinates.
         """
-        if screen == "":
+        if screen == "" or screen is None:
             return -1, -1
 
         # If we reach the bottom edge, we need to set y to 1 (top of the server screen)
@@ -294,7 +294,7 @@ class ServerMouseListener(object):
         """
         Stops the mouse listener.
         """
-        if self.is_alive():
+        if self._listener is not None and self.is_alive():
             self._listener.stop()
         self._logger.debug("Stopped.")
         return True
@@ -312,6 +312,9 @@ class ServerMouseListener(object):
         client_screen = data.client_screen
         # We need this check in order to not dispatch cross-screen events to clients without mouse stream
         client_streams = data.streams  # We check if client has mouse stream enabled
+        if client_streams is None:
+            return
+
         if client_screen and StreamType.MOUSE in client_streams:  # If not, we ignore
             self._active_screens[client_screen] = True
 
@@ -917,7 +920,7 @@ class ClientMouseController(object):
 
             self._controller.position = (x, y)
 
-    def _click(self, button: int, is_pressed: bool):
+    def _click(self, button: int | None, is_pressed: bool):
         """
         Perform a mouse click action.
         """

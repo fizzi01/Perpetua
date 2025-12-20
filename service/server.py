@@ -19,12 +19,15 @@ from network.stream.server import (
     MulticastStreamHandler,
 )
 from network.stream import StreamType, StreamHandler
+
 from command import CommandHandler
+
 from input.cursor import CursorHandlerWorker
 from input.mouse import ServerMouseListener, ServerMouseController
 from input.keyboard import ServerKeyboardListener
 from input.clipboard import ClipboardListener, ClipboardController
 
+from utils.metrics import MetricsCollector, PerformanceMonitor
 from utils.net import get_local_ip
 from utils.crypto import CertificateManager
 from utils.crypto.sharing import CertificateSharing
@@ -133,6 +136,9 @@ class Server:
         # Components registry
         self._components = {}
         self._running = False
+
+        self._metrics_collector = MetricsCollector()
+        self._performance_monitor = PerformanceMonitor(self._metrics_collector)
 
         # Connection handler
         self.connection_handler: Optional[ConnectionHandler] = None
@@ -620,6 +626,8 @@ class Server:
             await self.stop()
             return False
 
+        await self._performance_monitor.start()
+
         self._running = True
         self._logger.info(f"Server started on {self.config.host}:{self.config.port}")
         return True
@@ -630,7 +638,9 @@ class Server:
             self._logger.warning("Server not running")
             return
 
-        self._logger.info("Stopping PyContinuity Server...")
+        self._logger.info("Stopping Server...")
+
+        await self._performance_monitor.stop()
 
         # Stop connection handler
         if self.connection_handler:
@@ -691,6 +701,7 @@ class Server:
             clients=self.clients_manager,
             event_bus=self.event_bus,
             handler_id="ServerCommandStreamHandler",
+            metrics_collector=self._metrics_collector,
         )
         # Force start command stream
         if not await self._stream_handlers[StreamType.COMMAND].start():
@@ -706,6 +717,7 @@ class Server:
             event_bus=self.event_bus,
             handler_id="ServerMouseStreamHandler",
             sender=True,
+            metrics_collector=self._metrics_collector,
         )
 
         # Keyboard stream
@@ -715,6 +727,7 @@ class Server:
             event_bus=self.event_bus,
             handler_id="ServerKeyboardStreamHandler",
             sender=True,
+            metrics_collector=self._metrics_collector,
         )
 
         # Clipboard stream
@@ -723,6 +736,7 @@ class Server:
             clients=self.clients_manager,
             event_bus=self.event_bus,
             handler_id="ServerClipboardStreamHandler",
+            metrics_collector=self._metrics_collector,
         )
 
         # Start all stream handlers

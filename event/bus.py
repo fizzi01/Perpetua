@@ -1,11 +1,13 @@
 from abc import ABC
 import asyncio
-from typing import Callable, Dict, List, Optional, Any
+from typing import Callable, Dict, List, Optional, Any, TypeVar
 import inspect
 
 from utils.logging import get_logger
 
 from . import BusEvent
+
+T = TypeVar("T", bound=BusEvent)
 
 
 class EventBus(ABC):
@@ -16,23 +18,19 @@ class EventBus(ABC):
     def subscribe(
         self,
         event_type: int,
-        callback: Callable[[Optional[BusEvent]], Any],
+        callback: Callable[[Optional[T]], Any],
         priority: bool = False,
     ):
         """
         Subscribe a callback function to a specific event type.
         """
 
-    def unsubscribe(
-        self, event_type: int, callback: Callable[[Optional[BusEvent]], Any]
-    ):
+    def unsubscribe(self, event_type: int, callback: Callable[[Optional[T]], Any]):
         """
         Unsubscribe a callback function from a specific event type.
         """
 
-    async def dispatch(
-        self, event_type: int, data: Optional[BusEvent] = None, **kwargs
-    ):
+    async def dispatch(self, event_type: int, data: Optional[T] = None, **kwargs):
         """
         Dispatch an event to all registered listeners for the given event type.
         """
@@ -59,7 +57,7 @@ class AsyncEventBus(EventBus):
     def subscribe(
         self,
         event_type: int,
-        callback: Callable[[Optional[BusEvent]], Any],
+        callback: Callable[[Optional[T]], Any],
         priority: bool = False,
     ):
         """
@@ -74,9 +72,7 @@ class AsyncEventBus(EventBus):
         else:
             self._subscribers[event_type].append(callback)
 
-    def unsubscribe(
-        self, event_type: int, callback: Callable[[Optional[BusEvent]], Any]
-    ):
+    def unsubscribe(self, event_type: int, callback: Callable[[Optional[T]], Any]):
         """
         Unsubscribe a callback function from an event type.
         """
@@ -86,9 +82,7 @@ class AsyncEventBus(EventBus):
         ):
             self._subscribers[event_type].remove(callback)
 
-    async def dispatch(
-        self, event_type: int, data: Optional[BusEvent] = None, **kwargs
-    ):
+    async def dispatch(self, event_type: int, data: Optional[T] = None, **kwargs):
         """
         Async dispatch of an event to all registered listeners.
         Executes all callbacks concurrently for maximum performance.

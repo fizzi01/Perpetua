@@ -500,5 +500,5 @@ class ClipboardController:
 
         content = event.content
 
-        if content:
+        if content is not None:
             await self.clipboard.set_clipboard(content)

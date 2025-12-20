@@ -2,6 +2,8 @@
 Layer responsible for handling message exchanges between network nodes, using protocol
 """
 
+from asyncio.queues import Queue
+
 import asyncio
 from dataclasses import dataclass
 from time import time
@@ -12,6 +14,7 @@ from network.data import MissingTransportError
 from network.protocol.message import ProtocolMessage, MessageBuilder
 from network.stream import StreamType
 from utils.logging import Logger, get_logger
+from utils.metrics import ConnectionMetrics, MetricsCollector
 
 
 @dataclass
@@ -34,12 +37,19 @@ class MessageExchange:
 
     DEFAULT_TRANSPORT_ID = "default"
 
-    def __init__(self, conf: Optional[MessageExchangeConfig] = None, id="default"):
+    def __init__(
+        self,
+        conf: Optional[MessageExchangeConfig] = None,
+        id: str = "default",
+        metrics_collector: Optional[MetricsCollector] = None,
+    ):
         """
         Initialize MessageExchange layer.
 
         Args:
             conf: Configuration object for the exchange layer
+            id: Identifier for this message exchange instance
+            metrics_collector: Optional metrics collector for connection metrics
         """
         self._id = id
         self.config = conf or MessageExchangeConfig()
@@ -55,6 +65,10 @@ class MessageExchange:
         # We support multiple transports for multicast scenarios
         self._send_callbacks: Dict[str, Optional[Callable[[bytes], Any]]] = {}
         self._receive_callbacks: Dict[str, Optional[Callable[[int], Any]]] = {}
+
+        # Metrics
+        self._metrics: Optional[ConnectionMetrics] = None
+        self._metrics_collector: Optional[MetricsCollector] = metrics_collector
 
         # Asyncio components
         self._receive_task: Optional[asyncio.Task] = None
@@ -74,9 +88,11 @@ class MessageExchange:
 
         # if not self._receive_callback:
         #     raise RuntimeError("Transport layer not configured. Call set_transport() first.")
+        if self._metrics_collector is not None:
+            self._metrics = await self._metrics_collector.register_connection(self._id)
 
         self._running = True
-        self._message_queue = asyncio.Queue(maxsize=10000)
+        self._message_queue: Queue[ProtocolMessage] = asyncio.Queue(maxsize=10000)
         self._receive_task = asyncio.create_task(self._receive_loop())
 
         self._logger.debug("Started")
@@ -122,6 +138,9 @@ class MessageExchange:
                     if not new_data:
                         await asyncio.sleep(0)  # Breve pausa per evitare busy waiting
                         continue
+
+                    if self._metrics:
+                        self._metrics.record_received(len(new_data))
 
                     persistent_buffer.extend(new_data)
                     buffer_len = len(persistent_buffer)
@@ -170,7 +189,11 @@ class MessageExchange:
                                 persistent_buffer[offset : offset + total_length]
                             )
                             message = ProtocolMessage.from_bytes(message_data)
-                            message.timestamp = time()
+                            # message.timestamp = time()
+                            if message.timestamp:
+                                receive_latency = time() - message.timestamp
+                                if self._metrics:
+                                    self._metrics.record_latency(receive_latency)
 
                             if message.is_heartbeat():
                                 # Ignora messaggi di heartbeat
@@ -196,6 +219,9 @@ class MessageExchange:
                         except ValueError:
                             # Prefisso invalido, avanza di 1 byte
                             offset += 1
+                            if self._metrics:
+                                self._metrics.connection_errors += 1
+                            await asyncio.sleep(0)
                             continue
 
                     # Rimuovi dati processati dal buffer
@@ -242,9 +268,7 @@ class MessageExchange:
                         )
                         self._running = False
                         break
-                    import traceback
 
-                    traceback.print_exc()
                     self._logger.log(
                         f"Error in receive loop {self._id} -> {e}", Logger.ERROR
                     )
@@ -442,7 +466,7 @@ class MessageExchange:
         # noinspection PyProtectedMember
         message = ProtocolMessage(
             message_type=message_type,
-            timestamp=self.builder._next_sequence_id(),
+            timestamp=time(),
             sequence_id=self.builder._next_sequence_id(),
             payload=payload,
             source=source,
@@ -476,16 +500,30 @@ class MessageExchange:
                 )
                 for ch in chs:
                     data = ch.to_bytes()
+                    if self._metrics:
+                        self._metrics.record_sent(len(data))
+
                     if asyncio.iscoroutinefunction(send_callback):
                         await send_callback(data)
                     else:
                         send_callback(data)
             else:
                 data = message.to_bytes()
+                if self._metrics:
+                    self._metrics.record_sent(len(data))
+
                 if asyncio.iscoroutinefunction(send_callback):
                     await send_callback(data)
                 else:
                     send_callback(data)
+
+    async def get_metrics(self) -> Optional[Dict]:
+        """
+        Obtain current connection metrics as a dictionary.
+        """
+        if self._metrics:
+            return self._metrics.to_dict()
+        return None
 
     async def get_received_message(self) -> Optional[ProtocolMessage]:
         """
@@ -536,9 +574,6 @@ class MessageExchange:
     async def dispatch_message(self, message: ProtocolMessage):
         """Dispatch message to registered handler in modo asyncio."""
         handler = self._handlers.get(message.message_type)
-        # Metriche di delay commentate per performance
-        # curtime = time()
-        # print(f"Pre-dispatch delay: {curtime - message.timestamp:.7f}s")
         if handler:
             try:
                 # Se handler è async, await, altrimenti chiamalo normalmente

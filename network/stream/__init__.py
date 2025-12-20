@@ -1,5 +1,5 @@
 import asyncio
-from typing import Any
+from typing import Any, Optional
 
 from attr import dataclass
 
@@ -10,13 +10,28 @@ from utils.logging import Logger, get_logger
 
 @dataclass
 class StreamType:
-    """Tipi di stream QUIC con priorità"""
+    """
+    Enumeration of different stream types with priority levels.
+    """
 
-    COMMAND = 0  # Alta priorità - comandi bidirezionali
-    KEYBOARD = 4  # Alta priorità - eventi tastiera
-    MOUSE = 1  # Media priorità - movimenti mouse (alta frequenza)
-    CLIPBOARD = 12  # Bassa priorità - clipboard
-    FILE = 16  # Bassa priorità - trasferimenti file
+    COMMAND: int = 0  # High priority - bidirectional commands
+    KEYBOARD: int = 4  # High priority - keyboard events
+    MOUSE: int = 1  # High priority - mouse movements (high frequency)
+    CLIPBOARD: int = 12  # Low priority - clipboard
+    FILE: int = 16  # Low priority - file transfers
+
+    @classmethod
+    def is_valid(cls, stream_type: int) -> bool:
+        """
+        Verify if the given stream type is valid.
+        """
+        return stream_type in {
+            cls.COMMAND,
+            cls.KEYBOARD,
+            cls.MOUSE,
+            cls.CLIPBOARD,
+            cls.FILE,
+        }
 
 
 class StreamHandler:

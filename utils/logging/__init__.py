@@ -426,7 +426,7 @@ class StructLogger(BaseLogger):
                     structlog.processors.format_exc_info,
                     structlog.dev.ConsoleRenderer(
                         colors=True,
-                        pad_event=100,
+                        pad_event_to=40,
                         level_styles=self.color_map,
                     ),
                 ],
@@ -442,7 +442,7 @@ class StructLogger(BaseLogger):
                     structlog.processors.format_exc_info,
                     structlog.dev.ConsoleRenderer(
                         colors=False,
-                        pad_event=30,
+                        pad_event_to=40,
                     ),
                 ],
                 wrapper_class=wrapper_cls,

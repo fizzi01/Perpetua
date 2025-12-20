@@ -1,13 +1,14 @@
 import asyncio
 from typing import Optional
 
-from utils.logging import get_logger
+from event.bus import EventBus
 from event import EventType, ClientActiveEvent
 from network.stream import StreamHandler
 from network.data.exchange import MessageExchange, MessageExchangeConfig
 from model.client import ClientsManager, ClientObj
 
-from event.bus import EventBus
+from utils.metrics import MetricsCollector
+from utils.logging import get_logger
 
 
 class UnidirectionalStreamHandler(StreamHandler):
@@ -24,6 +25,7 @@ class UnidirectionalStreamHandler(StreamHandler):
         handler_id: Optional[str] = None,
         sender: bool = True,
         active_only: bool = False,
+        metrics_collector: Optional[MetricsCollector] = None,
     ):
         """
         It handles stream management and event subscription for the client.
@@ -64,7 +66,9 @@ class UnidirectionalStreamHandler(StreamHandler):
 
         # Create a MessageExchange object
         self.msg_exchange = MessageExchange(
-            conf=MessageExchangeConfig(auto_dispatch=True), id=self.handler_id
+            conf=MessageExchangeConfig(auto_dispatch=True),
+            id=self.handler_id,
+            metrics_collector=metrics_collector,
         )
 
         # Get main client
@@ -99,10 +103,18 @@ class UnidirectionalStreamHandler(StreamHandler):
         self._is_active = True
 
         try:
+            if self._main_client is None:
+                self._logger.error("No main client found in ClientsManager")
+                raise ValueError("No main client found in ClientsManager")
+
             # Set message exchange transport source
             cl_conn = self._main_client.get_connection()
             if cl_conn is not None:
                 cl_stream = cl_conn.get_stream(self.stream_type)
+
+                if cl_stream is None:  # No valid stream for main client
+                    self._active_client = False
+                    return
 
                 if (
                     cl_stream.get_writer() is None
@@ -161,13 +173,17 @@ class UnidirectionalStreamHandler(StreamHandler):
                 continue
 
             try:
+                screen = ""
+                if self._main_client is not None:
+                    screen = self._main_client.get_screen_position()
+
                 # Get data from queue
                 data = await self._send_queue.get()
                 if not isinstance(data, dict) and hasattr(data, "to_dict"):
                     data = data.to_dict()
                 await self.msg_exchange.send_stream_type_message(
                     stream_type=self.stream_type,
-                    source=self._main_client.screen_position,
+                    source=screen,
                     target="server",
                     **data,
                 )
@@ -197,6 +213,7 @@ class BidirectionalStreamHandler(StreamHandler):
         event_bus: EventBus,
         handler_id: Optional[str] = None,
         active_only: bool = False,
+        metrics_collector: Optional[MetricsCollector] = None,
     ):
         """
         Initializes an instance of the class to manage stream handling and event subscription.
@@ -229,7 +246,9 @@ class BidirectionalStreamHandler(StreamHandler):
 
         # Create a MessageExchange object
         self.msg_exchange = MessageExchange(
-            conf=MessageExchangeConfig(auto_dispatch=True), id=self.handler_id
+            conf=MessageExchangeConfig(auto_dispatch=True),
+            id=self.handler_id,
+            metrics_collector=metrics_collector,
         )
 
         # Get main client
@@ -266,10 +285,18 @@ class BidirectionalStreamHandler(StreamHandler):
         self._is_active = True
 
         try:
+            if self._main_client is None:
+                self._logger.error("No main client found in ClientsManager")
+                raise ValueError("No main client found in ClientsManager")
+
             # Set message exchange transport source
             cl_conn = self._main_client.get_connection()
             if cl_conn is not None:
                 cl_stream = cl_conn.get_stream(self.stream_type)
+
+                if cl_stream is None:  # No valid stream for main client
+                    self._active_client = False
+                    return
 
                 if (
                     cl_stream.get_writer() is None
@@ -327,13 +354,17 @@ class BidirectionalStreamHandler(StreamHandler):
                 continue
 
             try:
+                screen = ""
+                if self._main_client is not None:
+                    screen = self._main_client.get_screen_position()
+
                 # Get data from queue
                 data = await self._send_queue.get()
                 if not isinstance(data, dict) and hasattr(data, "to_dict"):
                     data = data.to_dict()
                 await self.msg_exchange.send_stream_type_message(
                     stream_type=self.stream_type,
-                    source=self._main_client.screen_position,
+                    source=screen,
                     target="server",
                     **data,
                 )
