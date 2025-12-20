@@ -130,8 +130,10 @@ class CursorHandlerWindow(wx.Frame):
     def RestoreFocus(self, event):
         """
         Restore current window focus when mouse leaves the overlay.
+        Derived classes can implement platform-specific focus restoration here
+        (default: do nothing).
         """
-        self.ForceOverlay()
+        event.Skip()
 
     def ForceOverlay(self):
         """

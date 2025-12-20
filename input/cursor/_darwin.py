@@ -116,6 +116,12 @@ class CursorHandlerWindow(_base.CursorHandlerWindow):
 
         self._create()
 
+    def RestoreFocus(self, event):
+        """
+        Restore current window focus when mouse leaves the overlay.
+        """
+        self.ForceOverlay()
+
     def ForceOverlay(self):
         try:
             super().ForceOverlay()
