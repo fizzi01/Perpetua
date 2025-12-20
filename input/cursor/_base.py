@@ -81,6 +81,7 @@ class CursorHandlerWindow(wx.Frame):
         self.Bind(wx.EVT_MOTION, self.on_mouse_move)
         self.Bind(wx.EVT_CHAR_HOOK, self.on_key_press)
         self.Bind(wx.EVT_CLOSE, self.on_close)
+        self.Bind(wx.EVT_LEAVE_WINDOW, self.RestoreFocus)
 
     def _create(self):
         """
@@ -125,6 +126,12 @@ class CursorHandlerWindow(wx.Frame):
                     continue
         except Exception as e:
             print(f"Error processing commands: {e}")
+
+    def RestoreFocus(self, event):
+        """
+        Restore current window focus when mouse leaves the overlay.
+        """
+        self.ForceOverlay()
 
     def ForceOverlay(self):
         """

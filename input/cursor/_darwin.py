@@ -13,20 +13,19 @@ from multiprocessing.connection import Connection
 import objc
 import Quartz
 
-from Quartz import kCGMaximumWindowLevel
-
+from Quartz import kCGMaximumWindowLevel # ty:ignore[unresolved-import]
 
 from AppKit import (
-    NSApplication,
-    NSWindowCollectionBehaviorCanJoinAllSpaces,
-    NSScreenSaverWindowLevel,
-    NSApplicationActivationPolicyAccessory,
-    NSWorkspace,
-    NSApplicationActivateIgnoringOtherApps,
-    NSApplicationPresentationAutoHideDock,
-    NSApplicationPresentationAutoHideMenuBar,
-    NSWindowCollectionBehaviorStationary,
-    NSWindowCollectionBehaviorFullScreenAuxiliary,
+    NSApplication,  # ty:ignore[unresolved-import]
+    NSWindowCollectionBehaviorCanJoinAllSpaces,  # ty:ignore[unresolved-import]
+    NSScreenSaverWindowLevel,   # ty:ignore[unresolved-import]
+    NSApplicationActivationPolicyAccessory, # ty:ignore[unresolved-import]
+    NSWorkspace,    # ty:ignore[unresolved-import]
+    NSApplicationActivateIgnoringOtherApps, # ty:ignore[unresolved-import]
+    NSApplicationPresentationAutoHideDock,  # ty:ignore[unresolved-import]
+    NSApplicationPresentationAutoHideMenuBar,   # ty:ignore[unresolved-import]
+    NSWindowCollectionBehaviorStationary,   # ty:ignore[unresolved-import]
+    NSWindowCollectionBehaviorFullScreenAuxiliary,  # ty:ignore[unresolved-import]
 )
 
 # Accessibility API
@@ -105,7 +104,7 @@ class CursorHandlerWindow(_base.CursorHandlerWindow):
             command_queue, result_queue, mouse_conn, debug, size=(400, 400)
         )
         # Panel principale
-        self.panel = DebugOverlayPanel(self)
+        self.panel = wx.Panel(self)
 
         # Obtain NSApplication instance
         NSApp = NSApplication.sharedApplication()
@@ -201,10 +200,10 @@ class CursorHandlerWindow(_base.CursorHandlerWindow):
         if not visible:
             cursor = wx.Cursor(wx.CURSOR_BLANK)
             self.SetCursor(cursor)
-            Quartz.CGDisplayHideCursor(Quartz.CGMainDisplayID())
+            Quartz.CGDisplayHideCursor(Quartz.CGMainDisplayID())  # ty:ignore[unresolved-attribute]
         else:
             self.SetCursor(wx.NullCursor)
-            Quartz.CGDisplayShowCursor(Quartz.CGMainDisplayID())
+            Quartz.CGDisplayShowCursor(Quartz.CGMainDisplayID())  # ty:ignore[unresolved-attribute]
 
     def update_ui(self, panel_obj, data, call):
         try:
