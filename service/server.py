@@ -753,6 +753,7 @@ class Server:
             handler_id="ServerKeyboardStreamHandler",
             sender=True,
             metrics_collector=self._metrics_collector,
+            buffer_size=10000
         )
 
         # Clipboard stream

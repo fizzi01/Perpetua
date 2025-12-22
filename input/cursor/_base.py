@@ -8,7 +8,7 @@ import time
 import threading
 
 from multiprocessing import Queue, Pipe, Process
-from multiprocessing.connection import Connection
+from multiprocessing.connection import PipeConnection
 from typing import Optional
 
 from event import (
@@ -36,7 +36,7 @@ class CursorHandlerWindow(wx.Frame):
         self,
         command_queue: Queue,
         result_queue: Queue,
-        mouse_conn: Connection,
+        mouse_conn: PipeConnection,
         debug: bool = False,
         **frame_kwargs,
     ):
@@ -297,7 +297,7 @@ class _CursorHandlerProcess:
         self,
         command_queue: Queue,
         result_queue: Queue,
-        mouse_conn: Connection,
+        mouse_conn: PipeConnection,
         debug: bool = False,
         window_class=CursorHandlerWindow,
     ):
