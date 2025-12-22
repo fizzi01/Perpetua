@@ -27,10 +27,12 @@ from network.protocol.message import MessageType, ProtocolMessage
 # ============================================================================
 
 
-@pytest.fixture(params=[
-    pytest.param(('asyncio', {'use_uvloop': True}), id='asyncio+uvloop'),
-    pytest.param(('asyncio', {'use_uvloop': False}), id='asyncio')
-])
+@pytest.fixture(
+    params=[
+        pytest.param(("asyncio", {"use_uvloop": True}), id="asyncio+uvloop"),
+        pytest.param(("asyncio", {"use_uvloop": False}), id="asyncio"),
+    ]
+)
 def anyio_backend(request):
     return request.param
 
@@ -50,6 +52,7 @@ def temp_dir(tmp_path):
 def test_config_dir():
     """Provide the path to the tests/unit/config directory with default config files."""
     import os
+
     # Get the directory where this conftest.py file is located
     current_dir = os.path.dirname(__file__)
     return os.path.join(current_dir, "config")
@@ -67,6 +70,7 @@ def app_config(temp_dir) -> ApplicationConfig:
 def app_config_with_test_files(test_config_dir) -> ApplicationConfig:
     """Provide application config pointing to tests/unit/config directory."""
     import os
+
     config = ApplicationConfig()
     # Set main_path to the parent of config dir
     config.set_save_path(os.path.dirname(test_config_dir))
@@ -79,6 +83,7 @@ def app_config_with_test_files(test_config_dir) -> ApplicationConfig:
 def server_config(app_config) -> "ServerConfig":
     """Provide a clean ServerConfig instance for testing."""
     from config import ServerConfig
+
     return ServerConfig(app_config)
 
 
@@ -86,6 +91,7 @@ def server_config(app_config) -> "ServerConfig":
 def server_config_with_test_files(app_config_with_test_files) -> "ServerConfig":
     """Provide ServerConfig pointing to tests/unit/config directory."""
     from config import ServerConfig
+
     return ServerConfig(app_config_with_test_files)
 
 
@@ -93,6 +99,7 @@ def server_config_with_test_files(app_config_with_test_files) -> "ServerConfig":
 def client_config(app_config) -> "ClientConfig":
     """Provide a clean ClientConfig instance for testing."""
     from config import ClientConfig
+
     return ClientConfig(app_config)
 
 
@@ -100,6 +107,7 @@ def client_config(app_config) -> "ClientConfig":
 def client_config_with_test_files(app_config_with_test_files) -> "ClientConfig":
     """Provide ClientConfig pointing to tests/unit/config directory."""
     from config import ClientConfig
+
     return ClientConfig(app_config_with_test_files)
 
 
@@ -242,9 +250,7 @@ def clipboard_event():
 @pytest.fixture
 def screen_event():
     """Provide a sample ScreenEvent."""
-    return ScreenEvent(
-        data={"cursor_x": 100, "cursor_y": 200, "screen": "client1"}
-    )
+    return ScreenEvent(data={"cursor_x": 100, "cursor_y": 200, "screen": "client1"})
 
 
 # ============================================================================

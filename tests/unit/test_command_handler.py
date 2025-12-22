@@ -26,8 +26,6 @@ from tests.unit.conftest import create_protocol_message
 # ============================================================================
 
 
-
-
 @pytest.fixture
 def mock_stream_handler():
     """Create a mock StreamHandler."""
@@ -317,9 +315,7 @@ class TestHandleCrossScreen:
 class TestCrossScreenEventConversion:
     """Test CrossScreenCommandEvent conversion."""
 
-    async def test_from_command_event_conversion(
-        self, command_handler, mock_event_bus
-    ):
+    async def test_from_command_event_conversion(self, command_handler, mock_event_bus):
         """Test conversion from CommandEvent to CrossScreenCommandEvent."""
         cmd_event = CommandEvent(
             command=CommandEvent.CROSS_SCREEN,
@@ -461,9 +457,7 @@ class TestIntegrationScenarios:
         ]
 
         # Handle all messages concurrently
-        await asyncio.gather(
-            *[command_handler.handle_command(msg) for msg in messages]
-        )
+        await asyncio.gather(*[command_handler.handle_command(msg) for msg in messages])
 
         # Wait for all tasks
         await asyncio.sleep(0.1)
@@ -668,4 +662,3 @@ class TestMessageTypeValidation:
 
             # Should be processed
             mock_handle.assert_called_once()
-

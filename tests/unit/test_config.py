@@ -545,9 +545,7 @@ class TestServerConfigPersistence:
 
     async def test_save_creates_directory(self, server_config, temp_dir):
         """Test that save creates directory if it doesn't exist."""
-        config_file = os.path.join(
-            str(temp_dir), "nested", "dir", "server_config.json"
-        )
+        config_file = os.path.join(str(temp_dir), "nested", "dir", "server_config.json")
 
         await server_config.save(config_file)
 
@@ -995,9 +993,7 @@ class TestClientConfigPersistence:
 
     async def test_save_creates_directory(self, client_config, temp_dir):
         """Test that save creates directory if it doesn't exist."""
-        config_file = os.path.join(
-            str(temp_dir), "nested", "dir", "client_config.json"
-        )
+        config_file = os.path.join(str(temp_dir), "nested", "dir", "client_config.json")
 
         await client_config.save(config_file)
 
@@ -1093,4 +1089,3 @@ class TestConfigEdgeCases:
         except (PermissionError, OSError):
             # Expected behavior - permission denied
             pass
-

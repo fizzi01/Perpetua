@@ -590,7 +590,7 @@ class TestClipboardWithMocks:
 
     async def test_clipboard_with_mock_paste(self):
         """Test clipboard listener with mocked paste function."""
-        with patch('input.clipboard._base.paste') as mock_paste:
+        with patch("input.clipboard._base.paste") as mock_paste:
             mock_paste.return_value = "Mocked content"
 
             changes = []
@@ -609,8 +609,9 @@ class TestClipboardWithMocks:
 
     async def test_clipboard_paste_error_handling(self):
         """Test handling of paste errors."""
-        with patch('input.clipboard._base.paste') as mock_paste:
+        with patch("input.clipboard._base.paste") as mock_paste:
             from copykitten import CopykittenError
+
             mock_paste.side_effect = CopykittenError("Clipboard error")
 
             listener = Clipboard(poll_interval=0.1)
@@ -625,7 +626,7 @@ class TestClipboardWithMocks:
 
     async def test_clipboard_copy_success(self):
         """Test clipboard copy operation."""
-        with patch('input.clipboard._base.copy') as mock_copy:
+        with patch("input.clipboard._base.copy") as mock_copy:
             mock_copy.return_value = None
 
             listener = Clipboard(poll_interval=0.1)
@@ -636,7 +637,7 @@ class TestClipboardWithMocks:
 
     async def test_clipboard_copy_error_handling(self):
         """Test handling of copy errors."""
-        with patch('input.clipboard._base.copy') as mock_copy:
+        with patch("input.clipboard._base.copy") as mock_copy:
             mock_copy.side_effect = Exception("Copy failed")
 
             listener = Clipboard(poll_interval=0.1)
@@ -979,10 +980,7 @@ class TestConcurrentOperations:
         await asyncio.sleep(0.15)
 
         # Perform concurrent sets
-        tasks = [
-            listener.set_clipboard(f"Content {i}")
-            for i in range(5)
-        ]
+        tasks = [listener.set_clipboard(f"Content {i}") for i in range(5)]
 
         results = await asyncio.gather(*tasks)
 
@@ -1099,4 +1097,3 @@ class TestSpecialCharacters:
 
         if changes:
             assert any(rtl_text in c[0] for c in changes)
-
