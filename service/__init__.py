@@ -21,12 +21,12 @@ class Service:
     """
 
     def __init__(
-        self,
-        name: str,
-        address: str,
-        port: Optional[int] = None,
-        hostname: Optional[str] = None,
-        uid: Optional[str] = None,
+            self,
+            name: str,
+            address: str,
+            port: Optional[int] = None,
+            hostname: Optional[str] = None,
+            uid: Optional[str] = None,
     ):
         """
         An mDNS service instance.
@@ -121,7 +121,7 @@ class ServiceDiscovery:
     UID_LEN = 48
 
     def __init__(
-        self, async_mdns: Optional[AsyncZeroconf] = None, timeout: float = 5.0
+            self, async_mdns: Optional[AsyncZeroconf] = None, timeout: float = 5.0
     ):
         """
         Args:
@@ -132,7 +132,7 @@ class ServiceDiscovery:
         self._mdns_timeout = timeout
 
         self._service_type = (
-            "_" + ApplicationConfig.service_name.lower() + "._tcp.local."
+                "_" + ApplicationConfig.service_name.lower() + "._tcp.local."
         )
         self._uid: Optional[str] = None
 
@@ -173,7 +173,7 @@ class ServiceDiscovery:
         """
         loop = asyncio.get_event_loop()
         try:
-            addr_info = await loop.getaddrinfo(hostname, None)
+            addr_info = await loop.getaddrinfo(hostname, None, family=socket.AF_INET)
             ip_address = addr_info[0][4][0]
             return ip_address
         except Exception as e:
@@ -297,7 +297,7 @@ class ServiceDiscovery:
     #     pass
 
     async def register_service(
-        self, host: str, port: int, uid: Optional[str] = None
+            self, host: str, port: int, uid: Optional[str] = None
     ) -> None:
         """
         It registers a service on the network using mDNS.
