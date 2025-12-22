@@ -144,7 +144,7 @@ class CertificateSharing:
             "nonce": base64.b64encode(nonce).decode('utf-8'),
             "salt": base64.b64encode(salt).decode('utf-8'),
             "exp": datetime.now(timezone.utc) + timedelta(seconds=self._timeout),
-            "iat": datetime.now(timezone.utc),
+            "iat": datetime.now(tz=timezone.utc).timestamp(),
         }
 
         # Sign JWT (using a hash of OTP to avoid using OTP directly as JWT secret)
@@ -350,7 +350,7 @@ class CertificateReceiver:
             self._logger.log("Connected, waiting for certificate...", Logger.DEBUG)
 
             # Read response
-            response = await asyncio.wait_for(reader.readline(), timeout=self._timeout)
+            response = await asyncio.wait_for(reader.readuntil(b"\n"), timeout=self._timeout)
             response = response.decode("utf-8").strip()
 
             if response.startswith("ERROR:"):
@@ -368,7 +368,7 @@ class CertificateReceiver:
             # Verify and decode JWT using OTP hash as secret
             try:
                 jwt_secret = hashlib.sha256(otp.encode('utf-8')).hexdigest()
-                payload = jwt.decode(token, jwt_secret, algorithms=["HS256"])
+                payload = jwt.decode(token, jwt_secret, algorithms=["HS256"], options={"verify_iat": False})
 
                 # Extract encrypted data components
                 encrypted_cert_b64 = payload["encrypted_cert"]
