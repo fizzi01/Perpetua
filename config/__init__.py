@@ -114,6 +114,9 @@ class ServerConfig:
         # Legacy storage for serialization
         self.authorized_clients: List[Dict[str, Any]] = []
 
+        # UID
+        self.uid: Optional[str] = None
+
     # SSL Configuration
     def enable_ssl(self) -> None:
         """Enable SSL (certificates managed by CertificateManager)"""
@@ -266,6 +269,7 @@ class ServerConfig:
         ]
 
         return {
+            "uid": self.uid,
             "host": self.host,
             "port": self.port,
             "heartbeat_interval": self.heartbeat_interval,
@@ -279,6 +283,7 @@ class ServerConfig:
 
     def from_dict(self, data: Dict[str, Any]) -> None:
         """Load configuration from dictionary"""
+        self.uid = data.get("uid", self.uid)
         self.host = data.get("host", self.host)
         self.port = data.get("port", self.port)
         self.heartbeat_interval = data.get(
@@ -379,6 +384,7 @@ class ClientConfig:
     """
 
     # Default values
+    DEFAULT_UID = ""
     DEFAULT_SERVER_HOST = "127.0.0.1"
     DEFAULT_SERVER_PORT = 5555
     DEFAULT_HEARTBEAT_INTERVAL = 1
@@ -391,6 +397,7 @@ class ClientConfig:
 
         def __init__(
             self,
+            uid: str,
             host: str = "127.0.0.1",
             port: int = 5555,
             heartbeat_interval: int = 1,
@@ -398,6 +405,7 @@ class ClientConfig:
             ssl: bool = False,
             additional_params: Optional[Dict[str, Any]] = None,
         ):
+            self.uid = uid
             self.host = host
             self.port = port
             self.heartbeat_interval = heartbeat_interval
@@ -408,6 +416,7 @@ class ClientConfig:
         def to_dict(self) -> Dict[str, Any]:
             """Convert ServerInfo to dictionary"""
             return {
+                "uid": self.uid,
                 "host": self.host,
                 "port": self.port,
                 "heartbeat_interval": self.heartbeat_interval,
@@ -420,6 +429,7 @@ class ClientConfig:
         def from_dict(cls, data: Dict[str, Any]) -> "ClientConfig.ServerInfo":
             """Create ServerInfo from dictionary"""
             return cls(
+                uid=data.get("uid", ""),
                 host=data.get("host", "127.0.0.1"),
                 port=data.get("port", 5555),
                 heartbeat_interval=data.get("heartbeat_interval", 1),
@@ -447,6 +457,7 @@ class ClientConfig:
 
         # Server connection information
         self.server_info = self.ServerInfo(
+            uid=self.DEFAULT_UID,
             host=self.DEFAULT_SERVER_HOST,
             port=self.DEFAULT_SERVER_PORT,
             heartbeat_interval=self.DEFAULT_HEARTBEAT_INTERVAL,
@@ -494,6 +505,7 @@ class ClientConfig:
 
     def set_server_connection(
         self,
+        uid: Optional[str] = None,
         host: Optional[str] = None,
         port: Optional[int] = None,
         heartbeat_interval: Optional[int] = None,
@@ -502,6 +514,8 @@ class ClientConfig:
         additional_params: Optional[Dict[str, Any]] = None,
     ) -> None:
         """Update server connection parameters"""
+        if uid is not None:
+            self.server_info.uid = uid
         if host is not None:
             self.server_info.host = host
         if port is not None:
@@ -514,6 +528,10 @@ class ClientConfig:
             self.server_info.ssl = ssl
         if additional_params is not None:
             self.server_info.additional_params.update(additional_params)
+
+    def get_server_uid(self) -> str:
+        """Get server UID"""
+        return self.server_info.uid
 
     def get_server_host(self) -> str:
         """Get server host"""
