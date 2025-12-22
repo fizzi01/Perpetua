@@ -94,9 +94,6 @@ class Client:
             cert_dir=self.app_config.get_certificate_path()
         )
         self._cert_receiver: Optional[CertificateReceiver] = None
-        # If ssl is enabled but no cert, we will wait for it in connection, so we need to set the otp future
-        self._otp_needed: asyncio.Future[bool] = asyncio.Future()
-        self._otp_received: asyncio.Future[str] = asyncio.Future()
 
         # Load certificate if available and SSL is enabled
         if self.config.ssl_enabled:
@@ -132,11 +129,18 @@ class Client:
         # mDNS Service Discovery
         self._mdns_service = ServiceDiscovery()
         self._found_services: list[Service] = []
-        self._need_server_choice: asyncio.Future[bool] = asyncio.Future()
-        self._server: asyncio.Future[Service] = asyncio.Future() # We will set the result when user choose a server
 
         # Connection handler
         self.connection_handler: Optional[ConnectionHandler] = None
+
+        # -- Inner config state --
+        self._state_lock = asyncio.Lock()
+        # If ssl is enabled but no cert, we will wait for it in connection, so we need to set the otp future
+        self._otp_needed: asyncio.Future[bool] = asyncio.Future()
+        self._otp_received: asyncio.Future[str] = asyncio.Future()
+
+        self._need_server_choice: asyncio.Future[bool] = asyncio.Future()
+        self._server: asyncio.Future[Service] = asyncio.Future() # We will set the result when user choose a server
 
     # ==================== Configuration Management ====================
 
@@ -233,7 +237,8 @@ class Client:
         Returns:
             True if OTP is needed, False otherwise
         """
-        return await self._otp_needed
+        async with self._state_lock:
+            return await self._otp_needed
 
     async def set_otp(self, otp: str) -> bool:
         """
@@ -482,7 +487,8 @@ class Client:
         Returns:
             True if server choice is needed, False otherwise
         """
-        return await self._need_server_choice
+        async with self._state_lock:
+            return await self._need_server_choice
 
     def get_found_servers(self) -> list[Service]:
         """
@@ -550,7 +556,8 @@ class Client:
 
                 # If still not found,force start certificate receiving process
                 if not certfile:
-                    self._otp_needed.set_result(True)
+                    async with self._state_lock:
+                        self._otp_needed.set_result(True)
                     self._logger.info(
                         "Waiting to receive certificate from server. Provide OTP to continue..."
                     )
@@ -566,10 +573,11 @@ class Client:
             self._logger.error(f"Error during certificate check -> {e}")
             return None
         finally:
-            if not self._otp_needed.done():
-                self._otp_needed.set_result(False)
-            else:
-                self._otp_needed = asyncio.Future() # Reset for future use
+            async with self._state_lock:
+                if not self._otp_needed.done():
+                    self._otp_needed.set_result(False)
+                else:
+                    self._otp_needed = asyncio.Future() # Reset for future use
 
     async def _handle_server_availability(self) -> bool:
         """
@@ -603,7 +611,8 @@ class Client:
                     )
 
                 # If server not found, we wait the user to choose it and set the future
-                self._need_server_choice.set_result(True)
+                async with self._state_lock:
+                    self._need_server_choice.set_result(True)
                 res = await self._server
 
                 self._logger.info(
@@ -618,10 +627,11 @@ class Client:
             self._logger.error(f"Error during server availability check -> {e}")
             return False
         finally:
-            if not self._need_server_choice.done():
-                self._need_server_choice.set_result(False)
-            else:
-                self._need_server_choice = asyncio.Future()  # Reset for future use
+            async with self._state_lock:
+                if not self._need_server_choice.done():
+                    self._need_server_choice.set_result(False)
+                else:
+                    self._need_server_choice = asyncio.Future()  # Reset for future use
 
     async def start(self) -> bool:
         """Start the client and connect to server"""
