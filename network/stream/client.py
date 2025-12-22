@@ -108,6 +108,7 @@ class UnidirectionalStreamHandler(StreamHandler):
             return
 
         self._is_active = True
+        self._clear_buffer()
 
         try:
             if self._main_client is None:
@@ -297,6 +298,7 @@ class BidirectionalStreamHandler(StreamHandler):
             return
 
         self._is_active = True
+        self._clear_buffer()
 
         try:
             if self._main_client is None:

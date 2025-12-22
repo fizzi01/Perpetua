@@ -152,6 +152,7 @@ class UnidirectionalStreamHandler(StreamHandler):
 
             # Set message exchange active client
             if self._active_client is not None:
+                self._clear_buffer()
                 # Try to get corresponding stream socket
                 cl_conn = self._active_client.get_connection()
                 if cl_conn is not None:
@@ -370,6 +371,7 @@ class BidirectionalStreamHandler(StreamHandler):
 
             # Set message exchange active client
             if self._active_client is not None:
+                self._clear_buffer()
                 # Try to get corresponding stream socket
                 cl_conn = self._active_client.get_connection()
                 if cl_conn is not None:
