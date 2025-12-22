@@ -34,6 +34,8 @@ from utils.crypto.sharing import CertificateSharing
 
 from utils.logging import Logger, get_logger
 
+from . import ServiceDiscovery
+
 
 class Server:
     """
@@ -137,8 +139,12 @@ class Server:
         self._components = {}
         self._running = False
 
+        # Metrics and performance monitoring
         self._metrics_collector = MetricsCollector()
         self._performance_monitor = PerformanceMonitor(self._metrics_collector)
+
+        # mDNS
+        self._mdns_service = ServiceDiscovery()
 
         # Connection handler
         self.connection_handler: Optional[ConnectionHandler] = None
@@ -610,12 +616,27 @@ class Server:
             self._logger.error("Failed to start connection handler")
             return False
 
+        try:
+            # Start mDNS service
+            await self._mdns_service.register_service(
+                host=self.config.host, port=self.config.port, uid=self.config.uid
+            )
+            if (
+                self.config.uid is None
+            ):  # At this point we have a UID generated and assigned ^
+                self.config.uid = self._mdns_service.get_uid()
+                await self.save_config()
+        except Exception as e:
+            self._logger.error(f"Failed to start mDNS service -> {e}")
+            await self.stop()
+            return False
+
         # Initialize and start enabled streams
         try:
             await self._initialize_streams()
         except Exception as e:
             self._logger.error(f"Failed to initialize streams -> {e}")
-            await self.connection_handler.stop()
+            await self.stop()
             return False
 
         # Initialize and start enabled components
@@ -663,6 +684,12 @@ class Server:
                     f"Error stopping stream handler {stream_type} -> {e}"
                 )
 
+        # Stop performance monitor
+        await self._performance_monitor.stop()
+
+        # mDNS service unregister
+        await self._mdns_service.unregister_service()
+
         # Wait a moment for cleanup
         await asyncio.sleep(self.CLEANUP_DELAY)
 
@@ -672,14 +699,14 @@ class Server:
 
     def cleanup(self):
         """Cleanup client resources"""
-        self._logger.info("Cleaning up client resources...")
+        self._logger.info("Cleaning up resources...")
         # We cleanup component and stream handlers obj from memory
         self._components.clear()
         self._stream_handlers.clear()
 
         # We also reset event bus
         self.event_bus = AsyncEventBus()
-        self._logger.info("Client resources cleaned up.")
+        self._logger.info("Resources cleaned up.")
 
     def is_running(self) -> bool:
         """Check if server is running"""

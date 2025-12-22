@@ -22,6 +22,7 @@ from command import CommandHandler
 from input.mouse import ClientMouseController
 from input.keyboard import ClientKeyboardController
 from input.clipboard import ClipboardListener, ClipboardController
+from service import ServiceDiscovery, Service
 from utils.crypto import CertificateManager
 from utils.crypto.sharing import CertificateReceiver
 from utils.metrics import MetricsCollector, PerformanceMonitor
@@ -93,6 +94,8 @@ class Client:
             cert_dir=self.app_config.get_certificate_path()
         )
         self._cert_receiver: Optional[CertificateReceiver] = None
+        # If ssl is enabled but no cert, we will wait for it in connection, so we need to set the otp future
+        self._otp_received: asyncio.Future[str] = asyncio.Future()
 
         # Load certificate if available and SSL is enabled
         if self.config.ssl_enabled:
@@ -121,8 +124,14 @@ class Client:
         self._running = False
         self._connected = False
 
+        # Metrics
         self._metrics_collector = MetricsCollector()
         self._performance_monitor = PerformanceMonitor(self._metrics_collector)
+
+        # mDNS Service Discovery
+        self._mdns_service = ServiceDiscovery()
+        self._found_services: list[Service] = []
+        self._server: asyncio.Future[Service] = asyncio.Future() # We will set the result when user choose a server
 
         # Connection handler
         self.connection_handler: Optional[ConnectionHandler] = None
@@ -197,13 +206,13 @@ class Client:
         Returns:
             Path to loaded certificate or None if not found
         """
-        server_host = self.config.get_server_host()
-        if self._cert_manager.certificate_exist(source_id=server_host):
-            cert_path = self._cert_manager.get_ca_cert_path(source_id=server_host)
+        server_uid = self.config.get_server_uid()
+        if self._cert_manager.certificate_exist(source_id=server_uid):
+            cert_path = self._cert_manager.get_ca_cert_path(source_id=server_uid)
             self._logger.info(f"Certificate loaded from {cert_path}")
             return cert_path
         else:
-            self._logger.warning(f"Certificate not found for server {server_host}")
+            self._logger.warning(f"Certificate not found for server {server_uid}")
             return None
 
     def _remove_certificate(self) -> None:
@@ -215,7 +224,30 @@ class Client:
         else:
             self._logger.info("No certificate to remove")
 
-    # TODO: If an hostname is provided we should save the corresponding IP addr too
+    async def set_otp(self, otp: str) -> bool:
+        """
+        Set the OTP for certificate receiving process.
+
+        Args:
+            otp: One-time password provided by server
+
+        Returns:
+            True if OTP is valid and set, False otherwise
+        """
+
+        if not otp or len(otp) != 6 or not otp.isdigit():
+            self._logger.error("Invalid OTP format. Must be 6 digits")
+            return False
+
+        if not self._otp_received.done():
+            self._otp_received.set_result(otp)
+            await asyncio.sleep(0)
+            self._logger.info("OTP set successfully")
+            return True
+        else:
+            self._logger.warning("OTP has already been set")
+            return False
+
     async def receive_certificate(
         self,
         otp: str,
@@ -274,7 +306,7 @@ class Client:
 
             # Save certificate
             if not self._cert_manager.save_ca_data(
-                data=cert_data, source_id=self.config.get_server_host()
+                data=cert_data, source_id=self.config.get_server_uid()
             ):
                 self._logger.error("Failed to save received certificate")
                 return False
@@ -308,7 +340,7 @@ class Client:
         """
         if self.has_certificate():
             return self._cert_manager.get_ca_cert_path(
-                source_id=self.config.get_server_host()
+                source_id=self.config.get_server_uid()
             )
         return None
 
@@ -404,6 +436,69 @@ class Client:
 
     # ==================== Client Lifecycle ====================
 
+    async def check_server_availability(self) -> bool:
+        """
+        Check if server is registered as available via mDNS.
+        If no services are discovered yet, it will perform discovery first.
+
+        Returns:
+            bool: True if server is available, False otherwise
+        """
+        if self._found_services is None or len(self._found_services) == 0:
+            await self.discover_servers()
+
+        if (self.config.get_server_uid() is None
+            or self.config.get_server_host() is None
+            or self.config.get_server_port() is None
+        ):
+            return False
+
+        for service in self._found_services:
+            # We need to match all (address and port could vary)
+            if (service.uid == self.config.get_server_uid()
+                    and service.address == self.config.get_server_host()
+                    and service.port == self.config.get_server_port()):
+                return True
+
+        return False
+
+    def choose_server(self, uid: str) -> None:
+        """
+        Choose a server from discovered services by UID.
+        It will set the server host and port in the configuration.
+        Args:
+            uid: UID of the server to choose
+        """
+        for service in self._found_services:
+            if service.uid == uid:
+                self.config.set_server_connection(
+                    uid=service.uid,
+                    host=service.address,
+                    port=service.port,
+                )
+                # Set the server future result in case someone is waiting for it
+                if not self._server.done():
+                    self._server.set_result(service)
+
+                return
+
+        self._logger.error("Server not found among discovered services", uid=uid)
+
+    async def discover_servers(self) -> None:
+        """
+        Discover available servers on the network using mDNS.
+
+        Args:
+            timeout: Discovery timeout in seconds (default: 5)
+
+        Returns:
+            List of discovered servers with their details
+        """
+        try:
+            self._found_services = await self._mdns_service.discover_services()
+        except Exception as e:
+            self._logger.error(f"Error during server discovery -> {e}")
+
     async def start(self) -> bool:
         """Start the client and connect to server"""
         if self._running:
@@ -411,6 +506,24 @@ class Client:
             return False
 
         self._logger.info("Starting Client...")
+
+        # Initial server availability check
+        if not await self.check_server_availability():
+            self._logger.warning("Server not found")
+
+            if not self._found_services or len(self._found_services) == 0:
+                self._logger.warning("Cannot find any available servers on the network")
+                return False
+
+            # If server not found, we wait the user to choose it and set the future
+            res = await self._server
+
+            self._logger.info(
+                "Server choosed",
+                uid=res.uid,
+                host=res.address,
+                port=res.port
+            )
 
         # Initialize stream handlers (but don't start them yet)
         try:
@@ -424,10 +537,19 @@ class Client:
 
         # Get certificate path if SSL is enabled
         certfile = None
-        if self.config.ssl_enabled and self.has_certificate():
+        if self.config.ssl_enabled and not self.has_certificate():
             certfile = self._cert_manager.get_ca_cert_path(
-                source_id=self.config.get_server_host()
+                source_id=self.config.get_server_uid(),
             )
+            # If still not found,force start certificate receiving process
+            if not certfile:
+                self._logger.info(
+                    "Waiting to receive certificate from server. Provide OTP to continue..."
+                )
+                # Wait for otp Future
+                otp = await self._otp_received
+                if not await self.receive_certificate(otp=otp):
+                    return False
 
         # Initialize connection handler
         self.connection_handler = ConnectionHandler(
@@ -517,7 +639,7 @@ class Client:
 
     def _get_enabled_stream_types(self) -> list[int]:
         """Get list of enabled stream types for connection"""
-        enabled = [StreamType.COMMAND]  # Command is always enabled
+        enabled: list[int] = [StreamType.COMMAND]  # Command is always enabled
         for stream_type, is_enabled in self.config.streams_enabled.items():
             if is_enabled and stream_type != StreamType.COMMAND:
                 enabled.append(stream_type)

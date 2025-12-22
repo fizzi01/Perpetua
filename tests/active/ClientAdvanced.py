@@ -6,7 +6,7 @@ Demonstrates how to enable/disable streams during execution and manage SSL certi
 import sys
 
 if sys.platform in ("win32", "cygwin", "cli"):
-    import winloop as loop
+    import winloop as loop  # ty:ignore[unresolved-import]
 else:
     import uvloop as loop
 import asyncio
@@ -99,17 +99,17 @@ async def interactive_client():
 
                 elif cmd == "status":
                     print(f"\n{'=' * 40}")
-                    print(f"Connection Status:")
+                    print("Connection Status:")
                     print(f"  Running: {client.is_running()}")
                     print(f"  Connected: {client.is_connected()}")
                     print(
                         f"  Server: {client.config.get_server_host()}:{client.config.get_server_port()}"
                     )
                     print(f"  Auto-reconnect: {client.config.do_auto_reconnect()}")
-                    print(f"\nStreams:")
+                    print("\nStreams:")
                     print(f"  Enabled: {client.get_enabled_streams()}")
                     print(f"  Active: {client.get_active_streams()}")
-                    print(f"\nSSL:")
+                    print("\nSSL:")
                     print(f"  Certificate loaded: {client.has_certificate()}")
                     if client.has_certificate():
                         print(f"  Certificate path: {client.get_certificate_path()}")
@@ -120,7 +120,7 @@ async def interactive_client():
                     print(f"Active streams: {client.get_active_streams()}\n")
 
                 elif cmd == "ssl":
-                    print(f"\nSSL Status:")
+                    print("\nSSL Status:")
                     print(f"  Certificate loaded: {client.has_certificate()}")
                     if client.has_certificate():
                         print(f"  Certificate path: {client.get_certificate_path()}")
@@ -156,10 +156,7 @@ async def interactive_client():
                         print("✗ Invalid OTP format. Must be 6 digits.\n")
                         continue
 
-                    print("\nReceiving certificate...")
-                    success = await client.receive_certificate(
-                        otp=otp, server_host=cert_host, server_port=cert_port
-                    )
+                    success = await client.set_otp(otp)
 
                     if success:
                         print("✓ Certificate received successfully!")
@@ -323,7 +320,7 @@ async def interactive_client():
 
     # Execute command handler
     try:
-        result = await handle_commands()
+        await handle_commands()
     except KeyboardInterrupt:
         print("\nKeyboard interrupt received")
     finally:
@@ -334,7 +331,6 @@ async def interactive_client():
 
 async def main():
     """Entry point"""
-    import sys
 
     print("\n" + "=" * 60)
     print("PyContinuity Advanced Client Examples")
