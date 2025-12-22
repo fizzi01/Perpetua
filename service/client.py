@@ -241,6 +241,7 @@ class Client:
 
         if not self._otp_received.done():
             self._otp_received.set_result(otp)
+            # Give the event loop a chance to process the result
             await asyncio.sleep(0)
             self._logger.info("OTP set successfully")
             return True
@@ -446,6 +447,7 @@ class Client:
         """
         if self._found_services is None or len(self._found_services) == 0:
             await self.discover_servers()
+            await asyncio.sleep(0)
 
         if (self.config.get_server_uid() is None
             or self.config.get_server_host() is None
@@ -499,21 +501,44 @@ class Client:
         except Exception as e:
             self._logger.error(f"Error during server discovery -> {e}")
 
-    async def start(self) -> bool:
-        """Start the client and connect to server"""
-        if self._running:
-            self._logger.warning("Client already running")
-            return False
+    async def _handle_certificate_check(self) -> Optional[str]:
+        """Handle certificate check before connection"""
+        if self.config.ssl_enabled and not self.has_certificate():
+            certfile = self._cert_manager.get_ca_cert_path(
+                source_id=self.config.get_server_uid(),
+            )
 
-        self._logger.info("Starting Client...")
+            # If still not found,force start certificate receiving process
+            if not certfile:
+                self._logger.info(
+                    "Waiting to receive certificate from server. Provide OTP to continue..."
+                )
 
-        # Initial server availability check
+                otp = await self._otp_received
+                if not await self.receive_certificate(otp=otp):
+                    return None
+
+        return self._cert_manager.get_ca_cert_path(
+            source_id=self.config.get_server_uid(),
+        )
+
+    async def _handle_server_availability(self) -> bool:
+
         if not await self.check_server_availability():
-            self._logger.warning("Server not found")
+            self._logger.warning("Saved server not found")
 
             if not self._found_services or len(self._found_services) == 0:
                 self._logger.warning("Cannot find any available servers on the network")
                 return False
+
+            if len(self._found_services) == 1:
+                # Auto choose the only available server
+                self.choose_server(self._found_services[0].uid)
+            else:
+                self._logger.info(
+                    "Multiple servers found. Please choose one to connect.",
+                    servers=[s.as_dict() for s in self._found_services]
+                )
 
             # If server not found, we wait the user to choose it and set the future
             res = await self._server
@@ -524,6 +549,20 @@ class Client:
                 host=res.address,
                 port=res.port
             )
+
+        return True
+
+    async def start(self) -> bool:
+        """Start the client and connect to server"""
+        if self._running:
+            self._logger.warning("Client already running")
+            return False
+
+        self._logger.info("Starting Client...")
+
+        # Initial server availability check
+        if not await self._handle_server_availability():
+            return False
 
         # Initialize stream handlers (but don't start them yet)
         try:
@@ -536,20 +575,7 @@ class Client:
         enabled_streams = self._get_enabled_stream_types()
 
         # Get certificate path if SSL is enabled
-        certfile = None
-        if self.config.ssl_enabled and not self.has_certificate():
-            certfile = self._cert_manager.get_ca_cert_path(
-                source_id=self.config.get_server_uid(),
-            )
-            # If still not found,force start certificate receiving process
-            if not certfile:
-                self._logger.info(
-                    "Waiting to receive certificate from server. Provide OTP to continue..."
-                )
-                # Wait for otp Future
-                otp = await self._otp_received
-                if not await self.receive_certificate(otp=otp):
-                    return False
+        certfile = await self._handle_certificate_check()
 
         # Initialize connection handler
         self.connection_handler = ConnectionHandler(

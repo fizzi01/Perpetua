@@ -33,6 +33,9 @@ def helper():
     print("  reconnect - Reconnect to server")
     print("  quit      - Stop client and exit\n")
 
+async def ainput(prompt: str = ""):
+    return await asyncio.to_thread(input, prompt)
+
 
 async def interactive_client():
     """Interactive client with runtime control of streams and SSL"""
@@ -72,11 +75,7 @@ async def interactive_client():
     start_now = input("Start client now? (y/n, default: y): ").strip().lower()
     try:
         if start_now != "n":
-            print("\nStarting client...")
-            if not await client.start():
-                print("Failed to start client")
-                return
-            print("Client started successfully!")
+            asyncio.create_task(client.start())
         else:
             print("\nClient created but not started. Use 'connect' command to start.")
     except Exception as e:
@@ -85,12 +84,10 @@ async def interactive_client():
 
     # Task to handle user input
     async def handle_commands():
-        loop = asyncio.get_event_loop()
-
         while True:
             try:
                 # Read input in executor to avoid blocking
-                cmd = await loop.run_in_executor(None, input, "> ")
+                cmd = await ainput("Command> ")
                 cmd = cmd.strip().lower()
 
                 if cmd == "quit" or cmd == "exit":
@@ -138,17 +135,6 @@ async def interactive_client():
                     print("1. On the server, run: share ca")
                     print("2. The server will display a 6-digit OTP")
                     print("3. Enter that OTP below\n")
-
-                    cert_host = input(
-                        f"Certificate server host (default: {client.config.get_server_host()}): "
-                    ).strip()
-                    if not cert_host:
-                        cert_host = client.config.get_server_host()
-
-                    cert_port = input(
-                        "Certificate server port (default: 5556): "
-                    ).strip()
-                    cert_port = int(cert_port) if cert_port else 5556
 
                     otp = input("\nEnter 6-digit OTP from server: ").strip()
 

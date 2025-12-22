@@ -9,7 +9,7 @@ import time
 import socket
 
 from zeroconf import ServiceInfo, ServiceListener, Zeroconf, BadTypeInNameException
-from zeroconf.asyncio import AsyncZeroconf, AsyncServiceBrowser
+from zeroconf.asyncio import AsyncZeroconf, AsyncServiceBrowser, AsyncServiceInfo
 
 from config import ApplicationConfig
 from utils.logging import get_logger
@@ -44,6 +44,18 @@ class Service:
         self.hostname: Optional[str] = hostname
         self.port = port
 
+    def as_dict(self) -> dict:
+        """
+        It returns the service as a dictionary.
+        """
+        return {
+            "uid": self.uid,
+            #"name": self.name,
+            "address": self.address,
+            "hostname": self.hostname,
+            "port": self.port,
+        }
+
 
 class _ServiceListener(ServiceListener):
     """
@@ -53,18 +65,18 @@ class _ServiceListener(ServiceListener):
     def __init__(self):
         self._services: list[Service] = []
 
+        self._pending_task: set[asyncio.Task] = set()
+
     def get_services(self) -> list[Service]:
         """
         It returns the list of discovered services.
         """
         return self._services
 
-    def add_service(self, zc: Zeroconf, type_: str, name: str) -> None:
-        """
-        It adds a new service to the list of discovered services.
-        """
+    async def _service_info_task(self, zc: Zeroconf, type_: str, name: str):
         # Get service info
-        info = zc.get_service_info(type_, name)
+        info = AsyncServiceInfo(type_=type_, name=name)
+        await info.async_request(zc=zc, timeout=3000)
         if info is not None:
             address = info.parsed_addresses()[0]
             uid = name.split(".")[0]
@@ -75,6 +87,15 @@ class _ServiceListener(ServiceListener):
             service = Service(name, address, info.port, uid=uid, hostname=hostname)
 
             self._services.append(service)
+
+    def add_service(self, zc: Zeroconf, type_: str, name: str) -> None:
+        """
+        It adds a new service to the list of discovered services.
+        """
+        task = asyncio.create_task(self._service_info_task(zc, type_, name))
+        self._pending_task.add(task)
+        task.add_done_callback(self._pending_task.discard)
+
 
     def update_service(self, zc: Zeroconf, type_: str, name: str) -> None:
         """Update existing service"""
