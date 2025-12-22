@@ -33,6 +33,7 @@ class UnidirectionalStreamHandler(StreamHandler):
         source: str = "server",
         sender: bool = True,
         metrics_collector: Optional[MetricsCollector] = None,
+        buffer_size: int = 1000,
     ):
         """
         Initializes and configures an instance responsible for managing the interaction between
@@ -48,6 +49,9 @@ class UnidirectionalStreamHandler(StreamHandler):
                 value based on class name and stream type if not provided.
             source (str): Identifier indicating the origin of the handler, defaulting to "server".
             sender (bool): Determines whether the handler acts as a sender, default is True.
+            metrics_collector (Optional[MetricsCollector]): Optional metrics collector for
+                gathering performance data.
+            buffer_size (int): Size of the internal buffer for managing outgoing messages.
 
         Attributes:
             _active_client (Optional[ClientObj]): The currently active client being handled or
@@ -71,6 +75,7 @@ class UnidirectionalStreamHandler(StreamHandler):
             clients=clients,
             event_bus=event_bus,
             sender=sender,
+            buffer_size=buffer_size
         )
 
         self._active_client: Optional[ClientObj] = None
@@ -267,13 +272,30 @@ class BidirectionalStreamHandler(StreamHandler):
         handler_id: Optional[str] = None,
         source: str = "server",
         metrics_collector: Optional[MetricsCollector] = None,
+        buffer_size: int = 1000,
     ):
         """
+        Initializes and configures an instance responsible for managing the interaction between
+        a specified stream type, connected clients, and event-driven communication. This
+        initialization involves creating necessary message exchange components, setting up logging,
+        and subscribing to specific events.
+
         Args:
-            source (str): The source identifier for messages.
+            stream_type: (int): Represents the type of the stream being managed.
+            clients: (ClientsManager): Instance managing client connections and their state.
+            event_bus: (EventBus): Centralized event bus for subscribing and broadcasting events.
+            handler_id: (Optional[str]): Unique identifier for the handler; defaults to a derived
+                value based on class name and stream type if not provided.
+            source: (str): Identifier indicating the origin of the handler, defaulting to "server".
+            metrics_collector: (Optional[MetricsCollector]): Optional metrics collector for
+            buffer_size: (int): Size of the internal buffer for managing outgoing messages.
         """
         super().__init__(
-            stream_type=stream_type, clients=clients, event_bus=event_bus, sender=True
+            stream_type=stream_type,
+            clients=clients,
+            event_bus=event_bus,
+            sender=True,
+            buffer_size=buffer_size
         )
 
         self._active_client = None
@@ -471,6 +493,7 @@ class MulticastStreamHandler(StreamHandler):
         handler_id: Optional[str] = None,
         source: str = "server",
         metrics_collector: Optional[MetricsCollector] = None,
+        buffer_size: int = 1000,
     ):
         """
         It initializes an instance responsible for managing bidirectional communication
@@ -504,7 +527,11 @@ class MulticastStreamHandler(StreamHandler):
                 defaults to "server".
         """
         super().__init__(
-            stream_type=stream_type, clients=clients, event_bus=event_bus, sender=True
+            stream_type=stream_type,
+            clients=clients,
+            event_bus=event_bus,
+            sender=True,
+            buffer_size=buffer_size
         )
 
         self._active_client = None

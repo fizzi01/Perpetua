@@ -266,6 +266,7 @@ class Server:
             self._logger.error(f"Error setting up SSL certificates -> {e}")
             raise
 
+    # TODO: Better handling -> We should keep the sharing server alive because port may be blocked
     async def share_certificate(
         self, host: str = "0.0.0.0", port: int = 5556, timeout: int = 30
     ) -> Tuple[bool, Optional[str]]:
@@ -600,6 +601,7 @@ class Server:
 
         self._logger.info("Starting Server...")
 
+        # TODO: We should check if port is available before starting by using ServiceDiscovery utils
         # Initialize connection handler
         self.connection_handler = ConnectionHandler(
             connected_callback=self._on_client_connected,
@@ -802,6 +804,7 @@ class Server:
                 event_bus=self.event_bus,
                 handler_id="ServerMouseStreamHandler",
                 sender=True,
+                buffer_size=10000, # Higher needed for high polling rates
             )
             self._stream_handlers[StreamType.MOUSE] = mouse_stream
 

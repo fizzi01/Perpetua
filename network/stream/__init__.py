@@ -41,6 +41,7 @@ class StreamHandler:
         clients: ClientsManager,
         event_bus: EventBus,
         sender: bool = True,
+        buffer_size: int = 1000,
     ):
         """
         Attributes:
@@ -52,7 +53,7 @@ class StreamHandler:
         self.stream_type = stream_type
         self.clients = clients
         self.event_bus = event_bus
-        self._send_queue: asyncio.Queue = asyncio.Queue(maxsize=1000)
+        self._send_queue: asyncio.Queue = asyncio.Queue(maxsize=buffer_size)
         self._active = False
         self._sender_task = None
 

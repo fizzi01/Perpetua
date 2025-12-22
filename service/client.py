@@ -772,6 +772,7 @@ class Client:
             handler_id="ClientMouseStreamHandler",
             sender=False,  # Client receives mouse data
             active_only=True,  # Only when client is active
+            buffer_size=10000,  # Larger buffer for high-frequency mouse data
         )
 
         # Keyboard stream (receiver)
