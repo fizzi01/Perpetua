@@ -130,13 +130,13 @@ async def __main():
             print(f"\n  Latenza media:           {stats['avg_latency_ms']:.3f} ms")
             print(f"  Latenza minima:          {stats['min_latency_ms']:.3f} ms")
             print(f"  Latenza massima:         {stats['max_latency_ms']:.3f} ms")
-            print(f"\n  Percentili latenza:")
+            print("\n  Percentili latenza:")
             print(f"    P50 (mediana):         {stats['p50_latency_ms']:.3f} ms")
             print(f"    P95:                   {stats['p95_latency_ms']:.3f} ms")
             print(f"    P99:                   {stats['p99_latency_ms']:.3f} ms")
 
             # Valutazione performance
-            print(f"\n  VALUTAZIONE:")
+            print("\n  VALUTAZIONE:")
             if stats["throughput"] > 100:
                 print(f"    ✓ Throughput ECCELLENTE (>{100} eventi/s)")
             elif stats["throughput"] > 50:
@@ -145,9 +145,9 @@ async def __main():
                 print(f"    ⚠ Throughput BASSO (<{50} eventi/s)")
 
             if stats["p95_latency_ms"] < 10:
-                print(f"    ✓ Latenza ECCELLENTE (P95 <10ms)")
+                print("    ✓ Latenza ECCELLENTE (P95 <10ms)")
             elif stats["p95_latency_ms"] < 20:
-                print(f"    ✓ Latenza BUONA (P95 <20ms)")
+                print("    ✓ Latenza BUONA (P95 <20ms)")
             else:
                 print(f"    ⚠ Latenza ALTA (P95 >{20}ms)")
         else:
@@ -160,7 +160,7 @@ async def __main():
         print("-" * 80)
 
         mock_stream.reset()
-        cycles = 1
+        cycles = 2
 
         for i in range(cycles):
             print(f"  Ciclo {i + 1}/{cycles}: Enable -> Wait -> Disable")

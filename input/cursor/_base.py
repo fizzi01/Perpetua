@@ -2,7 +2,7 @@ from queue import Empty
 import asyncio
 
 import wx
-from wx.core import Point
+from wx.core import Point, Size
 
 import time
 import threading
@@ -154,7 +154,7 @@ class CursorHandlerWindow(wx.Frame):
             # self.panel.Hide()
             self.Hide()
             # Resize to 0x0 to avoid interaction
-            self.SetSize((0, 0))
+            self.SetSize(Size(0, 0))
         except Exception as e:
             print(f"Error hiding overlay: {e}")
 
@@ -295,14 +295,14 @@ class _CursorHandlerProcess:
 
     def __init__(
         self,
-        command_queue,
-        result_queue,
+        command_queue: Queue,
+        result_queue: Queue,
         mouse_conn: Connection,
         debug: bool = False,
         window_class=CursorHandlerWindow,
     ):
-        self.command_queue = command_queue
-        self.result_queue = result_queue
+        self.command_queue: Queue[dict] = command_queue
+        self.result_queue: Queue[dict] = result_queue
         self.mouse_conn = mouse_conn
         self.window = None
         self.app = None
@@ -354,8 +354,8 @@ class CursorHandlerWorker(object):
 
         self._debug = debug
 
-        self.command_queue = Queue()
-        self.result_queue = Queue()
+        self.command_queue: Queue[dict] = Queue()
+        self.result_queue: Queue[dict] = Queue()
 
         # Unidirectional pipe for mouse movement
         self.mouse_conn_rec, self.mouse_conn_send = Pipe(duplex=False)
@@ -401,13 +401,13 @@ class CursorHandlerWorker(object):
             )
 
             try:
-                self.enable_capture()
+                await self.enable_capture()
             except Exception as e:
                 self._logger.error(f"Error enabling cursor capture: {e}")
             self._active_client = active_screen
         else:
             try:
-                self.disable_capture()
+                await self.disable_capture()
             except Exception as e:
                 self._logger.error(f"Error disabling cursor capture: {e}")
 
@@ -426,7 +426,7 @@ class CursorHandlerWorker(object):
 
         if self._active_client and data.client_screen == self._active_client:
             self._active_client = None
-            self.disable_capture()  # type: ignore
+            await self.disable_capture()
 
     def start(self, wait_ready=True, timeout=1) -> bool:
         """Avvia il processo della window"""
@@ -484,7 +484,7 @@ class CursorHandlerWorker(object):
                 pass
             self._mouse_data_task = None
 
-        self.send_command({"type": "quit"})
+        await self.send_command({"type": "quit"})
 
         if self.process:
             # Run process join in executor to avoid blocking
@@ -544,40 +544,45 @@ class CursorHandlerWorker(object):
             except Exception:
                 await asyncio.sleep(0.01)
 
-    def send_command(self, command):
-        """Invia un comando alla window"""
+    async def send_command(self, command):
+        """Invia un comando alla window in modo asincrono"""
         if not self._is_running:
             raise RuntimeError("Window process not running")
-        self.command_queue.put(command)
+        loop = asyncio.get_running_loop()
+        await loop.run_in_executor(None, self.command_queue.put, command) # type: ignore
+        await asyncio.sleep(0)  # Yield control to event loop
 
-    def get_result(self, timeout: float = 0.1):
-        """Riceve un risultato dalla window"""
+    async def get_result(self, timeout: float = 0.1):
+        """Riceve un risultato dalla window in modo asincrono"""
+        loop = asyncio.get_running_loop()
         try:
-            return self.result_queue.get(timeout=timeout)
+            return await loop.run_in_executor(
+                None, self.result_queue.get, timeout # type: ignore
+            )
         except Empty:
             return None
 
-    def get_all_results(self, timeout=0.1):
+    async def get_all_results(self, timeout=0.1):
         """Riceve tutti i risultati disponibili"""
         results = []
         while True:
-            result = self.get_result(timeout=timeout)
+            result = await self.get_result(timeout=timeout)
             if result is None:
                 break
             results.append(result)
         return results
 
-    def enable_capture(self):
-        """Abilita la cattura del mouse"""
-        self.send_command({"type": "enable_capture"})
-        return self.get_result()  # FIXME: This can slow down the async flow
+    async def enable_capture(self):
+        """Abilita la cattura del mouse in modo asincrono"""
+        await self.send_command({"type": "enable_capture"})
+        return await self.get_result()
 
-    def disable_capture(self):
-        """Disabilita la cattura del mouse"""
-        self.send_command({"type": "disable_capture"})
-        return self.get_result()  # FIXME: This can slow down the async flow
+    async def disable_capture(self):
+        """Disabilita la cattura del mouse in modo asincrono"""
+        await self.send_command({"type": "disable_capture"})
+        return await self.get_result()
 
-    def set_message(self, message):
-        """Imposta un messaggio nella window"""
-        self.send_command({"type": "set_message", "message": message})
-        return self.get_result()
+    async def set_message(self, message):
+        """Imposta un messaggio nella window in modo asincrono"""
+        await self.send_command({"type": "set_message", "message": message})
+        return await self.get_result()
