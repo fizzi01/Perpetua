@@ -1,3 +1,4 @@
+import sys
 from queue import Empty
 import asyncio
 
@@ -8,7 +9,10 @@ import time
 import threading
 
 from multiprocessing import Queue, Pipe, Process
-from multiprocessing.connection import PipeConnection
+if sys.platform == "win32":
+    from multiprocessing.connection import PipeConnection as Connection
+else:
+    from multiprocessing.connection import Connection
 from typing import Optional
 
 from event import (
@@ -36,7 +40,7 @@ class CursorHandlerWindow(wx.Frame):
         self,
         command_queue: Queue,
         result_queue: Queue,
-        mouse_conn: PipeConnection,
+        mouse_conn: Connection,
         debug: bool = False,
         **frame_kwargs,
     ):
@@ -297,7 +301,7 @@ class _CursorHandlerProcess:
         self,
         command_queue: Queue,
         result_queue: Queue,
-        mouse_conn: PipeConnection,
+        mouse_conn: Connection,
         debug: bool = False,
         window_class=CursorHandlerWindow,
     ):
