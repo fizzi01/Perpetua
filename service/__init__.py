@@ -13,6 +13,7 @@ from zeroconf.asyncio import AsyncZeroconf, AsyncServiceBrowser, AsyncServiceInf
 
 from config import ApplicationConfig
 from utils.logging import get_logger
+from utils.net import get_local_ip
 
 
 class Service:
@@ -171,10 +172,9 @@ class ServiceDiscovery:
         """
         Resolve a machine hostname to an IP address (no mDNS).
         """
-        loop = asyncio.get_event_loop()
         try:
-            addr_info = await loop.getaddrinfo(hostname, None, family=socket.AF_INET)
-            ip_address = addr_info[0][4][0]
+            ip_address = get_local_ip()
+            await asyncio.sleep(0)
             return ip_address
         except Exception as e:
             raise RuntimeError(f"Failed to resolve hostname {hostname} ({e})")
