@@ -2,6 +2,7 @@
 Advanced Client Example - Runtime management of streams and SSL
 Demonstrates how to enable/disable streams during execution and manage SSL certificates
 """
+from service import Service
 
 import sys
 
@@ -36,6 +37,70 @@ def helper():
 async def ainput(prompt: str = ""):
     return await asyncio.to_thread(input, prompt)
 
+async def server_choice(services: list[Service]) -> str:
+    print("\n" + "=" * 60)
+    print("Server Selection")
+    print("=" * 60)
+    print("\nMultiple servers found. Please select one:\n")
+
+    for idx, service in enumerate(services):
+        print(f"  [{idx}] {service.uid} - {service.address}:{service.port}")
+
+    while True:
+        choice = input("\nEnter the number of the server to connect to: ").strip()
+        if choice.isdigit():
+            choice_idx = int(choice)
+            if 0 <= choice_idx < len(services):
+                selected_service = services[choice_idx]
+                if selected_service.uid is None:
+                    print("✗ Selected server has no UID. Please choose another.")
+                    continue
+
+                print(
+                    f"\n✓ Selected server: {selected_service.uid} - {selected_service.address}:{selected_service.port}\n"
+                )
+                return selected_service.uid
+        print("✗ Invalid selection. Please try again.")
+
+    return ""
+
+async def certificate_reception(client: Client):
+    print("\n" + "=" * 60)
+    print("Certificate Reception")
+    print("=" * 60)
+    print("\nSteps:")
+    print("1. On the server, run: share ca")
+    print("2. The server will display a 6-digit OTP")
+    print("3. Enter that OTP below\n")
+
+    otp = input("\nEnter 6-digit OTP from server: ").strip()
+
+    if not otp or len(otp) != 6 or not otp.isdigit():
+        print("✗ Invalid OTP format. Must be 6 digits.\n")
+        await asyncio.sleep(0)
+        return
+
+    success = await client.set_otp(otp)
+    await asyncio.sleep(0.5)
+
+    if success:
+        print("✓ Certificate received successfully!")
+        print(f"  Saved to: {client.get_certificate_path()}")
+
+        # Ask if user wants to enable SSL now
+        if not client.is_running():
+            enable = (
+                input("\nEnable SSL now? (y/n, default: y): ")
+                .strip()
+                .lower()
+            )
+            if enable != "n":
+                if client.enable_ssl():
+                    print("✓ SSL enabled")
+                else:
+                    print("✗ Failed to enable SSL")
+
+    await asyncio.sleep(0)
 
 async def interactive_client():
     """Interactive client with runtime control of streams and SSL"""
@@ -76,6 +141,11 @@ async def interactive_client():
     try:
         if start_now != "n":
             asyncio.create_task(client.start())
+            if await client.server_choice_needed():
+                services = client.get_found_servers()
+                await server_choice(services)
+            if await client.otp_needed():
+                await certificate_reception(client)
         else:
             print("\nClient created but not started. Use 'connect' command to start.")
     except Exception as e:
@@ -128,46 +198,7 @@ async def interactive_client():
                     print()
 
                 elif cmd == "cert":
-                    print("\n" + "=" * 60)
-                    print("Certificate Reception")
-                    print("=" * 60)
-                    print("\nSteps:")
-                    print("1. On the server, run: share ca")
-                    print("2. The server will display a 6-digit OTP")
-                    print("3. Enter that OTP below\n")
-
-                    otp = input("\nEnter 6-digit OTP from server: ").strip()
-
-                    if not otp or len(otp) != 6 or not otp.isdigit():
-                        print("✗ Invalid OTP format. Must be 6 digits.\n")
-                        continue
-
-                    success = await client.set_otp(otp)
-
-                    if success:
-                        print("✓ Certificate received successfully!")
-                        print(f"  Saved to: {client.get_certificate_path()}")
-
-                        # Ask if user wants to enable SSL now
-                        if not client.is_running():
-                            enable = (
-                                input("\nEnable SSL now? (y/n, default: y): ")
-                                .strip()
-                                .lower()
-                            )
-                            if enable != "n":
-                                if client.enable_ssl():
-                                    print("✓ SSL enabled")
-                                else:
-                                    print("✗ Failed to enable SSL")
-                        else:
-                            print(
-                                "\nNote: Client is running. SSL will be used on next connection."
-                            )
-                    else:
-                        print("✗ Failed to receive certificate")
-                    print()
-
+                    await certificate_reception(client)
                 elif cmd == "connect":
                     if client.is_running():
                         print(

@@ -95,6 +95,7 @@ class Client:
         )
         self._cert_receiver: Optional[CertificateReceiver] = None
         # If ssl is enabled but no cert, we will wait for it in connection, so we need to set the otp future
+        self._otp_needed: asyncio.Future[bool] = asyncio.Future()
         self._otp_received: asyncio.Future[str] = asyncio.Future()
 
         # Load certificate if available and SSL is enabled
@@ -131,6 +132,7 @@ class Client:
         # mDNS Service Discovery
         self._mdns_service = ServiceDiscovery()
         self._found_services: list[Service] = []
+        self._need_server_choice: asyncio.Future[bool] = asyncio.Future()
         self._server: asyncio.Future[Service] = asyncio.Future() # We will set the result when user choose a server
 
         # Connection handler
@@ -223,6 +225,15 @@ class Client:
             self.disable_ssl()
         else:
             self._logger.info("No certificate to remove")
+
+    async def otp_needed(self) -> bool:
+        """
+        Check if OTP is needed for certificate receiving process.
+
+        Returns:
+            True if OTP is needed, False otherwise
+        """
+        return await self._otp_needed
 
     async def set_otp(self, otp: str) -> bool:
         """
@@ -464,6 +475,24 @@ class Client:
 
         return False
 
+    async def server_choice_needed(self) -> bool:
+        """
+        Check if we have to choose a server from discovered services.
+
+        Returns:
+            True if server choice is needed, False otherwise
+        """
+        return await self._need_server_choice
+
+    def get_found_servers(self) -> list[Service]:
+        """
+        Get the list of discovered servers.
+
+        Returns:
+            List of discovered services
+        """
+        return self._found_services
+
     def choose_server(self, uid: str) -> None:
         """
         Choose a server from discovered services by UID.
@@ -502,55 +531,97 @@ class Client:
             self._logger.error(f"Error during server discovery -> {e}")
 
     async def _handle_certificate_check(self) -> Optional[str]:
-        """Handle certificate check before connection"""
-        if self.config.ssl_enabled and not self.has_certificate():
-            certfile = self._cert_manager.get_ca_cert_path(
+        """
+        Handles the process of checking and obtaining a server certificate if necessary.
+
+        This method ensures that a valid SSL certificate is available before proceeding with
+        SSL-related operations. If a certificate is missing, it triggers the process to receive
+        a new certificate using an OTP provided by the server.
+
+        Returns:
+            Optional[str]: The path to the CA certificate if available or successfully obtained;
+            otherwise, None.
+        """
+        try:
+            if self.config.ssl_enabled and not self.has_certificate():
+                certfile = self._cert_manager.get_ca_cert_path(
+                    source_id=self.config.get_server_uid(),
+                )
+
+                # If still not found,force start certificate receiving process
+                if not certfile:
+                    self._otp_needed.set_result(True)
+                    self._logger.info(
+                        "Waiting to receive certificate from server. Provide OTP to continue..."
+                    )
+
+                    otp = await self._otp_received
+                    if not await self.receive_certificate(otp=otp):
+                        return None
+
+            return self._cert_manager.get_ca_cert_path(
                 source_id=self.config.get_server_uid(),
             )
-
-            # If still not found,force start certificate receiving process
-            if not certfile:
-                self._logger.info(
-                    "Waiting to receive certificate from server. Provide OTP to continue..."
-                )
-
-                otp = await self._otp_received
-                if not await self.receive_certificate(otp=otp):
-                    return None
-
-        return self._cert_manager.get_ca_cert_path(
-            source_id=self.config.get_server_uid(),
-        )
+        except Exception as e:
+            self._logger.error(f"Error during certificate check -> {e}")
+            return None
+        finally:
+            if not self._otp_needed.done():
+                self._otp_needed.set_result(False)
+            else:
+                self._otp_needed = asyncio.Future() # Reset for future use
 
     async def _handle_server_availability(self) -> bool:
+        """
+        Checks and handles the availability of servers asynchronously.
 
-        if not await self.check_server_availability():
-            self._logger.warning("Saved server not found")
+        This method verifies whether a previously saved server is still available. If it is not, the
+        method will evaluate other available servers identified on the network. Based on the number
+        of discovered servers, it will either auto-select the only available server or wait the user
+        to choose one. It will then proceed with the user's choice. If any exception occurs during
+        execution, it logs an error message. Finally, it ensures the resolution of the need for server
+        choice.
 
-            if not self._found_services or len(self._found_services) == 0:
-                self._logger.warning("Cannot find any available servers on the network")
-                return False
+        Returns:
+            bool: True if server availability check completes successfully, False if no server is found.
+        """
+        try:
+            if not await self.check_server_availability():
+                self._logger.warning("Saved server not found")
 
-            if len(self._found_services) == 1:
-                # Auto choose the only available server
-                self.choose_server(self._found_services[0].uid)
-            else:
+                if not self._found_services or len(self._found_services) == 0:
+                    self._logger.warning("Cannot find any available servers on the network")
+                    return False
+
+                if len(self._found_services) == 1:
+                    # Auto choose the only available server
+                    self.choose_server(self._found_services[0].uid)
+                else:
+                    self._logger.info(
+                        "Multiple servers found. Please choose one to connect.",
+                        servers=[s.as_dict() for s in self._found_services]
+                    )
+
+                # If server not found, we wait the user to choose it and set the future
+                self._need_server_choice.set_result(True)
+                res = await self._server
+
                 self._logger.info(
-                    "Multiple servers found. Please choose one to connect.",
-                    servers=[s.as_dict() for s in self._found_services]
+                    "Server choosed",
+                    uid=res.uid,
+                    host=res.address,
+                    port=res.port
                 )
 
-            # If server not found, we wait the user to choose it and set the future
-            res = await self._server
-
-            self._logger.info(
-                "Server choosed",
-                uid=res.uid,
-                host=res.address,
-                port=res.port
-            )
-
-        return True
+            return True
+        except Exception as e:
+            self._logger.error(f"Error during server availability check -> {e}")
+            return False
+        finally:
+            if not self._need_server_choice.done():
+                self._need_server_choice.set_result(False)
+            else:
+                self._need_server_choice = asyncio.Future()  # Reset for future use
 
     async def start(self) -> bool:
         """Start the client and connect to server"""
