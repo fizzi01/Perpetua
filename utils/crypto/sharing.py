@@ -5,9 +5,14 @@ Secure certificate sharing system with OTP and JWT
 import asyncio
 import secrets
 import time
+import hashlib
+import base64
 from typing import Optional, Tuple
 import jwt
 from datetime import datetime, timedelta, timezone
+from cryptography.hazmat.primitives.ciphers.aead import AESGCM
+from cryptography.hazmat.primitives import hashes
+from cryptography.hazmat.primitives.kdf.pbkdf2 import PBKDF2HMAC
 
 from utils.logging import Logger, get_logger
 
@@ -54,25 +59,97 @@ class CertificateSharing:
         """Generate a secure 6-digit OTP"""
         return "".join([str(secrets.randbelow(10)) for _ in range(6)])
 
-    def _create_jwt(self, otp: str) -> str:
+    @staticmethod
+    def _derive_key_from_otp(otp: str, salt: bytes) -> bytes:
         """
-        Create JWT containing certificate data, encrypted with OTP.
+        Derive AES-256 key from OTP using PBKDF2.
 
         Args:
-            otp: One-time password used as JWT secret
+            otp: One-time password
+            salt: Random salt for key derivation
 
         Returns:
-            Encrypted JWT token
+            32-byte key suitable for AES-256
         """
+        kdf = PBKDF2HMAC(
+            algorithm=hashes.SHA256(),
+            length=32,
+            salt=salt,
+            iterations=100000,
+        )
+        return kdf.derive(otp.encode('utf-8'))
+
+    @staticmethod
+    def encrypt_data(data: bytes, otp: str) -> Tuple[bytes, bytes, bytes]:
+        """
+        Encrypt data using AES-GCM with key derived from OTP.
+
+        Args:
+            data: Data to encrypt
+            otp: One-time password used to derive encryption key
+
+        Returns:
+            Tuple of (encrypted_data, nonce, salt)
+        """
+        # Generate random salt and nonce
+        salt = secrets.token_bytes(16)
+        nonce = secrets.token_bytes(12)  # GCM standard nonce size
+
+        # Derive key from OTP
+        key = CertificateSharing._derive_key_from_otp(otp, salt)
+
+        # Encrypt data
+        aesgcm = AESGCM(key)
+        encrypted_data = aesgcm.encrypt(nonce, data, None)
+
+        return encrypted_data, nonce, salt
+
+    @staticmethod
+    def decrypt_data(encrypted_data: bytes, nonce: bytes, salt: bytes, otp: str) -> bytes:
+        """
+        Decrypt data using AES-GCM with key derived from OTP.
+
+        Args:
+            encrypted_data: Encrypted data
+            nonce: Nonce used for encryption
+            salt: Salt used for key derivation
+            otp: One-time password used to derive decryption key
+
+        Returns:
+            Decrypted data
+        """
+        # Derive key from OTP
+        key = CertificateSharing._derive_key_from_otp(otp, salt)
+
+        # Decrypt data
+        aesgcm = AESGCM(key)
+        return aesgcm.decrypt(nonce, encrypted_data, None)
+
+    def _create_jwt(self, otp: str) -> str:
+        """
+        Create JWT containing encrypted certificate data.
+
+        Args:
+            otp: One-time password used for encryption
+
+        Returns:
+            JWT token with encrypted certificate
+        """
+        # Encrypt certificate data
+        encrypted_data, nonce, salt = self.encrypt_data(self._cert_data, otp)
+
+        # Encode binary data to base64 for JSON serialization
         payload = {
-            "cert": self._cert_data.decode("utf-8")
-            if isinstance(self._cert_data, bytes)
-            else self._cert_data,
+            "encrypted_cert": base64.b64encode(encrypted_data).decode('utf-8'),
+            "nonce": base64.b64encode(nonce).decode('utf-8'),
+            "salt": base64.b64encode(salt).decode('utf-8'),
             "exp": datetime.now(timezone.utc) + timedelta(seconds=self._timeout),
             "iat": datetime.now(timezone.utc),
         }
 
-        return jwt.encode(payload, otp, algorithm="HS256")
+        # Sign JWT (using a hash of OTP to avoid using OTP directly as JWT secret)
+        jwt_secret = hashlib.sha256(otp.encode('utf-8')).hexdigest()
+        return jwt.encode(payload, jwt_secret, algorithm="HS256")
 
     async def _handle_client(
         self, reader: asyncio.StreamReader, writer: asyncio.StreamWriter
@@ -252,7 +329,7 @@ class CertificateReceiver:
         """
         try:
             self._logger.log(
-                f"Connecting to {self._server_host}:{self._server_port}...", Logger.INFO
+                f"Connecting to {self._server_host}:{self._server_port}...", Logger.INFO, otp=otp
             )
 
             # Connect to server (no SSL for this temporary connection)
@@ -288,21 +365,42 @@ class CertificateReceiver:
             # Extract JWT token
             token = response.split(":", 1)[1]
 
-            # Decrypt JWT using OTP
+            # Verify and decode JWT using OTP hash as secret
             try:
-                payload = jwt.decode(token, otp, algorithms=["HS256"])
-                cert_data = payload["cert"]
+                jwt_secret = hashlib.sha256(otp.encode('utf-8')).hexdigest()
+                payload = jwt.decode(token, jwt_secret, algorithms=["HS256"])
+
+                # Extract encrypted data components
+                encrypted_cert_b64 = payload["encrypted_cert"]
+                nonce_b64 = payload["nonce"]
+                salt_b64 = payload["salt"]
+
+                # Decode from base64
+                encrypted_cert = base64.b64decode(encrypted_cert_b64)
+                nonce = base64.b64decode(nonce_b64)
+                salt = base64.b64decode(salt_b64)
+
+                # Decrypt certificate data using OTP
+                cert_data = CertificateSharing.decrypt_data(encrypted_cert, nonce, salt, otp)
+
+                # Convert bytes to string if needed
+                cert_data_str = cert_data.decode('utf-8') if isinstance(cert_data, bytes) else cert_data
 
                 self._logger.log(
                     "Certificate received and decrypted successfully", Logger.INFO
                 )
-                return True, cert_data
+                return True, cert_data_str
 
             except jwt.ExpiredSignatureError:
                 self._logger.log("JWT expired", Logger.ERROR)
                 return False, None
-            except jwt.InvalidTokenError:
-                self._logger.log("Invalid OTP or corrupted token", Logger.ERROR)
+            except jwt.InvalidTokenError as e:
+                self._logger.log(f"Invalid JWT or OTP: {e}", Logger.ERROR)
+                return False, None
+            except Exception as e:
+                self._logger.log(f"Failed to decrypt certificate data: {e}", Logger.ERROR)
+                import traceback
+                self._logger.log(traceback.format_exc(), Logger.DEBUG)
                 return False, None
 
         except asyncio.TimeoutError:
