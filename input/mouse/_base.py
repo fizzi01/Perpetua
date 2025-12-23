@@ -381,6 +381,8 @@ class ServerMouseListener(object):
                 edge = EdgeDetector.is_at_edge(
                     movement_history=queue_data, x=x, y=y, screen_size=self._screen_size
                 )
+                if edge is None:
+                    return True
 
                 mouse_event = MouseEvent(x=x, y=y, action=MouseEvent.POSITION_ACTION)
 
