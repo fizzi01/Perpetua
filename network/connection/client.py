@@ -14,9 +14,10 @@ from network.stream import StreamType
 from utils.logging import Logger, get_logger
 
 from . import ClientConnection, StreamWrapper
+from .handler import CallbackError, BaseConnectionHandler
 
 
-class ConnectionHandler:
+class ConnectionHandler(BaseConnectionHandler):
     """
     Async client-side connection handler using asyncio.
 
@@ -30,6 +31,7 @@ class ConnectionHandler:
     CONNECTION_ATTEMPT_TIMEOUT = 10  # seconds
     RECONNECTION_DELAY = 10  # seconds
     HANDSHAKE_DELAY = 0.2  # seconds
+    STREAM_CONN_DELAY_GUARD = 1 # seconds
     HANDSHAKE_MSG_TIMEOUT = 5.0  # seconds
     MAX_HEARTBEAT_MISSES = 1
 
@@ -37,6 +39,7 @@ class ConnectionHandler:
         self,
         connected_callback: Optional[Callable[["ClientObj"], Any]] = None,
         disconnected_callback: Optional[Callable[["ClientObj"], Any]] = None,
+        reconnected_callback: Optional[Callable[["ClientObj", list[int]], Any]] = None,
         host: str = "127.0.0.1",
         port: int = 5001,
         wait: int = 5,
@@ -53,6 +56,7 @@ class ConnectionHandler:
         Args:
             connected_callback: Callback when connected to server (can be async)
             disconnected_callback: Callback when disconnected from server (can be async)
+            reconnected_callback: Callback when reconnected to server (can be async)
             host: Server host address
             port: Server port
             wait: Wait time between connection attempts (seconds)
@@ -65,6 +69,7 @@ class ConnectionHandler:
         """
         self.connected_callback = connected_callback
         self.disconnected_callback = disconnected_callback
+        self.reconnected_callback = reconnected_callback
 
         self.host = host
         self.port = port
@@ -224,13 +229,9 @@ class ConnectionHandler:
                             # Call connected callback
                             if self.connected_callback:
                                 try:
-                                    if asyncio.iscoroutinefunction(
-                                        self.connected_callback
-                                    ):
-                                        await self.connected_callback(self._client_obj)
-                                    else:
-                                        self.connected_callback(self._client_obj)
-                                except Exception as e:
+                                    await self._invoke_callback(callback=self.connected_callback,
+                                                                client=self._client_obj)
+                                except CallbackError as e:
                                     self._logger.log(
                                         f"Error in connected callback -> {e}",
                                         Logger.ERROR,
@@ -414,7 +415,7 @@ class ConnectionHandler:
 
             # Open additional streams
             if self.open_streams:
-                success = await self._open_additional_streams()
+                success = await self._open_additional_streams(streams=self.open_streams)
                 if not success:
                     self._logger.log("Failed to open additional streams", Logger.ERROR)
                     return False
@@ -435,14 +436,26 @@ class ConnectionHandler:
             self._logger.log(traceback.format_exc(), Logger.ERROR)
             return False
 
-    async def _open_additional_streams(self) -> bool:
-        """Open additional streams requested in handshake"""
+    async def _open_additional_streams(self, streams: list[int]) -> bool:
+        """
+        Attempts to open additional streams based on the provided stream types and establish
+        secure or non-secure connections accordingly while managing connections within
+        the client object.
+
+        Args:
+            streams (list[int]): A list of integers representing the types of streams to be
+                opened and connected. Each stream type should correspond to a valid stream code.
+
+        Returns:
+            bool: True if all streams were successfully connected and configured; False if
+                any stream connection failed due to a timeout or other issues.
+        """
         ssl_context = None
         if self.use_ssl and self.certfile:
             ssl_context = ssl.create_default_context(ssl.Purpose.SERVER_AUTH)
             ssl_context.load_verify_locations(self.certfile)
 
-        for stream_type in self.open_streams:
+        for stream_type in streams:
             try:
                 # Connect to server for this stream
                 reader, writer = await asyncio.wait_for(
@@ -508,9 +521,42 @@ class ConnectionHandler:
                     if command_reader is None or command_reader.is_closed():
                         raise ConnectionResetError("Command stream EOF reached")
 
+                # Check others streams to handle reconnection
+                closed_streams: list[int] = []
+                for stream_type in self.open_streams:
+                    if c_conn is not None and c_conn.has_stream(stream_type):
+                        stream_reader = c_conn.get_reader(stream_type)
+                        stream_writer = c_conn.get_writer(stream_type)
+                        if (
+                                (stream_reader is None or stream_reader.is_closed())
+                                or
+                                (stream_writer is None or stream_writer.is_closed())
+                        ):
+                            # Force closure of the stream writer if it exists
+                            if stream_writer:
+                                await stream_writer.close()
+                            closed_streams.append(stream_type)
+
+                # Attempt to reopen closed streams
+                if len(closed_streams) > 0:
+                    await asyncio.sleep(self.STREAM_CONN_DELAY_GUARD)
+                    if not await self._open_additional_streams(closed_streams):
+                        raise ConnectionResetError("Failed to reopen closed streams")
+                    else:
+                        try:
+                            await self._invoke_callback(
+                                callback=self.reconnected_callback,
+                                client=self._client_obj,
+                                streams=closed_streams,
+                            )
+                        except CallbackError as e:
+                            self._logger.log(
+                                f"Error in reconnected callback -> {e}", Logger.ERROR
+                            )
+
             except asyncio.CancelledError:
                 break
-            except ConnectionResetError:
+            except ConnectionResetError as e:
                 if heartbeat_trials < self.MAX_HEARTBEAT_MISSES:
                     heartbeat_trials += 1
                     self._logger.log(
@@ -520,14 +566,14 @@ class ConnectionHandler:
                     continue
                 else:
                     self._logger.log("Heartbeat detected disconnection", Logger.WARNING)
-                    await self._handle_disconnection()
+                    await self._handle_disconnection(err=e)
                     break
             except Exception as e:
                 self._logger.log(f"Heartbeat error -> {e}", Logger.ERROR)
-                await self._handle_disconnection()
+                await self._handle_disconnection(err=e)
                 break
 
-    async def _handle_disconnection(self):
+    async def _handle_disconnection(self, err: Optional[Exception] = None):
         """Handle disconnection and cleanup"""
         self._connected = False
 
@@ -545,16 +591,13 @@ class ConnectionHandler:
             self.clients.update_client(self._client_obj)
 
         # Call disconnected callback
-        if self.disconnected_callback:
-            try:
-                if asyncio.iscoroutinefunction(self.disconnected_callback):
-                    await self.disconnected_callback(self._client_obj)
-                else:
-                    self.disconnected_callback(self._client_obj)
-            except Exception as e:
-                self._logger.log(f"Error in disconnected callback -> {e}", Logger.ERROR)
+        try:
+            await self._invoke_callback(callback=self.disconnected_callback,
+                                        client=self._client_obj)
+        except CallbackError as e:
+            self._logger.log(f"Error in disconnected callback -> {e}", Logger.ERROR)
 
-        self._logger.log("Client disconnected from server", Logger.WARNING)
+        self._logger.warning(f"Client disconnected from server ({err})")
 
     async def _close_all_streams(self):
         """Close all stream connections"""

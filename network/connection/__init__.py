@@ -142,7 +142,7 @@ class ClientConnection:
         stream: Optional[StreamWrapper] = None,
     ) -> None:
         """
-        Add a stream of the given type
+        Add a stream of the given type. If a stream is already present, it will be replaced.
 
         Args:
             stream_type (int): The type of the stream

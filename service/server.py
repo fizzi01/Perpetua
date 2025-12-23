@@ -11,7 +11,7 @@ from typing import Optional, Dict, Tuple
 from config import ApplicationConfig, ServerConfig
 from model.client import ClientObj, ClientsManager, ScreenPosition
 from event.bus import AsyncEventBus
-from event import EventType, ClientConnectedEvent, ClientDisconnectedEvent
+from event import EventType, ClientConnectedEvent, ClientDisconnectedEvent, ClientStreamReconnectedEvent
 from network.connection.server import ConnectionHandler
 from network.stream.server import (
     UnidirectionalStreamHandler,
@@ -606,6 +606,7 @@ class Server:
         self.connection_handler = ConnectionHandler(
             connected_callback=self._on_client_connected,
             disconnected_callback=self._on_client_disconnected,
+            reconnected_callback=self._on_client_stream_reconnected,
             host=self.config.host,
             port=self.config.port,
             heartbeat_interval=self.config.heartbeat_interval,
@@ -999,6 +1000,17 @@ class Server:
         await self.save_config()
         self._logger.info(
             f"Client {client.get_net_id()} disconnected from position {client.screen_position}"
+        )
+
+    async def _on_client_stream_reconnected(
+        self, client: ClientObj, streams: list[int]
+    ):
+        """Handle client stream reconnection event"""
+        await self.event_bus.dispatch(
+            event_type=EventType.CLIENT_STREAM_RECONNECTED,
+            data=ClientStreamReconnectedEvent(
+                client_screen=client.get_screen_position(), streams=streams
+            ),
         )
 
     # ==================== Utility Methods ====================

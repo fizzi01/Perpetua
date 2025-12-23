@@ -140,7 +140,7 @@ class ServiceDiscovery:
         self._logger = get_logger(self.__class__.__name__)
 
     @staticmethod
-    def _generate_uid(host: str) -> str:
+    def generate_uid(host: str) -> str:
         """
         It generates a unique identifier for the service instance.
 
@@ -168,7 +168,7 @@ class ServiceDiscovery:
         return self._uid
 
     @staticmethod
-    async def _resolve_hostname(hostname: str):
+    async def resolve_hostname(hostname: str):
         """
         Resolve a machine hostname to an IP address (no mDNS).
         """
@@ -219,10 +219,10 @@ class ServiceDiscovery:
         hostname = None
         if not self._is_ip(host):
             hostname = host
-            host = await self._resolve_hostname(host)
+            host = await self.resolve_hostname(host)
 
         if self._uid is None:
-            self._uid = ServiceDiscovery._generate_uid(host)
+            self._uid = ServiceDiscovery.generate_uid(host)
 
         service_name = ".".join([self._uid, self._service_type])
         # Build service info

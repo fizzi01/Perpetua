@@ -16,9 +16,10 @@ from network.stream import StreamType
 from utils.logging import Logger, get_logger
 
 from . import ClientConnection, StreamWrapper
+from .handler import CallbackError, BaseConnectionHandler
 
 
-class ConnectionHandler:
+class ConnectionHandler(BaseConnectionHandler):
     """
     Manages server-side socket connections using asyncio.
 
@@ -28,6 +29,7 @@ class ConnectionHandler:
     Attributes:
         connected_callback (callable): Callback for client connection.
         disconnected_callback (callable): Callback for client disconnection.
+        reconnected_callback (callable): Callback for client streams reconnection.
         host (str): Server host address.
         port (int): Server port.
         heartbeat_interval (int): Interval for heartbeat checks.
@@ -45,6 +47,7 @@ class ConnectionHandler:
         self,
         connected_callback: Optional[Callable[["ClientObj", list[int]], Any]] = None,
         disconnected_callback: Optional[Callable[["ClientObj", list[int]], Any]] = None,
+        reconnected_callback: Optional[Callable[["ClientObj", list[int]], Any]] = None,
         host: str = "0.0.0.0",
         port: int = 5001,
         heartbeat_interval: int = 2,
@@ -52,12 +55,14 @@ class ConnectionHandler:
         certfile: Optional[str] = None,
         keyfile: Optional[str] = None,
     ):
-        # Nota: msg_exchange non usato, ogni client ha il proprio
         self.certfile = certfile
         self.keyfile = keyfile
         self.clients = allowlist if allowlist is not None else ClientsManager()
+
         self.connected_callback = connected_callback
         self.disconnected_callback = disconnected_callback
+        self.reconnected_callback = reconnected_callback
+
         self.host = host
         self.port = port
         self.heartbeat_interval = heartbeat_interval
@@ -189,16 +194,72 @@ class ConnectionHandler:
             client.set_connection(None)
             self.clients.update_client(client)
 
-            if self.disconnected_callback:
-                try:
-                    if asyncio.iscoroutinefunction(self.disconnected_callback):
-                        await self.disconnected_callback(client, [])
+            try:
+                await self._invoke_callback(callback=self.disconnected_callback,
+                                            client=client,
+                                            streams=[])
+            except CallbackError as e:
+                self._logger.log(
+                    f"Error in disconnected callback -> {e}", Logger.ERROR
+                )
+
+    async def _check_pending_streams(self,
+                                     reader: asyncio.StreamReader,
+                                     writer: asyncio.StreamWriter,
+                                     address: str) -> bool:
+        """
+        Checks for pending streams associated with a specific address and handles their
+        completion if applicable.
+
+        This method verifies if there are any pending streams waiting to be resolved
+        for a given address. When a match is found, it fulfills the associated
+        future with the current reader and writer streams. The method also logs the
+        status of the completed future and cleans up its associated resources.
+
+        Args:
+            reader (asyncio.StreamReader): The stream reader associated with the
+                new connection.
+            writer (asyncio.StreamWriter): The stream writer associated with the
+                new connection.
+            address (str): The address of the client initiating the connection.
+
+        Returns:
+            bool: True if a pending stream was resolved, otherwise False.
+        """
+        try:
+            if (
+                    address in self._pending_streams
+                    and self._pending_streams[address] is not None
+            ):
+                # There are pending streams for this address
+                # Get the first pending stream (there should be only one per type)
+                pending = self._pending_streams[address]
+                if pending:
+                    stream_type = next(iter(pending.keys()))
+                    future = pending[stream_type]
+
+                    if not future.done():
+                        future.set_result((reader, writer))
+                        self._logger.log(
+                            f"Stream {stream_type} accepted from {address}",
+                            Logger.DEBUG,
+                        )
                     else:
-                        self.disconnected_callback(client, [])
-                except Exception as e:
-                    self._logger.log(
-                        f"Error in disconnected callback -> {e}", Logger.ERROR
-                    )
+                        self._logger.log(
+                            f"Future already done for stream {stream_type} from {address}",
+                            Logger.WARNING,
+                        )
+                        writer.close()
+                        await writer.wait_closed()
+
+                    del pending[stream_type]
+                    return True
+        except Exception as e:
+            self._logger.log(
+                f"Error checking pending streams for {address} -> {e}", Logger.ERROR
+            )
+
+        return False
 
     async def _handle_client(
         self, reader: asyncio.StreamReader, writer: asyncio.StreamWriter
@@ -209,34 +270,8 @@ class ConnectionHandler:
 
         try:
             client_obj = self.clients.get_client(ip_address=addr[0])
-            # Controlla se è uno stream aggiuntivo in attesa
-            if (
-                addr[0] in self._pending_streams
-                and self._pending_streams[addr[0]] is not None
-            ):
-                # Questa è una connessione per uno stream aggiuntivo
-                # Prendi il primo stream type in attesa
-                pending = self._pending_streams[addr[0]]
-                if pending:
-                    stream_type = next(iter(pending.keys()))
-                    future = pending[stream_type]
-
-                    if not future.done():
-                        future.set_result((reader, writer))
-                        self._logger.log(
-                            f"Stream {stream_type} accepted from {addr[0]}",
-                            Logger.DEBUG,
-                        )
-                    else:
-                        self._logger.log(
-                            f"Future already done for stream {stream_type} from {addr[0]}",
-                            Logger.WARNING,
-                        )
-                        writer.close()
-                        await writer.wait_closed()
-
-                    del pending[stream_type]
-                    return
+            if await self._check_pending_streams(reader=reader,writer=writer,address=addr[0]):
+                return # Pending stream accepted let the handshake handler manage it
 
             # Altrimenti è una connessione di handshake
             if client_obj and client_obj.is_connected:
@@ -403,105 +438,15 @@ class ConnectionHandler:
                         Logger.DEBUG,
                     )
 
-                    if client.ip_address is None or not isinstance(
-                        client.ip_address, str
+                    if not await self._accept_additional_streams(
+                        client, requested_streams
                     ):
-                        raise ValueError("Client IP address is None")
-
-                    # Prepara i future per gli stream in arrivo
-                    if client.ip_address not in self._pending_streams:
-                        self._pending_streams[client.ip_address] = {}  # ty:ignore[invalid-assignment]
-
-                    for stream_type in requested_streams:
-                        if not isinstance(stream_type, int) or not StreamType.is_valid(
-                            stream_type
-                        ):
-                            self._logger.log(
-                                f"Invalid stream type requested: {stream_type}",
-                                Logger.WARNING,
-                            )
-                            continue
-
-                        try:
-                            # Crea un future per questo stream
-                            stream_future = asyncio.Future()
-                            self._pending_streams[client.ip_address][stream_type] = (
-                                stream_future
-                            )
-
-                            # Attendi che il client si connetta per questo stream
-                            # Il future verrà risolto in _handle_client quando arriva la connessione
-                            stream_reader, stream_writer = await asyncio.wait_for(
-                                stream_future, timeout=self.CONNECTION_ATTEMPT_TIMEOUT
-                            )
-
-                            stream_addr = stream_writer.get_extra_info("peername")
-
-                            # Wrap SSL
-                            if client.ssl and self.certfile and self.keyfile:
-                                await asyncio.wait_for(
-                                    stream_writer.start_tls(self._get_ssl_context()),
-                                    timeout=self.CONNECTION_ATTEMPT_TIMEOUT,
-                                )
-                                self._logger.log(
-                                    f"SSL stream connection for {stream_type} from {stream_addr}",
-                                    Logger.INFO,
-                                )
-
-                            conn = client.get_connection()
-                            if conn is None:
-                                raise ConnectionError(
-                                    "Client connection lost during handshake"
-                                )
-                            conn.add_stream(
-                                stream_type=stream_type,
-                                reader=stream_reader,
-                                writer=stream_writer,
-                            )
-                            client.set_connection(connection=conn)
-                            client.ports[stream_type] = stream_addr[1]
-
-                            self._logger.log(
-                                f"Stream {stream_type} connected from {stream_addr}",
-                                Logger.DEBUG,
-                            )
-
-                        except asyncio.TimeoutError:
-                            self._logger.log(
-                                f"Timeout waiting for stream {stream_type} from client {client.get_net_id()}",
-                                Logger.WARNING,
-                            )
-                            # Pulisci i pending streams
-                            if client.ip_address in self._pending_streams:
-                                fut = self._pending_streams[client.ip_address].pop(
-                                    stream_type, None
-                                )
-                                if fut and not fut.done():
-                                    fut.cancel()
-                                if not self._pending_streams[client.ip_address]:
-                                    del self._pending_streams[client.ip_address]
-                            await client_msg_exchange.stop()
-                            return False
-                        except Exception as e:
-                            self._logger.log(
-                                f"Error accepting stream {stream_type} -> {e}",
-                                Logger.ERROR,
-                            )
-                            # Pulisci i pending streams
-                            if client.ip_address in self._pending_streams:
-                                fut = self._pending_streams[client.ip_address].pop(
-                                    stream_type, None
-                                )
-                                if fut and not fut.done():
-                                    fut.cancel()
-                                if not self._pending_streams[client.ip_address]:
-                                    del self._pending_streams[client.ip_address]
-                            await client_msg_exchange.stop()
-                            return False
-
-                    # Pulisci i pending streams per questo client
-                    if client.ip_address in self._pending_streams:
-                        del self._pending_streams[client.ip_address]
+                        self._logger.log(
+                            f"Failed to accept additional streams for client {client.get_net_id()}",
+                            Logger.WARNING,
+                        )
+                        await client_msg_exchange.stop()
+                        return False
 
                 # Cleanup temporaneo del msg_exchange (il client ne avrà uno proprio)
                 await client_msg_exchange.stop()
@@ -517,16 +462,11 @@ class ConnectionHandler:
                         if c_conn is not None:
                             c_streams = c_conn.get_available_stream_types()
 
-                        if asyncio.iscoroutinefunction(self.connected_callback):
-                            await self.connected_callback(
-                                client,
-                                c_streams,
-                            )  # type: ignore
-                        else:
-                            self.connected_callback(
-                                client,
-                                c_streams,
-                            )  # type: ignore
+                        await self._invoke_callback(
+                            callback=self.connected_callback,
+                            client=client,
+                            streams=c_streams,
+                        )
                     except Exception as e:
                         self._logger.log(
                             f"Error in connected callback -> {e}", Logger.ERROR
@@ -565,6 +505,115 @@ class ConnectionHandler:
             # self._logger.log(traceback.format_exc(), Logger.ERROR)
             return False
 
+    async def _accept_additional_streams(
+            self,
+            client: ClientObj,
+            requested_streams: list[int]
+    ) -> bool:
+        """
+        Accepts and establishes additional streams requested by a client. The method handles
+        stream setup, validation, connection, SSL wrapping (if enabled), and stream lifecycle.
+
+        Args:
+            client (ClientObj): The client object requesting additional streams.
+            requested_streams (list[int]): The list of stream types requested to be added.
+
+        Returns:
+            bool: True if all requested streams are successfully connected, otherwise False.
+
+        Raises:
+            ValueError: If the client's IP address is None or invalid.
+            ConnectionError: If the client's connection is lost during the handshake.
+        """
+        if not requested_streams:
+            return True
+
+        if client.ip_address is None or not isinstance(client.ip_address, str):
+            raise ValueError("Client IP address is None")
+
+        # Prepara i future per gli stream in arrivo
+        if client.ip_address not in self._pending_streams:
+            self._pending_streams[client.ip_address] = {}
+
+        for stream_type in requested_streams:
+            if not isinstance(stream_type, int) or not StreamType.is_valid(stream_type):
+                self._logger.log(
+                    f"Invalid stream type requested: {stream_type}",
+                    Logger.WARNING,
+                )
+                continue
+
+            try:
+                # Crea un future per questo stream
+                stream_future = asyncio.Future()
+                self._pending_streams[client.ip_address][stream_type] = stream_future
+
+                # Attendi che il client si connetta per questo stream
+                stream_reader, stream_writer = await asyncio.wait_for(
+                    stream_future, timeout=self.CONNECTION_ATTEMPT_TIMEOUT
+                )
+
+                stream_addr = stream_writer.get_extra_info("peername")
+
+                # Wrap SSL
+                if client.ssl and self.certfile and self.keyfile:
+                    await asyncio.wait_for(
+                        stream_writer.start_tls(self._get_ssl_context()),
+                        timeout=self.CONNECTION_ATTEMPT_TIMEOUT,
+                    )
+                    self._logger.log(
+                        f"SSL stream connection for {stream_type} from {stream_addr}",
+                        Logger.INFO,
+                    )
+
+                conn = client.get_connection()
+                if conn is None:
+                    raise ConnectionError("Client connection lost during handshake")
+
+                conn.add_stream(
+                    stream_type=stream_type,
+                    reader=stream_reader,
+                    writer=stream_writer,
+                )
+                client.set_connection(connection=conn)
+                client.open_streams[stream_type] = stream_addr[1]
+
+                self._logger.log(
+                    f"Stream {stream_type} connected from {stream_addr}",
+                    Logger.DEBUG,
+                )
+
+            except asyncio.TimeoutError:
+                self._logger.log(
+                    f"Timeout waiting for stream {stream_type} from client {client.get_net_id()}",
+                    Logger.WARNING,
+                )
+                self._cleanup_pending_stream(client.ip_address, stream_type)
+                return False
+
+            except Exception as e:
+                self._logger.log(
+                    f"Error accepting stream {stream_type} -> {e}",
+                    Logger.ERROR,
+                )
+                self._cleanup_pending_stream(client.ip_address, stream_type)
+                return False
+
+        # Pulisci i pending streams per questo client
+        if client.ip_address in self._pending_streams:
+            del self._pending_streams[client.ip_address]
+
+        return True
+
+    def _cleanup_pending_stream(self, ip_address: str, stream_type: int):
+        """Pulisce un pending stream specifico."""
+        if ip_address in self._pending_streams:
+            fut = self._pending_streams[ip_address].pop(stream_type, None)
+            if fut and not fut.done():
+                fut.cancel()
+            if not self._pending_streams[ip_address]:
+                del self._pending_streams[ip_address]
+
     async def _handle_hartbeat_failure(
         self, client: ClientObj, err: Optional[Exception] = None
     ):
@@ -586,16 +635,16 @@ class ConnectionHandler:
         client.set_connection(None)
         self.clients.update_client(client)
 
-        if self.disconnected_callback:
-            try:
-                if asyncio.iscoroutinefunction(self.disconnected_callback):
-                    await self.disconnected_callback(client, [])
-                else:
-                    self.disconnected_callback(client, [])
-            except Exception as e:
-                self._logger.log(f"Error in disconnected callback -> {e}", Logger.ERROR)
+        try:
+            await self._invoke_callback(callback=self.disconnected_callback,
+                                        client=client,
+                                        streams=[])
+        except CallbackError as e:
+            self._logger.log(f"Error in disconnected callback -> {e}", Logger.ERROR)
 
-    # TODO: need a reconnection mechanism for single client's streams
+    async def _handle_streams_reconnection(self, client: ClientObj, closed_streams: list[int]) -> bool:
+        return await self._accept_additional_streams(client, closed_streams)
+
     async def _heartbeat_loop(self):
         """Loop di heartbeat per verificare le connessioni e aggiornare metriche"""
         try:
@@ -624,11 +673,11 @@ class ConnectionHandler:
                             if not client_conn.is_open():
                                 raise ConnectionResetError("Connection is closed")
 
-                            # Send heartbeat message
                             cmd_stream = client_conn.get_stream(StreamType.COMMAND)
                             if cmd_stream is None:
                                 raise ConnectionResetError("Command stream not found")
 
+                            # Send heartbeat message
                             # client_msg_exchange = MessageExchange(config, id=f"Heartbeat_{client.get_net_id()}")
                             # await client_msg_exchange.set_transport(cmd_stream.get_writer_call(), None)
                             # await client_msg_exchange.send_custom_message(message_type="HEARTBEAT", payload={})
@@ -639,6 +688,45 @@ class ConnectionHandler:
                                 raise ConnectionResetError(
                                     "Command stream reader is closed"
                                 )
+
+                            # Check others streams to handle reconnection
+                            closed_streams: list[int] = []
+                            for stream_type in client_conn.get_available_stream_types():
+                                # Skip command stream (already checked)
+                                if stream_type == StreamType.COMMAND:
+                                    continue
+
+                                stream_reader = client_conn.get_reader(stream_type)
+                                stream_writer = client_conn.get_writer(stream_type)
+                                if (
+                                        (stream_reader is None or stream_reader.is_closed())
+                                        or
+                                        (stream_writer is None or stream_writer.is_closed())
+                                ):
+                                    # Force closure of the stream writer if it exists
+                                    if stream_writer:
+                                        await stream_writer.close()
+                                    closed_streams.append(stream_type)
+
+                            if len(closed_streams) > 0:
+                                self._logger.warning("Detected closed streams, attempting reconnection...",
+                                                     client=client.get_net_id(), closed_streams=closed_streams)
+
+                                if not await self._handle_streams_reconnection(client, closed_streams):
+                                    raise ConnectionResetError(
+                                        f"Streams {closed_streams} are closed and reconnection failed"
+                                    )
+                                else:
+                                    self._logger.info("Reconnected closed streams successfully.",
+                                                      client=client.get_net_id(), reconnected_streams=closed_streams)
+                                    try:
+                                        await self._invoke_callback(callback=self.reconnected_callback,
+                                                                    client=client,
+                                                                    streams=closed_streams)
+                                    except CallbackError as e:
+                                        self._logger.log(
+                                            f"Error in reconnected callback -> {e}", Logger.ERROR
+                                        )
 
                             # Update active time
                             client.set_last_connection()

@@ -465,6 +465,7 @@ class ClientConfig:
 
         # Client-specific settings
         self.client_hostname: Optional[str] = None
+        self.uid: Optional[str] = None
 
         # Stream management
         self.streams_enabled: Dict[int, bool] = {}
@@ -476,6 +477,14 @@ class ClientConfig:
         self.log_level: int = self.DEFAULT_LOG_LEVEL
         self.log_to_file: bool = False
         self.log_file_path: Optional[str] = None
+
+    def get_uid(self) -> Optional[str]:
+        """Get the client UID"""
+        return self.uid
+
+    def set_uid(self, uid: str) -> None:
+        """Set the client UID"""
+        self.uid = uid
 
     def set_hostname(self, hostname: str) -> None:
         """Set the client hostname"""
@@ -580,6 +589,7 @@ class ClientConfig:
         """Convert configuration to dictionary for serialization"""
         return {
             "server_info": self.server_info.to_dict(),
+            "uid": self.uid,
             "client_hostname": self.client_hostname,
             "streams_enabled": self.streams_enabled,
             "ssl_enabled": self.ssl_enabled,
@@ -604,6 +614,7 @@ class ClientConfig:
         #         ssl=data.get("ssl_enabled", False)
         #     )
 
+        self.uid = data.get("uid")
         self.client_hostname = data.get("client_hostname", self.client_hostname)
 
         # Load streams and convert string keys to int if necessary

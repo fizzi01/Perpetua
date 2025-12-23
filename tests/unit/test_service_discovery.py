@@ -164,7 +164,7 @@ class TestUIDGeneration:
         host = "192.168.1.100"
 
         with patch("time.time", return_value=1234567890.0):
-            uid = ServiceDiscovery._generate_uid(host)
+            uid = ServiceDiscovery.generate_uid(host)
 
             # Verify UID is generated correctly
             expected_string = f"{host}-{1234567890.0}"
@@ -178,8 +178,8 @@ class TestUIDGeneration:
     def test_generate_uid_different_hosts(self):
         """Test that different hosts generate different UIDs."""
         with patch("time.time", return_value=1234567890.0):
-            uid1 = ServiceDiscovery._generate_uid("192.168.1.100")
-            uid2 = ServiceDiscovery._generate_uid("192.168.1.101")
+            uid1 = ServiceDiscovery.generate_uid("192.168.1.100")
+            uid2 = ServiceDiscovery.generate_uid("192.168.1.101")
 
             assert uid1 != uid2
 
@@ -188,10 +188,10 @@ class TestUIDGeneration:
         host = "192.168.1.100"
 
         with patch("time.time", return_value=1234567890.0):
-            uid1 = ServiceDiscovery._generate_uid(host)
+            uid1 = ServiceDiscovery.generate_uid(host)
 
         with patch("time.time", return_value=1234567891.0):
-            uid2 = ServiceDiscovery._generate_uid(host)
+            uid2 = ServiceDiscovery.generate_uid(host)
 
             assert uid1 != uid2
 
@@ -201,8 +201,8 @@ class TestUIDGeneration:
         timestamp = 1234567890.0
 
         with patch("time.time", return_value=timestamp):
-            uid1 = ServiceDiscovery._generate_uid(host)
-            uid2 = ServiceDiscovery._generate_uid(host)
+            uid1 = ServiceDiscovery.generate_uid(host)
+            uid2 = ServiceDiscovery.generate_uid(host)
 
             assert uid1 == uid2
 
@@ -210,7 +210,7 @@ class TestUIDGeneration:
         """Test exception handling in _generate_uid."""
         with patch("hashlib.sha256", side_effect=Exception("Hash error")):
             with pytest.raises(RuntimeError, match="Failed to generate UID"):
-                ServiceDiscovery._generate_uid("192.168.1.100")
+                ServiceDiscovery.generate_uid("192.168.1.100")
 
     def test_get_uid_initially_none(self, service_discovery):
         """Test that get_uid returns None initially."""
@@ -270,7 +270,7 @@ class TestHostnameResolution:
             ]
             mock_loop.return_value = mock_loop_instance
 
-            ip = await ServiceDiscovery._resolve_hostname(hostname)
+            ip = await ServiceDiscovery.resolve_hostname(hostname)
             assert ip == "127.0.0.1"
 
     @pytest.mark.anyio
@@ -288,7 +288,7 @@ class TestHostnameResolution:
             with pytest.raises(
                 RuntimeError, match=f"Failed to resolve hostname {hostname}"
             ):
-                await ServiceDiscovery._resolve_hostname(hostname)
+                await ServiceDiscovery.resolve_hostname(hostname)
 
 
 # ============================================================================

@@ -19,7 +19,29 @@ from utils.metrics import ConnectionMetrics, MetricsCollector
 
 @dataclass
 class MessageExchangeConfig:
-    """Configuration for MessageExchange layer."""
+    """
+    Configuration settings for message exchange.
+
+    This class encapsulates the configuration parameters needed for controlling
+    the behavior of message exchange in a communication system. It allows for
+    defining limits on message handling, transport mechanisms, and chunk management.
+
+    Attributes:
+        max_delay_tolerance (float): Maximum allowable delay tolerance for
+            message transmission. Determines the threshold for acceptable delays
+            in message exchanges.
+        max_chunk_size (int): Maximum size of a single message chunk in bytes.
+            Controls the amount of data that can be handled per message chunk.
+        auto_chunk (bool): Flag indicating whether to automatically divide larger
+            messages into chunks based on `max_chunk_size`.
+        auto_dispatch (bool): Flag determining if messages should be dispatched
+            automatically upon receipt. When set to True, messages are processed
+            and sent without manual intervention.
+        receive_buffer_size (int): Size of the receive buffer in bytes for
+            handling incoming messages asynchronously.
+        multicast (bool): Indicates whether multicast transport is enabled for
+            message exchange.
+    """
 
     max_delay_tolerance: float = ApplicationConfig.max_delay_tolerance
     max_chunk_size: int = ApplicationConfig.max_chunk_size  # bytes

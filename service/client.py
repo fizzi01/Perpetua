@@ -11,7 +11,7 @@ from typing import Optional, Dict
 from config import ApplicationConfig, ClientConfig
 from model.client import ClientObj, ClientsManager
 from event.bus import AsyncEventBus
-from event import EventType
+from event import EventType, ClientStreamReconnectedEvent
 from network.connection.client import ConnectionHandler
 from network.stream.client import (
     UnidirectionalStreamHandler,
@@ -108,8 +108,9 @@ class Client:
 
         # Add main client to clients manager
         self.main_client = ClientObj(
+            uid=self.config.get_uid(),
             ip_address="0.0.0.0",  # Dummy, we don't need it
-            hostname=self.config.client_hostname,
+            hostname=self.config.get_hostname(),
             screen_resolution=Screen.get_size_str(),
         )
         self.clients_manager.add_client(self.main_client)
@@ -661,6 +662,7 @@ class Client:
         self.connection_handler = ConnectionHandler(
             connected_callback=self._on_connected,
             disconnected_callback=self._on_disconnected,
+            reconnected_callback=self._on_streams_reconnected,
             host=self.config.get_server_host(),
             port=self.config.get_server_port(),
             heartbeat_interval=self.config.get_heartbeat_interval(),
@@ -1011,6 +1013,18 @@ class Client:
                 self._logger.error(f"Error stopping component {component_name}: {e}")
 
         self._logger.info(f"Disconnected from server at {client.get_net_id()}")
+
+    async def _on_streams_reconnected(self, client: ClientObj, streams: list[int]):
+        """Handle streams reconnected event"""
+        self._logger.info(
+            f"Streams reconnected for client {client.get_net_id()}: {streams}"
+        )
+        await self.event_bus.dispatch(
+            event_type=EventType.CLIENT_STREAM_RECONNECTED,
+            data=ClientStreamReconnectedEvent(
+                client_screen=client.get_screen_position(), streams=streams
+            )
+        )
 
     # ==================== Utility Methods ====================
 

@@ -4,15 +4,16 @@ Information includes IP address, port, connection time,
 and other metadata like screen position relative to the server (center),
 screen resolution, and client name. But also additional optional config parameters (future use).
 """
+from enum import StrEnum
 
 from typing import Optional
 
 from network.connection import ClientConnection
 
 
-class ScreenPosition:
+class ScreenPosition(StrEnum):
     """
-    Enum-like class for screen positions.
+    Enumeration of different screen positions.
     """
 
     CENTER = "center"
@@ -21,20 +22,21 @@ class ScreenPosition:
     LEFT = "left"
     RIGHT = "right"
     UKNOWN = "unknown"
-    NONE = None
+    NONE = "none"
 
-    @staticmethod
-    def is_valid(position: Optional[str]) -> bool:
+    @classmethod
+    def is_valid(cls, position: Optional[str]) -> bool:
+        """
+        Verify if the given screen position is valid.
+        """
         if position is None:
             return True
-        return position.lower() in {
-            ScreenPosition.CENTER,
-            ScreenPosition.TOP,
-            ScreenPosition.BOTTOM,
-            ScreenPosition.LEFT,
-            ScreenPosition.RIGHT,
-        }
 
+        try:
+            cls(position)
+            return True
+        except ValueError:
+            return False
 
 class ClientObj:
     """
@@ -43,20 +45,21 @@ class ClientObj:
 
     def __init__(
         self,
+        uid: Optional[str] = None,
         ip_address: Optional[str] = None,
         hostname: Optional[str] = None,
         ports: Optional[dict[int, int]] = None,
-        connection_time: float = 0.0,  # FixME: Use datetime and first and last. This connection_time can increase indefinitely !!!
         first_connection_date: Optional[str] = None,
         last_connection_date: Optional[str] = None,
         is_connected: bool = False,
         screen_position: str = ScreenPosition.CENTER,
         screen_resolution: str = "1x1",
-        client_name: str = "Unknown",
         ssl: bool = False,
         conn_socket: Optional["ClientConnection"] = None,
         additional_params: Optional[dict] = None,
     ):
+        self.uid = uid
+
         if hostname is not None and not self._check_hostname(hostname):
             raise ValueError(f"Invalid hostname: {hostname}")
         self.host_name = hostname
@@ -70,8 +73,7 @@ class ClientObj:
             raise ValueError(f"Invalid IP address: {ip_address}")
         self.ip_address = ip_address
 
-        self.ports = ports if ports is not None else {}
-        self.connection_time = connection_time
+        self.open_streams = ports if ports is not None else {}
         self.first_connection_date = first_connection_date
         self.last_connection_date = last_connection_date
 
@@ -80,7 +82,6 @@ class ClientObj:
             raise ValueError(f"Invalid screen position: {screen_position}")
 
         self.screen_resolution = screen_resolution
-        self.client_name = client_name
         self.ssl = ssl
         self.conn_socket = conn_socket
         self.is_connected = is_connected
@@ -208,9 +209,9 @@ class ClientObj:
     @staticmethod
     def from_dict(data: dict) -> "ClientObj":
         return ClientObj(
+            uid=data.get("uid"),
             hostname=data.get("host_name", None),
             ip_address=data.get("ip_address", None),
-            connection_time=data.get("connection_time", 0.0),
             first_connection_date=data.get("first_connection_date", None),
             last_connection_date=data.get("last_connection_date", None),
             screen_position=data.get("screen_position", ScreenPosition.CENTER),
@@ -221,9 +222,9 @@ class ClientObj:
 
     def __dict__(self) -> dict:
         return {
+            "uid": self.uid,
             "host_name": self.host_name,
             "ip_address": self.ip_address,
-            "connection_time": self.connection_time,
             "first_connection_date": self.first_connection_date,
             "last_connection_date": self.last_connection_date,
             "screen_position": self.screen_position,
@@ -234,9 +235,10 @@ class ClientObj:
 
     def __repr__(self):
         return (
-            f"ClientObj(host_name={self.host_name}, ip_address={self.ip_address}, port={self.ports}, "
-            f"connection_time={self.connection_time}, screen_position={self.screen_position}, "
-            f"screen_resolution={self.screen_resolution}, client_name={self.client_name}, "
+            f"ClientObj(uid={self.uid}, "
+            f"host_name={self.host_name}, ip_address={self.ip_address}, port={self.open_streams}, "
+            f"screen_position={self.screen_position}, "
+            f"screen_resolution={self.screen_resolution}, "
             f"additional_params={self.additional_params})"
         )
 
