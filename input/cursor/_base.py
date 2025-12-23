@@ -81,6 +81,11 @@ class CursorHandlerWindow(wx.Frame):
         if not self._debug:
             self.SetTransparent(0)
 
+        self.last_mouse_send_time = 0
+        self.mouse_send_interval = 0.005  # 1000 Hz
+        self.accumulated_delta_x = 0
+        self.accumulated_delta_y = 0
+
         # Eventi
         self.Bind(wx.EVT_MOTION, self.on_mouse_move)
         self.Bind(wx.EVT_CHAR_HOOK, self.on_key_press)
@@ -273,10 +278,18 @@ class CursorHandlerWindow(wx.Frame):
 
         # Processa solo se c'è movimento
         if delta_x != 0 or delta_y != 0:
-            try:
-                self.mouse_conn.send((delta_x, delta_y))
-            except Exception:
-                pass
+            self.accumulated_delta_x += delta_x
+            self.accumulated_delta_y += delta_y
+
+            current_time = time.time()
+            if current_time - self.last_mouse_send_time >= self.mouse_send_interval:
+                try:
+                    self.mouse_conn.send((self.accumulated_delta_x, self.accumulated_delta_y))
+                    self.accumulated_delta_x = 0
+                    self.accumulated_delta_y = 0
+                    self.last_mouse_send_time = current_time
+                except Exception:
+                    pass
 
             # Resetta posizione
             self.reset_mouse_position()
