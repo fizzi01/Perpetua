@@ -123,7 +123,6 @@ class _ServiceListener(ServiceListener):
         for task in self._pending_task:
             task.cancel()
         self._pending_task.clear()
-        self._services.clear()
 
 
 class ServiceDiscovery:

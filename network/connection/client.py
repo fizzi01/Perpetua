@@ -503,6 +503,7 @@ class ConnectionHandler(BaseConnectionHandler):
     async def _heartbeat_loop(self):
         """Monitor connection health"""
         heartbeat_trials = 0
+        #dbg_b = True
         while self._running and self._connected:
             try:
                 await asyncio.sleep(self.heartbeat_interval)
@@ -523,6 +524,9 @@ class ConnectionHandler(BaseConnectionHandler):
                     if command_reader is None or command_reader.is_closed():
                         raise ConnectionResetError("Command stream EOF reached")
 
+                # st = c_conn.get_stream(StreamType.MOUSE)
+                # if dbg_b:
+                #     await st.close()
                 # Check others streams to handle reconnection
                 closed_streams: list[int] = []
                 for stream_type in self.open_streams:

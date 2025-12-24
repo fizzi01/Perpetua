@@ -99,6 +99,10 @@ class BaseLogger(ABC):
         pass
 
     @abstractmethod
+    def exception(self, message: str, **kw: Any):
+        pass
+
+    @abstractmethod
     def set_level(self, level: int):
         pass
 
