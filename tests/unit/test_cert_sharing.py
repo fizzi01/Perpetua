@@ -2,11 +2,12 @@
 """
 Unit tests for certificate sharing system with OTP and JWT
 """
-
+import hashlib
 import unittest
 import asyncio
 import tempfile
 import os
+from base64 import b64encode
 from pathlib import Path
 import time
 
@@ -82,21 +83,39 @@ class TestCertificateSharing(unittest.TestCase):
 
         # Should be able to decode with same OTP
         import jwt
+        jwt_secret = hashlib.sha256(otp.encode("utf-8")).hexdigest()
+        payload = jwt.decode(token, jwt_secret, algorithms=["HS256"], options={"verify_iat": False})
 
-        payload = jwt.decode(token, otp, algorithms=["HS256"])
-
-        # Check payload contains certificate
-        self.assertIn("cert", payload)
+        # Check payload contains encrypted certificate and salt
+        self.assertIn("encrypted_cert", payload)
+        self.assertIn("salt", payload)
         self.assertIn("exp", payload)
         self.assertIn("iat", payload)
 
-        # Check certificate data matches
+        # Check salt is base64 encoded string
+        self.assertIsInstance(payload["salt"], str)
+        self.assertGreater(len(payload["salt"]), 0)
+
+        import base64
+
+        # Decrypt certificate data using salt from payload
+        decrypted_cert = CertificateSharing.decrypt_data(
+            encrypted_data=base64.b64decode(payload["encrypted_cert"]),
+            nonce=base64.b64decode(payload["nonce"]),
+            salt=base64.b64decode(payload["salt"]),
+            otp=otp,
+        )
+
+        # Check decrypted certificate matches original
         cert_str = (
             self.cert_data.decode("utf-8")
             if isinstance(self.cert_data, bytes)
             else self.cert_data
         )
-        self.assertEqual(payload["cert"], cert_str)
+        # Remove any leading/trailing whitespace for comparison
+        cert_str_normalized = cert_str.replace('\r\n', '\n').replace('\r', '\n')
+        decrypted_cert_normalized = decrypted_cert.decode("utf-8").replace('\r\n', '\n').replace('\r', '\n')
+        self.assertEqual(decrypted_cert_normalized, cert_str_normalized)
 
     def test_otp_expiry(self):
         """Test OTP expiry mechanism"""

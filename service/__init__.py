@@ -78,7 +78,7 @@ class _ServiceListener(ServiceListener):
         # Get service info
         info = AsyncServiceInfo(type_=type_, name=name)
         await info.async_request(zc=zc, timeout=3000)
-        if info is not None:
+        if info is not None and len(info.parsed_addresses()) > 0:
             address = info.parsed_addresses()[0]
             uid = name.split(".")[0]
             hostname = info.properties.get(b"hostname", None)
@@ -97,10 +97,10 @@ class _ServiceListener(ServiceListener):
         self._pending_task.add(task)
         task.add_done_callback(self._pending_task.discard)
 
-    def update_service(self, zc: Zeroconf, type_: str, name: str) -> None:
-        """Update existing service"""
-        info = zc.get_service_info(type_, name)
-        if info is not None:
+    async def _service_info_update_task(self, zc: Zeroconf, type_: str, name: str):
+        info = AsyncServiceInfo(type_=type_, name=name)
+        await info.async_request(zc=zc, timeout=3000)
+        if info is not None and len(info.parsed_addresses()) > 0:
             uid = name.split(".")[0]
             for service in self._services:
                 if service.uid == uid:
@@ -110,6 +110,20 @@ class _ServiceListener(ServiceListener):
                     if b_hostname is not None:
                         service.hostname = b_hostname.decode()
                     break
+
+    def update_service(self, zc: Zeroconf, type_: str, name: str) -> None:
+        """Update existing service"""
+        task = asyncio.create_task(self._service_info_update_task(zc, type_, name))
+        self._pending_task.add(task)
+        task.add_done_callback(self._pending_task.discard)
+
+    def clear(self):
+        """Clear discovered services"""
+        # Close pending tasks
+        for task in self._pending_task:
+            task.cancel()
+        self._pending_task.clear()
+        self._services.clear()
 
 
 class ServiceDiscovery:
@@ -263,8 +277,8 @@ class ServiceDiscovery:
         if self._async_zercnf is None:
             raise RuntimeError("Zeroconf instance is not initialized")
 
+        listener = _ServiceListener()
         try:
-            listener = _ServiceListener()
             zconf = self._async_zercnf.zeroconf
             if zconf is None:
                 raise RuntimeError("Zeroconf instance is not initialized")
@@ -274,6 +288,8 @@ class ServiceDiscovery:
             )
         except Exception as e:
             raise RuntimeError(f"Failed to start mDNS service discovery ({e})")
+        finally:
+            listener.clear()
 
         try:
             await asyncio.sleep(self._mdns_timeout)
@@ -288,6 +304,7 @@ class ServiceDiscovery:
         finally:
             await browser.async_cancel()
             zconf.close()
+            listener.clear()
 
     # async def _resolve_mdns(self):
     #     """

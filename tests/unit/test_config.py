@@ -807,6 +807,7 @@ class TestServerInfoSerialization:
     def test_server_info_to_dict(self):
         """Test converting ServerInfo to dictionary."""
         server_info = ClientConfig.ServerInfo(
+            uid="server-123",
             host="10.0.0.1",
             port=8080,
             heartbeat_interval=5,
@@ -817,6 +818,7 @@ class TestServerInfoSerialization:
 
         data = server_info.to_dict()
 
+        assert data["uid"] == "server-123"
         assert data["host"] == "10.0.0.1"
         assert data["port"] == 8080
         assert data["heartbeat_interval"] == 5

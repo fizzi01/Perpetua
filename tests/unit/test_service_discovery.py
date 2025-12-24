@@ -26,6 +26,7 @@ def mock_async_zeroconf():
     mock = AsyncMock(spec=AsyncZeroconf)
     mock.async_register_service = AsyncMock()
     mock.async_unregister_all_services = AsyncMock()
+    mock.zeroconf = AsyncMock(spec=Zeroconf)
     return mock
 
 
@@ -78,6 +79,16 @@ def sample_services():
 def mock_service_info():
     """Provide a mocked ServiceInfo."""
     mock_info = Mock(spec=ServiceInfo)
+    mock_info.parsed_addresses.return_value = ["192.168.1.100"]
+    mock_info.port = 8000
+    mock_info.properties = {b"hostname": b"test-hostname.local"}
+    return mock_info
+
+@pytest.fixture
+def mock_async_service_info():
+    """Provide a mocked AsyncServiceInfo."""
+    mock_info = AsyncMock(spec=ServiceInfo)
+    mock_info.async_request = AsyncMock()
     mock_info.parsed_addresses.return_value = ["192.168.1.100"]
     mock_info.port = 8000
     mock_info.properties = {b"hostname": b"test-hostname.local"}
@@ -263,30 +274,24 @@ class TestHostnameResolution:
         """Test successful hostname resolution."""
         hostname = "localhost"
 
-        with patch("asyncio.get_event_loop") as mock_loop:
-            mock_loop_instance = AsyncMock()
-            mock_loop_instance.getaddrinfo.return_value = [
-                (None, None, None, None, ("127.0.0.1", 0))
-            ]
-            mock_loop.return_value = mock_loop_instance
+    @pytest.mark.anyio
+    async def test_resolve_hostname_success(self):
+        """Test successful hostname resolution."""
+        hostname = "localhost"
 
+        with patch("service.get_local_ip", return_value="127.0.0.1") as mock_get_local_ip:
             ip = await ServiceDiscovery.resolve_hostname(hostname)
             assert ip == "127.0.0.1"
+            mock_get_local_ip.assert_called_once()
 
     @pytest.mark.anyio
     async def test_resolve_hostname_failure(self):
         """Test hostname resolution failure."""
         hostname = "invalid-nonexistent-host.local"
 
-        with patch("asyncio.get_event_loop") as mock_loop:
-            mock_loop_instance = AsyncMock()
-            mock_loop_instance.getaddrinfo.side_effect = Exception(
-                "Name resolution failed"
-            )
-            mock_loop.return_value = mock_loop_instance
-
+        with patch("service.get_local_ip", side_effect=Exception("Name resolution failed")):
             with pytest.raises(
-                RuntimeError, match=f"Failed to resolve hostname {hostname}"
+                    RuntimeError, match=f"Failed to resolve hostname {hostname}"
             ):
                 await ServiceDiscovery.resolve_hostname(hostname)
 
@@ -417,7 +422,7 @@ class TestServiceRegistration:
 
         # Mock hostname resolution
         with patch.object(
-            ServiceDiscovery, "_resolve_hostname", return_value="192.168.1.100"
+            ServiceDiscovery, "resolve_hostname", return_value="192.168.1.100"
         ) as mock_resolve:
             await service_discovery_with_mock.register_service(hostname, port, uid=None)
 
@@ -443,7 +448,7 @@ class TestServiceRegistration:
         # Mock hostname resolution to raise exception
         with patch.object(
             ServiceDiscovery,
-            "_resolve_hostname",
+            "resolve_hostname",
             side_effect=RuntimeError("Failed to resolve"),
         ):
             with pytest.raises(RuntimeError, match="Failed to resolve"):
@@ -503,11 +508,10 @@ class TestServiceDiscoveryMethods:
     """Test service discovery functionality."""
 
     @pytest.mark.anyio
-    async def test_discover_services_no_services(self, service_discovery):
+    async def test_discover_services_no_services(self, service_discovery_with_mock):
         """Test discovering services when none are available."""
         with (
             patch("service._ServiceListener") as mock_listener_class,
-            patch("service.Zeroconf") as mock_zeroconf_class,
             patch("service.AsyncServiceBrowser") as mock_browser_class,
         ):
             # Setup mocks
@@ -515,21 +519,17 @@ class TestServiceDiscoveryMethods:
             mock_listener.get_services.return_value = []
             mock_listener_class.return_value = mock_listener
 
-            mock_zeroconf = Mock()
-            mock_zeroconf.close = Mock()
-            mock_zeroconf_class.return_value = mock_zeroconf
-
             mock_browser = AsyncMock()
             mock_browser.async_cancel = AsyncMock()
             mock_browser_class.return_value = mock_browser
 
             # Discover services
-            services = await service_discovery.discover_services()
+            services = await service_discovery_with_mock.discover_services()
 
             # Verify results
             assert services == []
             mock_browser.async_cancel.assert_called_once()
-            mock_zeroconf.close.assert_called_once()
+            service_discovery_with_mock._async_zercnf.zeroconf.close.assert_called_once()
 
     @pytest.mark.anyio
     async def test_discover_services_with_services(
@@ -549,6 +549,8 @@ class TestServiceDiscoveryMethods:
             mock_zeroconf = Mock()
             mock_zeroconf.close = Mock()
             mock_zeroconf_class.return_value = mock_zeroconf
+            service_discovery._async_zercnf = AsyncMock()
+            service_discovery._async_zercnf.zeroconf = mock_zeroconf
 
             mock_browser = AsyncMock()
             mock_browser.async_cancel = AsyncMock()
@@ -583,6 +585,8 @@ class TestServiceDiscoveryMethods:
             mock_zeroconf = Mock()
             mock_zeroconf.close = Mock()
             mock_zeroconf_class.return_value = mock_zeroconf
+            service_discovery._async_zercnf = AsyncMock()
+            service_discovery._async_zercnf.zeroconf = mock_zeroconf
 
             mock_browser = AsyncMock()
             mock_browser.async_cancel = AsyncMock()
@@ -605,6 +609,8 @@ class TestServiceDiscoveryMethods:
             with pytest.raises(
                 RuntimeError, match=r"^Failed to start mDNS service discovery"
             ):
+                service_discovery._async_zercnf = AsyncMock()
+                service_discovery._async_zercnf.zeroconf = Mock()
                 await service_discovery._discover_services()
 
     @pytest.mark.anyio
@@ -623,6 +629,8 @@ class TestServiceDiscoveryMethods:
             mock_zeroconf = Mock()
             mock_zeroconf.close = Mock()
             mock_zeroconf_class.return_value = mock_zeroconf
+            service_discovery._async_zercnf = Mock()
+            service_discovery._async_zercnf.zeroconf = mock_zeroconf
 
             mock_browser = AsyncMock()
             mock_browser.async_cancel = AsyncMock()
@@ -650,6 +658,8 @@ class TestServiceDiscoveryMethods:
             mock_zeroconf = Mock()
             mock_zeroconf.close = Mock()
             mock_zeroconf_class.return_value = mock_zeroconf
+            service_discovery._async_zercnf = Mock()
+            service_discovery._async_zercnf.zeroconf = mock_zeroconf
 
             mock_browser = AsyncMock()
             mock_browser.async_cancel = AsyncMock()
@@ -677,7 +687,8 @@ class TestServiceListener:
         listener = _ServiceListener()
         assert listener.get_services() == []
 
-    def test_listener_add_service(self, mock_service_info):
+    @pytest.mark.anyio
+    async def test_listener_add_service(self, mock_async_service_info):
         """Test adding a service to the listener."""
         from service import _ServiceListener
 
@@ -685,23 +696,28 @@ class TestServiceListener:
 
         # Create mock Zeroconf
         mock_zeroconf = Mock(spec=Zeroconf)
-        mock_zeroconf.get_service_info.return_value = mock_service_info
 
-        # Add service
-        service_type = "_pycontinuity._tcp.local."
-        service_name = "test_uid._pycontinuity._tcp.local."
-        listener.add_service(mock_zeroconf, service_type, service_name)
+        # Mock AsyncServiceInfo
+        with patch("service.AsyncServiceInfo", return_value=mock_async_service_info):
+            # Add service
+            service_type = "_pycontinuity._tcp.local."
+            service_name = "test_uid._pycontinuity._tcp.local."
+            listener.add_service(mock_zeroconf, service_type, service_name)
 
-        # Verify service was added
-        services = listener.get_services()
-        assert len(services) == 1
-        assert services[0].name == service_name
-        assert services[0].address == "192.168.1.100"
-        assert services[0].port == 8000
-        assert services[0].uid == "test_uid"
-        assert services[0].hostname == "test-hostname.local"
+            # Wait for the async task to complete
+            await asyncio.sleep(0.1)
 
-    def test_listener_add_service_no_info(self):
+            # Verify service was added
+            services = listener.get_services()
+            assert len(services) == 1
+            assert services[0].name == service_name
+            assert services[0].address == "192.168.1.100"
+            assert services[0].port == 8000
+            assert services[0].uid == "test_uid"
+            assert services[0].hostname == "test-hostname.local"
+
+    @pytest.mark.anyio
+    async def test_listener_add_service_no_info(self, mock_async_service_info):
         """Test adding a service when no info is available."""
         from service import _ServiceListener
 
@@ -709,59 +725,72 @@ class TestServiceListener:
 
         # Create mock Zeroconf
         mock_zeroconf = Mock(spec=Zeroconf)
-        mock_zeroconf.get_service_info.return_value = None
+        mock_async_service_info.parsed_addresses.return_value = []
+        # Mock AsyncServiceInfo to return None after async_request
+        with patch("service.AsyncServiceInfo", return_value=mock_async_service_info):
+            # Add service
+            service_type = "_pycontinuity._tcp.local."
+            service_name = "test._pycontinuity._tcp.local."
+            listener.add_service(mock_zeroconf, service_type, service_name)
 
-        # Add service
-        service_type = "_pycontinuity._tcp.local."
-        service_name = "test._pycontinuity._tcp.local."
-        listener.add_service(mock_zeroconf, service_type, service_name)
+            await asyncio.sleep(0.1)
 
-        # Verify no service was added
-        services = listener.get_services()
-        assert len(services) == 0
+            # Verify no service was added
+            services = listener.get_services()
+            assert len(services) == 0
 
-    def test_listener_add_multiple_services(self, mock_service_info):
+    @pytest.mark.anyio
+    async def test_listener_add_multiple_services(self, mock_async_service_info):
         """Test adding multiple services."""
         from service import _ServiceListener
+        from service import AsyncServiceInfo
 
         listener = _ServiceListener()
 
         # Create mock Zeroconf
         mock_zeroconf = Mock(spec=Zeroconf)
 
-        # Create multiple service infos
-        info1 = Mock(spec=ServiceInfo)
-        info1.parsed_addresses.return_value = ["192.168.1.100"]
-        info1.port = 8000
-        info1.properties = {b"hostname": b"host1.local"}
+        with patch("service.AsyncServiceInfo") as mock_async_info_class:
+            # Create first service info
+            mock_async_info1 = Mock()
+            mock_async_info1.async_request = AsyncMock()
+            mock_async_info1.parsed_addresses.return_value = ["192.168.1.100"]
+            mock_async_info1.port = 8000
+            mock_async_info1.properties = {b"hostname": b"host1.local"}
 
-        info2 = Mock(spec=ServiceInfo)
-        info2.parsed_addresses.return_value = ["192.168.1.101"]
-        info2.port = 8001
-        info2.properties = {b"hostname": b"host2.local"}
+            # Create second service info
+            mock_async_info2 = Mock()
+            mock_async_info2.async_request = AsyncMock()
+            mock_async_info2.parsed_addresses.return_value = ["192.168.1.101"]
+            mock_async_info2.port = 8001
+            mock_async_info2.properties = {b"hostname": b"host2.local"}
 
-        mock_zeroconf.get_service_info.side_effect = [info1, info2]
+            mock_async_info_class.side_effect = [mock_async_info1, mock_async_info2]
 
-        # Add services
-        service_type = "_pycontinuity._tcp.local."
-        listener.add_service(
-            mock_zeroconf, service_type, "uid1._pycontinuity._tcp.local."
-        )
-        listener.add_service(
-            mock_zeroconf, service_type, "uid2._pycontinuity._tcp.local."
-        )
+            # Add services
+            service_type = "_pycontinuity._tcp.local."
+            listener.add_service(
+                mock_zeroconf, service_type, "uid1._pycontinuity._tcp.local."
+            )
+            listener.add_service(
+                mock_zeroconf, service_type, "uid2._pycontinuity._tcp.local."
+            )
 
-        # Verify services were added
-        services = listener.get_services()
-        assert len(services) == 2
-        assert services[0].address == "192.168.1.100"
-        assert services[0].uid == "uid1"
-        assert services[0].hostname == "host1.local"
-        assert services[1].address == "192.168.1.101"
-        assert services[1].uid == "uid2"
-        assert services[1].hostname == "host2.local"
+            await asyncio.sleep(0.2)
 
-    def test_listener_update_service(self):
+            # Verify services were added
+            services = listener.get_services()
+            assert len(services) == 2
+            assert services[0].address == "192.168.1.100"
+            assert services[0].uid == "uid1"
+            assert services[0].hostname == "host1.local"
+            assert services[1].address == "192.168.1.101"
+            assert services[1].uid == "uid2"
+            assert services[1].hostname == "host2.local"
+
+    @pytest.mark.anyio
+    @pytest.mark.anyio
+    async def test_listener_update_service(self):
         """Test updating an existing service."""
         from service import _ServiceListener
 
@@ -770,21 +799,30 @@ class TestServiceListener:
         # Create mock Zeroconf
         mock_zeroconf = Mock(spec=Zeroconf)
 
-        # Add initial service
-        info1 = Mock(spec=ServiceInfo)
-        info1.parsed_addresses.return_value = ["192.168.1.100"]
-        info1.port = 8000
-        info1.properties = {b"hostname": b"host1.local"}
+        # Add initial service first
+        with patch("service.AsyncServiceInfo") as mock_async_info_class:
+            info1 = AsyncMock()
+            info1.async_request = AsyncMock()
+            info1.parsed_addresses = Mock(return_value=["192.168.1.100"])
+            info1.port = 8000
+            info1.properties = {b"hostname": b"host1.local"}
 
-        mock_zeroconf.get_service_info.return_value = info1
+            mock_async_info_class.return_value = info1
 
-        service_type = "_pycontinuity._tcp.local."
-        service_name = "test_uid._pycontinuity._tcp.local."
-        listener.add_service(mock_zeroconf, service_type, service_name)
+            service_type = "_pycontinuity._tcp.local."
+            service_name = "test_uid._pycontinuity._tcp.local."
 
-        # Update service
+            listener.add_service(mock_zeroconf, service_type, service_name)
+            await asyncio.sleep(0.2)
+
+        # Verify initial service was added
+        services = listener.get_services()
+        assert len(services) == 1
+        assert services[0].address == "192.168.1.100"
+
+        # Now update the service using get_service_info (sync method)
         info2 = Mock(spec=ServiceInfo)
-        info2.parsed_addresses.return_value = ["192.168.1.200"]
+        info2.parsed_addresses = Mock(return_value=["192.168.1.200"])
         info2.port = 9000
         info2.properties = {b"hostname": b"updated-host.local"}
 
@@ -822,35 +860,39 @@ class TestServiceListener:
         services = listener.get_services()
         assert len(services) == 0
 
-    def test_listener_add_service_without_hostname(self):
+    @pytest.mark.anyio
+    async def test_listener_add_service_without_hostname(self):
         """Test adding a service without hostname property."""
         from service import _ServiceListener
 
         listener = _ServiceListener()
 
         # Create mock Zeroconf
-        mock_zeroconf = Mock(spec=Zeroconf)
+        mock_zeroconf = AsyncMock(spec=Zeroconf)
+        with patch("service.AsyncServiceInfo") as mock_async_info_class:
+            # Create service info without hostname
+            mock_async_info = AsyncMock()
+            mock_async_info.async_request = AsyncMock()
+            mock_async_info.parsed_addresses.return_value = ["192.168.1.100"]
+            mock_async_info.port = 8000
+            mock_async_info.properties = {}  # No hostname property
 
-        # Create service info without hostname
-        mock_info = Mock(spec=ServiceInfo)
-        mock_info.parsed_addresses.return_value = ["192.168.1.100"]
-        mock_info.port = 8000
-        mock_info.properties = {}  # No hostname property
+            mock_async_info_class.return_value = mock_async_info
 
-        mock_zeroconf.get_service_info.return_value = mock_info
+            mock_zeroconf.get_service_info.return_value = mock_async_info_class
 
-        # Add service
-        service_type = "_pycontinuity._tcp.local."
-        service_name = "test_uid._pycontinuity._tcp.local."
-        listener.add_service(mock_zeroconf, service_type, service_name)
-
-        # Verify service was added without hostname
-        services = listener.get_services()
-        assert len(services) == 1
-        assert services[0].hostname is None
-        assert services[0].address == "192.168.1.100"
-        assert services[0].port == 8000
-        assert services[0].uid == "test_uid"
+            # Add service
+            service_type = "_pycontinuity._tcp.local."
+            service_name = "test_uid._pycontinuity._tcp.local."
+            listener.add_service(mock_zeroconf, service_type, service_name)
+            await asyncio.sleep(0.1)
+            # Verify service was added without hostname
+            services = listener.get_services()
+            assert len(services) == 1
+            assert services[0].hostname is None
+            assert services[0].address == "192.168.1.100"
+            assert services[0].port == 8000
+            assert services[0].uid == "test_uid"
 
 
 # ============================================================================
@@ -902,6 +944,8 @@ class TestServiceDiscoveryIntegration:
             mock_zeroconf = Mock()
             mock_zeroconf.close = Mock()
             mock_zeroconf_class.return_value = mock_zeroconf
+            service_discovery._async_zercnf = Mock()
+            service_discovery._async_zercnf.zeroconf = mock_zeroconf
 
             mock_browser = AsyncMock()
             mock_browser.async_cancel = AsyncMock()
