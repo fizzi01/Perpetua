@@ -4,6 +4,7 @@ Information includes IP address, port, connection time,
 and other metadata like screen position relative to the server (center),
 screen resolution, and client name. But also additional optional config parameters (future use).
 """
+
 from enum import StrEnum
 
 from typing import Optional
@@ -37,6 +38,7 @@ class ScreenPosition(StrEnum):
             return True
         except ValueError:
             return False
+
 
 class ClientObj:
     """

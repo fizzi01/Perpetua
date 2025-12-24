@@ -21,7 +21,8 @@ from event import (
 from event.bus import EventBus
 from model.client import ScreenPosition
 
-from network.stream import StreamType, StreamHandler
+from network.stream import StreamType
+from network.stream.handler import StreamHandler
 
 from utils.logging import get_logger, Logger
 from utils.screen import Screen

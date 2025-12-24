@@ -11,14 +11,20 @@ from typing import Optional, Dict, Tuple
 from config import ApplicationConfig, ServerConfig
 from model.client import ClientObj, ClientsManager, ScreenPosition
 from event.bus import AsyncEventBus
-from event import EventType, ClientConnectedEvent, ClientDisconnectedEvent, ClientStreamReconnectedEvent
+from event import (
+    EventType,
+    ClientConnectedEvent,
+    ClientDisconnectedEvent,
+    ClientStreamReconnectedEvent,
+)
 from network.connection.server import ConnectionHandler
-from network.stream.server import (
+from network.stream.handler.server import (
     UnidirectionalStreamHandler,
     BidirectionalStreamHandler,
     MulticastStreamHandler,
 )
-from network.stream import StreamType, StreamHandler
+from network.stream import StreamType
+from network.stream.handler import StreamHandler
 
 from command import CommandHandler
 
@@ -754,7 +760,7 @@ class Server:
             handler_id="ServerKeyboardStreamHandler",
             sender=True,
             metrics_collector=self._metrics_collector,
-            buffer_size=10000
+            buffer_size=10000,
         )
 
         # Clipboard stream
@@ -806,7 +812,7 @@ class Server:
                 event_bus=self.event_bus,
                 handler_id="ServerMouseStreamHandler",
                 sender=True,
-                buffer_size=10000, # Higher needed for high polling rates
+                buffer_size=10000,  # Higher needed for high polling rates
             )
             self._stream_handlers[StreamType.MOUSE] = mouse_stream
 

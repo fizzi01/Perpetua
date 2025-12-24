@@ -31,7 +31,7 @@ class ConnectionHandler(BaseConnectionHandler):
     CONNECTION_ATTEMPT_TIMEOUT = 10  # seconds
     RECONNECTION_DELAY = 10  # seconds
     HANDSHAKE_DELAY = 0.2  # seconds
-    STREAM_CONN_DELAY_GUARD = 1 # seconds
+    STREAM_CONN_DELAY_GUARD = 1  # seconds
     HANDSHAKE_MSG_TIMEOUT = 5.0  # seconds
     MAX_HEARTBEAT_MISSES = 1
 
@@ -229,8 +229,10 @@ class ConnectionHandler(BaseConnectionHandler):
                             # Call connected callback
                             if self.connected_callback:
                                 try:
-                                    await self._invoke_callback(callback=self.connected_callback,
-                                                                client=self._client_obj)
+                                    await self._invoke_callback(
+                                        callback=self.connected_callback,
+                                        client=self._client_obj,
+                                    )
                                 except CallbackError as e:
                                     self._logger.log(
                                         f"Error in connected callback -> {e}",
@@ -527,10 +529,8 @@ class ConnectionHandler(BaseConnectionHandler):
                     if c_conn is not None and c_conn.has_stream(stream_type):
                         stream_reader = c_conn.get_reader(stream_type)
                         stream_writer = c_conn.get_writer(stream_type)
-                        if (
-                                (stream_reader is None or stream_reader.is_closed())
-                                or
-                                (stream_writer is None or stream_writer.is_closed())
+                        if (stream_reader is None or stream_reader.is_closed()) or (
+                            stream_writer is None or stream_writer.is_closed()
                         ):
                             # Force closure of the stream writer if it exists
                             if stream_writer:
@@ -539,7 +539,12 @@ class ConnectionHandler(BaseConnectionHandler):
 
                 # Attempt to reopen closed streams
                 if len(closed_streams) > 0:
+                    self._logger.warning(
+                        "Detected closed streams, attempting reconnection...",
+                        closed_streams=closed_streams,
+                    )
                     await asyncio.sleep(self.STREAM_CONN_DELAY_GUARD)
+
                     if not await self._open_additional_streams(closed_streams):
                         raise ConnectionResetError("Failed to reopen closed streams")
                     else:
@@ -592,8 +597,9 @@ class ConnectionHandler(BaseConnectionHandler):
 
         # Call disconnected callback
         try:
-            await self._invoke_callback(callback=self.disconnected_callback,
-                                        client=self._client_obj)
+            await self._invoke_callback(
+                callback=self.disconnected_callback, client=self._client_obj
+            )
         except CallbackError as e:
             self._logger.log(f"Error in disconnected callback -> {e}", Logger.ERROR)
 

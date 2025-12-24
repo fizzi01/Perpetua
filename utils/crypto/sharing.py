@@ -77,7 +77,7 @@ class CertificateSharing:
             salt=salt,
             iterations=100000,
         )
-        return kdf.derive(otp.encode('utf-8'))
+        return kdf.derive(otp.encode("utf-8"))
 
     @staticmethod
     def encrypt_data(data: bytes, otp: str) -> Tuple[bytes, bytes, bytes]:
@@ -105,7 +105,9 @@ class CertificateSharing:
         return encrypted_data, nonce, salt
 
     @staticmethod
-    def decrypt_data(encrypted_data: bytes, nonce: bytes, salt: bytes, otp: str) -> bytes:
+    def decrypt_data(
+        encrypted_data: bytes, nonce: bytes, salt: bytes, otp: str
+    ) -> bytes:
         """
         Decrypt data using AES-GCM with key derived from OTP.
 
@@ -140,15 +142,15 @@ class CertificateSharing:
 
         # Encode binary data to base64 for JSON serialization
         payload = {
-            "encrypted_cert": base64.b64encode(encrypted_data).decode('utf-8'),
-            "nonce": base64.b64encode(nonce).decode('utf-8'),
-            "salt": base64.b64encode(salt).decode('utf-8'),
+            "encrypted_cert": base64.b64encode(encrypted_data).decode("utf-8"),
+            "nonce": base64.b64encode(nonce).decode("utf-8"),
+            "salt": base64.b64encode(salt).decode("utf-8"),
             "exp": datetime.now(timezone.utc) + timedelta(seconds=self._timeout),
             "iat": datetime.now(tz=timezone.utc).timestamp(),
         }
 
         # Sign JWT (using a hash of OTP to avoid using OTP directly as JWT secret)
-        jwt_secret = hashlib.sha256(otp.encode('utf-8')).hexdigest()
+        jwt_secret = hashlib.sha256(otp.encode("utf-8")).hexdigest()
         return jwt.encode(payload, jwt_secret, algorithm="HS256")
 
     async def _handle_client(
@@ -329,7 +331,9 @@ class CertificateReceiver:
         """
         try:
             self._logger.log(
-                f"Connecting to {self._server_host}:{self._server_port}...", Logger.INFO, otp=otp
+                f"Connecting to {self._server_host}:{self._server_port}...",
+                Logger.INFO,
+                otp=otp,
             )
 
             # Connect to server (no SSL for this temporary connection)
@@ -350,7 +354,9 @@ class CertificateReceiver:
             self._logger.log("Connected, waiting for certificate...", Logger.DEBUG)
 
             # Read response
-            response = await asyncio.wait_for(reader.readuntil(b"\n"), timeout=self._timeout)
+            response = await asyncio.wait_for(
+                reader.readuntil(b"\n"), timeout=self._timeout
+            )
             response = response.decode("utf-8").strip()
 
             if response.startswith("ERROR:"):
@@ -367,8 +373,13 @@ class CertificateReceiver:
 
             # Verify and decode JWT using OTP hash as secret
             try:
-                jwt_secret = hashlib.sha256(otp.encode('utf-8')).hexdigest()
-                payload = jwt.decode(token, jwt_secret, algorithms=["HS256"], options={"verify_iat": False})
+                jwt_secret = hashlib.sha256(otp.encode("utf-8")).hexdigest()
+                payload = jwt.decode(
+                    token,
+                    jwt_secret,
+                    algorithms=["HS256"],
+                    options={"verify_iat": False},
+                )
 
                 # Extract encrypted data components
                 encrypted_cert_b64 = payload["encrypted_cert"]
@@ -381,10 +392,16 @@ class CertificateReceiver:
                 salt = base64.b64decode(salt_b64)
 
                 # Decrypt certificate data using OTP
-                cert_data = CertificateSharing.decrypt_data(encrypted_cert, nonce, salt, otp)
+                cert_data = CertificateSharing.decrypt_data(
+                    encrypted_cert, nonce, salt, otp
+                )
 
                 # Convert bytes to string if needed
-                cert_data_str = cert_data.decode('utf-8') if isinstance(cert_data, bytes) else cert_data
+                cert_data_str = (
+                    cert_data.decode("utf-8")
+                    if isinstance(cert_data, bytes)
+                    else cert_data
+                )
 
                 self._logger.log(
                     "Certificate received and decrypted successfully", Logger.INFO
@@ -398,8 +415,11 @@ class CertificateReceiver:
                 self._logger.log(f"Invalid JWT or OTP: {e}", Logger.ERROR)
                 return False, None
             except Exception as e:
-                self._logger.log(f"Failed to decrypt certificate data: {e}", Logger.ERROR)
+                self._logger.log(
+                    f"Failed to decrypt certificate data: {e}", Logger.ERROR
+                )
                 import traceback
+
                 self._logger.log(traceback.format_exc(), Logger.DEBUG)
                 return False, None
 

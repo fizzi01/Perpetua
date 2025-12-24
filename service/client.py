@@ -13,11 +13,12 @@ from model.client import ClientObj, ClientsManager
 from event.bus import AsyncEventBus
 from event import EventType, ClientStreamReconnectedEvent
 from network.connection.client import ConnectionHandler
-from network.stream.client import (
+from network.stream.handler.client import (
     UnidirectionalStreamHandler,
     BidirectionalStreamHandler,
 )
-from network.stream import StreamType, StreamHandler
+from network.stream import StreamType
+from network.stream.handler import StreamHandler
 from command import CommandHandler
 from input.mouse import ClientMouseController
 from input.keyboard import ClientKeyboardController
@@ -141,7 +142,9 @@ class Client:
         self._otp_received: asyncio.Future[str] = asyncio.Future()
 
         self._need_server_choice: asyncio.Future[bool] = asyncio.Future()
-        self._server: asyncio.Future[Service] = asyncio.Future() # We will set the result when user choose a server
+        self._server: asyncio.Future[Service] = (
+            asyncio.Future()
+        )  # We will set the result when user choose a server
 
     # ==================== Configuration Management ====================
 
@@ -466,7 +469,8 @@ class Client:
             await self.discover_servers()
             await asyncio.sleep(0)
 
-        if (self.config.get_server_uid() is None
+        if (
+            self.config.get_server_uid() is None
             or self.config.get_server_host() is None
             or self.config.get_server_port() is None
         ):
@@ -474,9 +478,11 @@ class Client:
 
         for service in self._found_services:
             # We need to match all (address and port could vary)
-            if (service.uid == self.config.get_server_uid()
-                    and service.address == self.config.get_server_host()
-                    and service.port == self.config.get_server_port()):
+            if (
+                service.uid == self.config.get_server_uid()
+                and service.address == self.config.get_server_host()
+                and service.port == self.config.get_server_port()
+            ):
                 return True
 
         return False
@@ -526,9 +532,6 @@ class Client:
         """
         Discover available servers on the network using mDNS.
 
-        Args:
-            timeout: Discovery timeout in seconds (default: 5)
-
         Returns:
             List of discovered servers with their details
         """
@@ -577,7 +580,7 @@ class Client:
                 self._otp_needed.set_result(False)
             else:
                 async with self._state_lock:
-                    self._otp_needed = asyncio.Future() # Reset for future use
+                    self._otp_needed = asyncio.Future()  # Reset for future use
 
     async def _handle_server_availability(self) -> bool:
         """
@@ -598,7 +601,9 @@ class Client:
                 self._logger.warning("Saved server not found")
 
                 if not self._found_services or len(self._found_services) == 0:
-                    self._logger.warning("Cannot find any available servers on the network")
+                    self._logger.warning(
+                        "Cannot find any available servers on the network"
+                    )
                     return False
 
                 if len(self._found_services) == 1:
@@ -608,7 +613,7 @@ class Client:
                 else:
                     self._logger.info(
                         "Multiple servers found. Please choose one to connect.",
-                        servers=[s.as_dict() for s in self._found_services]
+                        servers=[s.as_dict() for s in self._found_services],
                     )
                     self._need_server_choice.set_result(True)
 
@@ -616,10 +621,7 @@ class Client:
                 res = await self._server
 
                 self._logger.info(
-                    "Server choosed",
-                    uid=res.uid,
-                    host=res.address,
-                    port=res.port
+                    "Server choosed", uid=res.uid, host=res.address, port=res.port
                 )
 
             return True
@@ -627,11 +629,11 @@ class Client:
             self._logger.error(f"Error during server availability check -> {e}")
             return False
         finally:
-                if not self._need_server_choice.done():
-                    self._need_server_choice.set_result(False)
-                else:
-                    async with self._state_lock:
-                        self._need_server_choice = asyncio.Future()  # Reset for future use
+            if not self._need_server_choice.done():
+                self._need_server_choice.set_result(False)
+            else:
+                async with self._state_lock:
+                    self._need_server_choice = asyncio.Future()  # Reset for future use
 
     async def start(self) -> bool:
         """Start the client and connect to server"""
@@ -1016,14 +1018,12 @@ class Client:
 
     async def _on_streams_reconnected(self, client: ClientObj, streams: list[int]):
         """Handle streams reconnected event"""
-        self._logger.info(
-            f"Streams reconnected for client {client.get_net_id()}: {streams}"
-        )
+        self._logger.info("Streams reconnected", streams=streams)
         await self.event_bus.dispatch(
             event_type=EventType.CLIENT_STREAM_RECONNECTED,
             data=ClientStreamReconnectedEvent(
                 client_screen=client.get_screen_position(), streams=streams
-            )
+            ),
         )
 
     # ==================== Utility Methods ====================

@@ -6,6 +6,7 @@ from model.client import ClientObj
 
 class CallbackError(Exception):
     """Custom exception for callback invocation errors."""
+
     pass
 
 
@@ -16,9 +17,9 @@ class BaseConnectionHandler:
 
     @staticmethod
     async def _invoke_callback(
-            callback: Optional[Callable],
-            client: Optional['ClientObj'],
-            **kwargs,
+        callback: Optional[Callable],
+        client: Optional["ClientObj"],
+        **kwargs,
     ):
         """
         Invokes a provided callback function with the given client and streams. If the callback
@@ -45,7 +46,9 @@ class BaseConnectionHandler:
         except Exception as e:
             raise CallbackError(f"{e}") from e
 
-    async def handle_connection(self, reader: asyncio.StreamReader, writer: asyncio.StreamWriter):
+    async def handle_connection(
+        self, reader: asyncio.StreamReader, writer: asyncio.StreamWriter
+    ):
         """
         Handle a new connection.
 

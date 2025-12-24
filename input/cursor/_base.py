@@ -9,6 +9,7 @@ import time
 import threading
 
 from multiprocessing import Queue, Pipe, Process
+
 if sys.platform == "win32":
     from multiprocessing.connection import PipeConnection as Connection
 else:
@@ -24,7 +25,7 @@ from event import (
 )
 from event.bus import EventBus
 
-from network.stream import StreamHandler
+from network.stream.handler import StreamHandler
 
 from utils.logging import get_logger
 
@@ -284,7 +285,9 @@ class CursorHandlerWindow(wx.Frame):
             current_time = time.time()
             if current_time - self.last_mouse_send_time >= self.mouse_send_interval:
                 try:
-                    self.mouse_conn.send((self.accumulated_delta_x, self.accumulated_delta_y))
+                    self.mouse_conn.send(
+                        (self.accumulated_delta_x, self.accumulated_delta_y)
+                    )
                     self.accumulated_delta_x = 0
                     self.accumulated_delta_y = 0
                     self.last_mouse_send_time = current_time
@@ -566,7 +569,7 @@ class CursorHandlerWorker(object):
         if not self._is_running:
             raise RuntimeError("Window process not running")
         loop = asyncio.get_running_loop()
-        await loop.run_in_executor(None, self.command_queue.put, command) # type: ignore
+        await loop.run_in_executor(None, self.command_queue.put, command)  # type: ignore
         await asyncio.sleep(0)  # Yield control to event loop
 
     async def get_result(self, timeout: float = 0.1):
@@ -574,7 +577,9 @@ class CursorHandlerWorker(object):
         loop = asyncio.get_running_loop()
         try:
             return await loop.run_in_executor(
-                None, self.result_queue.get, timeout # type: ignore
+                None,
+                self.result_queue.get,
+                timeout,  # type: ignore
             )
         except Empty:
             return None

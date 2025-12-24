@@ -4,7 +4,7 @@ from typing import Optional, Callable, Any
 from AppKit import NSPasteboard, NSFilenamesPboardType
 
 from event.bus import EventBus
-from network.stream import StreamHandler
+from network.stream.handler import StreamHandler
 from utils.logging import get_logger
 from . import _base
 from ._base import ClipboardType

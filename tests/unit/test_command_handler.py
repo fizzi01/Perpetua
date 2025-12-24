@@ -16,7 +16,7 @@ from event import (
     CrossScreenCommandEvent,
     ClientActiveEvent,
 )
-from network.stream import StreamHandler
+from network.stream.handler import StreamHandler
 from network.protocol.message import MessageType
 from tests.unit.conftest import create_protocol_message
 

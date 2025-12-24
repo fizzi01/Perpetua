@@ -35,7 +35,7 @@ class EventType(IntEnum):
     CLIENT_ACTIVE = 2
     CLIENT_INACTIVE = 3
 
-    CLIENT_STREAM_RECONNECTED = 7 # Dispatched when a client stream reconnects
+    CLIENT_STREAM_RECONNECTED = 7  # Dispatched when a client stream reconnects
 
 
 class BusEvent(ABC):
@@ -45,6 +45,7 @@ class BusEvent(ABC):
 
     def to_dict(self):
         raise NotImplementedError
+
 
 class ClientStreamReconnectedEvent(BusEvent):
     """
@@ -57,6 +58,7 @@ class ClientStreamReconnectedEvent(BusEvent):
 
     def to_dict(self) -> dict:
         return {"client_screen": self.client_screen, "stream_id": self.streams}
+
 
 class ActiveScreenChangedEvent(BusEvent):
     """

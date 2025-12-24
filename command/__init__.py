@@ -12,7 +12,7 @@ from event import (
     ClientActiveEvent,
 )
 from event.bus import EventBus
-from network.stream import StreamHandler
+from network.stream.handler import StreamHandler
 from network.protocol.message import MessageType
 from utils.logging import get_logger
 

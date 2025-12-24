@@ -5,7 +5,6 @@ Fully async implementation using AsyncEventBus and async connection handlers.
 
 import asyncio
 from event import EventType
-from network.data.exchange import MessageExchange
 # ServerConnectionService needs a Clientmanager with at least a ClienObj configured to connect to.
 # We need also an EventBus to handle events and the first stream handler (command stream).
 # (We need just one per stream cause the handler manages multiple clients).
@@ -16,7 +15,7 @@ from model.client import ClientObj, ClientsManager
 from event.bus import AsyncEventBus  # Changed to AsyncEventBus
 
 from network.connection.server import ConnectionHandler  # Changed to async
-from network.stream.server import (
+from network.stream.handler.server import (
     UnidirectionalStreamHandler,
     BidirectionalStreamHandler,
     MulticastStreamHandler,

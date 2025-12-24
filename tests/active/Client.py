@@ -11,7 +11,7 @@ from event.bus import AsyncEventBus  # Changed to AsyncEventBus
 from command import CommandHandler
 
 from network.connection.client import ConnectionHandler  # Changed to async
-from network.stream.client import (
+from network.stream.handler.client import (
     UnidirectionalStreamHandler,
     BidirectionalStreamHandler,
 )

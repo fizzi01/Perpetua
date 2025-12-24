@@ -1,7 +1,7 @@
 import Quartz
 
 from event.bus import EventBus
-from network.stream import StreamHandler
+from network.stream.handler import StreamHandler
 
 from . import _base
 

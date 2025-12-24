@@ -195,18 +195,15 @@ class ConnectionHandler(BaseConnectionHandler):
             self.clients.update_client(client)
 
             try:
-                await self._invoke_callback(callback=self.disconnected_callback,
-                                            client=client,
-                                            streams=[])
-            except CallbackError as e:
-                self._logger.log(
-                    f"Error in disconnected callback -> {e}", Logger.ERROR
+                await self._invoke_callback(
+                    callback=self.disconnected_callback, client=client, streams=[]
                 )
+            except CallbackError as e:
+                self._logger.log(f"Error in disconnected callback -> {e}", Logger.ERROR)
 
-    async def _check_pending_streams(self,
-                                     reader: asyncio.StreamReader,
-                                     writer: asyncio.StreamWriter,
-                                     address: str) -> bool:
+    async def _check_pending_streams(
+        self, reader: asyncio.StreamReader, writer: asyncio.StreamWriter, address: str
+    ) -> bool:
         """
         Checks for pending streams associated with a specific address and handles their
         completion if applicable.
@@ -228,8 +225,8 @@ class ConnectionHandler(BaseConnectionHandler):
         """
         try:
             if (
-                    address in self._pending_streams
-                    and self._pending_streams[address] is not None
+                address in self._pending_streams
+                and self._pending_streams[address] is not None
             ):
                 # There are pending streams for this address
                 # Get the first pending stream (there should be only one per type)
@@ -270,8 +267,10 @@ class ConnectionHandler(BaseConnectionHandler):
 
         try:
             client_obj = self.clients.get_client(ip_address=addr[0])
-            if await self._check_pending_streams(reader=reader,writer=writer,address=addr[0]):
-                return # Pending stream accepted let the handshake handler manage it
+            if await self._check_pending_streams(
+                reader=reader, writer=writer, address=addr[0]
+            ):
+                return  # Pending stream accepted let the handshake handler manage it
 
             # Altrimenti è una connessione di handshake
             if client_obj and client_obj.is_connected:
@@ -506,9 +505,7 @@ class ConnectionHandler(BaseConnectionHandler):
             return False
 
     async def _accept_additional_streams(
-            self,
-            client: ClientObj,
-            requested_streams: list[int]
+        self, client: ClientObj, requested_streams: list[int]
     ) -> bool:
         """
         Accepts and establishes additional streams requested by a client. The method handles
@@ -636,13 +633,15 @@ class ConnectionHandler(BaseConnectionHandler):
         self.clients.update_client(client)
 
         try:
-            await self._invoke_callback(callback=self.disconnected_callback,
-                                        client=client,
-                                        streams=[])
+            await self._invoke_callback(
+                callback=self.disconnected_callback, client=client, streams=[]
+            )
         except CallbackError as e:
             self._logger.log(f"Error in disconnected callback -> {e}", Logger.ERROR)
 
-    async def _handle_streams_reconnection(self, client: ClientObj, closed_streams: list[int]) -> bool:
+    async def _handle_streams_reconnection(
+        self, client: ClientObj, closed_streams: list[int]
+    ) -> bool:
         return await self._accept_additional_streams(client, closed_streams)
 
     async def _heartbeat_loop(self):
@@ -699,9 +698,9 @@ class ConnectionHandler(BaseConnectionHandler):
                                 stream_reader = client_conn.get_reader(stream_type)
                                 stream_writer = client_conn.get_writer(stream_type)
                                 if (
-                                        (stream_reader is None or stream_reader.is_closed())
-                                        or
-                                        (stream_writer is None or stream_writer.is_closed())
+                                    stream_reader is None or stream_reader.is_closed()
+                                ) or (
+                                    stream_writer is None or stream_writer.is_closed()
                                 ):
                                     # Force closure of the stream writer if it exists
                                     if stream_writer:
@@ -709,23 +708,34 @@ class ConnectionHandler(BaseConnectionHandler):
                                     closed_streams.append(stream_type)
 
                             if len(closed_streams) > 0:
-                                self._logger.warning("Detected closed streams, attempting reconnection...",
-                                                     client=client.get_net_id(), closed_streams=closed_streams)
+                                self._logger.warning(
+                                    "Detected closed streams, attempting reconnection...",
+                                    client=client.get_net_id(),
+                                    closed_streams=closed_streams,
+                                )
 
-                                if not await self._handle_streams_reconnection(client, closed_streams):
+                                if not await self._handle_streams_reconnection(
+                                    client, closed_streams
+                                ):
                                     raise ConnectionResetError(
                                         f"Streams {closed_streams} are closed and reconnection failed"
                                     )
                                 else:
-                                    self._logger.info("Reconnected closed streams successfully.",
-                                                      client=client.get_net_id(), reconnected_streams=closed_streams)
+                                    self._logger.info(
+                                        "Reconnected closed streams successfully.",
+                                        client=client.get_net_id(),
+                                        reconnected_streams=closed_streams,
+                                    )
                                     try:
-                                        await self._invoke_callback(callback=self.reconnected_callback,
-                                                                    client=client,
-                                                                    streams=closed_streams)
+                                        await self._invoke_callback(
+                                            callback=self.reconnected_callback,
+                                            client=client,
+                                            streams=closed_streams,
+                                        )
                                     except CallbackError as e:
                                         self._logger.log(
-                                            f"Error in reconnected callback -> {e}", Logger.ERROR
+                                            f"Error in reconnected callback -> {e}",
+                                            Logger.ERROR,
                                         )
 
                             # Update active time

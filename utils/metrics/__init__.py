@@ -125,7 +125,7 @@ class ConnectionMetrics:
         return {
             "bytes_per_sec": (self.bytes_sent + self.bytes_received) / duration,
             "messages_per_sec": (self.messages_sent + self.messages_received)
-                                / duration,
+            / duration,
             "uptime": duration,
         }
 

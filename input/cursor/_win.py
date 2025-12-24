@@ -10,7 +10,7 @@ from multiprocessing.connection import Connection
 
 from event.bus import EventBus
 from input.cursor import _base
-from network.stream import StreamHandler
+from network.stream.handler import StreamHandler
 
 
 class DebugOverlayPanel(wx.Panel):

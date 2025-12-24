@@ -13,18 +13,18 @@ from multiprocessing.connection import Connection
 import objc
 import Quartz
 
-from Quartz import kCGMaximumWindowLevel # ty:ignore[unresolved-import]
+from Quartz import kCGMaximumWindowLevel  # ty:ignore[unresolved-import]
 
 from AppKit import (
     NSApplication,  # ty:ignore[unresolved-import]
     NSWindowCollectionBehaviorCanJoinAllSpaces,  # ty:ignore[unresolved-import]
-    NSScreenSaverWindowLevel,   # ty:ignore[unresolved-import]
-    NSApplicationActivationPolicyAccessory, # ty:ignore[unresolved-import]
-    NSWorkspace,    # ty:ignore[unresolved-import]
-    NSApplicationActivateIgnoringOtherApps, # ty:ignore[unresolved-import]
+    NSScreenSaverWindowLevel,  # ty:ignore[unresolved-import]
+    NSApplicationActivationPolicyAccessory,  # ty:ignore[unresolved-import]
+    NSWorkspace,  # ty:ignore[unresolved-import]
+    NSApplicationActivateIgnoringOtherApps,  # ty:ignore[unresolved-import]
     NSApplicationPresentationAutoHideDock,  # ty:ignore[unresolved-import]
-    NSApplicationPresentationAutoHideMenuBar,   # ty:ignore[unresolved-import]
-    NSWindowCollectionBehaviorStationary,   # ty:ignore[unresolved-import]
+    NSApplicationPresentationAutoHideMenuBar,  # ty:ignore[unresolved-import]
+    NSWindowCollectionBehaviorStationary,  # ty:ignore[unresolved-import]
     NSWindowCollectionBehaviorFullScreenAuxiliary,  # ty:ignore[unresolved-import]
 )
 
@@ -33,7 +33,7 @@ from AppKit import (
 
 from event.bus import EventBus
 from input.cursor import _base
-from network.stream import StreamHandler
+from network.stream.handler import StreamHandler
 
 
 class DebugOverlayPanel(wx.Panel):

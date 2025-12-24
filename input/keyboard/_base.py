@@ -20,7 +20,7 @@ from pynput.keyboard import (
 )
 import keyboard as hotkey_controller
 
-from network.stream import StreamHandler
+from network.stream.handler import StreamHandler
 
 from utils.logging import get_logger
 from utils.screen import Screen

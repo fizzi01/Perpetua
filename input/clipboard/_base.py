@@ -14,7 +14,7 @@ from event import (
     ClientActiveEvent,
 )
 from event.bus import EventBus
-from network.stream import StreamHandler
+from network.stream.handler import StreamHandler
 
 from utils.logging import get_logger
 
