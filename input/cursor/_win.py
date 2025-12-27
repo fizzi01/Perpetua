@@ -6,7 +6,7 @@ from typing import Optional
 import wx
 
 from multiprocessing import Queue
-from multiprocessing.connection import Connection, PipeConnection
+from multiprocessing.connection import PipeConnection
 
 from event.bus import EventBus
 from input.cursor import _base
