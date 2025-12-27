@@ -44,13 +44,14 @@ class StreamWrapper:
             self._writer.close()
             await self._writer.wait_closed()
 
-        async def _try_writer_close(self):
+        async def _try_writer_close(self) -> bool:
             # Send empty data to trigger any pending operations
             try:
                 self._writer.write(b"")
                 await self._writer.drain()
             except Exception:
-                pass
+                return False
+            return True
 
         async def is_closed(self) -> bool:
             """
@@ -63,7 +64,9 @@ class StreamWrapper:
             Returns:
                 bool: True if the writer connection is closing or closed, False otherwise.
             """
-            await self._try_writer_close()
+            res = await self._try_writer_close()
+            if not res:
+                return True
             return self._writer.is_closing()
 
         def get_sockname(self) -> Tuple[str, int]:
