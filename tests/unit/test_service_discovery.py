@@ -274,11 +274,6 @@ class TestHostnameResolution:
         """Test successful hostname resolution."""
         hostname = "localhost"
 
-    @pytest.mark.anyio
-    async def test_resolve_hostname_success(self):
-        """Test successful hostname resolution."""
-        hostname = "localhost"
-
         with patch("service.get_local_ip", return_value="127.0.0.1") as mock_get_local_ip:
             ip = await ServiceDiscovery.resolve_hostname(hostname)
             assert ip == "127.0.0.1"
@@ -604,7 +599,7 @@ class TestServiceDiscoveryMethods:
     async def test_discover_services_exception_handling(self, service_discovery):
         """Test exception handling during discovery."""
         with patch(
-            "service._ServiceListener", side_effect=Exception("Discovery failed")
+            "service.AsyncServiceBrowser", side_effect=Exception("Discovery failed")
         ):
             with pytest.raises(
                 RuntimeError, match=r"^Failed to start mDNS service discovery"
@@ -743,7 +738,6 @@ class TestServiceListener:
     async def test_listener_add_multiple_services(self, mock_async_service_info):
         """Test adding multiple services."""
         from service import _ServiceListener
-        from service import AsyncServiceInfo
 
         listener = _ServiceListener()
 
@@ -789,7 +783,6 @@ class TestServiceListener:
             assert services[1].hostname == "host2.local"
 
     @pytest.mark.anyio
-    @pytest.mark.anyio
     async def test_listener_update_service(self):
         """Test updating an existing service."""
         from service import _ServiceListener
@@ -820,14 +813,17 @@ class TestServiceListener:
         assert len(services) == 1
         assert services[0].address == "192.168.1.100"
 
-        # Now update the service using get_service_info (sync method)
-        info2 = Mock(spec=ServiceInfo)
-        info2.parsed_addresses = Mock(return_value=["192.168.1.200"])
-        info2.port = 9000
-        info2.properties = {b"hostname": b"updated-host.local"}
+        with patch("service.AsyncServiceInfo") as mock_async_info_class:
+            # Now update the service using get_service_info (sync method)
+            info2 = AsyncMock()
+            info2.async_request = AsyncMock()
+            info2.parsed_addresses = Mock(return_value=["192.168.1.200"])
+            info2.port = 9000
+            info2.properties = {b"hostname": b"updated-host.local"}
 
-        mock_zeroconf.get_service_info.return_value = info2
-        listener.update_service(mock_zeroconf, service_type, service_name)
+            mock_async_info_class.return_value = info2
+            listener.update_service(mock_zeroconf, service_type, service_name)
+            await asyncio.sleep(0.2)
 
         # Verify service was updated
         services = listener.get_services()
@@ -836,7 +832,8 @@ class TestServiceListener:
         assert services[0].port == 9000
         assert services[0].hostname == "updated-host.local"
 
-    def test_listener_update_nonexistent_service(self):
+    @pytest.mark.anyio
+    async def test_listener_update_nonexistent_service(self):
         """Test updating a service that doesn't exist."""
         from service import _ServiceListener
 
@@ -845,16 +842,20 @@ class TestServiceListener:
         # Create mock Zeroconf
         mock_zeroconf = Mock(spec=Zeroconf)
 
-        info = Mock(spec=ServiceInfo)
-        info.parsed_addresses.return_value = ["192.168.1.100"]
-        info.port = 8000
-        info.properties = {}
+        with patch("service.AsyncServiceInfo") as mock_async_info_class:
+            info = AsyncMock()
+            info.async_request = AsyncMock()
+            info.parsed_addresses = Mock(return_value=["192.168.1.100"])
+            info.port = 8000
+            info.properties = {}
 
-        mock_zeroconf.get_service_info.return_value = info
+            mock_async_info_class.return_value = info
 
-        # Update non-existent service (should not crash)
-        service_type = "_pycontinuity._tcp.local."
-        listener.update_service(mock_zeroconf, service_type, "nonexistent")
+            # Update non-existent service (should not crash)
+            service_type = "_pycontinuity._tcp.local."
+            service_name = "nonexistent._pycontinuity._tcp.local."
+            listener.update_service(mock_zeroconf, service_type, service_name)
+            await asyncio.sleep(0.1)
 
         # Verify no services were added
         services = listener.get_services()
@@ -873,7 +874,7 @@ class TestServiceListener:
             # Create service info without hostname
             mock_async_info = AsyncMock()
             mock_async_info.async_request = AsyncMock()
-            mock_async_info.parsed_addresses.return_value = ["192.168.1.100"]
+            mock_async_info.parsed_addresses = Mock(spec=list, return_value=["192.168.1.100"])
             mock_async_info.port = 8000
             mock_async_info.properties = {}  # No hostname property
 

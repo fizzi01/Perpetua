@@ -503,7 +503,7 @@ class ConnectionHandler(BaseConnectionHandler):
     async def _heartbeat_loop(self):
         """Monitor connection health"""
         heartbeat_trials = 0
-        #dbg_b = True
+        # dbg_b = True
         while self._running and self._connected:
             try:
                 await asyncio.sleep(self.heartbeat_interval)

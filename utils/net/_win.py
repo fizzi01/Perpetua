@@ -3,7 +3,6 @@ from ._base import MissingIpError
 
 
 class CommonNetInfo(_base.CommonNetInfo):
-
     @staticmethod
     def get_local_ip():
         """
@@ -24,9 +23,7 @@ class CommonNetInfo(_base.CommonNetInfo):
             import socket
 
             with socket.socket(socket.AF_INET, socket.SOCK_DGRAM) as s:
-                s.connect(
-                    ("8.8.8.8", 80)
-                )
+                s.connect(("8.8.8.8", 80))
                 ip = s.getsockname()[0]
                 return ip
         except Exception as e:

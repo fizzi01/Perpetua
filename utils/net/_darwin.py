@@ -5,7 +5,6 @@ from ._base import MissingIpError
 
 
 class CommonNetInfo(_base.CommonNetInfo):
-
     @staticmethod
     def get_local_ip():
         """

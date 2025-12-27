@@ -3,6 +3,7 @@ from typing import TYPE_CHECKING
 
 if TYPE_CHECKING:
     from ._base import CommonNetInfo
+
     get_local_ip = CommonNetInfo.get_local_ip
 else:
     _backend_module = backend_module(__name__)

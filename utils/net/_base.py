@@ -1,6 +1,8 @@
 class MissingIpError(Exception):
     """Custom exception raised when the local IP address cannot be determined."""
+
     pass
+
 
 class CommonNetInfo:
     """Common network information class for shared attributes or methods."""
@@ -14,4 +16,6 @@ class CommonNetInfo:
         Raises:
             NotImplementedError: Always raised to indicate the function is not implemented.
         """
-        raise NotImplementedError("get_local_ip() must be implemented in platform-specific modules.")
+        raise NotImplementedError(
+            "get_local_ip() must be implemented in platform-specific modules."
+        )
