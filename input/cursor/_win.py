@@ -6,7 +6,7 @@ from typing import Optional
 import wx
 
 from multiprocessing import Queue
-from multiprocessing.connection import Connection
+from multiprocessing.connection import Connection, PipeConnection
 
 from event.bus import EventBus
 from input.cursor import _base
@@ -69,7 +69,7 @@ class CursorHandlerWindow(_base.CursorHandlerWindow):
         self,
         command_queue: Queue,
         result_queue: Queue,
-        mouse_conn: Connection,
+        mouse_conn: PipeConnection,
         debug: bool = False,
     ):
         super().__init__(

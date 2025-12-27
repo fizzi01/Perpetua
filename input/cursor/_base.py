@@ -113,12 +113,14 @@ class CursorHandlerWindow(wx.Frame):
 
                     if cmd_type == "enable_capture":
                         wx.CallAfter(self.enable_mouse_capture)
+                        time.sleep(0)
                         self.result_queue.put(
                             {"type": "capture_enabled", "success": True}
                         )
 
                     elif cmd_type == "disable_capture":
                         wx.CallAfter(self.disable_mouse_capture)
+                        time.sleep(0)
                         self.result_queue.put(
                             {"type": "capture_disabled", "success": True}
                         )
@@ -133,6 +135,7 @@ class CursorHandlerWindow(wx.Frame):
                         self._running = False
                         self.Close()
                 except Empty:
+                    time.sleep(0)
                     continue
         except Exception as e:
             print(f"Error processing commands: {e}")
@@ -223,15 +226,15 @@ class CursorHandlerWindow(wx.Frame):
 
             self.mouse_captured = True
 
+            # Nascondi il cursore
+            self.handle_cursor_visibility(False)
+
             # Calcola il centro della finestra
             size = self.GetSize()
             pos = self.GetPosition()
             self.center_pos: Point = Point(
                 pos.x + size.width // 2, pos.y + size.height // 2
             )
-
-            # Nascondi il cursore
-            self.handle_cursor_visibility(False)
 
             # Cattura il mouse
             self.CaptureMouse()
@@ -242,11 +245,12 @@ class CursorHandlerWindow(wx.Frame):
         Disable mouse capture.
         """
         if self.mouse_captured:
-            self.mouse_captured = False
 
             # Rilascia il mouse
             if self.HasCapture():
                 self.ReleaseMouse()
+
+            self.mouse_captured = False
 
             # Ripristina il cursore
             self.handle_cursor_visibility(True)
