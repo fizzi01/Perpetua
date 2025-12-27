@@ -33,13 +33,3 @@ class ServerKeyboardListener(_base.ServerKeyboardListener):
                 return event
         else:
             return event
-
-
-class ClientKeyboardController(_base.ClientKeyboardController):
-    def __init__(
-        self,
-        event_bus: EventBus,
-        stream_handler: StreamHandler,
-        command_stream: StreamHandler,
-    ):
-        super().__init__(event_bus, stream_handler, command_stream)
