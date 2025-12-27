@@ -44,7 +44,26 @@ class StreamWrapper:
             self._writer.close()
             await self._writer.wait_closed()
 
-        def is_closed(self) -> bool:
+        async def _try_writer_close(self):
+            # Send empty data to trigger any pending operations
+            try:
+                self._writer.write(b"")
+                await self._writer.drain()
+            except Exception:
+                pass
+
+        async def is_closed(self) -> bool:
+            """
+            Checks if the writer connection is closed.
+
+            This asynchronous method ensures that the writer connection is properly
+            checked for closure. It attempts to close the writer if necessary and
+            then verifies whether the writer connection is currently closing.
+
+            Returns:
+                bool: True if the writer connection is closing or closed, False otherwise.
+            """
+            await self._try_writer_close()
             return self._writer.is_closing()
 
         def get_sockname(self) -> Tuple[str, int]:
@@ -91,11 +110,11 @@ class StreamWrapper:
         await self.writer.close()
         self.reader.close()
 
-    def is_open(self) -> bool:
+    async def is_open(self) -> bool:
         """
         Check if the writer is still open.
         """
-        return not self.writer.is_closed()
+        return not await self.writer.is_closed()
 
     def get_sockname(self) -> Tuple[str, int]:
         """
@@ -198,7 +217,7 @@ class ClientConnection:
         """Get list of available stream types"""
         return list(self.wrappers.keys())
 
-    def is_open(self) -> bool:
+    async def is_open(self) -> bool:
         """
         Check if connection is still open by checking if any writer is not closing.
 
@@ -211,7 +230,7 @@ class ClientConnection:
 
         # Check if any writer is not closing
         for stream in self.wrappers.values():
-            if stream.is_open():
+            if await stream.is_open():
                 return True
 
         return False

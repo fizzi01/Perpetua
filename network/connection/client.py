@@ -509,7 +509,7 @@ class ConnectionHandler(BaseConnectionHandler):
                 await asyncio.sleep(self.heartbeat_interval)
 
                 # Check if command stream is still alive
-                if not self._command_stream or not self._command_stream.is_open():
+                if not self._command_stream or not await self._command_stream.is_open():
                     raise ConnectionResetError("Command stream closed")
 
                 # Send heartbeat message
@@ -534,7 +534,7 @@ class ConnectionHandler(BaseConnectionHandler):
                         stream_reader = c_conn.get_reader(stream_type)
                         stream_writer = c_conn.get_writer(stream_type)
                         if (stream_reader is None or stream_reader.is_closed()) or (
-                            stream_writer is None or stream_writer.is_closed()
+                            stream_writer is None or await stream_writer.is_closed()
                         ):
                             # Force closure of the stream writer if it exists
                             if stream_writer:

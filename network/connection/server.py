@@ -41,7 +41,7 @@ class ConnectionHandler(BaseConnectionHandler):
     HANDSHAKE_DELAY = 0.2  # sec
     HANDSHAKE_MSG_TIMEOUT = 5.0  # sec
     CONNECTION_ATTEMPT_TIMEOUT = 10  # sec
-    MAX_HEARTBEAT_MISSES = 1
+    MAX_HEARTBEAT_MISSES = 0
 
     def __init__(
         self,
@@ -669,7 +669,7 @@ class ConnectionHandler(BaseConnectionHandler):
                             if client_conn is None:
                                 raise ConnectionResetError("No connection found")
 
-                            if not client_conn.is_open():
+                            if not await client_conn.is_open():
                                 raise ConnectionResetError("Connection is closed")
 
                             cmd_stream = client_conn.get_stream(StreamType.COMMAND)
@@ -700,7 +700,7 @@ class ConnectionHandler(BaseConnectionHandler):
                                 if (
                                     stream_reader is None or stream_reader.is_closed()
                                 ) or (
-                                    stream_writer is None or stream_writer.is_closed()
+                                    stream_writer is None or await stream_writer.is_closed()
                                 ):
                                     # Force closure of the stream writer if it exists
                                     if stream_writer:
