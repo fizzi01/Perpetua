@@ -331,7 +331,7 @@ class ClientKeyboardController(object):
         self._pressed = False
         # Track pressed keys for hotkey combinations
         self.pressed_keys = set()
-        self.caps_lock_state = False
+        self.is_caps_locked = False
 
         self._logger = get_logger(self.__class__.__name__)
 
@@ -465,23 +465,29 @@ class ClientKeyboardController(object):
             return
 
         if event.action == KeyboardEvent.PRESS_ACTION:
-            # Handl Caps Lock toggle
+            # Handle Caps Lock toggle
             if key == Key.caps_lock:
-                if self.caps_lock_state:  # TODO: Better handling of caps lock state
+                if self.is_caps_locked:
                     self._controller.release(key)
                 else:
                     self._controller.press(key)
-                self.caps_lock_state = not self.caps_lock_state
-            elif KeyUtilities.is_special(key):  # General special key handling
-                if key in self.pressed_keys:
-                    self._controller.release(key)
-                    self.pressed_keys.discard(key)
-
-            # Press key
-            self._controller.press(key)
-            self.pressed_keys.add(key)
+                self.is_caps_locked = not self.is_caps_locked
+            elif KeyUtilities.is_special(key) and not key == Key.space:  # General special key handling
+                if key not in self.pressed_keys:
+                    self.pressed_keys.add(key)
+                    self._controller.press(key)
+            else:
+                self._controller.press(key)
         elif event.action == KeyboardEvent.RELEASE_ACTION:
-            self._controller.release(key)
-            self.pressed_keys.discard(
-                key
-            )  # We don't need to check cause discard doesn't raise
+            if key == Key.caps_lock:
+                if self.is_caps_locked:
+                    self._controller.release(key)
+                else:
+                    self._controller.press(key)
+                self.is_caps_locked = not self.is_caps_locked
+            elif KeyUtilities.is_special(key) and not key == Key.space:  # General special key handling
+                if key in self.pressed_keys:
+                    self.pressed_keys.discard(key)
+                    self._controller.release(key)
+            else:
+                self._controller.release(key)
