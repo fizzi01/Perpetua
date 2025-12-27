@@ -135,7 +135,7 @@ class CursorHandlerWindow(wx.Frame):
                         self._running = False
                         self.Close()
                 except Empty:
-                    #time.sleep(0)
+                    # time.sleep(0)
                     continue
         except Exception as e:
             print(f"Error processing commands: {e}")
@@ -245,7 +245,6 @@ class CursorHandlerWindow(wx.Frame):
         Disable mouse capture.
         """
         if self.mouse_captured:
-
             # Rilascia il mouse
             if self.HasCapture():
                 self.ReleaseMouse()

@@ -472,7 +472,9 @@ class ClientKeyboardController(object):
                 else:
                     self._controller.press(key)
                 self.is_caps_locked = not self.is_caps_locked
-            elif KeyUtilities.is_special(key) and not key == Key.space:  # General special key handling
+            elif (
+                KeyUtilities.is_special(key) and not key == Key.space
+            ):  # General special key handling
                 if key not in self.pressed_keys:
                     self.pressed_keys.add(key)
                     self._controller.press(key)
@@ -485,7 +487,9 @@ class ClientKeyboardController(object):
                 else:
                     self._controller.press(key)
                 self.is_caps_locked = not self.is_caps_locked
-            elif KeyUtilities.is_special(key) and not key == Key.space:  # General special key handling
+            elif (
+                KeyUtilities.is_special(key) and not key == Key.space
+            ):  # General special key handling
                 if key in self.pressed_keys:
                     self.pressed_keys.discard(key)
                     self._controller.release(key)

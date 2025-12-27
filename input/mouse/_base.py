@@ -826,7 +826,7 @@ class ClientMouseController(object):
 
                 # Get the current cursor position
                 pos = self._controller.position
-                if pos is None or len(pos) != 2: # Invalid position
+                if pos is None or len(pos) != 2:  # Invalid position
                     return None
                 x, y = pos
 

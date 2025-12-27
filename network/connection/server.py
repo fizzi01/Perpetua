@@ -700,7 +700,8 @@ class ConnectionHandler(BaseConnectionHandler):
                                 if (
                                     stream_reader is None or stream_reader.is_closed()
                                 ) or (
-                                    stream_writer is None or await stream_writer.is_closed()
+                                    stream_writer is None
+                                    or await stream_writer.is_closed()
                                 ):
                                     # Force closure of the stream writer if it exists
                                     if stream_writer:
