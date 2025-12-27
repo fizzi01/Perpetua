@@ -825,7 +825,10 @@ class ClientMouseController(object):
                 self._checking_edge = True
 
                 # Get the current cursor position
-                x, y = self._controller.position
+                pos = self._controller.position
+                if pos is None or len(pos) != 2: # Invalid position
+                    return None
+                x, y = pos
 
                 # Add the current position to the movement history
                 self._movement_history.append((x, y))
