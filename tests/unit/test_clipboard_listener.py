@@ -316,7 +316,7 @@ class TestClipboardPerformance:
         clipboard_listener.set_poll_interval(0.01)
         assert clipboard_listener.poll_interval == 0.1  # Should be clamped to minimum
 
-    @pytest.mark.slow
+    @pytest.mark.anyio
     async def test_long_running_monitoring(self):
         """Test clipboard monitoring over extended period."""
         changes = []
@@ -520,7 +520,6 @@ class TestClipboardEdgeCases:
 
 
 @pytest.mark.anyio
-@pytest.mark.benchmark
 class TestClipboardBenchmarks:
     """Benchmark tests for clipboard operations."""
 
