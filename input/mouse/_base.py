@@ -734,7 +734,7 @@ class ClientMouseController(object):
                     #     event.x, event.y
                     # )
                     for _ in range(
-                        3
+                        10
                     ):  # We position multiple times to ensure it works across platforms
                         asyncio.create_task(self._position_cursor(event.x, event.y))
                     # Check for edge crossing after positioning
