@@ -296,6 +296,7 @@ class CursorHandlerWindow(wx.Frame):
         Handle mouse movement events.
         """
         if not self.mouse_captured_flag.is_set() or self.center_pos is None:
+            time.sleep(0)
             event.Skip()
             return
 
@@ -324,8 +325,11 @@ class CursorHandlerWindow(wx.Frame):
                     pass
 
             # Resetta posizione
+            time.sleep(0)
             self.reset_mouse_position()
+            time.sleep(0)
 
+        time.sleep(0)
         event.Skip()
 
     def on_close(self, event):
