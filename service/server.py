@@ -609,6 +609,14 @@ class Server:
 
         self._logger.info("Starting Server...")
 
+        # Initialize and start enabled streams
+        try:
+            await self._initialize_streams()
+        except Exception as e:
+            self._logger.error(f"Failed to initialize streams -> {e}")
+            await self.stop()
+            return False
+
         # TODO: We should check if port is available before starting by using ServiceDiscovery utils
         # Initialize connection handler
         self.connection_handler = ConnectionHandler(
@@ -638,13 +646,6 @@ class Server:
             await self.stop()
             return False
 
-        # Initialize and start enabled streams
-        try:
-            await self._initialize_streams()
-        except Exception as e:
-            self._logger.error(f"Failed to initialize streams -> {e}")
-            await self.stop()
-            return False
 
         # Initialize and start enabled components
         try:
@@ -737,6 +738,7 @@ class Server:
             event_bus=self.event_bus,
             handler_id="ServerCommandStreamHandler",
             metrics_collector=self._metrics_collector,
+            do_cleanup=False # Command stream should not cleanup on state changes
         )
         # Force start command stream
         if not await self._stream_handlers[StreamType.COMMAND].start():

@@ -125,6 +125,7 @@ class BidirectionalStreamHandler(_ServerStreamHandler):
         source: str = "server",
         metrics_collector: Optional[MetricsCollector] = None,
         buffer_size: int = 1000,
+        do_cleanup: bool = True,
     ):
         """
         Initializes and configures an instance responsible for managing the interaction between
@@ -141,6 +142,7 @@ class BidirectionalStreamHandler(_ServerStreamHandler):
             source: (str): Identifier indicating the origin of the handler, defaulting to "server".
             metrics_collector: (Optional[MetricsCollector]): Optional metrics collector for
             buffer_size: (int): Size of the internal buffer for managing outgoing messages.
+            do_cleanup: (bool): Flag indicating whether to perform cleanup operations on state changes.
 
         Configurations:
             Automatically dispatches messages using the MessageExchange component.
@@ -160,6 +162,12 @@ class BidirectionalStreamHandler(_ServerStreamHandler):
             metrics_collector=metrics_collector,
             buffer_size=buffer_size,
         )
+
+        self._do_cleanup = do_cleanup
+
+    def _clear_buffer(self):
+        if self._do_cleanup:
+            super()._clear_buffer()
 
     async def _on_client_disconnected(self, data: Optional[ClientDisconnectedEvent]):
         """
