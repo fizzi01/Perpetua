@@ -377,6 +377,9 @@ class ClientKeyboardController(object):
         if self._running:
             self._running = False
 
+            # Clear pressed keys
+            self._clear_pressed_keys()
+
             if self._worker_task:
                 self._worker_task.cancel()
                 try:
@@ -453,6 +456,17 @@ class ClientKeyboardController(object):
             await self._queue.put(message)
         except Exception as e:
             self._logger.error(f"Failed to process mouse event -> {e}")
+
+    def _clear_pressed_keys(self):
+        """
+        Helper to release all currently pressed keys.
+        """
+        for key in list(self.pressed_keys):
+            try:
+                self._controller.release(key)
+            except Exception:
+                pass
+        self.pressed_keys.clear()
 
     def _key_event_action(self, event: KeyboardEvent):
         """

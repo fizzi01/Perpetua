@@ -116,6 +116,10 @@ class CursorHandlerWindow(_base.CursorHandlerWindow):
 
         self._create()
 
+    def _os_delay(self, specific: bool = False):
+        if not specific: # On macOS we need only non-specific delay
+            super()._os_delay(specific)
+
     def RestoreFocus(self, event):
         """
         Restore current window focus when mouse leaves the overlay.
@@ -178,24 +182,6 @@ class CursorHandlerWindow(_base.CursorHandlerWindow):
             self.previous_app_pid = None
         except Exception as e:
             print(f"Error restoring previous app: {e}")
-
-    def on_key_press(self, event):
-        key_code = event.GetKeyCode()
-
-        if self._debug:
-            if key_code == wx.WXK_SPACE:
-                if self.mouse_captured:
-                    self.disable_mouse_capture()
-                else:
-                    self.enable_mouse_capture()
-            elif key_code == wx.WXK_ESCAPE:
-                self.disable_mouse_capture()
-            elif key_code == ord("Q") or key_code == ord("q"):
-                self.Close()
-            else:
-                event.Skip()
-        else:
-            event.Skip()
 
     def handle_cursor_visibility(self, visible: bool):
         """

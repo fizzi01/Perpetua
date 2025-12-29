@@ -57,7 +57,9 @@ class CursorHandlerWindow(wx.Frame):
         super().__init__(None, title="", **frame_kwargs)
 
         self._debug = debug
-        self.mouse_captured = False
+        self.mouse_captured_flag = threading.Event()
+        self.mouse_captured_event = threading.Event()
+
         self.center_pos: Optional[Point] = None
 
         self.command_queue: Queue = command_queue
@@ -101,6 +103,18 @@ class CursorHandlerWindow(wx.Frame):
         self.Show()
         self.HideOverlay()
 
+    def _os_delay(self, specific: bool = False):
+        """
+        OS-specific delay to allow UI updates.
+        Derived classes can implement platform-specific delays here (default: time.sleep).
+
+        Args:
+            specific (bool): If True, use a specific os delay method.
+
+        Default implementation just wait for mouse_captured_event to be set or timeout.
+        """
+        self.mouse_captured_event.wait(1)
+
     def _process_commands(self):
         """
         Commands processing loop.
@@ -114,21 +128,25 @@ class CursorHandlerWindow(wx.Frame):
                     if cmd_type == "enable_capture":
                         wx.CallAfter(self.enable_mouse_capture)
                         time.sleep(0)
+                        self._os_delay(specific=False)
                         self.result_queue.put(
                             {"type": "capture_enabled", "success": True}
                         )
+                        self.mouse_captured_event.clear()
 
                     elif cmd_type == "disable_capture":
                         wx.CallAfter(self.disable_mouse_capture)
                         time.sleep(0)
+                        self._os_delay(specific=True) # We need it only in Windows
                         self.result_queue.put(
                             {"type": "capture_disabled", "success": True}
                         )
+                        self.mouse_captured_event.clear()
                     elif cmd_type == "get_stats":
                         self.result_queue.put(
                             {
                                 "type": "stats",
-                                "is_captured": self.mouse_captured,
+                                "is_captured": self.mouse_captured_flag.is_set(),
                             }
                         )
                     elif cmd_type == "quit":
@@ -185,7 +203,7 @@ class CursorHandlerWindow(wx.Frame):
 
         if self._debug:
             if key_code == wx.WXK_SPACE:
-                if self.mouse_captured:
+                if self.mouse_captured_flag.is_set():
                     self.disable_mouse_capture()
                 else:
                     self.enable_mouse_capture()
@@ -218,13 +236,13 @@ class CursorHandlerWindow(wx.Frame):
         """
         Enable mouse capture.
         """
-        if not self.mouse_captured:
+        if not self.mouse_captured_flag.is_set():
             # Forza il focus prima di catturare
             self.Raise()
             self.SetFocus()
             self.ForceOverlay()
 
-            self.mouse_captured = True
+            self.mouse_captured_flag.set()
 
             # Nascondi il cursore
             self.handle_cursor_visibility(False)
@@ -240,27 +258,31 @@ class CursorHandlerWindow(wx.Frame):
             self.CaptureMouse()
             self.reset_mouse_position()
 
+            self.mouse_captured_event.set()
+
     def disable_mouse_capture(self):
         """
         Disable mouse capture.
         """
-        if self.mouse_captured:
+        if self.mouse_captured_flag.is_set():
+            self.mouse_captured_flag.clear()
+
             # Rilascia il mouse
             if self.HasCapture():
                 self.ReleaseMouse()
-
-            self.mouse_captured = False
 
             # Ripristina il cursore
             self.handle_cursor_visibility(True)
 
             self.HideOverlay()
 
+            self.mouse_captured_event.set()
+
     def reset_mouse_position(self):
         """
         Reset mouse position to center.
         """
-        if self.mouse_captured and self.center_pos is not None:
+        if self.mouse_captured_flag.is_set() and self.center_pos is not None:
             # Sposta il cursore al centro della finestra
             client_center = self.ScreenToClient(self.center_pos)
             self.WarpPointer(client_center.x, client_center.y)
@@ -269,7 +291,7 @@ class CursorHandlerWindow(wx.Frame):
         """
         Handle mouse movement events.
         """
-        if not self.mouse_captured or self.center_pos is None:
+        if not self.mouse_captured_flag.is_set() or self.center_pos is None:
             event.Skip()
             return
 
@@ -422,7 +444,8 @@ class CursorHandlerWorker(object):
                 event_type=EventType.ACTIVE_SCREEN_CHANGED,
                 data=self._last_event,
             )
-
+            await asyncio.sleep(0)
+            await asyncio.sleep(0)
             try:
                 await self.enable_capture()
             except Exception as e:
@@ -543,7 +566,7 @@ class CursorHandlerWorker(object):
             try:
                 # Poll non-bloccante
                 has_data = await loop.run_in_executor(
-                    None, self.mouse_conn_rec.poll, 0.0000001
+                    None, self.mouse_conn_rec.poll, 0.01
                 )
 
                 if has_data:
@@ -560,11 +583,12 @@ class CursorHandlerWorker(object):
                     await self.stream.send(mouse_event)
                 else:
                     # Piccolo sleep per evitare busy waiting
-                    await asyncio.sleep(0.001)
+                    await asyncio.sleep(0.0001)
 
             except EOFError:
                 break
-            except Exception:
+            except Exception as e:
+                self._logger.exception(f"Error in mouse data listener ({e})")
                 await asyncio.sleep(0.01)
 
     async def send_command(self, command):
@@ -575,14 +599,14 @@ class CursorHandlerWorker(object):
         await loop.run_in_executor(None, self.command_queue.put, command)  # type: ignore
         await asyncio.sleep(0)  # Yield control to event loop
 
-    async def get_result(self, timeout: float = 0.1):
+    async def get_result(self, timeout: float = 1):
         """Riceve un risultato dalla window in modo asincrono"""
         loop = asyncio.get_running_loop()
         try:
-            return await loop.run_in_executor(
+            return await loop.run_in_executor( # type: ignore
                 None,
                 self.result_queue.get,
-                timeout,  # type: ignore
+                timeout, # type: ignore
             )
         except Empty:
             return None

@@ -111,24 +111,6 @@ class CursorHandlerWindow(_base.CursorHandlerWindow):
     def RestorePreviousApp(self):
         return
 
-    def on_key_press(self, event):
-        key_code = event.GetKeyCode()
-
-        if self._debug:
-            if key_code == wx.WXK_SPACE:
-                if self.mouse_captured:
-                    self.disable_mouse_capture()
-                else:
-                    self.enable_mouse_capture()
-            elif key_code == wx.WXK_ESCAPE:
-                self.disable_mouse_capture()
-            elif key_code == ord("Q") or key_code == ord("q"):
-                self.Close()
-            else:
-                event.Skip()
-        else:
-            event.Skip()
-
     def handle_cursor_visibility(self, visible: bool):
         """
         Handle cursor visibility for Windows.
@@ -141,12 +123,6 @@ class CursorHandlerWindow(_base.CursorHandlerWindow):
         else:
             # Show cursor
             self.SetCursor(wx.NullCursor)
-
-    def reset_mouse_position(self):
-        """Reset mouse position to center using Windows API"""
-        if self.mouse_captured and self.center_pos:
-            client_center = self.ScreenToClient(self.center_pos)
-            self.WarpPointer(client_center.x, client_center.y)
 
     def update_ui(self, panel_obj, data, call):
         try:
