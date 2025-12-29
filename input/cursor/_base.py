@@ -135,6 +135,9 @@ class CursorHandlerWindow(wx.Frame):
                         self.mouse_captured_event.clear()
 
                     elif cmd_type == "disable_capture":
+                        # Force unbinding MOTION evnt
+                        self.Unbind(wx.EVT_MOTION)
+                        time.sleep(0)
                         wx.CallAfter(self.disable_mouse_capture)
                         time.sleep(0)
                         self._os_delay(specific=True)  # We need it only in Windows
@@ -142,6 +145,7 @@ class CursorHandlerWindow(wx.Frame):
                             {"type": "capture_disabled", "success": True}
                         )
                         self.mouse_captured_event.clear()
+                        self.Bind(wx.EVT_MOTION, self.on_mouse_move) # Rebind MOTION event
                     elif cmd_type == "get_stats":
                         self.result_queue.put(
                             {
