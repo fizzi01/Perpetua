@@ -61,7 +61,7 @@ class DebugOverlayPanel(wx.Panel):
         self.SetSizer(vbox)
 
         # Black background
-        self.SetBackgroundColour(wx.Colour(10, 10, 10))
+        self.SetBackgroundColour(wx.Colour(0, 0, 0))
 
 
 class CursorHandlerWindow(_base.CursorHandlerWindow):

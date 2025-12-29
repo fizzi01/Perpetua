@@ -228,8 +228,7 @@ class CursorHandlerWindow(wx.Frame):
             self.Raise()
             self.SetFocus()
             self.ForceOverlay()
-
-            self.mouse_captured_flag.set()
+            wx.Sleep(0)
 
             # Nascondi il cursore
             self.handle_cursor_visibility(False)
@@ -244,6 +243,8 @@ class CursorHandlerWindow(wx.Frame):
             # Cattura il mouse
             if not self.HasCapture():
                 self.CaptureMouse()
+            self.mouse_captured_flag.set()
+            wx.Sleep(0)
 
             self.reset_mouse_position()
             self.result_queue.put(
