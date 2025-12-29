@@ -548,6 +548,21 @@ class _ClientStreamHandler(StreamHandler):
         """
         return self._active_only and not self._is_active
 
+    async def _handle_disconnection(self):
+        """
+        Handle disconnection logic for the client stream handler.
+        """
+        self._is_active = False
+        await self.msg_exchange.stop()
+        self._clear_buffer()
+        # try to close client stream
+        if self._main_client is not None:
+            cl_conn = self._main_client.get_connection()
+            if cl_conn is not None:
+                cl_stream = cl_conn.get_stream(self.stream_type)
+                if cl_stream is not None:
+                    await cl_stream.close()
+
     async def _core_sender(self):
         while self._active:
             if self._send_clause():
@@ -564,10 +579,9 @@ class _ClientStreamHandler(StreamHandler):
                 await asyncio.sleep(0)  # yield control
             except (ConnectionResetError, BrokenPipeError) as e:
                 self._logger.error(f"Connection error -> {e}")
-                if self._active_only:
-                    self._is_active = False
-                    await self.msg_exchange.stop()
-                    self._clear_buffer()
+                # if connection lost error, close the stream
+                if "connection lost" in str(e).lower() or self._active_only:
+                    await self._handle_disconnection()
                 await asyncio.sleep(self._waiting_time)
             except RuntimeError as e:
                 # uv/winloop runtime error on closed tcp transport
