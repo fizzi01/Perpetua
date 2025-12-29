@@ -67,3 +67,21 @@ class ServerMouseListener(_base.ServerMouseListener):
                 return event
         else:
             return event
+
+
+class ServerMouseController(_base.ServerMouseController):
+    """
+    It controls the mouse on macOS systems.
+    Its main purpose is to move the cursor and simulate mouse clicks.
+    """
+
+    pass
+
+
+class ClientMouseController(_base.ClientMouseController):
+    """
+    It controls the mouse on macOS systems.
+    Its main purpose is to move the cursor and simulate mouse clicks.
+    """
+
+    pass
