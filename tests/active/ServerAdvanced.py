@@ -6,7 +6,7 @@ Dimostra come abilitare/disabilitare stream durante l'esecuzione
 import sys
 
 if sys.platform in ("win32", "cygwin", "cli"):
-    import winloop as loop
+    import winloop as loop  # ty:ignore[unresolved-import]
 else:
     import uvloop as loop
 import asyncio
@@ -32,6 +32,12 @@ def helper():
     print("  help    - Show this help message")
     print("  quit    - Stop server and exit\n")
 
+async def ainput(prompt: str = "", timeout: float = 0.1) -> str:
+    task = asyncio.to_thread(input, prompt)
+    try:
+        return await asyncio.wait_for(task, timeout)
+    except asyncio.TimeoutError:
+        return ""
 
 async def interactive_server():
     """Server interattivo con controllo runtime degli stream"""

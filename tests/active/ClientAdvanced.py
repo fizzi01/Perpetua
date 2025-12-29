@@ -34,8 +34,9 @@ def helper():
     print("  reconnect - Reconnect to server")
     print("  quit      - Stop client and exit\n")
 
-async def ainput(prompt: str = ""):
-    return await asyncio.to_thread(input, prompt)
+async def ainput(prompt: str = "") -> str:
+    loop = asyncio.get_event_loop()
+    return await loop.run_in_executor(None, input, prompt)
 
 async def server_choice(services: list[Service]) -> str:
     print("\n" + "=" * 60)
@@ -137,7 +138,8 @@ async def interactive_client():
     print("=" * 60 + "\n")
 
     # Ask if user wants to start client immediately
-    start_now = input("Start client now? (y/n, default: y): ").strip().lower()
+    start_now = await ainput("Start client now? (y/n, default: y): ")
+    start_now = start_now.strip().lower() or "y"
     try:
         if start_now != "n":
             asyncio.create_task(client.start())

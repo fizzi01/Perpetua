@@ -137,7 +137,7 @@ class CursorHandlerWindow(wx.Frame):
                     elif cmd_type == "disable_capture":
                         wx.CallAfter(self.disable_mouse_capture)
                         time.sleep(0)
-                        self._os_delay(specific=True) # We need it only in Windows
+                        self._os_delay(specific=True)  # We need it only in Windows
                         self.result_queue.put(
                             {"type": "capture_disabled", "success": True}
                         )
@@ -603,10 +603,10 @@ class CursorHandlerWorker(object):
         """Riceve un risultato dalla window in modo asincrono"""
         loop = asyncio.get_running_loop()
         try:
-            return await loop.run_in_executor( # type: ignore
+            return await loop.run_in_executor(  # type: ignore
                 None,
                 self.result_queue.get,
-                timeout, # type: ignore
+                timeout,  # type: ignore
             )
         except Empty:
             return None

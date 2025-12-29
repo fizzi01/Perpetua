@@ -117,7 +117,7 @@ class CursorHandlerWindow(_base.CursorHandlerWindow):
         self._create()
 
     def _os_delay(self, specific: bool = False):
-        if not specific: # On macOS we need only non-specific delay
+        if not specific:  # On macOS we need only non-specific delay
             super()._os_delay(specific)
 
     def RestoreFocus(self, event):
