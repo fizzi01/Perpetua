@@ -255,22 +255,26 @@ class CursorHandlerWindow(wx.Frame):
         Disable mouse capture.
         """
         if self.mouse_captured_flag.is_set():
+            self.Unbind(wx.EVT_MOTION)
             self.mouse_captured_flag.clear()
-
-            # Ripristina il cursore
-            self.handle_cursor_visibility(True)
-            self.HideOverlay()
-            #wx.SafeYield()
+            wx.Sleep(0)
+            time.sleep(0)
 
             # Rilascia il mouse
             while self.HasCapture():
                 self.ReleaseMouse()
-            self.Unbind(wx.EVT_MOTION)
+            wx.Sleep(0)
             #wx.SafeYield()
 
             self.result_queue.put(
                 {"type": "capture_disabled", "success": True}
             )
+
+            # Ripristina il cursore
+            self.HideOverlay()
+            self.handle_cursor_visibility(True)
+            wx.Sleep(0)
+
             self.Bind(wx.EVT_MOTION, self.on_mouse_move)  # Rebind MOTION event
 
     def reset_mouse_position(self):
