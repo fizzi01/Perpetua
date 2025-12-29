@@ -38,12 +38,12 @@ class CursorHandlerWindow(wx.Frame):
     """
 
     def __init__(
-            self,
-            command_queue: Queue,
-            result_queue: Queue,
-            mouse_conn: Connection,
-            debug: bool = False,
-            **frame_kwargs,
+        self,
+        command_queue: Queue,
+        result_queue: Queue,
+        mouse_conn: Connection,
+        debug: bool = False,
+        **frame_kwargs,
     ):
         """
         Initialize the cursor handler window.
@@ -247,9 +247,7 @@ class CursorHandlerWindow(wx.Frame):
             wx.Sleep(0)
 
             self.reset_mouse_position()
-            self.result_queue.put(
-                {"type": "capture_enabled", "success": True}
-            )
+            self.result_queue.put({"type": "capture_enabled", "success": True})
 
     def disable_mouse_capture(self):
         """
@@ -265,11 +263,9 @@ class CursorHandlerWindow(wx.Frame):
             while self.HasCapture():
                 self.ReleaseMouse()
             wx.Sleep(0)
-            #wx.SafeYield()
+            # wx.SafeYield()
 
-            self.result_queue.put(
-                {"type": "capture_disabled", "success": True}
-            )
+            self.result_queue.put({"type": "capture_disabled", "success": True})
 
             # Ripristina il cursore
             self.HideOverlay()
@@ -343,12 +339,12 @@ class _CursorHandlerProcess:
     """
 
     def __init__(
-            self,
-            command_queue: Queue,
-            result_queue: Queue,
-            mouse_conn: Connection,
-            debug: bool = False,
-            window_class=CursorHandlerWindow,
+        self,
+        command_queue: Queue,
+        result_queue: Queue,
+        mouse_conn: Connection,
+        debug: bool = False,
+        window_class=CursorHandlerWindow,
     ):
         self.command_queue: Queue[dict] = command_queue
         self.result_queue: Queue[dict] = result_queue
@@ -386,11 +382,11 @@ class CursorHandlerWorker(object):
     DATA_POLL_TIMEOUT = 0.0001  # seconds
 
     def __init__(
-            self,
-            event_bus: EventBus,
-            stream: Optional[StreamHandler] = None,
-            debug: bool = False,
-            window_class=CursorHandlerWindow,
+        self,
+        event_bus: EventBus,
+        stream: Optional[StreamHandler] = None,
+        debug: bool = False,
+        window_class=CursorHandlerWindow,
     ):
         """
         Initialize the cursor handler worker.
@@ -433,7 +429,7 @@ class CursorHandlerWorker(object):
         )  # ty:ignore[invalid-argument-type]
 
     async def _on_screen_change_guard(
-            self, data: Optional[ActiveScreenChangedEvent]
+        self, data: Optional[ActiveScreenChangedEvent]
     ) -> None:
         """Async callback for active screen changed"""
 

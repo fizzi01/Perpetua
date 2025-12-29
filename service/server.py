@@ -646,7 +646,6 @@ class Server:
             await self.stop()
             return False
 
-
         # Initialize and start enabled components
         try:
             await self._initialize_components()
@@ -738,7 +737,7 @@ class Server:
             event_bus=self.event_bus,
             handler_id="ServerCommandStreamHandler",
             metrics_collector=self._metrics_collector,
-            do_cleanup=False # Command stream should not cleanup on state changes
+            do_cleanup=False,  # Command stream should not cleanup on state changes
         )
         # Force start command stream
         if not await self._stream_handlers[StreamType.COMMAND].start():
