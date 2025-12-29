@@ -378,6 +378,9 @@ class CursorHandlerWorker(object):
     There is no platform-specific code here, all platform specifics are in the window class.
     """
 
+    RESULT_POLL_TIMEOUT = 0.1  # seconds
+    DATA_POLL_TIMEOUT = 0.0001  # seconds
+
     def __init__(
         self,
         event_bus: EventBus,
@@ -566,7 +569,7 @@ class CursorHandlerWorker(object):
             try:
                 # Poll non-bloccante
                 has_data = await loop.run_in_executor(
-                    None, self.mouse_conn_rec.poll, 0.01
+                    None, self.mouse_conn_rec.poll, self.DATA_POLL_TIMEOUT
                 )
 
                 if has_data:
@@ -599,7 +602,7 @@ class CursorHandlerWorker(object):
         await loop.run_in_executor(None, self.command_queue.put, command)  # type: ignore
         await asyncio.sleep(0)  # Yield control to event loop
 
-    async def get_result(self, timeout: float = 1):
+    async def get_result(self, timeout: float = RESULT_POLL_TIMEOUT):
         """Riceve un risultato dalla window in modo asincrono"""
         loop = asyncio.get_running_loop()
         try:
@@ -611,7 +614,7 @@ class CursorHandlerWorker(object):
         except Empty:
             return None
 
-    async def get_all_results(self, timeout=0.1):
+    async def get_all_results(self, timeout=RESULT_POLL_TIMEOUT):
         """Riceve tutti i risultati disponibili"""
         results = []
         while True:
