@@ -367,13 +367,16 @@ class ConnectionHandler(BaseConnectionHandler):
                 # Precheck client
                 tmp_host_name = response.source  # Client will provide its hostname
 
-                if tmp_host_name and client is None:
+                if tmp_host_name is not None and client is None:
                     # Get client obj by hostname if not found by IP
                     client = self.clients.get_client(hostname=tmp_host_name)
                     if client:
                         client.ip_address = (
                             client_addr  # Update IP address based on connection
                         )
+                elif client is None:
+                    # Try again to get client by IP if hostname not provided
+                    client = self.clients.get_client(ip_address=client_addr)
 
                 if (
                     client is None
