@@ -102,7 +102,14 @@ class AsyncEventBus(EventBus):
         # Execute all callbacks concurrently
         if tasks:
             # gather with return_exceptions to prevent one failure from stopping others
-            await asyncio.gather(*tasks, return_exceptions=True)
+            asyncio.create_task(self._gather_callbacks(tasks))
+
+    @staticmethod
+    async def _gather_callbacks(tasks: List[asyncio.Task]):
+        """
+        Gather and execute all callback tasks concurrently.
+        """
+        await asyncio.gather(*tasks, return_exceptions=True)
 
     def dispatch_nowait(self, event_type: int, *args, **kwargs):
         """

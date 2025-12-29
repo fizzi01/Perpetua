@@ -132,8 +132,7 @@ class CursorHandlerWindow(_base.CursorHandlerWindow):
 
 
 class CursorHandlerWorker(_base.CursorHandlerWorker):
-
-    RESULT_POLL_TIMEOUT = 1 # sec
+    RESULT_POLL_TIMEOUT = 1  # sec
     DATA_POLL_TIMEOUT = 0.01
 
     def __init__(
