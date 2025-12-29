@@ -219,7 +219,7 @@ class Server:
         try:
             self.certfile, self.keyfile = self._setup_certificates()
         except Exception:
-            self.config.ssl_enabled = False
+            self.config.disable_ssl()
             self._logger.error("Failed to setup SSL certificates, cannot enable SSL")
             return False
 
@@ -232,6 +232,8 @@ class Server:
         Disable SSL for server connections. It will take effect on next start.
         We won't auto save config here, need a manual save after this call.
         """
+        self.certfile = None
+        self.keyfile = None
         self.config.disable_ssl()
         self._logger.info("SSL disabled for server connections")
 
@@ -621,10 +623,6 @@ class Server:
             keyfile=self.keyfile,
         )
 
-        if not await self.connection_handler.start():
-            self._logger.error("Failed to start connection handler")
-            return False
-
         try:
             # Start mDNS service
             await self._mdns_service.register_service(
@@ -653,6 +651,11 @@ class Server:
             await self._initialize_components()
         except Exception as e:
             self._logger.error(f"Failed to initialize components -> {e}")
+            await self.stop()
+            return False
+
+        if not await self.connection_handler.start():
+            self._logger.error("Failed to start connection handler")
             await self.stop()
             return False
 
