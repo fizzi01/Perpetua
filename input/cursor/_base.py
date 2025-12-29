@@ -459,7 +459,8 @@ class CursorHandlerWorker(object):
                 await self.disable_capture()
             except Exception as e:
                 self._logger.error(f"Error disabling cursor capture: {e}")
-
+            await asyncio.sleep(0)
+            await asyncio.sleep(0)
             # dispatch event after disabling capture
             await self.event_bus.dispatch(
                 # when ServerMouseController receives this event will set the correct cursor position
