@@ -151,3 +151,5 @@ _test_config/
 
 # Poetry
 poetry.lock
+
+.DS_Store
