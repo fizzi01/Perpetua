@@ -314,14 +314,26 @@ class Daemon:
 
         self._pre_configure()
 
+        self._server = Server(
+            app_config=self.app_config,
+            server_config=self._server_config,
+            auto_load_config=False,  # Already loaded
+        )
+
+        self._client = Client(
+            app_config=self.app_config,
+            client_config=self._client_config,
+            auto_load_config=False,  # Already loaded
+        )
+
         # Create socket server based on platform
         try:
             if IS_WINDOWS:
                 # Windows TCP socket (localhost only for security)
-                await self._start_tcp_server()
+                asyncio.create_task(self._start_tcp_server())
             else:
                 # Unix socket
-                await self._start_unix_server()
+                asyncio.create_task(self._start_unix_server())
 
             self._running = True
             self._logger.info(f"Daemon started, listening on {self.socket_path}")
@@ -765,11 +777,8 @@ class Daemon:
             )
 
         try:
-            self._server = Server(
-                app_config=self.app_config,
-                server_config=self._server_config,
-                auto_load_config=False,  # Already loaded
-            )
+            if not self._server:
+                return DaemonResponse(success=False, error="Server not initialized")
 
             success = await self._server.start()
             if success:
@@ -824,12 +833,6 @@ class Daemon:
             )
 
         try:
-            self._client = Client(
-                app_config=self.app_config,
-                client_config=self._client_config,
-                auto_load_config=False,  # Already loaded
-            )
-
             success = await self._client.start()
             if success:
                 response_data = {
@@ -983,7 +986,7 @@ class Daemon:
 
     async def _handle_set_server_config(self, params: Dict[str, Any]) -> DaemonResponse:
         """Set server configuration"""
-        if self._server and self._server.is_running():
+        if self._server:
             return DaemonResponse(
                 success=False,
                 error="Cannot modify configuration while server is running",
@@ -1046,7 +1049,7 @@ class Daemon:
 
     async def _handle_set_client_config(self, params: Dict[str, Any]) -> DaemonResponse:
         """Set client configuration"""
-        if self._client and self._client.is_running():
+        if self._client:
             return DaemonResponse(
                 success=False,
                 error="Cannot modify configuration while client is running",
@@ -1127,9 +1130,7 @@ class Daemon:
 
     async def _handle_reload_config(self, params: Dict[str, Any]) -> DaemonResponse:
         """Reload configurations from disk"""
-        if (self._server and self._server.is_running()) or (
-            self._client and self._client.is_running()
-        ):
+        if self._server or self._client:
             return DaemonResponse(
                 success=False,
                 error="Cannot reload configuration while services are running",
@@ -1176,21 +1177,21 @@ class Daemon:
 
             # Determine which service to use
             if service_type == "auto":
-                if self._server and self._server.is_running():
+                if self._server:
                     service = self._server
                     service_name = "server"
-                elif self._client and self._client.is_running():
+                elif self._client:
                     service = self._client
                     service_name = "client"
                 else:
                     return DaemonResponse(success=False, error="No service is running")
             elif service_type == "server":
-                if not self._server or not self._server.is_running():
+                if not self._server:
                     return DaemonResponse(success=False, error="Server is not running")
                 service = self._server
                 service_name = "server"
             elif service_type == "client":
-                if not self._client or not self._client.is_running():
+                if not self._client:
                     return DaemonResponse(success=False, error="Client is not running")
                 service = self._client
                 service_name = "client"
@@ -1231,21 +1232,21 @@ class Daemon:
 
             # Determine which service to use
             if service_type == "auto":
-                if self._server and self._server.is_running():
+                if self._server:
                     service = self._server
                     service_name = "server"
-                elif self._client and self._client.is_running():
+                elif self._client:
                     service = self._client
                     service_name = "client"
                 else:
                     return DaemonResponse(success=False, error="No service is running")
             elif service_type == "server":
-                if not self._server or not self._server.is_running():
+                if not self._server:
                     return DaemonResponse(success=False, error="Server is not running")
                 service = self._server
                 service_name = "server"
             elif service_type == "client":
-                if not self._client or not self._client.is_running():
+                if not self._client:
                     return DaemonResponse(success=False, error="Client is not running")
                 service = self._client
                 service_name = "client"
@@ -1275,21 +1276,21 @@ class Daemon:
 
         # Determine which service to use
         if service_type == "auto":
-            if self._server and self._server.is_running():
+            if self._server:
                 service = self._server
                 service_name = "server"
-            elif self._client and self._client.is_running():
+            elif self._client:
                 service = self._client
                 service_name = "client"
             else:
                 return DaemonResponse(success=False, error="No service is running")
         elif service_type == "server":
-            if not self._server or not self._server.is_running():
+            if not self._server:
                 return DaemonResponse(success=False, error="Server is not running")
             service = self._server
             service_name = "server"
         elif service_type == "client":
-            if not self._client or not self._client.is_running():
+            if not self._client:
                 return DaemonResponse(success=False, error="Client is not running")
             service = self._client
             service_name = "client"
@@ -1311,7 +1312,7 @@ class Daemon:
 
     async def _handle_add_client(self, params: Dict[str, Any]) -> DaemonResponse:
         """Add a client to server (server only)"""
-        if not self._server or not self._server.is_running():
+        if not self._server:
             return DaemonResponse(success=False, error="Server is not running")
 
         try:
@@ -1344,7 +1345,7 @@ class Daemon:
 
     async def _handle_remove_client(self, params: Dict[str, Any]) -> DaemonResponse:
         """Remove a client from server (server only)"""
-        if not self._server or not self._server.is_running():
+        if not self._server:
             return DaemonResponse(success=False, error="Server is not running")
 
         try:
@@ -1950,7 +1951,8 @@ async def main():
 
     # Wait for shutdown
     try:
-        await daemon.wait_for_shutdown()
+        while daemon.is_running():
+            await asyncio.sleep(1)
     except KeyboardInterrupt:
         print("\nKeyboard interrupt received")
     finally:
@@ -1963,7 +1965,13 @@ if __name__ == "__main__":
     # Use uvloop for better performance if available
     try:
         import uvloop
+        import yappi
 
-        uvloop.run(main())
+        yappi.start()
+        uvloop.run(main(), debug=True)
     except ImportError:
         asyncio.run(main())
+    finally:
+        yappi.stop()
+        yappi.get_func_stats().print_all()
+        yappi.get_thread_stats().print_all()

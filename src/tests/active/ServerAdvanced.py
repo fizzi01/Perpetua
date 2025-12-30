@@ -2,7 +2,7 @@
 Advanced Server Example - Gestione runtime degli stream
 Dimostra come abilitare/disabilitare stream durante l'esecuzione
 """
-
+import os
 import sys
 
 if sys.platform in ("win32", "cygwin", "cli"):
@@ -32,6 +32,8 @@ def helper():
     print("  help    - Show this help message")
     print("  quit    - Stop server and exit\n")
 
+
+print(os.getcwd())
 
 async def ainput(prompt: str = "", timeout: float = 0.1) -> str:
     task = asyncio.to_thread(input, prompt)

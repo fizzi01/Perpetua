@@ -2,7 +2,7 @@
 Unified configuration management system for PyContinuity.
 Handles server and client configurations with persistent storage support.
 """
-
+import asyncio
 from dataclasses import dataclass, field
 from typing import Optional, Dict, Any, List
 import json
@@ -121,6 +121,8 @@ class ServerConfig:
 
         # UID
         self.uid: Optional[str] = None
+
+        self._write_lock = asyncio.Lock()
 
     # SSL Configuration
     def enable_ssl(self) -> None:
@@ -314,6 +316,12 @@ class ServerConfig:
             except Exception as e:
                 print(f"Error loading client from config: {e}")
 
+    @staticmethod
+    async def _write(file, content: str) -> None:
+        with open(file, "w") as f:
+            for line in content:
+                f.write(line)
+
     # Persistence
     async def save(self, file_path: Optional[str] = None) -> None:
         """
@@ -322,15 +330,36 @@ class ServerConfig:
         Args:
             file_path: Path to save the configuration. Uses self.config_file if None.
         """
-        file_path = file_path or self.config_file
+        print("Saving server configuration...")
+        async with self._write_lock:
+            file_path = file_path or self.config_file
 
-        # Ensure directory exists
-        dir_path = os.path.dirname(file_path)
-        if dir_path:
-            os.makedirs(dir_path, exist_ok=True)
+            # Ensure directory exists
+            dir_path = os.path.dirname(file_path)
+            if dir_path:
+                os.makedirs(dir_path, exist_ok=True)
 
-        async with aiofiles.open(file_path, mode="w") as f:
-            await f.write(json.dumps(self.to_dict(), indent=4))
+            try:
+                config_data = self.to_dict()
+                json_content = json.dumps(config_data, indent=4)
+            except Exception as e:
+                raise ValueError(f"Failed to serialize configuration ({e})")
+
+            if not config_data or not json_content.strip():
+                raise ValueError("Configuration data is empty, aborting save")
+
+            temp_file = f"{file_path}.tmp"
+            try:
+                await self._write(temp_file, json_content)
+
+                # Rinomina atomicamente (sovrascrive il file originale)
+                os.replace(temp_file, file_path)
+            except Exception as e:
+                # Rimuovi il file temporaneo in caso di errore
+                if os.path.exists(temp_file):
+                    os.remove(temp_file)
+                raise IOError(f"Failed to save configuration: {e}")
+        print("Server configuration saved.")
 
     def sync_load(self, file_path: Optional[str] = None) -> bool:
         """
@@ -436,6 +465,8 @@ class ClientConfig:
         self.log_level: int = self.DEFAULT_LOG_LEVEL
         self.log_to_file: bool = False
         self.log_file_path: Optional[str] = None
+
+        self._write_lock = asyncio.Lock()
 
     def get_uid(self) -> Optional[str]:
         """Get the client UID"""
@@ -585,6 +616,13 @@ class ClientConfig:
         self.log_to_file = data.get("log_to_file", self.log_to_file)
         self.log_file_path = data.get("log_file_path", self.log_file_path)
 
+    @staticmethod
+    async def _write(file, content: str) -> None:
+        with open(file, "w") as f:
+            for line in content:
+                f.write(line)
+                #await asyncio.sleep(0)
+
     # Persistence
     async def save(self, file_path: Optional[str] = None) -> None:
         """
@@ -593,15 +631,34 @@ class ClientConfig:
         Args:
             file_path: Path to save the configuration. Uses self.config_file if None.
         """
-        file_path = file_path or self.config_file
+        async with self._write_lock:
+            file_path = file_path or self.config_file
 
-        # Ensure directory exists
-        dir_path = os.path.dirname(file_path)
-        if dir_path:
-            os.makedirs(dir_path, exist_ok=True)
+            # Ensure directory exists
+            dir_path = os.path.dirname(file_path)
+            if dir_path:
+                os.makedirs(dir_path, exist_ok=True)
 
-        async with aiofiles.open(file_path, mode="w") as f:
-            await f.write(json.dumps(self.to_dict(), indent=4))
+            try:
+                config_data = self.to_dict()
+                json_content = json.dumps(config_data, indent=4)
+            except Exception as e:
+                raise ValueError(f"Failed to serialize configuration ({e})")
+
+            if not config_data or not json_content.strip():
+                raise ValueError("Configuration data is empty, aborting save")
+
+            temp_file = f"{file_path}.tmp"
+            try:
+                await self._write(temp_file, json_content)
+
+                # Rinomina atomicamente (sovrascrive il file originale)
+                os.replace(temp_file, file_path)
+            except Exception as e:
+                # Rimuovi il file temporaneo in caso di errore
+                if os.path.exists(temp_file):
+                    os.remove(temp_file)
+                raise IOError(f"Failed to save configuration: {e}")
 
     def sync_load(self, file_path: Optional[str] = None) -> bool:
         """

@@ -456,6 +456,11 @@ class ConnectionHandler(BaseConnectionHandler):
                 client.set_first_connection()
                 self.clients.update_client(client)
 
+                self._logger.log(
+                    f"Client {client.get_net_id()} connected and handshake completed.",
+                    Logger.INFO,
+                )
+
                 if self.connected_callback:
                     try:
                         c_conn = client.get_connection()
@@ -473,10 +478,6 @@ class ConnectionHandler(BaseConnectionHandler):
                             f"Error in connected callback -> {e}", Logger.ERROR
                         )
 
-                self._logger.log(
-                    f"Client {client.get_net_id()} connected and handshake completed.",
-                    Logger.INFO,
-                )
                 return True
             elif client is not None:
                 self._logger.log(
