@@ -2,6 +2,7 @@
 Advanced Client Example - Runtime management of streams and SSL
 Demonstrates how to enable/disable streams during execution and manage SSL certificates
 """
+
 from service import Service
 
 import sys
@@ -34,9 +35,11 @@ def helper():
     print("  reconnect - Reconnect to server")
     print("  quit      - Stop client and exit\n")
 
+
 async def ainput(prompt: str = "") -> str:
     loop = asyncio.get_event_loop()
     return await loop.run_in_executor(None, input, prompt)
+
 
 async def server_choice(services: list[Service]) -> str:
     print("\n" + "=" * 60)
@@ -65,6 +68,7 @@ async def server_choice(services: list[Service]) -> str:
 
     return ""
 
+
 async def certificate_reception(client: Client):
     print("\n" + "=" * 60)
     print("Certificate Reception")
@@ -90,11 +94,7 @@ async def certificate_reception(client: Client):
 
         # Ask if user wants to enable SSL now
         if not client.is_running():
-            enable = (
-                input("\nEnable SSL now? (y/n, default: y): ")
-                .strip()
-                .lower()
-            )
+            enable = input("\nEnable SSL now? (y/n, default: y): ").strip().lower()
             if enable != "n":
                 if client.enable_ssl():
                     print("✓ SSL enabled")
@@ -102,6 +102,7 @@ async def certificate_reception(client: Client):
                     print("✗ Failed to enable SSL")
 
     await asyncio.sleep(0)
+
 
 async def interactive_client():
     """Interactive client with runtime control of streams and SSL"""
@@ -118,7 +119,7 @@ async def interactive_client():
     #     port=int(input("Enter server port (default: 5555): ").strip() or "5555"),
     #     auto_reconnect=True
     # )
-    # client_config.set_hostname(gethostname())
+    client_config.set_hostname(gethostname())
     # Set logging
     # client_config.set_logging(level=Logger.DEBUG)
 

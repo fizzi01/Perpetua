@@ -1,5 +1,5 @@
 [project]
-name = "pycontinuity"
+name = "Perpetua"
 version = "0.1.0"
 description = ""
 authors = [
@@ -29,19 +29,11 @@ dependencies = [
     "structlog (>=25.5.0,<26.0.0)",
     "ruff (>=0.14.10,<0.15.0)",
     "pytest (>=9.0.2,<10.0.0)"
-
 ]
 
 [tool.poetry]
 packages = [
-    { include = "command" },
-    { include ="config" },
-    { include ="event" },
-    { include ="input" },
-    { include ="model" },
-    { include ="network" },
-    { include ="service" },
-    { include ="utils" }
+    { include = "*", from = "src" }
 ]
 
 [tool.poetry.group.dev.dependencies]

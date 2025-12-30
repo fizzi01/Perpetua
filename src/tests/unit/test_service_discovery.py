@@ -4,15 +4,13 @@ Unit tests for ServiceDiscovery class.
 
 import asyncio
 import hashlib
-import time
-from typing import List
-from unittest.mock import AsyncMock, MagicMock, Mock, patch, call
+from unittest.mock import AsyncMock, Mock, patch
 
 import pytest
 
 from service import Service, ServiceDiscovery
 from zeroconf import ServiceInfo, Zeroconf
-from zeroconf.asyncio import AsyncZeroconf, AsyncServiceBrowser
+from zeroconf.asyncio import AsyncZeroconf
 
 
 # ============================================================================

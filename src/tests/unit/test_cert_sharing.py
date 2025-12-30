@@ -8,7 +8,6 @@ import unittest
 import asyncio
 import tempfile
 import os
-from base64 import b64encode
 from pathlib import Path
 import time
 
