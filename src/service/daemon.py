@@ -131,7 +131,7 @@ class Daemon:
 
         # Create and start daemon (Windows)
         daemon = Daemon(
-            socket_path="127.0.0.1:65655",
+            socket_path="127.0.0.1:65654",
             app_config=ApplicationConfig()
         )
 
@@ -147,7 +147,7 @@ class Daemon:
     # Platform-specific default paths
     # On Windows, use TCP socket on localhost instead of named pipes for better asyncio compatibility
     if IS_WINDOWS:
-        DEFAULT_SOCKET_PATH = "127.0.0.1:65655"  # TCP address:port
+        DEFAULT_SOCKET_PATH = f"127.0.0.1:{ApplicationConfig.DEFAULT_PORT - 1}"  # TCP address:port
     else:
         DEFAULT_SOCKET_PATH = "/tmp/pycontinuity_daemon.sock"  # Unix socket
 
@@ -422,7 +422,7 @@ class Daemon:
         else:
             # Default fallback
             host = "127.0.0.1"
-            port = 65655
+            port = ApplicationConfig.DEFAULT_PORT - 1
 
         self._logger.info(f"Checking if daemon is already running on {host}:{port}...")
 
