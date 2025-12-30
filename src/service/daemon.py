@@ -601,6 +601,7 @@ class Daemon:
 
             # Continuously listen for commands
             while self._running and not reader.at_eof():
+                await asyncio.sleep(0)
                 try:
                     data = await asyncio.wait_for(
                         reader.read(self.BUFFER_SIZE), timeout=1.0
@@ -1964,8 +1965,11 @@ async def main():
 if __name__ == "__main__":
     # Use uvloop for better performance if available
     try:
-        import uvloop
+        if sys.platform in ("win32", "cygwin", "cli"):
+            import winloop as loop  # ty:ignore[unresolved-import]
+        else:
+            import uvloop as loop   # ty:ignore[unresolved-import]
 
-        uvloop.run(main())
+        loop.run(main())
     except ImportError:
         asyncio.run(main())

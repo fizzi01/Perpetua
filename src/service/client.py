@@ -326,7 +326,7 @@ class Client:
         self,
         otp: str,
         server_host: Optional[str] = None,
-        server_port: int = ClientConfig.DEFAULT_SERVER_PORT + 1,
+        server_port: int = ClientConfig.DEFAULT_SERVER_PORT - 2,
         timeout: int = 30,
     ) -> bool:
         """
@@ -532,11 +532,17 @@ class Client:
         for service in self._found_services:
             # We need to match all (address and port could vary)
             if (
-                service.uid == self.config.get_server_uid()
-                and service.address == self.config.get_server_host()
-                and service.port == self.config.get_server_port()
+                    service.uid == self.config.get_server_uid()
+                    and service.port == self.config.get_server_port()
             ):
-                return True
+                # If hostname is present, verify it first
+                if service.hostname:
+                    if service.hostname == self.config.get_server_host():
+                        return True
+
+                # if no hostname, verify address
+                elif service.address == self.config.get_server_host():
+                    return True
 
         return False
 
@@ -674,7 +680,7 @@ class Client:
                 res = await self._server
 
                 self._logger.info(
-                    "Server choosed", uid=res.uid, host=res.address, port=res.port
+                    "Server chosed", uid=res.uid, host=res.hostname or res.address, port=res.port
                 )
 
             return True
