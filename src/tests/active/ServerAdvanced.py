@@ -2,6 +2,7 @@
 Advanced Server Example - Gestione runtime degli stream
 Dimostra come abilitare/disabilitare stream durante l'esecuzione
 """
+
 import os
 import sys
 
@@ -34,6 +35,7 @@ def helper():
 
 
 print(os.getcwd())
+
 
 async def ainput(prompt: str = "", timeout: float = 0.1) -> str:
     task = asyncio.to_thread(input, prompt)

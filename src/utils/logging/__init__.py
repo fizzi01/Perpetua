@@ -269,6 +269,13 @@ class Logger(BaseLogger):
         """Log a critical level"""
         self.log(message, self.CRITICAL)
 
+    @classmethod
+    def _parse_level(cls, level: int) -> int:
+        return super()._parse_level(level)
+
+    def exception(self, message: str, **kw: Any):
+        pass
+
 
 class StructLogger(BaseLogger):
     """
@@ -285,12 +292,15 @@ class StructLogger(BaseLogger):
         "verbose": True,
         "level": -1,  # -1 indicates not set
     }
+    _root_logger = None
+    _logger_levels: dict[str, int] = {}
 
     level_map = {
         "debug": logging.DEBUG,
         "info": logging.INFO,
         "warning": logging.WARNING,
         "error": logging.ERROR,
+        "exception": logging.CRITICAL,
         "critical": logging.CRITICAL,
     }
 
@@ -300,6 +310,7 @@ class StructLogger(BaseLogger):
         "warning": "\033[93m",  # Yellow
         "error": "\033[91m",  # Red
         "critical": "\033[1;4;31m",  # Critical underlined and bold
+        "exception": "\033[1;4;31m",
     }
 
     def __init__(
@@ -343,17 +354,31 @@ class StructLogger(BaseLogger):
         if level is None:
             level = self.DEBUG if verbose else self.INFO
 
+        # Store the requested level for this specific logger
+        requested_level = level
+
         # Configure structlog in a thread-safe manner
         with self._lock:
+            # Initialize _logger_levels if not exists
+            if not hasattr(StructLogger, "_logger_levels"):
+                StructLogger._logger_levels = {}
+
+            # Register this logger's level BEFORE configuration
+            StructLogger._logger_levels[self.logger_name] = self._parse_level(
+                requested_level
+            )
+
             if not StructLogger._configured or is_root:
+                # First logger or root: configure structlog globally
                 StructLogger._global_config["verbose"] = verbose
-                StructLogger._global_config["level"] = level
-                self._configure_structlog(verbose, level)
+                StructLogger._global_config["level"] = self._parse_level(
+                    level if is_root else self.DEBUG
+                )
+                StructLogger._root_logger = self.logger_name if is_root else ""
+                self._configure_structlog(verbose, StructLogger._global_config["level"])
                 StructLogger._configured = True
-            elif StructLogger._global_config is not None:
-                verbose: bool = StructLogger._global_config["verbose"]  # ty:ignore[invalid-assignment]
-                level = StructLogger._global_config["level"]
-                self._configure_structlog(verbose, level)
+            # For non-root loggers, we don't reconfigure structlog
+            # The filter_by_level processor will use _logger_levels for per-logger filtering
 
         # Get the bound logger
         self._logger = structlog.get_logger().bind(logger=self.logger_name)
@@ -376,8 +401,6 @@ class StructLogger(BaseLogger):
                             color and detailed information. If False, configures for
                             silent output with minimal information.
         """
-        # We capture the configured level for use in the filter processor
-        configured_level = StructLogger._global_config.get("level")
 
         def filter_by_level(logger, method_name, event_dict):
             """
@@ -393,18 +416,37 @@ class StructLogger(BaseLogger):
                 event_dict: The dictionary containing log event data.
 
             Returns:
-                dict or None: The original event_dict if the message should be logged,
-                              otherwise None to filter it out.
+                dict: The original event_dict if the message should be logged.
+
+            Raises:
+                structlog.DropEvent: If the message should be filtered out.
             """
+            # We capture the configured level for use in the filter processor
+            configured_level = StructLogger._global_config.get("level")
+
             if configured_level is None:
-                raise ValueError("Logging level is not configured.")
+                raise structlog.DropEvent
+
+            # Ottieni il nome del logger dall'event_dict
+            logger_name = event_dict.get("logger", "")
+
+            # We get as min_levlel the max between the global configured level and the specific logger level
+            # We do so to ensure that the global level (root) acts as a floor for all loggers
+            min_level = max(
+                StructLogger._logger_levels.get(logger_name, configured_level),
+                configured_level,
+            )
+
+            if min_level is None:
+                return event_dict
 
             message_level = StructLogger.level_map.get(method_name, logging.INFO)
 
-            if message_level >= configured_level:
+            if message_level >= min_level:
                 return event_dict
             else:
-                return None
+                # Use DropEvent to properly stop the processor chain
+                raise structlog.DropEvent
 
         shared_processors = [
             structlog.contextvars.merge_contextvars,
@@ -414,13 +456,9 @@ class StructLogger(BaseLogger):
             structlog.processors.StackInfoRenderer(),
         ]
 
-        if level is not None:
-            logging_level = self._parse_level(level)
-            wrapper_cls = structlog.make_filtering_bound_logger(logging_level)
-        else:
-            wrapper_cls = structlog.make_filtering_bound_logger(
-                logging.DEBUG if verbose else logging.INFO
-            )
+        # Use BoundLogger without filtering wrapper
+        # All filtering is handled by filter_by_level processor
+        wrapper_cls = structlog.BoundLogger
 
         if verbose:
             # Modalità verbose: output colorato con tutti i dettagli
@@ -434,9 +472,9 @@ class StructLogger(BaseLogger):
                         level_styles=self.color_map,
                     ),
                 ],
-                wrapper_class=wrapper_cls,
+                wrapper_class=wrapper_cls,  # type: ignore
                 logger_factory=structlog.WriteLoggerFactory(),
-                cache_logger_on_first_use=True,
+                cache_logger_on_first_use=False,
             )
         else:
             # Modalità silent: output minimale senza colori
@@ -449,9 +487,9 @@ class StructLogger(BaseLogger):
                         pad_event_to=40,
                     ),
                 ],
-                wrapper_class=wrapper_cls,
+                wrapper_class=wrapper_cls,  # type: ignore
                 logger_factory=structlog.WriteLoggerFactory(),
-                cache_logger_on_first_use=True,
+                cache_logger_on_first_use=False,
             )
 
     def bind(self, **context: Any) -> "StructLogger":
@@ -551,16 +589,27 @@ class StructLogger(BaseLogger):
         """
         self._logger.exception(message, **kw)
 
+    def _check_is_root(self) -> bool:
+        """
+        Check if current logger is the root logger.
+        Returns:
+            bool: True if current logger is the root logger, False otherwise.
+        """
+        return StructLogger._root_logger == self.logger_name
+
     def set_level(self, level: int):
-        # Fixme: it does not work
-        # cfg = structlog.get_config()
-        # wrapper_cls = cfg.get('wrapper_class')
-        # wrapper_cls = structlog.make_filtering_bound_logger(self._parse_level(level))
-        # cfg['wrapper_class'] = wrapper_cls
-        # # Unbind e rebind per applicare il nuovo livello
-        # structlog.configure(**cfg)
-        # self._logger = structlog.get_logger().bind(logger=self.logger_name)
-        pass
+        """
+        Imposta il livello di logging per questo specifico logger.
+        """
+        with self._lock:
+            if not hasattr(StructLogger, "_logger_levels"):
+                StructLogger._logger_levels = {}
+
+            StructLogger._logger_levels[self.logger_name] = self._parse_level(level)
+
+            if self._check_is_root():
+                # If this is the root logger, also update the global configured level to match it
+                StructLogger._global_config["level"] = self._parse_level(level)
 
 
 def get_logger(

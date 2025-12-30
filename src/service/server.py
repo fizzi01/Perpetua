@@ -117,9 +117,8 @@ class Server:
             self.config.sync_load()
 
         # Set logging level
-        self._logger = get_logger(
-            self.__class__.__name__, level=self.config.log_level, is_root=True
-        )
+        self._logger = get_logger(self.__class__.__name__, level=self.config.log_level)
+        print(f"Logger initialized at level: {self.config.log_level}")
 
         # Log loaded clients
         self._load_authorized_clients()
@@ -276,7 +275,10 @@ class Server:
 
     # TODO: Better handling -> We should keep the sharing server alive because port may be blocked
     async def share_certificate(
-        self, host: str = "0.0.0.0", port: int = ServerConfig.DEFAULT_PORT - 2, timeout: int = 30
+        self,
+        host: str = "0.0.0.0",
+        port: int = ServerConfig.DEFAULT_PORT - 2,
+        timeout: int = 30,
     ) -> Tuple[bool, Optional[str]]:
         """
         Start certificate sharing process with OTP.
@@ -1066,7 +1068,9 @@ async def main():
     server = Server()
 
     # Configure server
-    server.config.set_connection_params(host="192.168.1.62", port=ApplicationConfig.DEFAULT_PORT)
+    server.config.set_connection_params(
+        host="192.168.1.62", port=ApplicationConfig.DEFAULT_PORT
+    )
     server.config.set_logging(level=Logger.INFO)
 
     # Enable streams

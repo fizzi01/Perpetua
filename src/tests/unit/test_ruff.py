@@ -1,6 +1,7 @@
 """
 Runs Ruff linter on project files to ensure code quality and adherence to style guidelines.
 """
+
 from os import path
 
 import subprocess

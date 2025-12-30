@@ -47,14 +47,16 @@ def temp_dir(tmp_path):
     """Provide a temporary directory for tests."""
     return tmp_path
 
+
 @pytest.fixture
 def project_root_dir():
     """Provide the project root directory path."""
     import os
 
     current_dir = os.path.dirname(__file__)
-    project_root = os.path.abspath(os.path.join(current_dir, "../../.."))
+    project_root = os.path.abspath(os.path.join(current_dir, "../.."))
     return project_root
+
 
 @pytest.fixture
 def cur_dir():

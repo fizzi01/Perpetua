@@ -256,6 +256,7 @@ class ServiceDiscovery:
             raise ValueError("Invalid service type or name")
         except Exception as e:
             import traceback
+
             print(traceback.format_exc())
             raise RuntimeError(f"Failed to register mDNS service ({e})")
 

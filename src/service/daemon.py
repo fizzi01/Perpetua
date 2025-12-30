@@ -147,7 +147,9 @@ class Daemon:
     # Platform-specific default paths
     # On Windows, use TCP socket on localhost instead of named pipes for better asyncio compatibility
     if IS_WINDOWS:
-        DEFAULT_SOCKET_PATH = f"127.0.0.1:{ApplicationConfig.DEFAULT_PORT - 3}"  # TCP address:port
+        DEFAULT_SOCKET_PATH = (
+            f"127.0.0.1:{ApplicationConfig.DEFAULT_PORT - 3}"  # TCP address:port
+        )
     else:
         DEFAULT_SOCKET_PATH = "/tmp/pycontinuity_daemon.sock"  # Unix socket
 
@@ -330,10 +332,10 @@ class Daemon:
         try:
             if IS_WINDOWS:
                 # Windows TCP socket (localhost only for security)
-                asyncio.create_task(self._start_tcp_server())
+                await self._start_tcp_server()
             else:
                 # Unix socket
-                asyncio.create_task(self._start_unix_server())
+                await self._start_unix_server()
 
             self._running = True
             self._logger.info(f"Daemon started, listening on {self.socket_path}")
@@ -634,7 +636,11 @@ class Daemon:
                 except asyncio.TimeoutError:
                     # Timeout is normal, just check running state and continue
                     continue
-                except (BrokenPipeError, ConnectionResetError, ConnectionAbortedError) as e:
+                except (
+                    BrokenPipeError,
+                    ConnectionResetError,
+                    ConnectionAbortedError,
+                ) as e:
                     self._logger.error(f"Client disconnected ({e})")
                     break
                 except Exception as e:
@@ -788,7 +794,7 @@ class Daemon:
                     "port": self._server.config.port,
                     "enabled_streams": self._server.get_enabled_streams(),
                 }
-
+                self._logger.set_level(self._server.config.log_level)
                 # Broadcast event to connected client
                 # await self.broadcast_event("server_started", response_data)
 
@@ -808,7 +814,6 @@ class Daemon:
 
         try:
             await self._server.stop()
-            self._server = None
 
             # Broadcast event to connected client
             # await self.broadcast_event("server_stopped", {"message": "Server stopped"})
@@ -832,6 +837,9 @@ class Daemon:
                 success=False, error="Cannot start client while server is running"
             )
 
+        if not self._client:
+            return DaemonResponse(success=False, error="Client not initialized")
+
         try:
             success = await self._client.start()
             if success:
@@ -841,7 +849,7 @@ class Daemon:
                     "server_port": self._client.config.get_server_port(),
                     "enabled_streams": self._client.get_enabled_streams(),
                 }
-
+                self._logger.set_level(self._client.config.log_level)
                 # Broadcast event to connected client
                 # await self.broadcast_event("client_started", response_data)
 
@@ -861,7 +869,7 @@ class Daemon:
 
         try:
             await self._client.stop()
-            self._client = None
+            # self._client = None
 
             # Broadcast event to connected client
             # await self.broadcast_event("client_stopped", {"message": "Client stopped"})
@@ -1951,8 +1959,7 @@ async def main():
 
     # Wait for shutdown
     try:
-        while daemon.is_running():
-            await asyncio.sleep(1)
+        await daemon.wait_for_shutdown()
     except KeyboardInterrupt:
         print("\nKeyboard interrupt received")
     finally:
@@ -1964,8 +1971,11 @@ async def main():
 if __name__ == "__main__":
     # Use uvloop for better performance if available
     try:
-        import uvloop
+        if IS_WINDOWS:
+            import winloop as asyncloop  # ty:ignore[unresolved-import]
+        else:
+            import uvloop as asyncloop  # ty:ignore[unresolved-import]
 
-        uvloop.run(main())
+        asyncloop.run(main())
     except ImportError:
         asyncio.run(main())
