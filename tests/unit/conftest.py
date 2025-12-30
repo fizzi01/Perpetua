@@ -47,15 +47,31 @@ def temp_dir(tmp_path):
     """Provide a temporary directory for tests."""
     return tmp_path
 
+@pytest.fixture
+def project_root_dir():
+    """Provide the project root directory path."""
+    import os
+
+    current_dir = os.path.dirname(__file__)
+    project_root = os.path.abspath(os.path.join(current_dir, "../.."))
+    return project_root
 
 @pytest.fixture
-def test_config_dir():
+def cur_dir():
+    """Provide the current working directory path."""
+    import os
+
+    current_dir = os.path.dirname(__file__)
+    return current_dir
+
+
+@pytest.fixture
+def test_config_dir(cur_dir):
     """Provide the path to the tests/unit/config directory with default config files."""
     import os
 
     # Get the directory where this conftest.py file is located
-    current_dir = os.path.dirname(__file__)
-    return os.path.join(current_dir, "config")
+    return os.path.join(cur_dir, "config")
 
 
 @pytest.fixture
@@ -376,3 +392,125 @@ def callback_tracker():
         call_args_list.append((args, kwargs))
 
     return call_count, call_args_list, tracked_callback
+
+
+# ============================================================================
+# Daemon Fixtures
+# ============================================================================
+
+
+@pytest.fixture
+def daemon_unix_socket_path(cur_dir):
+    """Provide a temporary Unix socket path for daemon testing."""
+    import os
+
+    return os.path.join(cur_dir, "test_daemon.sock")
+
+
+@pytest.fixture
+def daemon_tcp_address():
+    """Provide a test TCP address for daemon testing (Windows)."""
+    # Use high port number to avoid conflicts
+    return "127.0.0.1:55600"
+
+
+@pytest.fixture
+async def daemon_instance(app_config, daemon_unix_socket_path):
+    """
+    Provide a Daemon instance for testing.
+    Automatically uses Unix socket on Unix systems, TCP on Windows.
+    """
+    from service.daemon import Daemon
+    import sys
+
+    # Choose socket path based on platform
+    if sys.platform in ("win32", "cygwin", "cli"):
+        socket_path = "127.0.0.1:55600"
+    else:
+        socket_path = daemon_unix_socket_path
+
+    daemon = Daemon(
+        socket_path=socket_path, app_config=app_config, auto_load_config=False
+    )
+    return daemon
+
+
+@pytest.fixture
+async def running_daemon(daemon_instance):
+    """
+    Provide a running Daemon instance.
+    Automatically starts and stops the daemon.
+    """
+    await daemon_instance.start()
+    yield daemon_instance
+    if daemon_instance._running:
+        await daemon_instance.stop()
+
+
+@pytest.fixture
+def mock_server():
+    """Provide a mocked Server instance."""
+    from unittest.mock import AsyncMock, MagicMock
+
+    server = MagicMock()
+    server.start = AsyncMock(return_value=True)
+    server.stop = AsyncMock()
+    server.is_running = MagicMock(return_value=False)
+    server.get_enabled_streams = MagicMock(return_value=[0, 1, 4])
+    server.get_active_streams = MagicMock(return_value=[0, 1])
+    server.config = MagicMock()
+    server.config.host = "0.0.0.0"
+    server.config.port = 8888
+    server.config.ssl_enabled = False
+    server.clients_manager = MagicMock()
+    server.clients_manager.get_clients = MagicMock(return_value={})
+    return server
+
+
+@pytest.fixture
+def mock_client():
+    """Provide a mocked Client instance."""
+    from unittest.mock import AsyncMock, MagicMock
+
+    client = MagicMock()
+    client.start = AsyncMock(return_value=True)
+    client.stop = AsyncMock()
+    client.is_running = MagicMock(return_value=False)
+    client.is_connected = MagicMock(return_value=False)
+    client.get_enabled_streams = MagicMock(return_value=[0, 1, 4])
+    client.get_active_streams = MagicMock(return_value=[0, 1])
+    client.has_certificate = MagicMock(return_value=False)
+    client.config = MagicMock()
+    client.config.get_server_host = MagicMock(return_value="127.0.0.1")
+    client.config.get_server_port = MagicMock(return_value=8888)
+    client.config.ssl_enabled = False
+    return client
+
+
+@pytest.fixture
+async def daemon_client_connection(running_daemon):
+    """
+    Provide a connected client to the daemon.
+    Returns (reader, writer) tuple.
+    """
+    import asyncio
+    import sys
+
+    # Connect based on platform
+    if sys.platform in ("win32", "cygwin", "cli"):
+        host, port = running_daemon.socket_path.split(":")
+        reader, writer = await asyncio.open_connection(host, int(port))
+    else:
+        reader, writer = await asyncio.open_unix_connection(running_daemon.socket_path)
+
+    # Read welcome message
+    await reader.read(16384)
+
+    yield reader, writer
+
+    # Cleanup
+    try:
+        writer.close()
+        await writer.wait_closed()
+    except Exception:
+        pass

@@ -1,19 +1,32 @@
 """
 Runs Ruff linter on project files to ensure code quality and adherence to style guidelines.
 """
+from os import path
+
 import subprocess
 import sys
 
 # Directories to check
-DIRECTORIES_TO_CHECK = ["command/", "config/", "event/", "input/", "model/", "network/", "service/", "utils/"]
+DIRECTORIES_TO_CHECK = [
+    "command/",
+    "config/",
+    "event/",
+    "input/",
+    "model/",
+    "network/",
+    "service/",
+    "utils/",
+]
 
 
-def test_ruff_check():
+def test_ruff_check(project_root_dir):
     """Test that Ruff linter passes on all project files."""
+    # remap directories to check with project root
+    dirs = [path.join(project_root_dir, s) for s in DIRECTORIES_TO_CHECK]
     result = subprocess.run(
-        [sys.executable, "-m", "ruff", "check"] + DIRECTORIES_TO_CHECK,
+        [sys.executable, "-m", "ruff", "check"] + dirs,
         capture_output=True,
-        text=True
+        text=True,
     )
 
     assert result.returncode == 0, (
@@ -21,12 +34,13 @@ def test_ruff_check():
     )
 
 
-def test_ruff_format_check():
+def test_ruff_format_check(project_root_dir):
     """Test that code formatting follows Ruff rules."""
+    dirs = [path.join(project_root_dir, s) for s in DIRECTORIES_TO_CHECK]
     result = subprocess.run(
-        [sys.executable, "-m", "ruff", "format", "--check"] + DIRECTORIES_TO_CHECK,
+        [sys.executable, "-m", "ruff", "format", "--check"] + dirs,
         capture_output=True,
-        text=True
+        text=True,
     )
 
     assert result.returncode == 0, (

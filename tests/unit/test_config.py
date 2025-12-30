@@ -10,7 +10,7 @@ from pathlib import Path
 
 import pytest
 
-from config import ApplicationConfig, ServerConfig, ClientConfig
+from config import ApplicationConfig, ServerConfig, ClientConfig, ServerInfo
 from model.client import ClientObj, ScreenPosition
 from utils.logging import Logger
 
@@ -616,7 +616,7 @@ class TestClientConfigInitialization:
         """Test ClientConfig ServerInfo initialization."""
         config = ClientConfig()
 
-        assert isinstance(config.server_info, ClientConfig.ServerInfo)
+        assert isinstance(config.server_info, ServerInfo)
         assert config.server_info.auto_reconnect is True
         assert config.server_info.ssl is False
 
@@ -709,7 +709,7 @@ class TestClientConfigServerConnection:
         """Test getting server info object."""
         server_info = client_config.get_server_info()
 
-        assert isinstance(server_info, ClientConfig.ServerInfo)
+        assert isinstance(server_info, ServerInfo)
         assert server_info == client_config.server_info
 
     def test_get_server_host(self, client_config):
@@ -802,11 +802,11 @@ class TestClientConfigLogging:
 
 @pytest.mark.anyio
 class TestServerInfoSerialization:
-    """Test ClientConfig.ServerInfo serialization."""
+    """Test ServerInfo serialization."""
 
     def test_server_info_to_dict(self):
         """Test converting ServerInfo to dictionary."""
-        server_info = ClientConfig.ServerInfo(
+        server_info = ServerInfo(
             uid="server-123",
             host="10.0.0.1",
             port=8080,
@@ -837,7 +837,7 @@ class TestServerInfoSerialization:
             "additional_params": {"timeout": 60},
         }
 
-        server_info = ClientConfig.ServerInfo.from_dict(data)
+        server_info = ServerInfo.from_dict(data)
 
         assert server_info.host == "192.168.1.1"
         assert server_info.port == 9999
@@ -850,7 +850,7 @@ class TestServerInfoSerialization:
         """Test creating ServerInfo from dictionary with missing fields."""
         data = {}
 
-        server_info = ClientConfig.ServerInfo.from_dict(data)
+        server_info = ServerInfo.from_dict(data)
 
         assert server_info.host == "127.0.0.1"
         assert server_info.port == 5555

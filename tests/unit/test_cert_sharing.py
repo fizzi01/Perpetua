@@ -2,6 +2,7 @@
 """
 Unit tests for certificate sharing system with OTP and JWT
 """
+
 import hashlib
 import unittest
 import asyncio
@@ -83,8 +84,11 @@ class TestCertificateSharing(unittest.TestCase):
 
         # Should be able to decode with same OTP
         import jwt
+
         jwt_secret = hashlib.sha256(otp.encode("utf-8")).hexdigest()
-        payload = jwt.decode(token, jwt_secret, algorithms=["HS256"], options={"verify_iat": False})
+        payload = jwt.decode(
+            token, jwt_secret, algorithms=["HS256"], options={"verify_iat": False}
+        )
 
         # Check payload contains encrypted certificate and salt
         self.assertIn("encrypted_cert", payload)
@@ -113,8 +117,10 @@ class TestCertificateSharing(unittest.TestCase):
             else self.cert_data
         )
         # Remove any leading/trailing whitespace for comparison
-        cert_str_normalized = cert_str.replace('\r\n', '\n').replace('\r', '\n')
-        decrypted_cert_normalized = decrypted_cert.decode("utf-8").replace('\r\n', '\n').replace('\r', '\n')
+        cert_str_normalized = cert_str.replace("\r\n", "\n").replace("\r", "\n")
+        decrypted_cert_normalized = (
+            decrypted_cert.decode("utf-8").replace("\r\n", "\n").replace("\r", "\n")
+        )
         self.assertEqual(decrypted_cert_normalized, cert_str_normalized)
 
     def test_otp_expiry(self):

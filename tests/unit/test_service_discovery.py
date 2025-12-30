@@ -84,6 +84,7 @@ def mock_service_info():
     mock_info.properties = {b"hostname": b"test-hostname.local"}
     return mock_info
 
+
 @pytest.fixture
 def mock_async_service_info():
     """Provide a mocked AsyncServiceInfo."""
@@ -274,7 +275,9 @@ class TestHostnameResolution:
         """Test successful hostname resolution."""
         hostname = "localhost"
 
-        with patch("service.get_local_ip", return_value="127.0.0.1") as mock_get_local_ip:
+        with patch(
+            "service.get_local_ip", return_value="127.0.0.1"
+        ) as mock_get_local_ip:
             ip = await ServiceDiscovery.resolve_hostname(hostname)
             assert ip == "127.0.0.1"
             mock_get_local_ip.assert_called_once()
@@ -284,9 +287,11 @@ class TestHostnameResolution:
         """Test hostname resolution failure."""
         hostname = "invalid-nonexistent-host.local"
 
-        with patch("service.get_local_ip", side_effect=Exception("Name resolution failed")):
+        with patch(
+            "service.get_local_ip", side_effect=Exception("Name resolution failed")
+        ):
             with pytest.raises(
-                    RuntimeError, match=f"Failed to resolve hostname {hostname}"
+                RuntimeError, match=f"Failed to resolve hostname {hostname}"
             ):
                 await ServiceDiscovery.resolve_hostname(hostname)
 
@@ -874,7 +879,9 @@ class TestServiceListener:
             # Create service info without hostname
             mock_async_info = AsyncMock()
             mock_async_info.async_request = AsyncMock()
-            mock_async_info.parsed_addresses = Mock(spec=list, return_value=["192.168.1.100"])
+            mock_async_info.parsed_addresses = Mock(
+                spec=list, return_value=["192.168.1.100"]
+            )
             mock_async_info.port = 8000
             mock_async_info.properties = {}  # No hostname property
 

@@ -63,6 +63,7 @@ class UIDGenerator:
     """
     A simple UID generator utility.
     """
+
     UID_LEN: int = 48
 
     @staticmethod
@@ -78,9 +79,7 @@ class UIDGenerator:
         id_len = uid_len if uid_len > 0 else UIDGenerator.UID_LEN
         unique_string = f"{key}-{time.time()}"
         try:
-            uid = hashlib.sha256(unique_string.encode()).hexdigest()[
-                : id_len
-            ]
+            uid = hashlib.sha256(unique_string.encode()).hexdigest()[:id_len]
             return uid
         except Exception as e:
             raise RuntimeError(f"{e}")

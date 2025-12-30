@@ -99,10 +99,7 @@ class ConnectionHandler(BaseConnectionHandler):
 
             return True
         except Exception as e:
-            self._logger.log(f"Failed to start async server -> {e}", Logger.CRITICAL)
-            import traceback
-
-            self._logger.log(traceback.format_exc(), Logger.ERROR)
+            self._logger.exception(f"Failed to start async server -> {e}")
             self._running = False
             return False
 
@@ -281,6 +278,8 @@ class ConnectionHandler(BaseConnectionHandler):
                 writer.close()
                 await writer.wait_closed()
                 return
+
+            # TODO: Move client allowlist verification here and let user allow/block before handshake
 
             # Handshake
             if not await self._handshake(reader, writer, addr[0], client_obj):

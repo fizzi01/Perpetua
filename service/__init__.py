@@ -1,12 +1,11 @@
 """
 Service package provides server and client public APIs.
 """
+
 from utils import UIDGenerator
 
 import asyncio
 from typing import Optional
-import hashlib
-import time
 import socket
 
 from zeroconf import ServiceInfo, ServiceListener, Zeroconf, BadTypeInNameException

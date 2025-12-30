@@ -28,7 +28,7 @@ from utils.crypto import CertificateManager
 from utils.crypto.sharing import CertificateReceiver
 from utils.metrics import MetricsCollector, PerformanceMonitor
 from utils.screen import Screen
-from utils.logging import Logger, get_logger
+from utils.logging import get_logger
 
 
 class Client:

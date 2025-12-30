@@ -647,7 +647,6 @@ class ClientConfig:
             return False
 
 
-
 class ServerInfo:
     """
     Manages server connection information for the client.
