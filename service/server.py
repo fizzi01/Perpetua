@@ -276,7 +276,7 @@ class Server:
 
     # TODO: Better handling -> We should keep the sharing server alive because port may be blocked
     async def share_certificate(
-        self, host: str = "0.0.0.0", port: int = 5556, timeout: int = 30
+        self, host: str = "0.0.0.0", port: int = 55556, timeout: int = 30
     ) -> Tuple[bool, Optional[str]]:
         """
         Start certificate sharing process with OTP.
@@ -286,7 +286,7 @@ class Server:
 
         Args:
             host: Host address for temporary server (default: all interfaces)
-            port: Port for temporary server (default: 5556)
+            port: Port for temporary server (default: 55556)
             timeout: Maximum time window in seconds (default: 10)
 
         Returns:

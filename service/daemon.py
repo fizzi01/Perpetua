@@ -3,14 +3,15 @@ Daemon service for managing lifecycle.
 
 This module provides a daemon service that can run independently from a GUI,
 managing both Client and Server services through a command socket interface.
-The daemon exposes a Unix socket (Linux/macOS) or Named Pipe (Windows) for
-receiving commands to control the application.
+The daemon exposes a Unix socket (Linux/macOS) or TCP socket on localhost (Windows)
+for receiving commands to control the application.
 """
 
 import asyncio
 import json
 import os
 import signal
+import socket
 import sys
 from typing import Optional, Dict, Any, Callable
 from enum import Enum
@@ -18,19 +19,29 @@ from enum import Enum
 from config import ApplicationConfig, ServerConfig, ClientConfig
 from service.client import Client
 from service.server import Server
+from utils import UIDGenerator
 from utils.logging import Logger, get_logger
 
 # Determine platform for socket type
 IS_WINDOWS = sys.platform in ("win32", "cygwin", "cli")
 
-if IS_WINDOWS:
-    try:
-        import win32pipe
-        import win32file
-        import pywintypes
-    except ImportError:
-        # Windows without pywin32
-        IS_WINDOWS = False
+
+class DaemonException(Exception):
+    """Base exception for daemon errors"""
+
+    pass
+
+
+class DaemonAlreadyRunningException(DaemonException):
+    """Exception raised when daemon is already running (socket/port already in use)"""
+
+    pass
+
+
+class DaemonPortOccupiedException(DaemonException):
+    """Exception raised when TCP port is occupied by another process"""
+
+    pass
 
 
 class DaemonCommand(str, Enum):
@@ -108,14 +119,21 @@ class Daemon:
 
     This daemon runs independently and provides a command socket interface
     for controlling Client and Server services, as well as their configurations.
-    Supports both Unix sockets (Linux/macOS) and Named Pipes (Windows).
+    Supports both Unix sockets (Linux/macOS) and TCP sockets on localhost (Windows).
 
     Example:
-        # Create and start daemon
-        daemon = PyContinuityDaemon(
-            socket_path="/tmp/pycontinuity.sock",  # or r"\\.\\pipe\\pycontinuity" on Windows
+        # Create and start daemon (Unix)
+        daemon = Daemon(
+            socket_path="/tmp/pycontinuity.sock",
             app_config=ApplicationConfig()
         )
+
+        # Create and start daemon (Windows)
+        daemon = Daemon(
+            socket_path="127.0.0.1:55557",
+            app_config=ApplicationConfig()
+        )
+
         await daemon.start()
 
         # Daemon will run until shutdown command is received
@@ -126,12 +144,13 @@ class Daemon:
     """
 
     # Platform-specific default paths
+    # On Windows, use TCP socket on localhost instead of named pipes for better asyncio compatibility
     if IS_WINDOWS:
-        DEFAULT_SOCKET_PATH = r"\\.\\pipe\\pycontinuity_daemon"
+        DEFAULT_SOCKET_PATH = "127.0.0.1:55557"  # TCP address:port
     else:
-        DEFAULT_SOCKET_PATH = "/tmp/pycontinuity_daemon.sock"
+        DEFAULT_SOCKET_PATH = "/tmp/pycontinuity_daemon.sock"  # Unix socket
 
-    MAX_CONNECTIONS = 10
+    MAX_CONNECTIONS = 1  # Only accept one connection at a time
     BUFFER_SIZE = 16384  # 16KB for larger responses
 
     def __init__(
@@ -144,7 +163,7 @@ class Daemon:
         Initialize the daemon.
 
         Args:
-            socket_path: Path to Unix socket or Named Pipe for command interface
+            socket_path: Path to Unix socket or TCP address:port (e.g., "127.0.0.1:55557") for command interface
             app_config: Application configuration
             auto_load_config: Whether to auto-load existing configurations
         """
@@ -169,6 +188,11 @@ class Daemon:
         self._running = False
         self._shutdown_event = asyncio.Event()
         self._socket_server: Optional[asyncio.AbstractServer] = None
+
+        # Connected client management (only one at a time)
+        self._connected_client_reader: Optional[asyncio.StreamReader] = None
+        self._connected_client_writer: Optional[asyncio.StreamWriter] = None
+        self._client_connection_lock = asyncio.Lock()
 
         # Command handlers registry
         self._command_handlers: Dict[str, Callable] = {
@@ -201,7 +225,7 @@ class Daemon:
             DaemonCommand.GET_FOUND_SERVERS: self._handle_get_found_servers,
             DaemonCommand.CHOOSE_SERVER: self._handle_choose_server,
             DaemonCommand.CHECK_OTP_NEEDED: self._handle_check_otp_needed,
-            DaemonCommand.DISCOVER_SERVICES: self._handle_discover_services,
+            DaemonCommand.DISCOVER_SERVICES: self._get_discovered_services,
             DaemonCommand.SHUTDOWN: self._handle_shutdown,
             DaemonCommand.PING: self._handle_ping,
         }
@@ -227,12 +251,53 @@ class Daemon:
 
     # ==================== Lifecycle Methods ====================
 
+    def _pre_configure(self):
+        """Pre-configuration steps before starting services"""
+        # Check if server/client configs have missing important fields like hostname
+        if self._client_config:
+            if not self._client_config.get_uid():
+                try:
+                    key = self._client_config.get_hostname()
+                    if not key:
+                        key = socket.gethostname()
+                        self._logger.warning(
+                            "Client configuration missing hostname, setting new one", new_hostname=key
+                        )
+                        self._client_config.set_hostname(key)
+                    new_uid = UIDGenerator.generate_uid(key)
+                    self._client_config.set_uid(new_uid)
+                    self._logger.info(
+                        "Generated new client UID", client_uid=new_uid
+                    )
+                except Exception as e:
+                    self._logger.error(
+                        f"Preconfiguration error -> {e}", exc_info=True
+                    )
+
+        if self._server_config: # UID will be generated by service discovery
+            if not self._server_config.host:
+                try:
+                    hostname = socket.gethostname()
+                    self._server_config.host = hostname
+                    self._logger.info(
+                        "Server configuration missing host, setting to system hostname",
+                        host=hostname,
+                    )
+                except Exception as e:
+                    self._logger.error(
+                        f"Preconfiguration error -> {e}", exc_info=True
+                    )
+
     async def start(self) -> bool:
         """
         Start the daemon and command socket server.
 
         Returns:
             True if daemon started successfully, False otherwise
+
+        Raises:
+            DaemonAlreadyRunningException: If daemon is already running
+            DaemonPortOccupiedException: If TCP port is occupied (Windows only)
         """
         if self._running:
             self._logger.warning("Daemon already running")
@@ -249,13 +314,15 @@ class Daemon:
                 await self._server_config.load()
                 await self._client_config.load()
             except Exception as e:
-                self._logger.warning(f"Could not load configurations: {e}")
+                self._logger.warning(f"Could not load configurations -> {e}")
+
+        self._pre_configure()
 
         # Create socket server based on platform
         try:
             if IS_WINDOWS:
-                # Windows Named Pipe (requires custom implementation)
-                await self._start_windows_server()
+                # Windows TCP socket (localhost only for security)
+                await self._start_tcp_server()
             else:
                 # Unix socket
                 await self._start_unix_server()
@@ -264,82 +331,133 @@ class Daemon:
             self._logger.info(f"Daemon started, listening on {self.socket_path}")
             return True
 
+        except (DaemonAlreadyRunningException, DaemonPortOccupiedException):
+            # Re-raise daemon-specific exceptions
+            raise
+
         except Exception as e:
-            self._logger.error(f"Failed to start daemon: {e}")
+            self._logger.error(f"Failed to start daemon -> {e}")
             return False
 
     async def _start_unix_server(self):
-        """Start Unix socket server (Linux/macOS)"""
-        # Remove existing socket if present
-        if os.path.exists(self.socket_path):
-            os.unlink(self.socket_path)
+        """
+        Start Unix socket server (Linux/macOS)
 
+        Logic:
+        - If socket exists and is connectable -> raise DaemonAlreadyRunningException
+        - If socket exists but not connectable -> remove and create new one
+        - If socket doesn't exist -> create new one
+        """
+        if os.path.exists(self.socket_path):
+            self._logger.info(
+                f"Socket file {self.socket_path} already exists, checking if daemon is running..."
+            )
+
+            # Try to connect to existing socket
+            try:
+                reader, writer = await asyncio.wait_for(
+                    asyncio.open_unix_connection(self.socket_path), timeout=2.0
+                )
+                # Connection successful -> daemon is already running
+                writer.close()
+                await writer.wait_closed()
+
+                error_msg = f"Daemon is already running on socket {self.socket_path}"
+                self._logger.error(error_msg)
+                raise DaemonAlreadyRunningException(error_msg)
+
+            except (
+                ConnectionRefusedError,
+                FileNotFoundError,
+                asyncio.TimeoutError,
+            ) as e:
+                # Socket exists but daemon not running -> remove stale socket
+                self._logger.warning(
+                    f"Socket exists but daemon not running (error: {type(e).__name__}). "
+                    f"Removing stale socket file..."
+                )
+                try:
+                    os.unlink(self.socket_path)
+                    self._logger.info(f"Removed stale socket file {self.socket_path}")
+                except Exception as remove_error:
+                    self._logger.error(f"Failed to remove stale socket: {remove_error}")
+                    raise
+
+        # Create new Unix socket server
         self._socket_server = await asyncio.start_unix_server(
             self._handle_client_connection, path=self.socket_path
         )
 
         # Set socket permissions (owner read/write only)
         os.chmod(self.socket_path, 0o600)
+        self._logger.info(f"Unix socket server created at {self.socket_path}")
 
-    async def _start_windows_server(self):
-        """Start Named Pipe server (Windows)"""
-        # For Windows, we'll use asyncio streams with a custom pipe handler
-        # This is a simplified version - production should use more robust implementation
-        asyncio.create_task(self._windows_pipe_server())
+    async def _start_tcp_server(self):
+        """
+        Start TCP socket server on localhost (Windows)
 
-    async def _windows_pipe_server(self):
-        """Windows named pipe server loop"""
-        while self._running:
-            try:
-                # Create named pipe
-                pipe = win32pipe.CreateNamedPipe(
-                    self.socket_path,
-                    win32pipe.PIPE_ACCESS_DUPLEX,
-                    win32pipe.PIPE_TYPE_MESSAGE
-                    | win32pipe.PIPE_READMODE_MESSAGE
-                    | win32pipe.PIPE_WAIT,
-                    self.MAX_CONNECTIONS,
-                    self.BUFFER_SIZE,
-                    self.BUFFER_SIZE,
-                    0,
-                    None,
-                )
+        Logic:
+        - Try to connect to the port first
+        - If connection succeeds -> raise DaemonAlreadyRunningException
+        - If connection fails with "connection refused" -> port is free, create server
+        - If binding fails with "address already in use" -> raise DaemonPortOccupiedException
+        """
+        # Parse host and port from socket_path
+        if ":" in self.socket_path:
+            host, port_str = self.socket_path.split(":", 1)
+            port = int(port_str)
+        else:
+            # Default fallback
+            host = "127.0.0.1"
+            port = 55557
 
-                # Wait for client connection
-                win32pipe.ConnectNamedPipe(pipe, None)
+        self._logger.info(f"Checking if daemon is already running on {host}:{port}...")
 
-                # Handle connection in background
-                asyncio.create_task(self._handle_windows_pipe(pipe))
-
-            except Exception as e:
-                self._logger.error(f"Windows pipe server error: {e}")
-                await asyncio.sleep(0.1)
-
-    async def _handle_windows_pipe(self, pipe):
-        """Handle Windows named pipe connection"""
+        # First, try to connect to check if daemon is already running
         try:
-            # Read command
-            result, data = win32file.ReadFile(pipe, self.BUFFER_SIZE)
-            if result == 0 and data:
-                # Parse and execute command
-                try:
-                    command_data = json.loads(data.decode("utf-8"))
-                    command = command_data.get("command")
-                    params = command_data.get("params", {})
+            reader, writer = await asyncio.wait_for(
+                asyncio.open_connection(host, port), timeout=2.0
+            )
+            # Connection successful -> daemon is already running
+            writer.close()
+            await writer.wait_closed()
 
-                    response = await self._execute_command(command, params)
+            error_msg = f"Daemon is already running on {host}:{port}"
+            self._logger.error(error_msg)
+            raise DaemonAlreadyRunningException(error_msg)
 
-                    # Send response
-                    win32file.WriteFile(pipe, response.to_json().encode("utf-8"))
+        except (ConnectionRefusedError, OSError) as e:
+            # Connection refused is expected if no daemon is running
+            self._logger.debug(f"Port check failed as expected: {type(e).__name__}")
 
-                except json.JSONDecodeError as e:
-                    response = DaemonResponse(success=False, error=f"Invalid JSON: {e}")
-                    win32file.WriteFile(pipe, response.to_json().encode("utf-8"))
+        except asyncio.TimeoutError:
+            # Timeout might indicate port is open but not responding properly
+            self._logger.warning(
+                "Connection attempt timed out, proceeding with server creation"
+            )
 
-        except Exception as e:
-            self._logger.error(f"Error handling Windows pipe: {e}")
-        finally:
-            win32file.CloseHandle(pipe)
+        # Now try to create the server
+        try:
+            self._socket_server = await asyncio.start_server(
+                self._handle_client_connection, host=host, port=port
+            )
+            self._logger.info(f"TCP server started on {host}:{port}")
+
+        except OSError as e:
+            # Check if error is due to address already in use
+            if (
+                e.errno == 48 or "address already in use" in str(e).lower()
+            ):  # errno 48 on macOS, 98 on Linux
+                error_msg = (
+                    f"Port {port} is already occupied by another process. "
+                    f"Cannot start daemon."
+                )
+                self._logger.error(error_msg)
+                raise DaemonPortOccupiedException(error_msg) from e
+            else:
+                # Other OS error
+                self._logger.error(f"Failed to start TCP server: {e}")
+                raise
 
     async def stop(self):
         """Stop the daemon and cleanup resources"""
@@ -351,6 +469,34 @@ class Daemon:
 
         self._running = False
 
+        # Disconnect connected client
+        async with self._client_connection_lock:
+            if self._connected_client_writer is not None:
+                try:
+                    # Send shutdown notification
+                    shutdown_msg = DaemonResponse(
+                        success=True,
+                        data={
+                            "event": "daemon_shutdown",
+                            "message": "Daemon is shutting down",
+                        },
+                    )
+                    self._connected_client_writer.write(
+                        shutdown_msg.to_json().encode("utf-8")
+                    )
+                    self._connected_client_writer.write(b"\n")
+                    await self._connected_client_writer.drain()
+                except Exception:
+                    pass
+                finally:
+                    try:
+                        self._connected_client_writer.close()
+                        await self._connected_client_writer.wait_closed()
+                    except Exception:
+                        pass
+                    self._connected_client_reader = None
+                    self._connected_client_writer = None
+
         # Stop services
         if self._server:
             await self._server.stop()
@@ -361,7 +507,7 @@ class Daemon:
             self._client = None
 
         # Close socket server
-        if self._socket_server and not IS_WINDOWS:
+        if self._socket_server:
             self._socket_server.close()
             await self._socket_server.wait_closed()
 
@@ -382,51 +528,174 @@ class Daemon:
         self, reader: asyncio.StreamReader, writer: asyncio.StreamWriter
     ):
         """
-        Handle incoming client connection on command socket (Unix).
+        Handle incoming client connection on command socket.
+        Only one connection is allowed at a time. The connection remains open
+        and continuously listens for commands.
 
         Args:
             reader: Stream reader for receiving data
             writer: Stream writer for sending responses
         """
         addr = writer.get_extra_info("peername")
-        self._logger.debug(f"New connection from {addr}")
+        self._logger.info(f"New connection attempt from {addr}")
+
+        # Check if another client is already connected
+        async with self._client_connection_lock:
+            if self._connected_client_writer is not None:
+                self._logger.warning(
+                    f"Rejecting connection from {addr}: another client already connected"
+                )
+                try:
+                    error_response = DaemonResponse(
+                        success=False,
+                        error="Another client is already connected. Only one connection is allowed at a time.",
+                    )
+                    writer.write(error_response.to_json().encode("utf-8"))
+                    writer.write(b"\n")
+                    await writer.drain()
+                finally:
+                    writer.close()
+                    await writer.wait_closed()
+                return
+
+            # Accept the connection
+            self._connected_client_reader = reader
+            self._connected_client_writer = writer
+            self._logger.info(f"Client connected from {addr}")
 
         try:
-            # Read command from client
-            data = await reader.read(self.BUFFER_SIZE)
-            if not data:
-                return
+            # Send welcome message
+            welcome = DaemonResponse(
+                success=True,
+                data={
+                    "message": "Connected",
+                    "version": ApplicationConfig.version,
+                },
+            )
+            await self._send_to_client(welcome)
 
-            # Parse command
-            try:
-                command_data = json.loads(data.decode("utf-8"))
-                command = command_data.get("command")
-                params = command_data.get("params", {})
-            except json.JSONDecodeError as e:
-                response = DaemonResponse(success=False, error=f"Invalid JSON: {e}")
-                writer.write(response.to_json().encode("utf-8"))
-                await writer.drain()
-                return
+            # Continuously listen for commands
+            while self._running and not reader.at_eof():
+                try:
+                    # Read command from client (with timeout to check running state)
+                    data = await asyncio.wait_for(
+                        reader.read(self.BUFFER_SIZE), timeout=1.0
+                    )
 
-            # Execute command
-            response = await self._execute_command(command, params)
+                    if not data:
+                        self._logger.info("Client disconnected (no data)")
+                        break
 
-            # Send response
-            writer.write(response.to_json().encode("utf-8"))
-            await writer.drain()
+                    # Parse command (support multiple commands separated by newline)
+                    commands_data = data.decode("utf-8").strip().split("\n")
+
+                    for command_str in commands_data:
+                        if not command_str.strip():
+                            continue
+
+                        try:
+                            command_data = json.loads(command_str)
+                            command = command_data.get("command")
+                            params = command_data.get("params", {})
+                        except json.JSONDecodeError as e:
+                            response = DaemonResponse(
+                                success=False, error=f"Invalid JSON -> {e}"
+                            )
+                            await self._send_to_client(response)
+                            continue
+
+                        # Execute command
+                        response = await self._execute_command(command, params)
+
+                        # Send response
+                        await self._send_to_client(response)
+
+                except asyncio.TimeoutError:
+                    # Timeout is normal, just check running state and continue
+                    continue
+                except Exception as e:
+                    self._logger.error(
+                        f"Error processing command -> {e}", exc_info=True
+                    )
+                    response = DaemonResponse(
+                        success=False, error=f"Internal error -> {e}"
+                    )
+                    try:
+                        await self._send_to_client(response)
+                    except Exception:
+                        break
 
         except Exception as e:
-            self._logger.error(f"Error handling client connection: {e}")
-            response = DaemonResponse(success=False, error=f"Internal error: {e}")
-            try:
-                writer.write(response.to_json().encode("utf-8"))
-                await writer.drain()
-            except:
-                pass
+            self._logger.error(
+                f"Error handling client connection -> {e}", exc_info=True
+            )
 
         finally:
-            writer.close()
-            await writer.wait_closed()
+            # Cleanup connection
+            async with self._client_connection_lock:
+                if self._connected_client_writer == writer:
+                    self._connected_client_reader = None
+                    self._connected_client_writer = None
+
+            self._logger.info(f"Client {addr} disconnected")
+            try:
+                writer.close()
+                await writer.wait_closed()
+            except Exception:
+                pass
+
+    async def _send_to_client(self, response: DaemonResponse) -> bool:
+        """
+        Send data to the connected client.
+        This method can be called from anywhere to push data to the client.
+
+        Args:
+            response: DaemonResponse to send
+
+        Returns:
+            True if sent successfully, False otherwise
+        """
+        async with self._client_connection_lock:
+            if self._connected_client_writer is None:
+                self._logger.warning("No client connected, cannot send data")
+                return False
+
+            try:
+                self._connected_client_writer.write(response.to_json().encode("utf-8"))
+                self._connected_client_writer.write(b"\n")  # Message delimiter
+                await self._connected_client_writer.drain()
+                return True
+            except Exception as e:
+                self._logger.error(f"Error sending data to client -> {e}")
+                # Connection probably broken, clear it
+                self._connected_client_reader = None
+                self._connected_client_writer = None
+                return False
+
+    def is_client_connected(self) -> bool:
+        """Check if a client is currently connected"""
+        return self._connected_client_writer is not None
+
+    async def broadcast_event(self, event_type: str, data: Any = None):
+        """
+        Broadcast an event to the connected client.
+        This is useful for pushing notifications/updates without being requested.
+
+        Args:
+            event_type: Type of event (e.g., "server_started", "client_connected")
+            data: Event data
+        """
+        if not self.is_client_connected():
+            return
+
+        event_response = DaemonResponse(
+            success=True,
+            data={
+                "event": event_type,
+                "event_data": data,
+            },
+        )
+        await self._send_to_client(event_response)
 
     async def _execute_command(
         self, command: str, params: Dict[str, Any]
@@ -452,7 +721,9 @@ class Daemon:
         try:
             return await handler(params)
         except Exception as e:
-            self._logger.error(f"Error executing command {command}: {e}", exc_info=True)
+            self._logger.error(
+                f"Error executing command {command} -> {e}", exc_info=True
+            )
             return DaemonResponse(
                 success=False, error=f"Command execution failed: {str(e)}"
             )
@@ -479,19 +750,21 @@ class Daemon:
 
             success = await self._server.start()
             if success:
-                return DaemonResponse(
-                    success=True,
-                    data={
-                        "message": "Server started successfully",
-                        "host": self._server.config.host,
-                        "port": self._server.config.port,
-                        "enabled_streams": self._server.get_enabled_streams(),
-                    },
-                )
+                response_data = {
+                    "message": "Server started successfully",
+                    "host": self._server.config.host,
+                    "port": self._server.config.port,
+                    "enabled_streams": self._server.get_enabled_streams(),
+                }
+
+                # Broadcast event to connected client
+                # await self.broadcast_event("server_started", response_data)
+
+                return DaemonResponse(success=True, data=response_data)
             else:
                 return DaemonResponse(success=False, error="Failed to start server")
         except Exception as e:
-            self._logger.error(f"Error starting server: {e}", exc_info=True)
+            self._logger.error(f"Error starting server -> {e}", exc_info=True)
             return DaemonResponse(
                 success=False, error=f"Error starting server: {str(e)}"
             )
@@ -504,6 +777,10 @@ class Daemon:
         try:
             await self._server.stop()
             self._server = None
+
+            # Broadcast event to connected client
+            # await self.broadcast_event("server_stopped", {"message": "Server stopped"})
+
             return DaemonResponse(
                 success=True, data={"message": "Server stopped successfully"}
             )
@@ -532,19 +809,21 @@ class Daemon:
 
             success = await self._client.start()
             if success:
-                return DaemonResponse(
-                    success=True,
-                    data={
-                        "message": "Client started successfully",
-                        "server_host": self._client.config.get_server_host(),
-                        "server_port": self._client.config.get_server_port(),
-                        "enabled_streams": self._client.get_enabled_streams(),
-                    },
-                )
+                response_data = {
+                    "message": "Client started successfully",
+                    "server_host": self._client.config.get_server_host(),
+                    "server_port": self._client.config.get_server_port(),
+                    "enabled_streams": self._client.get_enabled_streams(),
+                }
+
+                # Broadcast event to connected client
+                # await self.broadcast_event("client_started", response_data)
+
+                return DaemonResponse(success=True, data=response_data)
             else:
                 return DaemonResponse(success=False, error="Failed to start client")
         except Exception as e:
-            self._logger.error(f"Error starting client: {e}", exc_info=True)
+            self._logger.error(f"Error starting client -> {e}", exc_info=True)
             return DaemonResponse(
                 success=False, error=f"Error starting client: {str(e)}"
             )
@@ -557,6 +836,10 @@ class Daemon:
         try:
             await self._client.stop()
             self._client = None
+
+            # Broadcast event to connected client
+            # await self.broadcast_event("client_stopped", {"message": "Client stopped"})
+
             return DaemonResponse(
                 success=True, data={"message": "Client stopped successfully"}
             )
@@ -578,27 +861,28 @@ class Daemon:
             "client_running": client_running,
             "platform": "windows" if IS_WINDOWS else "unix",
             "socket_path": self.socket_path,
+            "client_connected": self.is_client_connected(),
         }
 
-        if server_running:
-            connected_clients = self._server.clients_manager.get_clients()
+        if server_running and self._server_config and self._server:
+            connected_clients = self._server_config.get_clients()
             status["server_info"] = {  # type: ignore
-                "host": self._server.config.host,
-                "port": self._server.config.port,
+                "host": self._server_config.host,
+                "port": self._server_config.port,
                 "connected_clients": len(connected_clients),
                 "enabled_streams": self._server.get_enabled_streams(),
                 "active_streams": self._server.get_active_streams(),
-                "ssl_enabled": self._server.config.ssl_enabled,
+                "ssl_enabled": self._server_config.ssl_enabled,
             }
 
-        if client_running:
+        if client_running and self._client_config and self._client:
             status["client_info"] = {  # type: ignore
-                "server_host": self._client.config.get_server_host(),
-                "server_port": self._client.config.get_server_port(),
+                "server_host": self._client_config.get_server_host(),
+                "server_port": self._client_config.get_server_port(),
                 "connected": self._client.is_connected(),
                 "enabled_streams": self._client.get_enabled_streams(),
                 "active_streams": self._client.get_active_streams(),
-                "ssl_enabled": self._client.config.ssl_enabled,
+                "ssl_enabled": self._client_config.ssl_enabled,
                 "has_certificate": self._client.has_certificate(),
             }
 
@@ -658,6 +942,11 @@ class Daemon:
 
     async def _handle_get_server_config(self, params: Dict[str, Any]) -> DaemonResponse:
         """Get server configuration"""
+        if not self._server_config:
+            return DaemonResponse(
+                success=False, error="Server configuration not initialized"
+            )
+
         config_dict = {
             "host": self._server_config.host,
             "port": self._server_config.port,
@@ -674,6 +963,11 @@ class Daemon:
             return DaemonResponse(
                 success=False,
                 error="Cannot modify configuration while server is running",
+            )
+
+        if not self._server_config:
+            return DaemonResponse(
+                success=False, error="Server configuration not initialized"
             )
 
         try:
@@ -705,6 +999,11 @@ class Daemon:
 
     async def _handle_get_client_config(self, params: Dict[str, Any]) -> DaemonResponse:
         """Get client configuration"""
+        if not self._client_config:
+            return DaemonResponse(
+                success=False, error="Client configuration not initialized"
+            )
+
         config_dict = {
             "server_host": self._client_config.get_server_host(),
             "server_port": self._client_config.get_server_port(),
@@ -725,6 +1024,11 @@ class Daemon:
                 error="Cannot modify configuration while client is running",
             )
 
+        if not self._client_config:
+            return DaemonResponse(
+                success=False, error="Client configuration not initialized"
+            )
+
         try:
             # Update configuration
             if "server_host" in params or "server_port" in params:
@@ -738,9 +1042,16 @@ class Daemon:
                 )
 
             if "heartbeat_interval" in params:
-                self._client_config.heartbeat_interval = params["heartbeat_interval"]
+                self._client_config.heartbeat_interval = int(  # ty:ignore[invalid-assignment]
+                    params.get(
+                        "heartbeat_interval",
+                        self._client_config.get_heartbeat_interval(),
+                    )
+                )
             if "auto_reconnect" in params and "server_host" not in params:
-                self._client_config.auto_reconnect = params["auto_reconnect"]
+                self._client_config.auto_reconnect = params.get(  # ty:ignore[invalid-assignment]
+                    "auto_reconnect", self._client_config.do_auto_reconnect()
+                )
             if "ssl_enabled" in params:
                 if params["ssl_enabled"]:
                     self._client_config.enable_ssl()
@@ -767,9 +1078,13 @@ class Daemon:
             config_type = params.get("type", "both")
 
             if config_type in ("server", "both"):
+                if not self._server_config:
+                    raise Exception("Server configuration not initialized")
                 await self._server_config.save()
 
             if config_type in ("client", "both"):
+                if not self._client_config:
+                    raise Exception("Client configuration not initialized")
                 await self._client_config.save()
 
             return DaemonResponse(
@@ -794,9 +1109,13 @@ class Daemon:
             config_type = params.get("type", "both")
 
             if config_type in ("server", "both"):
+                if not self._server_config:
+                    raise Exception("Server configuration not initialized")
                 await self._server_config.load()
 
             if config_type in ("client", "both"):
+                if not self._client_config:
+                    raise Exception("Client configuration not initialized")
                 await self._client_config.load()
 
             return DaemonResponse(
@@ -1113,6 +1432,12 @@ class Daemon:
                 success=False, error=f"Invalid service type: {service_type}"
             )
 
+        if not config:
+            return DaemonResponse(
+                success=False,
+                error=f"{service_name.capitalize()} configuration not initialized",
+            )
+
         try:
             if hasattr(service, "enable_ssl"):
                 result = service.enable_ssl()
@@ -1168,6 +1493,12 @@ class Daemon:
         else:
             return DaemonResponse(
                 success=False, error=f"Invalid service type: {service_type}"
+            )
+
+        if not config:
+            return DaemonResponse(
+                success=False,
+                error=f"{service_name.capitalize()} configuration not initialized",
             )
 
         try:
@@ -1377,11 +1708,9 @@ class Daemon:
 
     # ==================== Command Handlers: Service Discovery ====================
 
-    async def _handle_discover_services(self, params: Dict[str, Any]) -> DaemonResponse:
-        """Discover available services on network"""
+    async def _get_discovered_services(self, params: Dict[str, Any]) -> DaemonResponse:
+        """Get available services on network"""
         try:
-            timeout = params.get("timeout", 5)
-
             # Use service discovery from client if available
             if self._client:
                 services = self._client.get_found_servers()
@@ -1456,7 +1785,7 @@ async def send_daemon_command(
     Args:
         command: Command to send
         params: Command parameters
-        socket_path: Path to daemon socket or named pipe
+        socket_path: Path to daemon socket (Unix) or host:port (TCP on Windows)
         timeout: Command timeout in seconds
 
     Returns:
@@ -1470,9 +1799,9 @@ async def send_daemon_command(
 
     command_data = {"command": command, "params": params or {}}
 
-    if IS_WINDOWS:
-        # Windows Named Pipe
-        return await _send_windows_command(socket_path, command_data, timeout)
+    if IS_WINDOWS or ":" in socket_path:
+        # Windows TCP socket or explicit TCP address
+        return await _send_tcp_command(socket_path, command_data, timeout)
     else:
         # Unix socket
         return await _send_unix_command(socket_path, command_data, timeout)
@@ -1510,40 +1839,46 @@ async def _send_unix_command(
         await writer.wait_closed()
 
 
-async def _send_windows_command(
-    pipe_path: str, command_data: dict, timeout: float
+async def _send_tcp_command(
+    socket_path: str, command_data: dict, timeout: float
 ) -> dict:
-    """Send command via Windows Named Pipe"""
-    try:
-        # Open named pipe
-        handle = win32file.CreateFile(
-            pipe_path,
-            win32file.GENERIC_READ | win32file.GENERIC_WRITE,
-            0,
-            None,
-            win32file.OPEN_EXISTING,
-            0,
-            None,
+    """Send command via TCP socket (Windows)"""
+    # Parse host and port
+    if ":" in socket_path:
+        host, port_str = socket_path.split(":", 1)
+        port = int(port_str)
+    else:
+        raise ValueError(
+            f"Invalid TCP socket path format: {socket_path}. Expected host:port"
         )
 
-        try:
-            # Send command
-            win32file.WriteFile(handle, json.dumps(command_data).encode("utf-8"))
+    # Connect to daemon
+    try:
+        reader, writer = await asyncio.wait_for(
+            asyncio.open_connection(host, port), timeout=5.0
+        )
+    except (ConnectionRefusedError, OSError) as e:
+        raise ConnectionError(
+            f"Daemon not running (cannot connect to {host}:{port}) -> {e}"
+        )
 
-            # Read response
-            result, data = win32file.ReadFile(handle, Daemon.BUFFER_SIZE)
+    try:
+        # Send command
+        writer.write(json.dumps(command_data).encode("utf-8"))
+        await writer.drain()
 
-            if result == 0 and data:
-                response = json.loads(data.decode("utf-8"))
-                return response
-            else:
-                raise ConnectionError("No response from daemon")
+        # Read response
+        data = await asyncio.wait_for(reader.read(Daemon.BUFFER_SIZE), timeout=timeout)
 
-        finally:
-            win32file.CloseHandle(handle)
+        if not data:
+            raise ConnectionError("No response from daemon")
 
-    except pywintypes.error as e:
-        raise ConnectionError(f"Cannot connect to daemon: {e}")
+        response = json.loads(data.decode("utf-8"))
+        return response
+
+    finally:
+        writer.close()
+        await writer.wait_closed()
 
 
 # ==================== Main Entry Point ====================
@@ -1557,7 +1892,7 @@ async def main():
     parser.add_argument(
         "--socket",
         default=Daemon.DEFAULT_SOCKET_PATH,
-        help="Socket path (Unix socket or Windows Named Pipe)",
+        help="Socket path (Unix socket) or host:port (TCP on Windows)",
     )
     parser.add_argument("--config-dir", help="Configuration directory path")
 
@@ -1578,7 +1913,7 @@ async def main():
         return 1
 
     print(f"Daemon started successfully on {daemon.get_socket_path()}")
-    print(f"Platform: {'Windows (Named Pipe)' if IS_WINDOWS else 'Unix (Socket)'}")
+    print(f"Platform: {'Windows (TCP Socket)' if IS_WINDOWS else 'Unix (Socket)'}")
 
     # Wait for shutdown
     try:
@@ -1592,18 +1927,10 @@ async def main():
 
 
 if __name__ == "__main__":
-    # Use appropriate event loop for platform
-    if IS_WINDOWS:
-        try:
-            import winloop
+    # Use uvloop for better performance if available
+    try:
+        import uvloop
 
-            winloop.run(main())
-        except ImportError:
-            asyncio.run(main())
-    else:
-        try:
-            import uvloop
-
-            uvloop.run(main())
-        except ImportError:
-            asyncio.run(main())
+        uvloop.run(main())
+    except ImportError:
+        asyncio.run(main())

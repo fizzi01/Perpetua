@@ -38,6 +38,59 @@ class Client:
     This class is designed to handle the overall management of a client application in aspects such as
     interaction with other clients, secure communication using certificates, and managing event streams
     during runtime.
+
+    Example:
+    ::
+        # Create client with unified configuration
+        # Option 1: Use default config and configure programmatically
+        client = Client()
+
+        # Configure client
+        client.config.set_server_connection(
+            host="192.168.1.74", port=5555, auto_reconnect=True
+        )
+        client.config.set_logging(level=Logger.INFO)
+
+        # Enable streams
+        await client.enable_stream(StreamType.MOUSE)
+        await client.enable_stream(StreamType.KEYBOARD)
+        await client.enable_stream(StreamType.CLIPBOARD)
+
+        # Save configuration for next time
+        await client.save_config()
+
+        # Option 2: Load existing configuration
+        # client = Client(auto_load_config=True)
+
+        # Start client
+        if not await client.start():
+            print("Failed to start client")
+            return
+
+        print("Client started successfully")
+        print(
+            f"Connecting to {client.config.get_server_host()}:{client.config.get_server_port()}"
+        )
+        print(f"Enabled streams: {client.get_enabled_streams()}")
+
+        try:
+            # Wait for connection
+            await asyncio.sleep(5)
+
+            if client.is_connected():
+                print(f"Connected! Active streams: {client.get_active_streams()}")
+
+            # Keep running
+            while True:
+                await asyncio.sleep(1)
+
+        except KeyboardInterrupt:
+            print("Keyboard interrupt received")
+        finally:
+            print("Stopping client...")
+            await client.stop()
+            # Save configuration on exit
+            await client.save_config()
     """
 
     CLEANUP_DELAY = 0.5  # seconds to wait during cleanup
@@ -273,7 +326,7 @@ class Client:
         self,
         otp: str,
         server_host: Optional[str] = None,
-        server_port: int = 5556,
+        server_port: int = 55556,
         timeout: int = 30,
     ) -> bool:
         """
@@ -282,7 +335,7 @@ class Client:
         Args:
             otp: One-time password provided by server
             server_host: Server host for certificate sharing (default: same as connection host)
-            server_port: Server port for certificate sharing (default: 5556)
+            server_port: Server port for certificate sharing (default: 55556)
             timeout: Connection timeout in seconds (default: 30)
 
         Returns:
@@ -1057,68 +1110,3 @@ class Client:
     async def stop_metrics_collection(self):
         """Stop metrics collection"""
         await self._performance_monitor.stop()
-
-
-# ==================== Example Usage ====================
-
-
-async def main():
-    """Example usage of Client API with unified ClientConfig"""
-
-    # Create client with unified configuration
-    # Option 1: Use default config and configure programmatically
-    client = Client()
-
-    # Configure client
-    client.config.set_server_connection(
-        host="192.168.1.74", port=5555, auto_reconnect=True
-    )
-    client.config.set_logging(level=Logger.INFO)
-
-    # Enable streams
-    await client.enable_stream(StreamType.MOUSE)
-    await client.enable_stream(StreamType.KEYBOARD)
-    await client.enable_stream(StreamType.CLIPBOARD)
-
-    # Save configuration for next time
-    await client.save_config()
-
-    # Option 2: Load existing configuration
-    # client = Client(auto_load_config=True)
-
-    # Start client
-    if not await client.start():
-        print("Failed to start client")
-        return
-
-    print("Client started successfully")
-    print(
-        f"Connecting to {client.config.get_server_host()}:{client.config.get_server_port()}"
-    )
-    print(f"Enabled streams: {client.get_enabled_streams()}")
-
-    try:
-        # Wait for connection
-        await asyncio.sleep(5)
-
-        if client.is_connected():
-            print(f"Connected! Active streams: {client.get_active_streams()}")
-
-        # Keep running
-        while True:
-            await asyncio.sleep(1)
-
-    except KeyboardInterrupt:
-        print("\nKeyboard interrupt received")
-    finally:
-        print("Stopping client...")
-        await client.stop()
-        # Save configuration on exit
-        await client.save_config()
-
-
-if __name__ == "__main__":
-    try:
-        asyncio.run(main())
-    except KeyboardInterrupt:
-        print("\nClient shutdown complete")
