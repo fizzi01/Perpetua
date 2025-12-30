@@ -1,6 +1,7 @@
 """
 Service package provides server and client public APIs.
 """
+from utils import UIDGenerator
 
 import asyncio
 from typing import Optional
@@ -161,12 +162,8 @@ class ServiceDiscovery:
         Returns:
             A unique identifier string.
         """
-        unique_string = f"{host}-{time.time()}"
         try:
-            uid = hashlib.sha256(unique_string.encode()).hexdigest()[
-                : ServiceDiscovery.UID_LEN
-            ]
-            return uid
+            return UIDGenerator.generate_uid(host, ServiceDiscovery.UID_LEN)
         except Exception as e:
             raise RuntimeError(f"Failed to generate UID ({e})")
 
@@ -331,7 +328,7 @@ class ServiceDiscovery:
         """
         if uid is not None:
             self._uid = uid
-
+        # TODO: We need to check if there is another service on same host/port
         await self._register_service(host, port)
 
     async def unregister_service(self):

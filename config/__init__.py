@@ -41,6 +41,8 @@ class ApplicationConfig:
 
     config_files: dict = field(default_factory=dict)
 
+    version: str = "1.0.0"
+
     def __post_init__(self):
         self.config_files = {
             "server": self.server_config_file,
@@ -71,7 +73,7 @@ class ServerConfig:
 
     # Default values
     DEFAULT_HOST = "0.0.0.0"
-    DEFAULT_PORT = 5555
+    DEFAULT_PORT = 55555
     DEFAULT_HEARTBEAT_INTERVAL = 1
     DEFAULT_LOG_LEVEL = Logger.INFO
 
@@ -386,57 +388,9 @@ class ClientConfig:
     # Default values
     DEFAULT_UID = ""
     DEFAULT_SERVER_HOST = "127.0.0.1"
-    DEFAULT_SERVER_PORT = 5555
+    DEFAULT_SERVER_PORT = 55555
     DEFAULT_HEARTBEAT_INTERVAL = 1
     DEFAULT_LOG_LEVEL = Logger.INFO
-
-    class ServerInfo:
-        """
-        Manages server connection information for the client.
-        """
-
-        def __init__(
-            self,
-            uid: str,
-            host: str = "127.0.0.1",
-            port: int = 5555,
-            heartbeat_interval: int = 1,
-            auto_reconnect: bool = True,
-            ssl: bool = False,
-            additional_params: Optional[Dict[str, Any]] = None,
-        ):
-            self.uid = uid
-            self.host = host
-            self.port = port
-            self.heartbeat_interval = heartbeat_interval
-            self.auto_reconnect = auto_reconnect
-            self.ssl = ssl
-            self.additional_params = additional_params or {}
-
-        def to_dict(self) -> Dict[str, Any]:
-            """Convert ServerInfo to dictionary"""
-            return {
-                "uid": self.uid,
-                "host": self.host,
-                "port": self.port,
-                "heartbeat_interval": self.heartbeat_interval,
-                "auto_reconnect": self.auto_reconnect,
-                "ssl": self.ssl,
-                "additional_params": self.additional_params,
-            }
-
-        @classmethod
-        def from_dict(cls, data: Dict[str, Any]) -> "ClientConfig.ServerInfo":
-            """Create ServerInfo from dictionary"""
-            return cls(
-                uid=data.get("uid", ""),
-                host=data.get("host", "127.0.0.1"),
-                port=data.get("port", 5555),
-                heartbeat_interval=data.get("heartbeat_interval", 1),
-                auto_reconnect=data.get("auto_reconnect", True),
-                ssl=data.get("ssl", False),
-                additional_params=data.get("additional_params", {}),
-            )
 
     def __init__(
         self,
@@ -456,7 +410,7 @@ class ClientConfig:
         )
 
         # Server connection information
-        self.server_info = self.ServerInfo(
+        self.server_info = ServerInfo(
             uid=self.DEFAULT_UID,
             host=self.DEFAULT_SERVER_HOST,
             port=self.DEFAULT_SERVER_PORT,
@@ -508,7 +462,7 @@ class ClientConfig:
         return self.streams_enabled.get(stream_type, False)
 
     # Server Connection Management
-    def get_server_info(self) -> ServerInfo:
+    def get_server_info(self) -> "ServerInfo":
         """Get server connection information"""
         return self.server_info
 
@@ -602,7 +556,7 @@ class ClientConfig:
         """Load configuration from dictionary"""
         # Load server info
         if "server_info" in data:
-            self.server_info = self.ServerInfo.from_dict(data["server_info"])
+            self.server_info = ServerInfo.from_dict(data["server_info"])
 
         # old format
         # elif "server_host" in data or "server_port" in data:
@@ -691,3 +645,53 @@ class ClientConfig:
         except Exception as e:
             print(f"Error loading configuration from {file_path}: {e}")
             return False
+
+
+
+class ServerInfo:
+    """
+    Manages server connection information for the client.
+    """
+
+    def __init__(
+        self,
+        uid: str,
+        host: str = ClientConfig.DEFAULT_SERVER_HOST,
+        port: int = ClientConfig.DEFAULT_SERVER_PORT,
+        heartbeat_interval: int = ClientConfig.DEFAULT_HEARTBEAT_INTERVAL,
+        auto_reconnect: bool = True,
+        ssl: bool = False,
+        additional_params: Optional[Dict[str, Any]] = None,
+    ):
+        self.uid = uid
+        self.host = host
+        self.port = port
+        self.heartbeat_interval = heartbeat_interval
+        self.auto_reconnect = auto_reconnect
+        self.ssl = ssl
+        self.additional_params = additional_params or {}
+
+    def to_dict(self) -> Dict[str, Any]:
+        """Convert ServerInfo to dictionary"""
+        return {
+            "uid": self.uid,
+            "host": self.host,
+            "port": self.port,
+            "heartbeat_interval": self.heartbeat_interval,
+            "auto_reconnect": self.auto_reconnect,
+            "ssl": self.ssl,
+            "additional_params": self.additional_params,
+        }
+
+    @classmethod
+    def from_dict(cls, data: Dict[str, Any]) -> "ServerInfo":
+        """Create ServerInfo from dictionary"""
+        return cls(
+            uid=data.get("uid", ""),
+            host=data.get("host", "127.0.0.1"),
+            port=data.get("port", 5555),
+            heartbeat_interval=data.get("heartbeat_interval", 1),
+            auto_reconnect=data.get("auto_reconnect", True),
+            ssl=data.get("ssl", False),
+            additional_params=data.get("additional_params", {}),
+        )

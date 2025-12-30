@@ -1,8 +1,11 @@
+import hashlib
 import sys
 import importlib
+import time
+from typing import Optional
 
 
-def backend_module(package: str, platform_map: dict = None):
+def backend_module(package: str, platform_map: Optional[dict] = None):
     """
     Dynamically loads the platform-specific module for the operating system.
 
@@ -54,3 +57,30 @@ def export_module_symbols(module, target_globals):
     for attr in dir(module):
         if not attr.startswith("_"):
             target_globals[attr] = getattr(module, attr)
+
+
+class UIDGenerator:
+    """
+    A simple UID generator utility.
+    """
+    UID_LEN: int = 48
+
+    @staticmethod
+    def generate_uid(key: str, uid_len: int = 0) -> str:
+        """
+        It generates a unique identifier for the service instance.
+
+        Args:
+            key: A string key to base the UID on.
+        Returns:
+            A unique identifier string.
+        """
+        id_len = uid_len if uid_len > 0 else UIDGenerator.UID_LEN
+        unique_string = f"{key}-{time.time()}"
+        try:
+            uid = hashlib.sha256(unique_string.encode()).hexdigest()[
+                : id_len
+            ]
+            return uid
+        except Exception as e:
+            raise RuntimeError(f"{e}")
