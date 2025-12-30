@@ -39,6 +39,9 @@ class ApplicationConfig:
     parallel_processors: int = 1
     auto_chunk: bool = True
 
+    DEFAULT_HOST: str = "0.0.0.0"
+    DEFAULT_PORT: int = 65655
+
     config_files: dict = field(default_factory=dict)
 
     version: str = "1.0.0"
@@ -72,10 +75,10 @@ class ServerConfig:
     """
 
     # Default values
-    DEFAULT_HOST = "0.0.0.0"
-    DEFAULT_PORT = 55555
-    DEFAULT_HEARTBEAT_INTERVAL = 1
-    DEFAULT_LOG_LEVEL = Logger.INFO
+    DEFAULT_HOST = ApplicationConfig.DEFAULT_HOST
+    DEFAULT_PORT = ApplicationConfig.DEFAULT_PORT
+    DEFAULT_HEARTBEAT_INTERVAL: int = 1
+    DEFAULT_LOG_LEVEL: int = Logger.INFO
 
     def __init__(
         self,
@@ -365,6 +368,8 @@ class ServerConfig:
         file_path = file_path or self.config_file
 
         if not os.path.exists(file_path):
+            # print cwd
+            print(f"Current working directory: {os.getcwd()}")
             return False
 
         try:
@@ -386,11 +391,11 @@ class ClientConfig:
     """
 
     # Default values
-    DEFAULT_UID = ""
-    DEFAULT_SERVER_HOST = "127.0.0.1"
-    DEFAULT_SERVER_PORT = 55555
-    DEFAULT_HEARTBEAT_INTERVAL = 1
-    DEFAULT_LOG_LEVEL = Logger.INFO
+    DEFAULT_UID: str = ""
+    DEFAULT_SERVER_HOST = ApplicationConfig.DEFAULT_HOST
+    DEFAULT_SERVER_PORT = ApplicationConfig.DEFAULT_PORT
+    DEFAULT_HEARTBEAT_INTERVAL: int = 1
+    DEFAULT_LOG_LEVEL: int = Logger.INFO
 
     def __init__(
         self,
@@ -687,8 +692,8 @@ class ServerInfo:
         """Create ServerInfo from dictionary"""
         return cls(
             uid=data.get("uid", ""),
-            host=data.get("host", "127.0.0.1"),
-            port=data.get("port", 5555),
+            host=data.get("host", ClientConfig.DEFAULT_SERVER_HOST),
+            port=data.get("port", ClientConfig.DEFAULT_SERVER_PORT),
             heartbeat_interval=data.get("heartbeat_interval", 1),
             auto_reconnect=data.get("auto_reconnect", True),
             ssl=data.get("ssl", False),

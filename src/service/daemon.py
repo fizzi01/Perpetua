@@ -131,7 +131,7 @@ class Daemon:
 
         # Create and start daemon (Windows)
         daemon = Daemon(
-            socket_path="127.0.0.1:55557",
+            socket_path="127.0.0.1:65655",
             app_config=ApplicationConfig()
         )
 
@@ -147,7 +147,7 @@ class Daemon:
     # Platform-specific default paths
     # On Windows, use TCP socket on localhost instead of named pipes for better asyncio compatibility
     if IS_WINDOWS:
-        DEFAULT_SOCKET_PATH = "127.0.0.1:55557"  # TCP address:port
+        DEFAULT_SOCKET_PATH = "127.0.0.1:65655"  # TCP address:port
     else:
         DEFAULT_SOCKET_PATH = "/tmp/pycontinuity_daemon.sock"  # Unix socket
 
@@ -164,7 +164,7 @@ class Daemon:
         Initialize the daemon.
 
         Args:
-            socket_path: Path to Unix socket or TCP address:port (e.g., "127.0.0.1:55557") for command interface
+            socket_path: Path to Unix socket or TCP address:port (e.g., "127.0.0.1:65655") for command interface
             app_config: Application configuration
             auto_load_config: Whether to auto-load existing configurations
         """
@@ -422,7 +422,7 @@ class Daemon:
         else:
             # Default fallback
             host = "127.0.0.1"
-            port = 55557
+            port = 65655w
 
         self._logger.info(f"Checking if daemon is already running on {host}:{port}...")
 
@@ -590,7 +590,6 @@ class Daemon:
             # Continuously listen for commands
             while self._running and not reader.at_eof():
                 try:
-                    # Read command from client (with timeout to check running state)
                     data = await asyncio.wait_for(
                         reader.read(self.BUFFER_SIZE), timeout=1.0
                     )
@@ -623,6 +622,9 @@ class Daemon:
                 except asyncio.TimeoutError:
                     # Timeout is normal, just check running state and continue
                     continue
+                except (BrokenPipeError, ConnectionResetError, ConnectionAbortedError) as e:
+                    self._logger.error(f"Client disconnected ({e})")
+                    break
                 except Exception as e:
                     self._logger.error(f"Error processing command -> {e}")
                     response = DaemonResponse(
@@ -632,6 +634,7 @@ class Daemon:
                         await self._send_to_client(response)
                     except Exception:
                         break
+                    await asyncio.sleep(0.5)
 
         except Exception as e:
             self._logger.error(f"Error handling client connection -> {e}")
@@ -968,6 +971,7 @@ class Daemon:
             )
 
         config_dict = {
+            "uid": self._server_config.uid,
             "host": self._server_config.host,
             "port": self._server_config.port,
             "heartbeat_interval": self._server_config.heartbeat_interval,
@@ -991,6 +995,9 @@ class Daemon:
             )
 
         try:
+            if "uid" in params:
+                self._server_config.uid = params.get("uid")
+
             # Update configuration
             if "host" in params or "port" in params:
                 host = params.get("host", self._server_config.host)
@@ -1033,6 +1040,7 @@ class Daemon:
             "log_level": self._client_config.log_level,
             "streams_enabled": self._client_config.streams_enabled,
             "hostname": self._client_config.get_hostname(),
+            "uid": self._client_config.uid,
         }
         return DaemonResponse(success=True, data=config_dict)
 
@@ -1083,6 +1091,8 @@ class Daemon:
                 self._client_config.streams_enabled = params["streams_enabled"]
             if "hostname" in params:
                 self._client_config.set_hostname(params["hostname"])
+            if "uid" in params:
+                self._client_config.uid = params.get("uid")
 
             return DaemonResponse(
                 success=True, data={"message": "Client configuration updated"}
@@ -1922,6 +1932,7 @@ async def main():
     app_config = ApplicationConfig()
     if args.config_dir:
         app_config.set_save_path(args.config_dir)
+    app_config.config_path = "_test_config/"
 
     # Create and start daemon
     daemon = Daemon(

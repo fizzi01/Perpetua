@@ -326,7 +326,7 @@ class Client:
         self,
         otp: str,
         server_host: Optional[str] = None,
-        server_port: int = 55556,
+        server_port: int = ClientConfig.DEFAULT_SERVER_PORT + 1,
         timeout: int = 30,
     ) -> bool:
         """

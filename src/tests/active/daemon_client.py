@@ -29,28 +29,55 @@ class DaemonClient:
         self.socket_path = socket_path or Daemon.DEFAULT_SOCKET_PATH
 
     async def execute_command(
-        self, command: str, params: Optional[dict] = None, verbose: bool = False
+        self,
+        command: str,
+        params: Optional[dict] = None,
+        verbose: bool = False,
+        expect_multiple_responses: bool = False,
+        max_responses: int = 2,
+        response_timeout: float = 1.0
     ):
-        """Execute a command and display response"""
+        """
+        Execute a command and display response(s).
+
+        Args:
+            command: Command to send
+            params: Command parameters
+            verbose: Enable verbose output
+            expect_multiple_responses: If True, keeps connection open for multiple responses
+            max_responses: Maximum number of responses to wait for
+            response_timeout: Timeout for each individual response
+        """
         try:
             if verbose:
                 print(f"Sending command: {command}")
                 if params:
                     print(f"Parameters: {json.dumps(params, indent=2)}")
 
-            response = await send_daemon_command(
-                command=command, params=params, socket_path=self.socket_path
-            )
-
-            if response.get("success"):
-                print("✓ Success")
-                if response.get("data"):
-                    self._print_data(response["data"])
+            if expect_multiple_responses:
+                # Use new multi-response handler
+                return await self._execute_with_multiple_responses(
+                    command=command,
+                    params=params,
+                    verbose=verbose,
+                    max_responses=max_responses,
+                    response_timeout=response_timeout
+                )
             else:
-                print("✗ Error:", response.get("error", "Unknown error"))
-                return False
+                # Original single response behavior
+                response = await send_daemon_command(
+                    command=command, params=params, socket_path=self.socket_path
+                )
 
-            return True
+                if response.get("success"):
+                    print("✓ Success")
+                    if response.get("data"):
+                        self._print_data(response["data"])
+                else:
+                    print("✗ Error:", response.get("error", "Unknown error"))
+                    return False
+
+                return True
 
         except ConnectionError as e:
             print(f"✗ Connection Error: {e}")
@@ -66,6 +93,106 @@ class DaemonClient:
 
                 traceback.print_exc()
             return False
+
+    async def _execute_with_multiple_responses(
+        self,
+        command: str,
+        params: Optional[dict],
+        verbose: bool,
+        max_responses: int,
+        response_timeout: float
+    ):
+        """Execute command and handle multiple responses from daemon"""
+        import platform
+
+        IS_WINDOWS = platform.system() == "Windows"
+        socket_path = self.socket_path
+
+        command_data = {"command": command, "params": params or {}}
+
+        try:
+            # Connect to daemon
+            if IS_WINDOWS or ":" in socket_path:
+                # TCP connection
+                if ":" in socket_path:
+                    host, port_str = socket_path.split(":", 1)
+                    port = int(port_str)
+                else:
+                    host, port = "127.0.0.1", 37492
+
+                reader, writer = await asyncio.wait_for(
+                    asyncio.open_connection(host, port), timeout=5.0
+                )
+            else:
+                # Unix socket
+                import os
+                if not os.path.exists(socket_path):
+                    raise ConnectionError(f"Daemon not running (socket not found: {socket_path})")
+
+                reader, writer = await asyncio.wait_for(
+                    asyncio.open_unix_connection(socket_path), timeout=5.0
+                )
+
+            try:
+                # Send command
+                writer.write(json.dumps(command_data).encode("utf-8"))
+                await writer.drain()
+
+                # Read multiple responses
+                response_count = 0
+                success = True
+
+                while response_count < max_responses:
+                    try:
+                        # Read response with timeout
+                        data = await asyncio.wait_for(
+                            reader.read(65536),
+                            timeout=response_timeout
+                        )
+
+                        if not data:
+                            if verbose:
+                                print(f"\n[Connection closed after {response_count} response(s)]")
+                            break
+
+                        response = json.loads(data.decode("utf-8"))
+                        response_count += 1
+
+                        # Display response
+                        if response.get("success"):
+                            print(f"✓ Response {response_count}")
+                            if response.get("data"):
+                                self._print_data(response["data"])
+                        else:
+                            print(f"✗ Error in response {response_count}:",
+                                  response.get("error", "Unknown error"))
+                            success = False
+
+                        # Check if this is the final response
+                        if response.get("final", False):
+                            if verbose:
+                                print("\n[Received final response]")
+                            break
+
+                    except asyncio.TimeoutError:
+                        if verbose:
+                            print(f"\n[Timeout waiting for response {response_count + 1}]")
+                        break
+
+                if response_count == 0:
+                    print("✗ No responses received")
+                    return False
+
+                return success
+
+            finally:
+                writer.close()
+                await writer.wait_closed()
+
+        except (ConnectionRefusedError, OSError) as e:
+            raise ConnectionError(f"Cannot connect to daemon: {e}")
+        except asyncio.TimeoutError:
+            raise ConnectionError("Timeout connecting to daemon")
 
     def _print_data(self, data):
         """Pretty print response data"""
@@ -117,8 +244,8 @@ Examples:
   # Start server
   %(prog)s start-server
   
-  # Start client
-  %(prog)s start-client
+  # Start client with multiple responses (e.g., for notifications)
+  %(prog)s start-client --multi-response --max-responses 5
   
   # Check if server choice needed (client)
   %(prog)s check-server-choice
@@ -135,8 +262,8 @@ Examples:
   # Set OTP (client)
   %(prog)s set-otp --otp 123456
   
-  # Share certificate (server)
-  %(prog)s share-cert
+  # Share certificate (server) with multiple response mode
+  %(prog)s share-cert --multi-response --response-timeout 60
   
   # Discover services
   %(prog)s discover --timeout 5
@@ -150,6 +277,26 @@ Examples:
     )
 
     parser.add_argument("--verbose", "-v", action="store_true", help="Verbose output")
+
+    parser.add_argument(
+        "--multi-response",
+        action="store_true",
+        help="Wait for multiple responses from daemon before closing connection"
+    )
+
+    parser.add_argument(
+        "--max-responses",
+        type=int,
+        default=10,
+        help="Maximum number of responses to wait for (default: 10)"
+    )
+
+    parser.add_argument(
+        "--response-timeout",
+        type=float,
+        default=1.0,
+        help="Timeout in seconds for each response (default: 30.0)"
+    )
 
     subparsers = parser.add_subparsers(dest="command", help="Command to execute")
 
@@ -531,7 +678,14 @@ Examples:
         params["timeout"] = args.timeout
 
     # Execute command
-    success = await client.execute_command(daemon_command, params, verbose=args.verbose)
+    success = await client.execute_command(
+        daemon_command,
+        params,
+        verbose=args.verbose,
+        expect_multiple_responses=args.multi_response,
+        max_responses=args.max_responses,
+        response_timeout=args.response_timeout
+    )
 
     return 0 if success else 1
 
