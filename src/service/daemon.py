@@ -1548,13 +1548,15 @@ class Daemon:
 
         try:
             host = params.get("host", self._server.config.host)
-            otp = await self._server.share_certificate(host=host)
+            timeout = params.get("timeout", 30)
+            otp = await self._server.share_certificate(host=host, timeout=timeout)
 
             return DaemonResponse(
                 success=True,
                 data={
                     "message": "Certificate sharing started",
                     "otp": otp,
+                    "timeout": timeout,
                     "instructions": "Provide this OTP to clients to receive the certificate",
                 },
             )

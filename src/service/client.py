@@ -570,7 +570,7 @@ class Client:
             if service.uid == uid:
                 self.config.set_server_connection(
                     uid=service.uid,
-                    host=service.address,
+                    host=service.hostname or service.address,
                     port=service.port,
                 )
                 # Set the server future result in case someone is waiting for it

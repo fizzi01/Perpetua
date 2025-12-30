@@ -287,7 +287,7 @@ class Server:
         Args:
             host: Host address for temporary server (default: all interfaces)
             port: Port for temporary server (default: 55556)
-            timeout: Maximum time window in seconds (default: 10)
+            timeout: Maximum time window in seconds (default: 30)
 
         Returns:
             Tuple of (success, otp). OTP is None if failed.

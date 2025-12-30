@@ -82,6 +82,9 @@ class _ServiceListener(ServiceListener):
             address = info.parsed_addresses()[0]
             uid = name.split(".")[0]
             hostname = info.properties.get(b"hostname", None)
+            if hostname == b"":
+                hostname = None
+
             if hostname is not None:
                 hostname = hostname.decode()
 
