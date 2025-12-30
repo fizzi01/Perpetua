@@ -40,7 +40,7 @@ class ApplicationConfig:
     auto_chunk: bool = True
 
     DEFAULT_HOST: str = "0.0.0.0"
-    DEFAULT_PORT: int = 65655
+    DEFAULT_PORT: int = 55655
 
     config_files: dict = field(default_factory=dict)
 

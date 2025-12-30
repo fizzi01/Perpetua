@@ -1068,7 +1068,7 @@ async def main():
     server = Server()
 
     # Configure server
-    server.config.set_connection_params(host="192.168.1.62", port=65655)
+    server.config.set_connection_params(host="192.168.1.62", port=ApplicationConfig.DEFAULT_PORT)
     server.config.set_logging(level=Logger.INFO)
 
     # Enable streams
