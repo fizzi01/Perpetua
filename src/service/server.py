@@ -276,7 +276,7 @@ class Server:
 
     # TODO: Better handling -> We should keep the sharing server alive because port may be blocked
     async def share_certificate(
-        self, host: str = "0.0.0.0", port: int = ServerConfig.DEFAULT_PORT + 1, timeout: int = 30
+        self, host: str = "0.0.0.0", port: int = ServerConfig.DEFAULT_PORT - 2, timeout: int = 30
     ) -> Tuple[bool, Optional[str]]:
         """
         Start certificate sharing process with OTP.
@@ -718,8 +718,6 @@ class Server:
 
         # We also reset event bus
         self.event_bus = AsyncEventBus()
-
-        self._mdns_service.unregister_service()
 
         self._logger.info("Resources cleaned up.")
 

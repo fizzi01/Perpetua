@@ -224,10 +224,11 @@ class ServiceDiscovery:
         if self._async_zercnf is None:
             raise RuntimeError("Zeroconf instance is not initialized")
 
-        hostname = None
         if not self._is_ip(host):
             hostname = host
             host = await self.resolve_hostname(host)
+        else:
+            hostname = socket.gethostname()
 
         if self._uid is None:
             self._uid = ServiceDiscovery.generate_uid(host)

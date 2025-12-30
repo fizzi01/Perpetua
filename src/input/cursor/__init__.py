@@ -3,7 +3,7 @@ from typing import TYPE_CHECKING
 
 # Load platform-specific mouse module
 if TYPE_CHECKING:
-    pass
+    from ._base import CursorHandlerWorker
 else:
     _backend = backend_module(__name__)
     CursorHandlerWorker = _backend.CursorHandlerWorker

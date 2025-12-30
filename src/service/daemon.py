@@ -147,7 +147,7 @@ class Daemon:
     # Platform-specific default paths
     # On Windows, use TCP socket on localhost instead of named pipes for better asyncio compatibility
     if IS_WINDOWS:
-        DEFAULT_SOCKET_PATH = f"127.0.0.1:{ApplicationConfig.DEFAULT_PORT - 1}"  # TCP address:port
+        DEFAULT_SOCKET_PATH = f"127.0.0.1:{ApplicationConfig.DEFAULT_PORT - 3}"  # TCP address:port
     else:
         DEFAULT_SOCKET_PATH = "/tmp/pycontinuity_daemon.sock"  # Unix socket
 
