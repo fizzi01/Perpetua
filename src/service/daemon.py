@@ -1965,13 +1965,7 @@ if __name__ == "__main__":
     # Use uvloop for better performance if available
     try:
         import uvloop
-        import yappi
 
-        yappi.start()
-        uvloop.run(main(), debug=True)
+        uvloop.run(main())
     except ImportError:
         asyncio.run(main())
-    finally:
-        yappi.stop()
-        yappi.get_func_stats().print_all()
-        yappi.get_thread_stats().print_all()
