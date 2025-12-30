@@ -422,7 +422,7 @@ class Daemon:
         else:
             # Default fallback
             host = "127.0.0.1"
-            port = 65655w
+            port = 65655
 
         self._logger.info(f"Checking if daemon is already running on {host}:{port}...")
 
