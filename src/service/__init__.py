@@ -13,7 +13,7 @@ from zeroconf.asyncio import AsyncZeroconf, AsyncServiceBrowser, AsyncServiceInf
 
 from config import ApplicationConfig
 from utils.logging import get_logger
-from utils.net import get_local_ip
+from utils.net import get_local_ip, CommonNetInfo
 
 
 class Service:
@@ -191,6 +191,19 @@ class ServiceDiscovery:
             raise RuntimeError(f"Failed to resolve hostname {hostname} ({e})")
 
     @staticmethod
+    def _is_loopback(ip: str) -> bool:
+        """
+        Check if the given IP address is a loopback address.
+        """
+        if (ip.startswith("127.")
+                or ip == "::1"
+                or ip == "0.0.0.0"
+                or ip == "::"):
+            return True
+
+        return False
+
+    @staticmethod
     def _is_ip(ip: str) -> bool:
         """
         Use socket utilities to check if a string is a valid IPv4 or IPv6 address.
@@ -231,6 +244,8 @@ class ServiceDiscovery:
             hostname = host
             host = await self.resolve_hostname(host)
         else:
+            if self._is_loopback(host):
+                host = CommonNetInfo.get_local_ip()
             hostname = socket.gethostname()
 
         if self._uid is None:
@@ -250,7 +265,7 @@ class ServiceDiscovery:
 
             await self._async_zercnf.async_register_service(s_info)
             self._logger.info(
-                "mDNS service registered.", uid=self._uid, port=port, **properties
+                "mDNS service registered.", uid=self._uid, port=port, host=host, **properties
             )
         except BadTypeInNameException:
             raise ValueError("Invalid service type or name")

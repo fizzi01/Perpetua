@@ -12,9 +12,6 @@ class CommonNetInfo:
         """
         Placeholder function for retrieving the local IP address.
         This function should be implemented in platform-specific modules.
-
-        Raises:
-            NotImplementedError: Always raised to indicate the function is not implemented.
         """
         raise NotImplementedError(
             "get_local_ip() must be implemented in platform-specific modules."

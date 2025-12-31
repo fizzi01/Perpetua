@@ -507,6 +507,7 @@ class ClientConfig:
         self,
         uid: Optional[str] = None,
         host: Optional[str] = None,
+        hostname: Optional[str] = None,
         port: Optional[int] = None,
         heartbeat_interval: Optional[int] = None,
         auto_reconnect: Optional[bool] = None,
@@ -518,6 +519,8 @@ class ClientConfig:
             self.server_info.uid = uid
         if host is not None:
             self.server_info.host = host
+        if hostname is not None:
+            self.server_info.hostname = hostname
         if port is not None:
             self.server_info.port = port
         if heartbeat_interval is not None:
@@ -536,6 +539,10 @@ class ClientConfig:
     def get_server_host(self) -> str:
         """Get server host"""
         return self.server_info.host
+
+    def get_server_hostname(self) -> Optional[str]:
+        """Get server hostname"""
+        return self.server_info.hostname
 
     def get_server_port(self) -> int:
         """Get server port"""
@@ -719,6 +726,7 @@ class ServerInfo:
         self,
         uid: str,
         host: str = ClientConfig.DEFAULT_SERVER_HOST,
+        hostname: Optional[str] = None,
         port: int = ClientConfig.DEFAULT_SERVER_PORT,
         heartbeat_interval: int = ClientConfig.DEFAULT_HEARTBEAT_INTERVAL,
         auto_reconnect: bool = True,
@@ -727,6 +735,7 @@ class ServerInfo:
     ):
         self.uid = uid
         self.host = host
+        self.hostname = hostname
         self.port = port
         self.heartbeat_interval = heartbeat_interval
         self.auto_reconnect = auto_reconnect
@@ -738,6 +747,7 @@ class ServerInfo:
         return {
             "uid": self.uid,
             "host": self.host,
+            "hostname": self.hostname,
             "port": self.port,
             "heartbeat_interval": self.heartbeat_interval,
             "auto_reconnect": self.auto_reconnect,
@@ -751,6 +761,7 @@ class ServerInfo:
         return cls(
             uid=data.get("uid", ""),
             host=data.get("host", ClientConfig.DEFAULT_SERVER_HOST),
+            hostname=data.get("hostname"),
             port=data.get("port", ClientConfig.DEFAULT_SERVER_PORT),
             heartbeat_interval=data.get("heartbeat_interval", 1),
             auto_reconnect=data.get("auto_reconnect", True),

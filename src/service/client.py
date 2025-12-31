@@ -237,16 +237,15 @@ class Client:
 
     def enable_ssl(self) -> bool:
         """Enable SSL connection if certificate is loaded"""
+        self.config.enable_ssl()
         if self.has_certificate():
-            self.config.enable_ssl()
             self._logger.info("SSL connection enabled")
             return True
         elif self._load_certificate():
-            self.config.enable_ssl()
             self._logger.info("SSL connection enabled")
             return True
         else:
-            self._logger.warning("Cannot enable SSL: No valid certificate loaded")
+            self._logger.warning("SSL Enabled but no valid certificate loaded")
             return False
 
     def disable_ssl(self) -> None:
@@ -419,18 +418,34 @@ class Client:
     # ==================== Stream Management ====================
 
     async def enable_stream(self, stream_type: int) -> None:
-        """Enable a specific stream type (applies before start or at runtime)"""
+        """
+        Enable a specific stream type (applies before start or at runtime)
+
+        Raises:
+            ValueError: If the stream type is invalid
+        """
+        if not StreamType.is_valid(stream_type):
+            raise ValueError(f"Invalid stream type: {stream_type}")
+
         self.config.enable_stream(stream_type)
         await self.config.save()
         self._logger.info(f"Enabled stream: {stream_type}")
 
     async def disable_stream(self, stream_type: int) -> None:
-        """Disable a specific stream type (applies before start or at runtime)"""
+        """
+        Disable a specific stream type (applies before start or at runtime)
+        Raises:
+            ValueError: If the stream type is invalid
+        """
+        if not StreamType.is_valid(stream_type):
+            raise ValueError(f"Invalid stream type: {stream_type}")
+
         if StreamType.COMMAND == stream_type:
             self._logger.warning(
                 "Command stream is always enabled and cannot be disabled"
             )
             return
+
         self.config.disable_stream(stream_type)
         await self.config.save()
         self._logger.info(f"Disabled stream: {stream_type}")
@@ -530,8 +545,8 @@ class Client:
         for service in self._found_services:
             # We need to match all (address and port could vary)
             if (
-                    service.uid == self.config.get_server_uid()
-                    and service.port == self.config.get_server_port()
+                service.uid == self.config.get_server_uid()
+                and service.port == self.config.get_server_port()
             ):
                 # If hostname is present, verify it first
                 if service.hostname:
@@ -574,7 +589,8 @@ class Client:
             if service.uid == uid:
                 self.config.set_server_connection(
                     uid=service.uid,
-                    host=service.hostname or service.address,
+                    host=service.address,
+                    hostname=service.hostname,
                     port=service.port,
                 )
                 # Set the server future result in case someone is waiting for it
@@ -678,7 +694,11 @@ class Client:
                 res = await self._server
 
                 self._logger.info(
-                    "Server chosed", uid=res.uid, host=res.hostname or res.address, port=res.port
+                    "Server chosed",
+                    uid=res.uid,
+                    host=res.address,
+                    hostname=res.hostname,
+                    port=res.port,
                 )
 
             return True

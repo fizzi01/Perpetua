@@ -1488,7 +1488,7 @@ class Daemon:
                 else:
                     return DaemonResponse(
                         success=False,
-                        error="Failed to enable SSL (certificate may be missing)",
+                        error="Failed to enable SSL or to load certificates",
                     )
             else:
                 config.enable_ssl()

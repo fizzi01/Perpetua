@@ -518,13 +518,29 @@ class Server:
     # ==================== Stream Management ====================
 
     async def enable_stream(self, stream_type: int) -> None:
-        """Enable a specific stream type (applies before start or at runtime)"""
+        """
+        Enable a specific stream type (applies before start or at runtime)
+
+        Raises:
+            ValueError: If the stream type is invalid
+        """
+        if not StreamType.is_valid(stream_type):
+            raise ValueError(f"Invalid stream type: {stream_type}")
+
         self.config.enable_stream(stream_type)
         await self.config.save()
         self._logger.info(f"Enabled stream: {stream_type}")
 
     async def disable_stream(self, stream_type: int) -> None:
-        """Disable a specific stream type (applies before start or at runtime)"""
+        """
+        Disable a specific stream type (applies before start or at runtime)
+
+        Raises:
+            ValueError: If the stream type is invalid
+        """
+        if not StreamType.is_valid(stream_type):
+            raise ValueError(f"Invalid stream type: {stream_type}")
+
         if StreamType.COMMAND == stream_type:
             self._logger.warning(
                 "Command stream is always enabled and cannot be disabled"
