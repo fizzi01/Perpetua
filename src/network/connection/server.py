@@ -406,6 +406,7 @@ class ConnectionHandler(BaseConnectionHandler):
                     return False
 
                 # Normal flow: update client info
+                client.uid = response.payload.get("client_name", client.uid)
                 client.screen_resolution = response.payload.get(
                     "screen_resolution", None
                 )

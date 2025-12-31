@@ -382,6 +382,7 @@ class ConnectionHandler(BaseConnectionHandler):
             # Send handshake response
             await self._msg_exchange.send_handshake_message(
                 ack=True,
+                client_name=self._client_obj.uid,
                 source=self._client_obj.host_name,
                 target="server",
                 streams=self.open_streams,
