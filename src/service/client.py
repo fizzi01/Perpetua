@@ -550,8 +550,8 @@ class Client:
             ):
                 # If hostname is present, verify it first
                 if service.hostname:
-                    if service.hostname == self.config.get_server_host():
-                        return True
+                    if not service.hostname == self.config.get_server_host():
+                        return False
 
                 # if no hostname, verify address
                 elif service.address == self.config.get_server_host():
