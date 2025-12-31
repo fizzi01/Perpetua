@@ -49,6 +49,7 @@ class DaemonCommand(str, Enum):
     """Available daemon commands"""
 
     # Service control
+    SERVICE_CHOICE = "service_choice"
     START_SERVER = "start_server"
     STOP_SERVER = "stop_server"
     START_CLIENT = "start_client"
@@ -199,6 +200,7 @@ class Daemon:
 
         # Command handlers registry
         self._command_handlers: Dict[str, Callable] = {
+            DaemonCommand.SERVICE_CHOICE: self._handle_service_choice,
             DaemonCommand.START_SERVER: self._handle_start_server,
             DaemonCommand.STOP_SERVER: self._handle_stop_server,
             DaemonCommand.START_CLIENT: self._handle_start_client,
@@ -315,18 +317,6 @@ class Daemon:
                 self._logger.warning(f"Could not load configurations -> {e}")
 
         self._pre_configure()
-
-        self._server = Server(
-            app_config=self.app_config,
-            server_config=self._server_config,
-            auto_load_config=False,  # Already loaded
-        )
-
-        self._client = Client(
-            app_config=self.app_config,
-            client_config=self._client_config,
-            auto_load_config=False,  # Already loaded
-        )
 
         # Create socket server based on platform
         try:
@@ -770,6 +760,42 @@ class Daemon:
             )
 
     # ==================== Command Handlers: Service Control ====================
+
+    async def _handle_service_choice(self, params: Dict[str, Any]) -> DaemonResponse:
+        """Handle service choice between client and server"""
+        choice = params.get("service")
+        if choice == "server":
+            if not self._server:
+                self._server = Server(
+                    app_config=self.app_config,
+                    server_config=self._server_config,
+                    auto_load_config=False,  # Already loaded
+                )
+            if self._client and self._client.is_running():
+                return DaemonResponse(
+                    success=False, error="Cannot start server while client is running"
+                )
+            elif self._client:
+                await self._client.stop()
+                self._client = None
+            return DaemonResponse(success=True, error=None)
+        elif choice == "client":
+            if not self._client:
+                self._client = Client(
+                    app_config=self.app_config,
+                    client_config=self._client_config,
+                    auto_load_config=False,  # Already loaded
+                )
+            if self._server and self._server.is_running():
+                return DaemonResponse(
+                    success=False, error="Cannot start client while server is running"
+                )
+            elif self._server:
+                await self._server.stop()
+                self._server = None
+            return DaemonResponse(success=True, error=None)
+        else:
+            return DaemonResponse(success=False, error="Invalid service choice")
 
     async def _handle_start_server(self, params: Dict[str, Any]) -> DaemonResponse:
         """Start the server service"""

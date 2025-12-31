@@ -49,6 +49,12 @@ class DaemonClient:
         subparsers = parser.add_subparsers(dest="command", help="Command to execute")
 
         # Service control commands
+        server_choice_parser = subparsers.add_parser("service-choice",
+                                                     help="Choose service to enable (server or client)")
+        server_choice_parser.add_argument("--service","-s", choices=["server", "client"],
+                                            required=True,
+                                            help="Service to enable")
+
         subparsers.add_parser("start-server", help="Start server service")
         subparsers.add_parser("stop-server", help="Stop server service")
         subparsers.add_parser("start-client", help="Start client service")
@@ -288,7 +294,10 @@ class DaemonClient:
         params = {}
         command = args.command
 
-        if command == "set-server-config":
+        if command == "service-choice":
+            if args.service:
+                params["service"] = args.service
+        elif command == "set-server-config":
             if args.host:
                 params["host"] = args.host
             if args.port:
@@ -372,6 +381,7 @@ class DaemonClient:
     def _get_daemon_command(command: str) -> str:
         """Map CLI command name to DaemonCommand value"""
         command_map = {
+            "service-choice": DaemonCommand.SERVICE_CHOICE,
             "start-server": DaemonCommand.START_SERVER,
             "stop-server": DaemonCommand.STOP_SERVER,
             "start-client": DaemonCommand.START_CLIENT,
