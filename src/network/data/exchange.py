@@ -145,7 +145,7 @@ class MessageExchange:
         try:
             # Ricevi nuovi dati in modo non bloccante
             async with self._lock:
-                print("Receiving data...")
+
                 try:
                     new_data = await asyncio.wait_for(
                         receive_callback(self.config.receive_buffer_size),
@@ -158,7 +158,7 @@ class MessageExchange:
             if not new_data:
                 await asyncio.sleep(0)  # Breve pausa per evitare busy waiting
                 return True
-            print("Data received:", len(new_data), "bytes")
+
             if self._metrics:
                 self._metrics.record_received(len(new_data))
 
@@ -308,6 +308,7 @@ class MessageExchange:
         max_msg_size = self.config.max_chunk_size * 100
 
         while self._running:
+            await asyncio.sleep(0)
             async with asyncio.TaskGroup() as tg:
                 for tr_id, receive_callback in self._receive_callbacks.items():
                     tg.create_task(
@@ -318,6 +319,7 @@ class MessageExchange:
                             max_msg_size,
                         )
                     )
+            await asyncio.sleep(0)
 
     async def set_transport(
         self,
