@@ -136,11 +136,11 @@ class MessageExchange:
     async def _receive_logic(self, receive_callback: Optional[Callable[[int], Any]],
                              persistent_buffer: bytearray,
                              prefix_len: int,
-                             max_msg_size: int) -> bool:
+                             max_msg_size: int) -> None:
         # Round-robin
         if receive_callback is None:
             await asyncio.sleep(0)
-            return True
+            return
 
         try:
             # Ricevi nuovi dati in modo non bloccante
@@ -153,11 +153,11 @@ class MessageExchange:
                     )
                 except asyncio.TimeoutError:
                     await asyncio.sleep(0)
-                    return True
+                    return
 
             if not new_data:
                 await asyncio.sleep(0)  # Breve pausa per evitare busy waiting
-                return True
+                return
 
             if self._metrics:
                 self._metrics.record_received(len(new_data))
@@ -219,6 +219,7 @@ class MessageExchange:
                         # Ignora messaggi di heartbeat
                         offset += total_length
                         continue
+
                     # Gestione chunk/messaggio normale
                     if message.is_chunk:
                         reconstructed = await self._handle_chunk(message)
@@ -231,11 +232,15 @@ class MessageExchange:
                         if self.config.auto_dispatch:
                             await self.dispatch_message(message)
                         else:
+                            self._logger.debug(f"Received message: {message.to_dict()}")
                             await self._message_queue.put(message)  # ty:ignore[possibly-missing-attribute]
 
                     offset += total_length
+                    # print(f"Received message of type {message.message_type}, length {msg_length} bytes")
+                    # print(f"Current buffer length: {len(persistent_buffer) - offset} bytes")
+                    # print(f"Next offset: {offset}")
                     await asyncio.sleep(0)
-                    return True
+                    #return
 
                 except ValueError:
                     # Prefisso invalido, avanza di 1 byte
@@ -247,12 +252,18 @@ class MessageExchange:
 
             # Rimuovi dati processati dal buffer
             if offset > 0:
-                persistent_buffer = persistent_buffer[offset:]
+                tmp = persistent_buffer[offset:]
+                persistent_buffer.clear()
+                persistent_buffer.extend(tmp)
 
-            return True
+            await asyncio.sleep(0)
 
         except asyncio.CancelledError:
-            return False
+            self._logger.log(
+                "Receive loop cancelled, stopping.", Logger.INFO
+            )
+            self._running = False
+            raise
         except AttributeError:
             # Transport layer disconnected
             self._logger.log(
@@ -260,13 +271,13 @@ class MessageExchange:
                 Logger.WARNING,
             )
             self._running = False
-            return False
+            raise
         except RuntimeError as e:
             self._logger.log(
                 f"Error in receive loop {self._id} -> {e}", Logger.CRITICAL
             )
             self._running = False
-            return False
+            raise e
         except Exception as e:
             # Catch broken pipe or connection reset errors
             if isinstance(
@@ -282,7 +293,7 @@ class MessageExchange:
                     f"Connection error in receive loop -> {e}", Logger.ERROR
                 )
                 self._running = False
-                return False
+                raise e
             # Avoid infinite loop if no receive callback is set
             if receive_callback is None:
                 self._logger.log(
@@ -290,13 +301,13 @@ class MessageExchange:
                     Logger.DEBUG,
                 )
                 self._running = False
-                return False
+                raise e
 
             self._logger.log(
                 f"Error in receive loop {self._id} -> {e}", Logger.ERROR
             )
             await asyncio.sleep(0)
-            return True
+            return
 
     async def _receive_loop(self):
         """
@@ -309,16 +320,17 @@ class MessageExchange:
 
         while self._running:
             await asyncio.sleep(0)
-            async with asyncio.TaskGroup() as tg:
-                for tr_id, receive_callback in self._receive_callbacks.items():
-                    tg.create_task(
-                        self._receive_logic(
-                            receive_callback,
-                            persistent_buffer,
-                            prefix_len,
-                            max_msg_size,
-                        )
+            for tr_id, receive_callback in self._receive_callbacks.items():
+                # We need to execute one by one
+                # to avoid concurrency issues on the buffer
+                await asyncio.create_task(
+                    self._receive_logic(
+                        receive_callback,
+                        persistent_buffer,
+                        prefix_len,
+                        max_msg_size,
                     )
+                )
             await asyncio.sleep(0)
 
     async def set_transport(
