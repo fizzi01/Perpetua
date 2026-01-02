@@ -133,6 +133,171 @@ class MessageExchange:
         self._chunk_buffer.clear()
         self._logger.debug("Stopped")
 
+    async def _receive_logic(self, receive_callback: Optional[Callable[[int], Any]],
+                             persistent_buffer: bytearray,
+                             prefix_len: int,
+                             max_msg_size: int) -> bool:
+        # Round-robin
+        if receive_callback is None:
+            await asyncio.sleep(0)
+            return True
+
+        try:
+            # Ricevi nuovi dati in modo non bloccante
+            async with self._lock:
+                print("Receiving data...")
+                try:
+                    new_data = await asyncio.wait_for(
+                        receive_callback(self.config.receive_buffer_size),
+                        timeout=0.1,
+                    )
+                except asyncio.TimeoutError:
+                    await asyncio.sleep(0)
+                    return True
+
+            if not new_data:
+                await asyncio.sleep(0)  # Breve pausa per evitare busy waiting
+                return True
+            print("Data received:", len(new_data), "bytes")
+            if self._metrics:
+                self._metrics.record_received(len(new_data))
+
+            persistent_buffer.extend(new_data)
+            buffer_len = len(persistent_buffer)
+            offset = 0
+
+            # Processa tutti i messaggi completi nel buffer
+            while offset + prefix_len <= buffer_len:
+                try:
+                    # Verifica marker "PY" prima di leggere il prefisso
+                    if persistent_buffer[offset + 4: offset + 6] != b"PY":
+                        # Cerca il prossimo marker valido
+                        next_marker = persistent_buffer.find(b"PY", offset + 1)
+                        if next_marker == -1 or next_marker < 4:
+                            # Nessun marker trovato, mantieni ultimi 5 byte
+                            persistent_buffer = (
+                                persistent_buffer[-5:]
+                                if buffer_len > 5
+                                else bytearray()
+                            )
+                            await asyncio.sleep(0)
+                            break
+                        offset = next_marker - 4
+                        continue
+
+                    # Leggi lunghezza messaggio
+                    msg_length = ProtocolMessage.read_lenght_prefix(
+                        bytes(persistent_buffer[offset: offset + prefix_len])
+                    )
+
+                    if msg_length > max_msg_size:
+                        # Messaggio troppo grande, cerca prossimo marker
+                        offset += 1
+                        # await asyncio.sleep(0)
+                        continue
+
+                    total_length = prefix_len + msg_length
+
+                    # Verifica se abbiamo il messaggio completo
+                    if offset + total_length > buffer_len:
+                        # Messaggio incompleto, mantieni da offset in poi
+                        await asyncio.sleep(0)
+                        break
+
+                    # Estrai e processa il messaggio completo
+                    message_data = bytes(
+                        persistent_buffer[offset: offset + total_length]
+                    )
+                    message = ProtocolMessage.from_bytes(message_data)
+                    # message.timestamp = time()
+                    if message.timestamp:
+                        receive_latency = time() - message.timestamp
+                        if self._metrics:
+                            self._metrics.record_latency(receive_latency)
+
+                    if message.is_heartbeat():
+                        # Ignora messaggi di heartbeat
+                        offset += total_length
+                        continue
+                    # Gestione chunk/messaggio normale
+                    if message.is_chunk:
+                        reconstructed = await self._handle_chunk(message)
+                        if reconstructed:
+                            if self.config.auto_dispatch:
+                                await self.dispatch_message(reconstructed)
+                            else:
+                                await self._message_queue.put(reconstructed)  # ty:ignore[possibly-missing-attribute]
+                    else:
+                        if self.config.auto_dispatch:
+                            await self.dispatch_message(message)
+                        else:
+                            await self._message_queue.put(message)  # ty:ignore[possibly-missing-attribute]
+
+                    offset += total_length
+                    await asyncio.sleep(0)
+                    return True
+
+                except ValueError:
+                    # Prefisso invalido, avanza di 1 byte
+                    offset += 1
+                    if self._metrics:
+                        self._metrics.connection_errors += 1
+                    await asyncio.sleep(0)
+                    continue
+
+            # Rimuovi dati processati dal buffer
+            if offset > 0:
+                persistent_buffer = persistent_buffer[offset:]
+
+            return True
+
+        except asyncio.CancelledError:
+            return False
+        except AttributeError:
+            # Transport layer disconnected
+            self._logger.log(
+                "Transport layer disconnected, stopping receive loop.",
+                Logger.WARNING,
+            )
+            self._running = False
+            return False
+        except RuntimeError as e:
+            self._logger.log(
+                f"Error in receive loop {self._id} -> {e}", Logger.CRITICAL
+            )
+            self._running = False
+            return False
+        except Exception as e:
+            # Catch broken pipe or connection reset errors
+            if isinstance(
+                    e,
+                    (
+                            ConnectionResetError,
+                            BrokenPipeError,
+                            ConnectionError,
+                            ConnectionAbortedError,
+                    ),
+            ):
+                self._logger.log(
+                    f"Connection error in receive loop -> {e}", Logger.ERROR
+                )
+                self._running = False
+                return False
+            # Avoid infinite loop if no receive callback is set
+            if receive_callback is None:
+                self._logger.log(
+                    "Receive callback is None, stopping receive loop.",
+                    Logger.DEBUG,
+                )
+                self._running = False
+                return False
+
+            self._logger.log(
+                f"Error in receive loop {self._id} -> {e}", Logger.ERROR
+            )
+            await asyncio.sleep(0)
+            return True
+
     async def _receive_loop(self):
         """
         Core loop for receiving and processing incoming messages.
@@ -143,159 +308,16 @@ class MessageExchange:
         max_msg_size = self.config.max_chunk_size * 100
 
         while self._running:
-            for (
-                tr_id,
-                receive_callback,
-            ) in self._receive_callbacks.items():  # Round-robin
-                if receive_callback is None:
-                    await asyncio.sleep(0)
-                    continue
-
-                try:
-                    # Ricevi nuovi dati in modo non bloccante
-                    async with self._lock:
-                        new_data = await receive_callback(
-                            self.config.receive_buffer_size
+            async with asyncio.TaskGroup() as tg:
+                for tr_id, receive_callback in self._receive_callbacks.items():
+                    tg.create_task(
+                        self._receive_logic(
+                            receive_callback,
+                            persistent_buffer,
+                            prefix_len,
+                            max_msg_size,
                         )
-                    if not new_data:
-                        await asyncio.sleep(0)  # Breve pausa per evitare busy waiting
-                        continue
-
-                    if self._metrics:
-                        self._metrics.record_received(len(new_data))
-
-                    persistent_buffer.extend(new_data)
-                    buffer_len = len(persistent_buffer)
-                    offset = 0
-
-                    # Processa tutti i messaggi completi nel buffer
-                    while offset + prefix_len <= buffer_len:
-                        try:
-                            # Verifica marker "PY" prima di leggere il prefisso
-                            if persistent_buffer[offset + 4 : offset + 6] != b"PY":
-                                # Cerca il prossimo marker valido
-                                next_marker = persistent_buffer.find(b"PY", offset + 1)
-                                if next_marker == -1 or next_marker < 4:
-                                    # Nessun marker trovato, mantieni ultimi 5 byte
-                                    persistent_buffer = (
-                                        persistent_buffer[-5:]
-                                        if buffer_len > 5
-                                        else bytearray()
-                                    )
-                                    await asyncio.sleep(0)
-                                    break
-                                offset = next_marker - 4
-                                continue
-
-                            # Leggi lunghezza messaggio
-                            msg_length = ProtocolMessage.read_lenght_prefix(
-                                bytes(persistent_buffer[offset : offset + prefix_len])
-                            )
-
-                            if msg_length > max_msg_size:
-                                # Messaggio troppo grande, cerca prossimo marker
-                                offset += 1
-                                # await asyncio.sleep(0)
-                                continue
-
-                            total_length = prefix_len + msg_length
-
-                            # Verifica se abbiamo il messaggio completo
-                            if offset + total_length > buffer_len:
-                                # Messaggio incompleto, mantieni da offset in poi
-                                await asyncio.sleep(0)
-                                break
-
-                            # Estrai e processa il messaggio completo
-                            message_data = bytes(
-                                persistent_buffer[offset : offset + total_length]
-                            )
-                            message = ProtocolMessage.from_bytes(message_data)
-                            # message.timestamp = time()
-                            if message.timestamp:
-                                receive_latency = time() - message.timestamp
-                                if self._metrics:
-                                    self._metrics.record_latency(receive_latency)
-
-                            if message.is_heartbeat():
-                                # Ignora messaggi di heartbeat
-                                offset += total_length
-                                continue
-                            # Gestione chunk/messaggio normale
-                            if message.is_chunk:
-                                reconstructed = await self._handle_chunk(message)
-                                if reconstructed:
-                                    if self.config.auto_dispatch:
-                                        await self.dispatch_message(reconstructed)
-                                    else:
-                                        await self._message_queue.put(reconstructed)  # ty:ignore[possibly-missing-attribute]
-                            else:
-                                if self.config.auto_dispatch:
-                                    await self.dispatch_message(message)
-                                else:
-                                    await self._message_queue.put(message)  # ty:ignore[possibly-missing-attribute]
-
-                            offset += total_length
-                            # await asyncio.sleep(0)
-
-                        except ValueError:
-                            # Prefisso invalido, avanza di 1 byte
-                            offset += 1
-                            if self._metrics:
-                                self._metrics.connection_errors += 1
-                            await asyncio.sleep(0)
-                            continue
-
-                    # Rimuovi dati processati dal buffer
-                    if offset > 0:
-                        persistent_buffer = persistent_buffer[offset:]
-
-                except asyncio.CancelledError:
-                    break
-                except AttributeError:
-                    # Transport layer disconnected
-                    self._logger.log(
-                        "Transport layer disconnected, stopping receive loop.",
-                        Logger.WARNING,
                     )
-                    self._running = False
-                    break
-                except RuntimeError as e:
-                    self._logger.log(
-                        f"Error in receive loop {self._id} -> {e}", Logger.CRITICAL
-                    )
-                    self._running = False
-                    break
-                except Exception as e:
-                    # Catch broken pipe or connection reset errors
-                    if isinstance(
-                        e,
-                        (
-                            ConnectionResetError,
-                            BrokenPipeError,
-                            ConnectionError,
-                            ConnectionAbortedError,
-                        ),
-                    ):
-                        self._logger.log(
-                            f"Connection error in receive loop -> {e}", Logger.ERROR
-                        )
-                        self._running = False
-                        break
-                    # Avoid infinite loop if no receive callback is set
-                    if receive_callback is None:
-                        self._logger.log(
-                            "Receive callback is None, stopping receive loop.",
-                            Logger.DEBUG,
-                        )
-                        self._running = False
-                        break
-
-                    self._logger.log(
-                        f"Error in receive loop {self._id} -> {e}", Logger.ERROR
-                    )
-                    await asyncio.sleep(0)
-                    continue
 
     async def set_transport(
         self,
