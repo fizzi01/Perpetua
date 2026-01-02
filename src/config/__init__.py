@@ -322,6 +322,7 @@ class ServerConfig:
         with open(file, "w") as f:
             for line in content:
                 f.write(line)
+                await asyncio.sleep(0)
 
     # Persistence
     async def save(self, file_path: Optional[str] = None) -> None:
@@ -331,7 +332,6 @@ class ServerConfig:
         Args:
             file_path: Path to save the configuration. Uses self.config_file if None.
         """
-        print("Saving server configuration...")
         async with self._write_lock:
             file_path = file_path or self.config_file
 
@@ -360,7 +360,6 @@ class ServerConfig:
                 if os.path.exists(temp_file):
                     os.remove(temp_file)
                 raise IOError(f"Failed to save configuration: {e}")
-        print("Server configuration saved.")
 
     def sync_load(self, file_path: Optional[str] = None) -> bool:
         """
@@ -629,7 +628,7 @@ class ClientConfig:
         with open(file, "w") as f:
             for line in content:
                 f.write(line)
-                # await asyncio.sleep(0)
+                await asyncio.sleep(0)
 
     # Persistence
     async def save(self, file_path: Optional[str] = None) -> None:

@@ -232,7 +232,6 @@ class MessageExchange:
                         if self.config.auto_dispatch:
                             await self.dispatch_message(message)
                         else:
-                            self._logger.debug(f"Received message: {message.to_dict()}")
                             await self._message_queue.put(message)  # ty:ignore[possibly-missing-attribute]
 
                     offset += total_length
@@ -259,11 +258,7 @@ class MessageExchange:
             await asyncio.sleep(0)
 
         except asyncio.CancelledError:
-            self._logger.log(
-                "Receive loop cancelled, stopping.", Logger.INFO
-            )
-            self._running = False
-            raise
+            pass
         except AttributeError:
             # Transport layer disconnected
             self._logger.log(

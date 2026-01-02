@@ -420,11 +420,6 @@ class ConnectionHandler(BaseConnectionHandler):
                     client=client.to_dict(),
                 )
 
-                # Crea AsyncClientConnection per gestire multiple streams asyncio
-                conn = ClientConnection(client_addr)
-                conn.add_stream(stream_type=StreamType.COMMAND, stream=cur_stream)
-                client.set_connection(connection=conn)
-
                 # Send position info back to client
                 await client_msg_exchange.send_handshake_message(
                     ack=True,
@@ -432,6 +427,10 @@ class ConnectionHandler(BaseConnectionHandler):
                     screen_position=client.screen_position,
                     target=client.screen_position,
                 )
+
+                conn = ClientConnection(client_addr)
+                conn.add_stream(stream_type=StreamType.COMMAND, stream=cur_stream)
+                client.set_connection(connection=conn)
 
                 # Accetta stream aggiuntivi richiesti dal client
                 if requested_streams:
