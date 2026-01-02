@@ -49,11 +49,16 @@ class DaemonClient:
         subparsers = parser.add_subparsers(dest="command", help="Command to execute")
 
         # Service control commands
-        server_choice_parser = subparsers.add_parser("service-choice",
-                                                     help="Choose service to enable (server or client)")
-        server_choice_parser.add_argument("--service","-s", choices=["server", "client"],
-                                            required=True,
-                                            help="Service to enable")
+        server_choice_parser = subparsers.add_parser(
+            "service-choice", help="Choose service to enable (server or client)"
+        )
+        server_choice_parser.add_argument(
+            "--service",
+            "-s",
+            choices=["server", "client"],
+            required=True,
+            help="Service to enable",
+        )
 
         subparsers.add_parser("start-server", help="Start server service")
         subparsers.add_parser("stop-server", help="Stop server service")

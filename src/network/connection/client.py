@@ -391,7 +391,9 @@ class ConnectionHandler(BaseConnectionHandler):
                 ssl=self.use_ssl,
             )
 
-            self._logger.debug("Sent handshake response to server", streams=self.open_streams)
+            self._logger.debug(
+                "Sent handshake response to server", streams=self.open_streams
+            )
 
             # Small delay to ensure server processes handshake
             await asyncio.sleep(self.HANDSHAKE_DELAY)

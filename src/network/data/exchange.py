@@ -133,10 +133,13 @@ class MessageExchange:
         self._chunk_buffer.clear()
         self._logger.debug("Stopped")
 
-    async def _receive_logic(self, receive_callback: Optional[Callable[[int], Any]],
-                             persistent_buffer: bytearray,
-                             prefix_len: int,
-                             max_msg_size: int) -> None:
+    async def _receive_logic(
+        self,
+        receive_callback: Optional[Callable[[int], Any]],
+        persistent_buffer: bytearray,
+        prefix_len: int,
+        max_msg_size: int,
+    ) -> None:
         # Round-robin
         if receive_callback is None:
             await asyncio.sleep(0)
@@ -145,7 +148,6 @@ class MessageExchange:
         try:
             # Ricevi nuovi dati in modo non bloccante
             async with self._lock:
-
                 try:
                     new_data = await asyncio.wait_for(
                         receive_callback(self.config.receive_buffer_size),
@@ -170,7 +172,7 @@ class MessageExchange:
             while offset + prefix_len <= buffer_len:
                 try:
                     # Verifica marker "PY" prima di leggere il prefisso
-                    if persistent_buffer[offset + 4: offset + 6] != b"PY":
+                    if persistent_buffer[offset + 4 : offset + 6] != b"PY":
                         # Cerca il prossimo marker valido
                         next_marker = persistent_buffer.find(b"PY", offset + 1)
                         if next_marker == -1 or next_marker < 4:
@@ -187,7 +189,7 @@ class MessageExchange:
 
                     # Leggi lunghezza messaggio
                     msg_length = ProtocolMessage.read_lenght_prefix(
-                        bytes(persistent_buffer[offset: offset + prefix_len])
+                        bytes(persistent_buffer[offset : offset + prefix_len])
                     )
 
                     if msg_length > max_msg_size:
@@ -206,7 +208,7 @@ class MessageExchange:
 
                     # Estrai e processa il messaggio completo
                     message_data = bytes(
-                        persistent_buffer[offset: offset + total_length]
+                        persistent_buffer[offset : offset + total_length]
                     )
                     message = ProtocolMessage.from_bytes(message_data)
                     # message.timestamp = time()
@@ -239,7 +241,7 @@ class MessageExchange:
                     # print(f"Current buffer length: {len(persistent_buffer) - offset} bytes")
                     # print(f"Next offset: {offset}")
                     await asyncio.sleep(0)
-                    #return
+                    # return
 
                 except ValueError:
                     # Prefisso invalido, avanza di 1 byte
@@ -276,13 +278,13 @@ class MessageExchange:
         except Exception as e:
             # Catch broken pipe or connection reset errors
             if isinstance(
-                    e,
-                    (
-                            ConnectionResetError,
-                            BrokenPipeError,
-                            ConnectionError,
-                            ConnectionAbortedError,
-                    ),
+                e,
+                (
+                    ConnectionResetError,
+                    BrokenPipeError,
+                    ConnectionError,
+                    ConnectionAbortedError,
+                ),
             ):
                 self._logger.log(
                     f"Connection error in receive loop -> {e}", Logger.ERROR
@@ -298,9 +300,7 @@ class MessageExchange:
                 self._running = False
                 raise e
 
-            self._logger.log(
-                f"Error in receive loop {self._id} -> {e}", Logger.ERROR
-            )
+            self._logger.log(f"Error in receive loop {self._id} -> {e}", Logger.ERROR)
             await asyncio.sleep(0)
             return
 

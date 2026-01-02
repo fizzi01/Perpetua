@@ -195,10 +195,7 @@ class ServiceDiscovery:
         """
         Check if the given IP address is a loopback address.
         """
-        if (ip.startswith("127.")
-                or ip == "::1"
-                or ip == "0.0.0.0"
-                or ip == "::"):
+        if ip.startswith("127.") or ip == "::1" or ip == "0.0.0.0" or ip == "::":
             return True
 
         return False
@@ -265,7 +262,11 @@ class ServiceDiscovery:
 
             await self._async_zercnf.async_register_service(s_info)
             self._logger.info(
-                "mDNS service registered.", uid=self._uid, port=port, host=host, **properties
+                "mDNS service registered.",
+                uid=self._uid,
+                port=port,
+                host=host,
+                **properties,
             )
         except BadTypeInNameException:
             raise ValueError("Invalid service type or name")

@@ -133,13 +133,21 @@ class CursorHandlerWindow(_base.CursorHandlerWindow):
 
             # Calcola la posizione per centrare la finestra sul cursore
             x = cursor_pos.x - self.__size[0] // 2
-            y = cursor_pos.y -  self.__size[1] // 2
+            y = cursor_pos.y - self.__size[1] // 2
 
             # Applica i limiti considerando l'offset dai bordi
-            x = max(screen_rect.x + offset - self.__size[0] // 2,
-                    min(x, screen_rect.x + screen_rect.width - offset - self.__size[0] // 2))
-            y = max(screen_rect.y + offset - self.__size[1] // 2,
-                    min(y, screen_rect.y + screen_rect.height - offset - self.__size[1] // 2))
+            x = max(
+                screen_rect.x + offset - self.__size[0] // 2,
+                min(
+                    x, screen_rect.x + screen_rect.width - offset - self.__size[0] // 2
+                ),
+            )
+            y = max(
+                screen_rect.y + offset - self.__size[1] // 2,
+                min(
+                    y, screen_rect.y + screen_rect.height - offset - self.__size[1] // 2
+                ),
+            )
 
             self.Show(True)
             self.Move(x, y)
