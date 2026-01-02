@@ -30,7 +30,7 @@ class ConnectionHandler(BaseConnectionHandler):
 
     CONNECTION_ATTEMPT_TIMEOUT = 10  # seconds
     RECONNECTION_DELAY = 10  # seconds
-    HANDSHAKE_DELAY = 0.2  # seconds
+    HANDSHAKE_DELAY = 0.5  # seconds
     STREAM_CONN_DELAY_GUARD = 1  # seconds
     HANDSHAKE_MSG_TIMEOUT = 5.0  # seconds
     MAX_HEARTBEAT_MISSES = 1
@@ -391,7 +391,7 @@ class ConnectionHandler(BaseConnectionHandler):
                 ssl=self.use_ssl,
             )
 
-            self._logger.log("Sent handshake response to server", Logger.DEBUG)
+            self._logger.debug("Sent handshake response to server", streams=self.open_streams)
 
             # Small delay to ensure server processes handshake
             await asyncio.sleep(self.HANDSHAKE_DELAY)

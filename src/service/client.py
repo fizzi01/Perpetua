@@ -826,9 +826,9 @@ class Client:
 
     def _get_enabled_stream_types(self) -> list[int]:
         """Get list of enabled stream types for connection"""
-        enabled: list[int] = [StreamType.COMMAND]  # Command is always enabled
+        enabled: list[int] = []
         for stream_type, is_enabled in self.config.streams_enabled.items():
-            if is_enabled and stream_type != StreamType.COMMAND:
+            if is_enabled and stream_type != StreamType.COMMAND:  # Command is always enabled
                 enabled.append(stream_type)
         return enabled
 

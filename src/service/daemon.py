@@ -1020,12 +1020,6 @@ class Daemon:
 
     async def _handle_set_server_config(self, params: Dict[str, Any]) -> DaemonResponse:
         """Set server configuration"""
-        if self._server:
-            return DaemonResponse(
-                success=False,
-                error="Cannot modify configuration while server is running",
-            )
-
         if not self._server_config:
             return DaemonResponse(
                 success=False, error="Server configuration not initialized"
@@ -1083,12 +1077,6 @@ class Daemon:
 
     async def _handle_set_client_config(self, params: Dict[str, Any]) -> DaemonResponse:
         """Set client configuration"""
-        if self._client:
-            return DaemonResponse(
-                success=False,
-                error="Cannot modify configuration while client is running",
-            )
-
         if not self._client_config:
             return DaemonResponse(
                 success=False, error="Client configuration not initialized"
@@ -1164,12 +1152,6 @@ class Daemon:
 
     async def _handle_reload_config(self, params: Dict[str, Any]) -> DaemonResponse:
         """Reload configurations from disk"""
-        if self._server or self._client:
-            return DaemonResponse(
-                success=False,
-                error="Cannot reload configuration while services are running",
-            )
-
         try:
             config_type = params.get("type", "both")
 
