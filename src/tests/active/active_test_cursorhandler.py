@@ -74,7 +74,7 @@ async def __main():
 
     eb = EventBus()
     mock_stream = MockStreamHandler()
-    controller = CursorHandlerWorker(eb, stream=mock_stream, debug=True)
+    controller = CursorHandlerWorker(eb, stream=mock_stream, debug=False)
 
     try:
         # Avvia la window
@@ -92,7 +92,7 @@ async def __main():
         print("\n>>> MUOVI IL MOUSE VELOCEMENTE PER 10 SECONDI <<<\n")
 
         # Monitora per 10 secondi
-        benchmark_duration = 10
+        benchmark_duration = 2
         start_benchmark = time.time()
         last_report = start_benchmark
 

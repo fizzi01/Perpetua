@@ -65,6 +65,9 @@ class DebugOverlayPanel(wx.Panel):
 
 
 class CursorHandlerWindow(_base.CursorHandlerWindow):
+    BORDER_OFFSET = 1
+    WINDOW_SIZE = (300, 300)
+
     def __init__(
         self,
         command_queue: Queue,
@@ -77,10 +80,10 @@ class CursorHandlerWindow(_base.CursorHandlerWindow):
             result_queue,
             mouse_conn,
             debug,
-            size=(100, 100),
+            size=self.WINDOW_SIZE,
             style=wx.STAY_ON_TOP | wx.FRAME_NO_TASKBAR | wx.NO_BORDER,
         )
-
+        self.__size = self.WINDOW_SIZE
         # Panel principale
         self.panel = None
 
@@ -90,7 +93,7 @@ class CursorHandlerWindow(_base.CursorHandlerWindow):
         self._old_style = self.GetWindowStyle()
         # self.SetWindowStyle(
         #     self._old_style | wx.STAY_ON_TOP | wx.FRAME_NO_TASKBAR | wx.NO_BORDER  | wx.TRANSPARENT_WINDOW)
-        #self.SetTransparent(1)
+        self.SetTransparent(1)
         self._create()
 
     def ForceOverlay(self):
@@ -101,18 +104,32 @@ class CursorHandlerWindow(_base.CursorHandlerWindow):
             cursor_pos = wx.GetMousePosition()
 
             # Imposta dimensioni della finestra
-            width, height = 100, 100
-            self.SetSize(width, height)
+            # width, height = 100, 100
+            # self.SetSize(width, height)
+
+            # Ottieni le dimensioni dello schermo dove si trova il cursore
+            display_index = wx.Display.GetFromPoint(cursor_pos)
+            if display_index == wx.NOT_FOUND:
+                display_index = 0
+            display = wx.Display(display_index)
+            screen_rect = display.GetClientArea()
+
+            # Offset minimo dai bordi (in pixel)
+            offset = self.BORDER_OFFSET
 
             # Calcola la posizione per centrare la finestra sul cursore
-            x = cursor_pos.x - width // 2
-            y = cursor_pos.y - height // 2
-            #print(f"Cursor position: {cursor_pos}, Window position: ({x}, {y})")
+            x = cursor_pos.x - self.__size[0] // 2
+            y = cursor_pos.y -  self.__size[1] // 2
+
+            # Applica i limiti considerando l'offset dai bordi
+            x = max(screen_rect.x + offset - self.__size[0] // 2,
+                    min(x, screen_rect.x + screen_rect.width - offset - self.__size[0] // 2))
+            y = max(screen_rect.y + offset - self.__size[1] // 2,
+                    min(y, screen_rect.y + screen_rect.height - offset - self.__size[1] // 2))
 
             self.Show(True)
             self.Move(x, y)
             self.Raise()
-            #self.ShowFullScreen(True, style=wx.FULLSCREEN_ALL)
         except Exception as e:
             print(f"Error forcing overlay: {e}")
 

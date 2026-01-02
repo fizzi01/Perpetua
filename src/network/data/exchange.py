@@ -331,7 +331,7 @@ class MessageExchange:
                         max_msg_size,
                     )
                 )
-            await asyncio.sleep(0)
+                await asyncio.sleep(0)
 
     async def set_transport(
         self,
