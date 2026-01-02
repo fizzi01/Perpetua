@@ -197,12 +197,6 @@ class CursorHandlerWindow(_base.CursorHandlerWindow):
             self.SetCursor(wx.NullCursor)
             Quartz.CGDisplayShowCursor(Quartz.CGMainDisplayID())  # ty:ignore[unresolved-attribute]
 
-    def update_ui(self, panel_obj, data, call):
-        try:
-            call(data)
-        except Exception:
-            pass
-
 
 class CursorHandlerWorker(_base.CursorHandlerWorker):
     RESULT_POLL_TIMEOUT = 1  # sec

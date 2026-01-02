@@ -66,7 +66,7 @@ class DebugOverlayPanel(wx.Panel):
 
 class CursorHandlerWindow(_base.CursorHandlerWindow):
     BORDER_OFFSET = 1
-    WINDOW_SIZE = (300, 300)
+    WINDOW_SIZE = (200, 200)
 
     def __init__(
         self,
@@ -95,6 +95,20 @@ class CursorHandlerWindow(_base.CursorHandlerWindow):
         #     self._old_style | wx.STAY_ON_TOP | wx.FRAME_NO_TASKBAR | wx.NO_BORDER  | wx.TRANSPARENT_WINDOW)
         self.SetTransparent(1)
         self._create()
+
+    def MoveWindow(self, x: int = -1, y: int = -1) -> None:
+        if x == -1 or y == -1:
+            return
+
+        # Denormalize coordinates
+        screen_width, screen_height = wx.GetDisplaySize()
+        x = int(x * screen_width)
+        y = int(y * screen_height)
+
+        try:
+            self.Move(x, y)
+        except Exception as e:
+            print(f"Error moving window: {e}")
 
     def ForceOverlay(self):
         try:
@@ -155,12 +169,6 @@ class CursorHandlerWindow(_base.CursorHandlerWindow):
         else:
             # Show cursor
             self.SetCursor(wx.NullCursor)
-
-    def update_ui(self, panel_obj, data, call):
-        try:
-            call(data)
-        except Exception:
-            pass
 
 
 class CursorHandlerWorker(_base.CursorHandlerWorker):

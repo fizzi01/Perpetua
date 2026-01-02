@@ -103,18 +103,6 @@ class CursorHandlerWindow(wx.Frame):
         self.Show()
         self.HideOverlay()
 
-    def _os_delay(self, specific: bool = False):
-        """
-        OS-specific delay to allow UI updates.
-        Derived classes can implement platform-specific delays here (default: time.sleep).
-
-        Args:
-            specific (bool): If True, use a specific os delay method.
-
-        Default implementation just wait for mouse_captured_event to be set or timeout.
-        """
-        self.mouse_captured_event.wait(1)
-
     def _process_commands(self):
         """
         Commands processing loop.
@@ -128,7 +116,8 @@ class CursorHandlerWindow(wx.Frame):
                     if cmd_type == "enable_capture":
                         wx.CallAfter(self.enable_mouse_capture)
                     elif cmd_type == "disable_capture":
-                        wx.CallAfter(self.disable_mouse_capture)
+                        x, y = command.get("x", -1), command.get("y", -1)
+                        wx.CallAfter(self.disable_mouse_capture, x, y)
                     elif cmd_type == "get_stats":
                         self.result_queue.put(
                             {
@@ -213,11 +202,11 @@ class CursorHandlerWindow(wx.Frame):
             "Derived classes must implement handle_cursor_visibility"
         )
 
-    def update_ui(self, panel_obj, data, call):
+    def MoveWindow(self, x: int, y: int) -> None:
         """
-        Update UI elements safely.
+        Move the window to the specified screen coordinates.
         """
-        raise NotImplementedError("Derived classes must implement update_ui")
+        pass
 
     def enable_mouse_capture(self):
         """
@@ -249,12 +238,15 @@ class CursorHandlerWindow(wx.Frame):
             self.reset_mouse_position()
             self.result_queue.put({"type": "capture_enabled", "success": True})
 
-    def disable_mouse_capture(self):
+    def disable_mouse_capture(self, x: int = -1, y: int = -1):
         """
         Disable mouse capture.
         """
         if self.mouse_captured_flag.is_set():
             self.Unbind(wx.EVT_MOTION)
+            self.MoveWindow(x, y)
+            wx.Sleep(0)
+            time.sleep(0)
             self.mouse_captured_flag.clear()
             wx.Sleep(0)
             time.sleep(0)
@@ -456,7 +448,7 @@ class CursorHandlerWorker(object):
             self._active_client = active_screen
         else:
             try:
-                await self.disable_capture()
+                await self.disable_capture(x=data.x, y=data.y)
             except Exception as e:
                 self._logger.error(f"Error disabling cursor capture: {e}")
             # dispatch event after disabling capture
@@ -628,9 +620,9 @@ class CursorHandlerWorker(object):
         await self.send_command({"type": "enable_capture"})
         return await self.get_result()
 
-    async def disable_capture(self):
+    async def disable_capture(self, **kwargs):
         """Disabilita la cattura del mouse in modo asincrono"""
-        await self.send_command({"type": "disable_capture"})
+        await self.send_command({"type": "disable_capture", **kwargs})
         return await self.get_result()
 
     async def set_message(self, message):

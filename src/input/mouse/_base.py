@@ -571,7 +571,7 @@ class ServerMouseController(object):
                 y = data.y
                 if x > -1 and y > -1:
                     # We need to asyncronously position the cursor multiple times to ensure it works across platforms
-                    for _ in range(3):
+                    for _ in range(50):
                         self.position_cursor(x, y)
 
     def position_cursor(self, x: float | int, y: float | int):
