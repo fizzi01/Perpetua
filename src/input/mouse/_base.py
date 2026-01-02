@@ -2,7 +2,7 @@ import asyncio
 import enum
 from collections import deque
 from typing import Callable, Optional
-from time import time
+from time import time, sleep
 from threading import Event
 
 from pynput.mouse import Button, Controller as MouseController
@@ -383,6 +383,7 @@ class ServerMouseListener(object):
                     movement_history=queue_data, x=x, y=y, screen_size=self._screen_size
                 )
                 if edge is None:
+                    sleep(0)
                     return True
 
                 mouse_event = MouseEvent(x=x, y=y, action=MouseEvent.POSITION_ACTION)

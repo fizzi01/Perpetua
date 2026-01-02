@@ -77,6 +77,7 @@ class CursorHandlerWindow(_base.CursorHandlerWindow):
             result_queue,
             mouse_conn,
             debug,
+            size=(100, 100),
             style=wx.STAY_ON_TOP | wx.FRAME_NO_TASKBAR | wx.NO_BORDER,
         )
 
@@ -89,15 +90,29 @@ class CursorHandlerWindow(_base.CursorHandlerWindow):
         self._old_style = self.GetWindowStyle()
         # self.SetWindowStyle(
         #     self._old_style | wx.STAY_ON_TOP | wx.FRAME_NO_TASKBAR | wx.NO_BORDER  | wx.TRANSPARENT_WINDOW)
-        self.SetTransparent(1)
+        #self.SetTransparent(1)
         self._create()
 
     def ForceOverlay(self):
         try:
             self.Iconize(False)
             self.AcceptsFocusRecursively()
-            super().ForceOverlay()
-            self.ShowFullScreen(True, style=wx.FULLSCREEN_ALL)
+
+            cursor_pos = wx.GetMousePosition()
+
+            # Imposta dimensioni della finestra
+            width, height = 100, 100
+            self.SetSize(width, height)
+
+            # Calcola la posizione per centrare la finestra sul cursore
+            x = cursor_pos.x - width // 2
+            y = cursor_pos.y - height // 2
+            #print(f"Cursor position: {cursor_pos}, Window position: ({x}, {y})")
+
+            self.Show(True)
+            self.Move(x, y)
+            self.Raise()
+            #self.ShowFullScreen(True, style=wx.FULLSCREEN_ALL)
         except Exception as e:
             print(f"Error forcing overlay: {e}")
 
