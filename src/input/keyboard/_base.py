@@ -62,10 +62,20 @@ class KeyUtilities:
         return None
 
     @staticmethod
-    def is_special(key: Key | KeyCode | None) -> bool:
+    def is_special(
+        key: Key | KeyCode | None, filter_out: Optional[list[Key]] = None
+    ) -> bool:
         """
         Check if the given key is a special key (pynput Key) or a character key (KeyCode).
+        Args:
+            key (Key | KeyCode | None): The key to check.
+            filter_out (Optional[list[Key]]): List of keys to filter out from being considered special.
+        Returns:
+            bool: True if the key is a special key and not in filter_out, False otherwise
         """
+        if filter_out and key in filter_out:
+            return False
+
         return isinstance(key, Key)
 
 
@@ -486,8 +496,8 @@ class ClientKeyboardController(object):
                 else:
                     self._controller.press(key)
                 self.is_caps_locked = not self.is_caps_locked
-            elif (
-                KeyUtilities.is_special(key) and not key == Key.space
+            elif KeyUtilities.is_special(
+                key, filter_out=[Key.space, Key.shift, Key.shift_l, Key.shift_r, Key.backspace]
             ):  # General special key handling
                 if key not in self.pressed_keys:
                     self.pressed_keys.add(key)
@@ -501,8 +511,8 @@ class ClientKeyboardController(object):
                 else:
                     self._controller.press(key)
                 self.is_caps_locked = not self.is_caps_locked
-            elif (
-                KeyUtilities.is_special(key) and not key == Key.space
+            elif KeyUtilities.is_special(
+                key, filter_out=[Key.space, Key.shift, Key.shift_l, Key.shift_r, Key.backspace]
             ):  # General special key handling
                 if key in self.pressed_keys:
                     self.pressed_keys.discard(key)
