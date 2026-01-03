@@ -78,7 +78,7 @@ async def __main():
 
     try:
         # Avvia la window
-        controller.start()
+        await controller.start()
         print("✓ Window avviata e pronta\n")
 
         # Test 1: Benchmark produzione eventi mouse
@@ -92,7 +92,7 @@ async def __main():
         print("\n>>> MUOVI IL MOUSE VELOCEMENTE PER 10 SECONDI <<<\n")
 
         # Monitora per 10 secondi
-        benchmark_duration = 2
+        benchmark_duration = 5
         start_benchmark = time.time()
         last_report = start_benchmark
 

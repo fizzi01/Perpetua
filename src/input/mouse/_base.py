@@ -314,10 +314,13 @@ class ServerMouseListener(object):
         # We need this check in order to not dispatch cross-screen events to clients without mouse stream
         client_streams = data.streams  # We check if client has mouse stream enabled
         if client_streams is None:
+            await asyncio.sleep(0)
             return
 
         if client_screen and StreamType.MOUSE in client_streams:  # If not, we ignore
             self._active_screens[client_screen] = True
+
+        await asyncio.sleep(0)
 
     async def _on_client_disconnected(self, data: Optional[ClientDisconnectedEvent]):
         """
@@ -335,6 +338,8 @@ class ServerMouseListener(object):
         if len(self._active_screens.items()) == 0:
             self._listening = False
 
+        await asyncio.sleep(0)
+
     async def _on_active_screen_changed(self, data: Optional[ActiveScreenChangedEvent]):
         """
         Async event handler for when the active screen changes.
@@ -351,6 +356,8 @@ class ServerMouseListener(object):
             self._cross_screen_event.clear()
         else:
             self._listening = False
+
+        await asyncio.sleep(0)
 
     def _darwin_mouse_suppress_filter(self, event_type, event):
         raise NotImplementedError("Mouse suppress filter not implemented yet.")
@@ -477,7 +484,7 @@ class ServerMouseListener(object):
         """Async handler for cross-screen events"""
         # reset movement history
         try:
-            # Acquisisci il lock per evitare cross-screen concorrenti
+            # Acquire lock to serialize cross-screen handling
             async with self._cross_screen_lock:
                 if (
                     len(self._movement_history) < self.MOVEMENT_HISTORY_N_THRESHOLD
@@ -570,9 +577,11 @@ class ServerMouseController(object):
                 x = data.x
                 y = data.y
                 if x > -1 and y > -1:
-                    # We need to asyncronously position the cursor multiple times to ensure it works across platforms
+                    # We need to position the cursor multiple times to ensure it works across platforms
                     for _ in range(50):
                         self.position_cursor(x, y)
+
+        await asyncio.sleep(0)
 
     def position_cursor(self, x: float | int, y: float | int):
         """
@@ -588,7 +597,11 @@ class ServerMouseController(object):
             self._logger.log(f"Invalid x or y values: x={x}, y={y}", Logger.ERROR)
             return
 
-        self._controller.position = (x, y)
+        try:
+            self._controller.position = (x, y)
+        except Exception as e:
+            # On some platforms, positioning may fail when cursor misses
+            self._logger.log(f"Failed to position cursor -> {e}", Logger.ERROR)
 
 
 # TODO: Optimize edge detection to avoid false positives during crossing
@@ -668,10 +681,13 @@ class ClientMouseController(object):
                     self._queue.get_nowait()
                 except asyncio.QueueEmpty:
                     break
+                finally:
+                    await asyncio.sleep(0)
 
             # Start worker task
             self._worker_task = asyncio.create_task(self._run_worker())
             self._logger.log("Async worker started.", Logger.DEBUG)
+            await asyncio.sleep(0)
 
     async def stop(self):
         """
@@ -751,6 +767,7 @@ class ClientMouseController(object):
                     # )
                     self._scroll(event.dx, event.dy)
 
+                await asyncio.sleep(0)
             except asyncio.TimeoutError:
                 continue
             except asyncio.CancelledError:
@@ -896,7 +913,12 @@ class ClientMouseController(object):
         except ValueError:
             return
 
-        self._controller.position = (x, y)
+        try:
+            self._controller.position = (x, y)
+            await asyncio.sleep(0)
+        except Exception as e:
+            # On some platforms, positioning may fail when cursor misses
+            self._logger.log(f"Failed to position cursor -> {e}", Logger.ERROR)
 
     def _move_cursor(
         self, x: float | int, y: float | int, dx: float | int, dy: float | int

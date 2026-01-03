@@ -467,11 +467,36 @@ class CursorHandlerWorker(object):
         if self._active_client and data.client_screen == self._active_client:
             self._active_client = None
             await self.disable_capture()
+            return
 
-    def start(self, wait_ready=True, timeout=1) -> bool:
-        """Avvia il processo della window"""
+        await asyncio.sleep(0)
+
+    async def start(self, wait_ready=True, timeout=1) -> bool:
+        """Starts the process responsible for handling cursor and mouse events, along
+        with the associated worker processes. Ensures that the initialization phase
+        completes successfully when `wait_ready` is set to True.
+
+        Args:
+            wait_ready (bool): Specifies whether to wait for the window to signal that
+                it is ready. Defaults to True.
+            timeout (float): The maximum time, in seconds, to wait for the window to
+                signal readiness if `wait_ready` is set to True. Defaults to 1 second.
+
+        Returns:
+            bool: True when the process starts successfully.
+
+        Raises:
+            TimeoutError: If `wait_ready` is True and the window is not ready within the
+                specified timeout.
+        """
         if self._is_running:
+            await asyncio.sleep(0)
             return True
+
+        try:
+            loop = asyncio.get_running_loop()
+        except RuntimeError:
+            raise RuntimeError("No running event loop found")
 
         self.process = Process(
             target=_CursorHandlerProcess(
@@ -488,22 +513,30 @@ class CursorHandlerWorker(object):
         if self.stream is not None:
             # Start async task for mouse data listener
             try:
-                loop = asyncio.get_running_loop()
-                self._mouse_data_task = loop.create_task(self._mouse_data_listener())
+                self._mouse_data_task = asyncio.create_task(self._mouse_data_listener())
             except RuntimeError:
-                # No event loop running, will start manually
-                pass
+                self._logger.error("Error creating task for mouse data listener")
+                self._mouse_data_task = None
+                return False
 
         if wait_ready:
             # Aspetta che la window sia pronta
             start_time = time.time()
             while time.time() - start_time < timeout:
                 try:
-                    result = self.result_queue.get(timeout=0.1)
+                    result = await loop.run_in_executor(  # type: ignore
+                        None,
+                        self.result_queue.get,
+                        0.1,  # type: ignore
+                    )
                     if result.get("type") == "window_ready":
                         self._logger.debug("Started")
+                        await asyncio.sleep(0)
                         return True
+
+                    await asyncio.sleep(0)
                 except Empty:
+                    await asyncio.sleep(0)
                     continue
             raise TimeoutError("Window not ready in time")
 
@@ -524,15 +557,22 @@ class CursorHandlerWorker(object):
                 pass
             self._mouse_data_task = None
 
-        await self.send_command({"type": "quit"})
+        try:
+            await self.send_command({"type": "quit"})
+        except RuntimeError:
+            # Process not running
+            pass
 
         if self.process:
             # Run process join in executor to avoid blocking
-            loop = asyncio.get_running_loop()
-            await loop.run_in_executor(None, self.process.join, timeout)
-            if self.process.is_alive():
-                self.process.terminate()
-                await loop.run_in_executor(None, self.process.join, 1)
+            try:
+                loop = asyncio.get_running_loop()
+                await loop.run_in_executor(None, self.process.join, timeout)
+                if self.process.is_alive():
+                    self.process.terminate()
+                    await loop.run_in_executor(None, self.process.join, 1)
+            except RuntimeError as e:
+                self._logger.warning(f"Error stopping process -> {e}")
 
         # Close queues
         self.command_queue.close()
@@ -580,6 +620,7 @@ class CursorHandlerWorker(object):
                     await asyncio.sleep(0.0001)
 
             except EOFError:
+                await asyncio.sleep(0)
                 break
             except Exception as e:
                 self._logger.exception(f"Error in mouse data listener ({e})")

@@ -107,10 +107,12 @@ class Clipboard:
 
             # Determine the content type (simplified - can be extended)
             content_type = ClipboardType.TEXT
-            content = self._try_get_clip_file(content)
+            content = await loop.run_in_executor(None, self._try_get_clip_file, content)
             if isinstance(content, str):
                 # Could check for URLs, file paths, etc.
-                if content.startswith(("http://", "https://")):
+                if content.startswith(
+                    ("http://", "https://")
+                ):  # TODO: improve URL detection
                     content_type = ClipboardType.URL
                 elif os.path.isfile(content):
                     content_type = ClipboardType.FILE
@@ -360,6 +362,7 @@ class ClipboardListener:
         ):  # We resume listening if needed
             await self.clipboard.start()
         self._logger.debug("Started")
+        await asyncio.sleep(0)
         return True
 
     async def stop(self):
@@ -370,6 +373,7 @@ class ClipboardListener:
             await self.clipboard.stop()
 
         self._logger.debug("Stopped")
+        await asyncio.sleep(0)
 
     def is_alive(self) -> bool:
         """
@@ -386,6 +390,7 @@ class ClipboardListener:
         if not self.clipboard.is_listening():
             await self.clipboard.start()
         self._listening = True
+        await asyncio.sleep(0)
 
     async def _on_client_inactive(self, data: dict):
         """
@@ -410,6 +415,9 @@ class ClipboardListener:
 
         if not self.clipboard.is_listening():
             await self.clipboard.start()
+            return
+
+        await asyncio.sleep(0)
 
     async def _on_client_disconnected(self, data: Optional[ClientDisconnectedEvent]):
         """
@@ -428,12 +436,17 @@ class ClipboardListener:
             self._listening = False
             if self.clipboard.is_listening():
                 await self.clipboard.stop()
+                return
+
+        await asyncio.sleep(0)
 
     async def _on_clipboard_change(self, content: str, content_type: ClipboardType):
         if self._listening:
             event = ClipboardEvent(content=content, content_type=content_type.value)
             # Send clipboard event to all connected clients -> Sync server clipboard with clients (if server)
             await self.stream_handler.send(event)
+
+        await asyncio.sleep(0)
 
     def get_clipboard_context(self) -> Clipboard:
         """
@@ -496,9 +509,13 @@ class ClipboardController:
         """
         event = EventMapper.get_event(message)
         if not isinstance(event, ClipboardEvent):
+            await asyncio.sleep(0)
             return
 
         content = event.content
 
         if content is not None:
             await self.clipboard.set_clipboard(content)
+            return
+
+        await asyncio.sleep(0)

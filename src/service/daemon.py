@@ -622,9 +622,11 @@ class Daemon:
 
                         # Execute command
                         asyncio.create_task(self._process_and_respond(command, params))
+                        await asyncio.sleep(0)
 
                 except asyncio.TimeoutError:
                     # Timeout is normal, just check running state and continue
+                    await asyncio.sleep(0)
                     continue
                 except (
                     BrokenPipeError,

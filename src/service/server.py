@@ -851,11 +851,11 @@ class Server:
             cursor_handler = CursorHandlerWorker(
                 event_bus=self.event_bus, stream=mouse_stream, debug=False
             )
-            if is_enabled and not cursor_handler.start():
+            if is_enabled and not await cursor_handler.start():
                 raise RuntimeError("Failed to start cursor handler")
             self._components["cursor_handler"] = cursor_handler
         elif is_enabled and not cursor_handler.is_alive():
-            if not cursor_handler.start():
+            if not await cursor_handler.start():
                 await self._disable_mouse_stream()
                 raise RuntimeError("Failed to start cursor handler")
 

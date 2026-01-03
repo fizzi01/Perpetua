@@ -15,6 +15,13 @@ from model.client import ClientObj, ClientsManager
 from utils.logging import Logger
 
 
+async def _write(file, content: str) -> None:
+    async with aiofiles.open(file, "w") as f:
+        for line in content:
+            await f.write(line)
+            await asyncio.sleep(0)
+
+
 @dataclass
 class ApplicationConfig:
     """Application-wide configuration settings"""
@@ -317,13 +324,6 @@ class ServerConfig:
             except Exception as e:
                 print(f"Error loading client from config: {e}")
 
-    @staticmethod
-    async def _write(file, content: str) -> None:
-        with open(file, "w") as f:
-            for line in content:
-                f.write(line)
-                await asyncio.sleep(0)
-
     # Persistence
     async def save(self, file_path: Optional[str] = None) -> None:
         """
@@ -351,7 +351,7 @@ class ServerConfig:
 
             temp_file = f"{file_path}.tmp"
             try:
-                await self._write(temp_file, json_content)
+                await asyncio.wait_for(_write(temp_file, json_content), timeout=1)
 
                 # Rinomina atomicamente (sovrascrive il file originale)
                 os.replace(temp_file, file_path)
@@ -623,13 +623,6 @@ class ClientConfig:
         self.log_to_file = data.get("log_to_file", self.log_to_file)
         self.log_file_path = data.get("log_file_path", self.log_file_path)
 
-    @staticmethod
-    async def _write(file, content: str) -> None:
-        with open(file, "w") as f:
-            for line in content:
-                f.write(line)
-                await asyncio.sleep(0)
-
     # Persistence
     async def save(self, file_path: Optional[str] = None) -> None:
         """
@@ -657,7 +650,7 @@ class ClientConfig:
 
             temp_file = f"{file_path}.tmp"
             try:
-                await self._write(temp_file, json_content)
+                await asyncio.wait_for(_write(temp_file, json_content), timeout=1)
 
                 # Rinomina atomicamente (sovrascrive il file originale)
                 os.replace(temp_file, file_path)

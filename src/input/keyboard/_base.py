@@ -198,6 +198,7 @@ class ServerKeyboardListener(object):
 
         client_screen = data.client_screen
         self._active_screens[client_screen] = True
+        await asyncio.sleep(0)
 
     async def _on_client_disconnected(self, data: Optional[ClientDisconnectedEvent]):
         """
@@ -205,6 +206,7 @@ class ServerKeyboardListener(object):
         """
         if data is None:
             return
+
         # try to get client from data to remove from active screens
         client = data.client_screen
         if client and client in self._active_screens:
@@ -213,6 +215,8 @@ class ServerKeyboardListener(object):
         # if active screens is empty, we stop listening
         if len(self._active_screens.items()) == 0:
             self._listening = False
+
+        await asyncio.sleep(0)
 
     async def _on_active_screen_changed(self, data: Optional[ActiveScreenChangedEvent]):
         """
@@ -228,6 +232,8 @@ class ServerKeyboardListener(object):
             self._listening = True
         else:
             self._listening = False
+
+        await asyncio.sleep(0)
 
     def _darwin_suppress_filter(self, event_type, event):
         raise NotImplementedError("Mouse suppress filter not implemented yet.")
@@ -375,10 +381,13 @@ class ClientKeyboardController(object):
                     self._queue.get_nowait()
                 except asyncio.QueueEmpty:
                     break
+                finally:
+                    await asyncio.sleep(0)
 
             # Start worker task
             self._worker_task = asyncio.create_task(self._run_worker())
             self._logger.debug("Async worker started.")
+            await asyncio.sleep(0)
 
     async def stop(self):
         """
@@ -388,7 +397,7 @@ class ClientKeyboardController(object):
             self._running = False
 
             # Clear pressed keys
-            self._clear_pressed_keys()
+            await self._clear_pressed_keys()
 
             if self._worker_task:
                 self._worker_task.cancel()
@@ -427,8 +436,9 @@ class ClientKeyboardController(object):
                     continue
 
                 await loop.run_in_executor(None, self._key_event_action, event)
-
+                await asyncio.sleep(0)
             except asyncio.TimeoutError:
+                await asyncio.sleep(0)
                 continue
             except asyncio.CancelledError:
                 break
@@ -446,12 +456,14 @@ class ClientKeyboardController(object):
         # Auto-start if not running
         if not self._running:
             await self.start()
+        await asyncio.sleep(0)
 
     async def _on_client_inactive(self, data: Optional[ClientActiveEvent]):
         """
         Async event handler for when a client becomes inactive.
         """
         self._is_active = False
+        await asyncio.sleep(0)
 
     async def _key_event_callback(self, message):
         """
@@ -466,8 +478,9 @@ class ClientKeyboardController(object):
             await self._queue.put(message)
         except Exception as e:
             self._logger.error(f"Failed to process mouse event -> {e}")
+            await asyncio.sleep(0)
 
-    def _clear_pressed_keys(self):
+    async def _clear_pressed_keys(self):
         """
         Helper to release all currently pressed keys.
         """
@@ -476,6 +489,7 @@ class ClientKeyboardController(object):
                 self._controller.release(key)
             except Exception:
                 pass
+            await asyncio.sleep(0)
         self.pressed_keys.clear()
 
     def _key_event_action(self, event: KeyboardEvent):
@@ -497,7 +511,14 @@ class ClientKeyboardController(object):
                     self._controller.press(key)
                 self.is_caps_locked = not self.is_caps_locked
             elif KeyUtilities.is_special(
-                key, filter_out=[Key.space, Key.shift, Key.shift_l, Key.shift_r, Key.backspace]
+                key,
+                filter_out=[
+                    Key.space,
+                    Key.shift,
+                    Key.shift_l,
+                    Key.shift_r,
+                    Key.backspace,
+                ],
             ):  # General special key handling
                 if key not in self.pressed_keys:
                     self.pressed_keys.add(key)
@@ -512,7 +533,14 @@ class ClientKeyboardController(object):
                     self._controller.press(key)
                 self.is_caps_locked = not self.is_caps_locked
             elif KeyUtilities.is_special(
-                key, filter_out=[Key.space, Key.shift, Key.shift_l, Key.shift_r, Key.backspace]
+                key,
+                filter_out=[
+                    Key.space,
+                    Key.shift,
+                    Key.shift_l,
+                    Key.shift_r,
+                    Key.backspace,
+                ],
             ):  # General special key handling
                 if key in self.pressed_keys:
                     self.pressed_keys.discard(key)

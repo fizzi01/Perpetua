@@ -360,6 +360,7 @@ class MessageExchange:
 
             self._send_callbacks[tr_id] = send_callback
             self._receive_callbacks[tr_id] = receive_callback
+        await asyncio.sleep(0)
 
     def register_handler(self, message_type: str, handler: Callable):
         """

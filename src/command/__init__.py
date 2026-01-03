@@ -41,19 +41,19 @@ class CommandHandler:
         try:
             event = EventMapper.get_event(message)
             if not isinstance(event, CommandEvent):
-                self._logger.warning(f"Received non-command event - {event}")
+                self._logger.warning(f"Received non-command event -> {event}")
                 return
 
             # Handle different commands types asynchronously
             if event.command == CommandEvent.CROSS_SCREEN:
                 # Create task to handle in background
-                asyncio.create_task(self.handle_cross_screen(event))
+                await asyncio.create_task(self.handle_cross_screen(event))
             else:
-                self._logger.warning(f"Unknown command received - {event.command}")
+                self._logger.warning(f"Unknown command received -> {event.command}")
                 return
 
         except Exception as e:
-            self._logger.error(f"CommandHandler: Error - {e}")
+            self._logger.error(f"{e}")
             return
 
     async def handle_cross_screen(self, event: CommandEvent):
