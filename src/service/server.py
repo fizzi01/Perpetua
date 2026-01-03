@@ -118,7 +118,7 @@ class Server:
 
         # Set logging level
         self._logger = get_logger(self.__class__.__name__, level=self.config.log_level)
-        print(f"Logger initialized at level: {self.config.log_level}")
+        self._logger.info(f"Logger initialized at level: {self.config.log_level}")
 
         # Log loaded clients
         self._load_authorized_clients()

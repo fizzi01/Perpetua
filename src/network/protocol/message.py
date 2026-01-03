@@ -90,7 +90,6 @@ class ProtocolMessage:
         # Read length prefix
         length, p, y = struct.unpack(cls._prefix_format, data)
         if p != b"P" or y != b"Y":
-            print(data)
             raise ValueError("Invalid binary data: not a protocol message")
         return length
 
