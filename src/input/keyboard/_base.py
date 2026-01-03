@@ -321,6 +321,28 @@ class ClientKeyboardController(object):
     Base class for client-side keyboard controllers.
     """
 
+    # Keys that can be hold pressed
+    _SPECIAL_KEYS_FILTER: list[Key] = [
+        Key.space,
+        Key.shift,
+        Key.shift_l,
+        Key.shift_r,
+        Key.backspace,
+        Key.enter,
+        Key.esc,
+        Key.tab,
+        Key.up,
+        Key.down,
+        Key.left,
+        Key.right,
+        Key.media_volume_up,
+        Key.media_volume_down,
+        # Key.delete, TODO: Check
+        Key.end,
+        Key.page_up,
+        Key.page_down,
+    ]
+
     def __init__(
         self,
         event_bus: EventBus,
@@ -511,14 +533,7 @@ class ClientKeyboardController(object):
                     self._controller.press(key)
                 self.is_caps_locked = not self.is_caps_locked
             elif KeyUtilities.is_special(
-                key,
-                filter_out=[
-                    Key.space,
-                    Key.shift,
-                    Key.shift_l,
-                    Key.shift_r,
-                    Key.backspace,
-                ],
+                key, filter_out=self._SPECIAL_KEYS_FILTER
             ):  # General special key handling
                 if key not in self.pressed_keys:
                     self.pressed_keys.add(key)
@@ -533,14 +548,7 @@ class ClientKeyboardController(object):
                     self._controller.press(key)
                 self.is_caps_locked = not self.is_caps_locked
             elif KeyUtilities.is_special(
-                key,
-                filter_out=[
-                    Key.space,
-                    Key.shift,
-                    Key.shift_l,
-                    Key.shift_r,
-                    Key.backspace,
-                ],
+                key, filter_out=self._SPECIAL_KEYS_FILTER
             ):  # General special key handling
                 if key in self.pressed_keys:
                     self.pressed_keys.discard(key)
