@@ -180,7 +180,7 @@ class Client:
         self._performance_monitor = PerformanceMonitor(self._metrics_collector)
 
         # mDNS Service Discovery
-        self._mdns_service = ServiceDiscovery()
+
         self._found_services: list[Service] = []
 
         # Connection handler
@@ -609,7 +609,8 @@ class Client:
             List of discovered servers with their details
         """
         try:
-            self._found_services = await self._mdns_service.discover_services()
+            # changes: Recreate ServiceDiscovery instance to avoid stale cache
+            self._found_services = await ServiceDiscovery().discover_services()
         except Exception as e:
             self._logger.error(f"Error during server discovery -> {e}")
 
@@ -655,6 +656,35 @@ class Client:
                 async with self._state_lock:
                     self._otp_needed = asyncio.Future()  # Reset for future use
 
+    async def _is_server_available(self) -> bool:
+        """Check if server is configured in client config"""
+        if (
+            self.config.get_server_uid() is not None
+            and (
+                self.config.get_server_host() is not None
+                or self.config.get_server_hostname() is not None
+            )
+            and self.config.get_server_port() is not None
+        ):
+            # Try to establish a TCP connection to verify server is reachable
+            host = self.config.get_server_host() or self.config.get_server_hostname()
+            port = self.config.get_server_port()
+
+            try:
+                # Attempt connection with short timeout
+                _, writer = await asyncio.wait_for(
+                    asyncio.open_connection(host, port), timeout=3.0
+                )
+                writer.close()
+                await writer.wait_closed()
+                return True
+            except (asyncio.TimeoutError, ConnectionRefusedError, OSError) as e:
+                self._logger.warning(f"Server {host}:{port} not reachable ({e})")
+                return False
+
+        self._logger.warning(f"No server configured")
+        return False
+
     async def _handle_server_availability(self) -> bool:
         """
         Checks and handles the availability of servers asynchronously.
@@ -674,10 +704,9 @@ class Client:
                 self._logger.warning("Saved server not found")
 
                 if not self._found_services or len(self._found_services) == 0:
-                    self._logger.warning(
-                        "Cannot find any available servers on the network"
-                    )
-                    return False
+                    self._logger.warning("No servers found on the network.")
+                    # Check anyway if config has server set
+                    return await self._is_server_available()
 
                 if len(self._found_services) == 1:
                     # Auto choose the only available server
@@ -714,55 +743,69 @@ class Client:
 
     async def start(self) -> bool:
         """Start the client and connect to server"""
-        if self._running:
-            self._logger.warning("Client already running")
-            return False
-
-        self._logger.info("Starting Client...")
-
-        # Initial server availability check
-        if not await self._handle_server_availability():
-            return False
-
-        # Initialize stream handlers (but don't start them yet)
         try:
-            await self._initialize_streams()
-        except Exception as e:
-            self._logger.error(f"Failed to initialize streams: {e}")
-            return False
+            if self._running:
+                self._logger.warning("Client already running")
+                return False
 
-        # Get enabled streams
-        enabled_streams = self._get_enabled_stream_types()
+            self._logger.info("Starting Client...")
 
-        # Get certificate path if SSL is enabled
-        certfile = await self._handle_certificate_check()
+            # Initial server availability check
+            if not await self._handle_server_availability():
+                return False
 
-        # Initialize connection handler
-        self.connection_handler = ConnectionHandler(
-            connected_callback=self._on_connected,
-            disconnected_callback=self._on_disconnected,
-            reconnected_callback=self._on_streams_reconnected,
-            host=self.config.get_server_host(),
-            port=self.config.get_server_port(),
-            heartbeat_interval=self.config.get_heartbeat_interval(),
-            clients=self.clients_manager,
-            open_streams=enabled_streams,
-            auto_reconnect=self.config.do_auto_reconnect(),
-            certfile=certfile,
-        )
+            # Initialize stream handlers (but don't start them yet)
+            try:
+                await self._initialize_streams()
+            except Exception as e:
+                self._logger.error(f"Failed to initialize streams: {e}")
+                return False
 
-        # Connect to server
-        if not await self.connection_handler.start():
-            self._logger.error("Failed to connect to server")
-            return False
+            # Get enabled streams
+            enabled_streams = self._get_enabled_stream_types()
 
-        self._running = True
-        server_host = self.config.get_server_host()
-        server_port = self.config.get_server_port()
-        self._logger.info(
-            f"Client started and connecting to {server_host}:{server_port}"
-        )
-        return True
+            # Get certificate path if SSL is enabled
+            certfile = await self._handle_certificate_check()
+
+            # Initialize connection handler
+            self.connection_handler = ConnectionHandler(
+                connected_callback=self._on_connected,
+                disconnected_callback=self._on_disconnected,
+                reconnected_callback=self._on_streams_reconnected,
+                host=self.config.get_server_host(),
+                port=self.config.get_server_port(),
+                heartbeat_interval=self.config.get_heartbeat_interval(),
+                clients=self.clients_manager,
+                open_streams=enabled_streams,
+                auto_reconnect=self.config.do_auto_reconnect(),
+                certfile=certfile,
+            )
+
+            # Connect to server
+            if not await self.connection_handler.start():
+                self._logger.error("Failed to connect to server")
+                return False
+
+            self._running = True
+            server_host = self.config.get_server_host()
+            server_port = self.config.get_server_port()
+            self._logger.info(
+                f"Client started and connecting to {server_host}:{server_port}"
+            )
+            return True
+        finally:
+            # Release OTP futures
+            if not self._otp_needed.done():
+                self._otp_needed.set_result(False)
+            else:
+                async with self._state_lock:
+                    self._otp_needed = asyncio.Future()  # Reset for future use
+
+            if not self._need_server_choice.done():
+                self._need_server_choice.set_result(False)
+            else:
+                async with self._state_lock:
+                    self._need_server_choice = asyncio.Future()  # Reset for future use
 
     async def stop(self):
         """Stop all client components"""
