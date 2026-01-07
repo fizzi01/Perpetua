@@ -1,0 +1,29 @@
+.titlebar {
+  background-color: rgba(15, 23, 42, 0.8);
+  border-color: rgba(99, 102, 241, 0.2);
+  box-shadow: 0 1px 3px rgba(0, 0, 0, 0.3);
+}
+
+.titlebar-toggle {
+  background-color: rgba(30, 41, 59, 0.6);
+  border-color: rgba(71, 85, 105, 0.5);
+}
+
+.titlebar-button {
+  transition: all 0.3s ease;
+  flex: 1;
+}
+
+.titlebar-button:not(.active) {
+  background-color: transparent;
+  color: var(--app-text-muted);
+}
+
+.titlebar-button.active {
+  background-color: var(--app-primary);
+  color: white;
+}
+
+.titlebar-button:hover:not(.active) {
+  background-color: rgba(71, 85, 105, 0.3);
+}
