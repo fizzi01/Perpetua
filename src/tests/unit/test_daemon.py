@@ -12,6 +12,8 @@ Tests cover:
 - Configuration management
 """
 
+from event.notification import NotificationEvent, NotificationEventType
+
 import asyncio
 import json
 import os
@@ -46,24 +48,21 @@ async def send_command(
 ):
     """Send a command to daemon and receive response."""
     cmd = {"command": command, "params": params or {}}
-    writer.write(json.dumps(cmd).encode("utf-8"))
-    writer.write(b"\n")
+    writer.write(Daemon.prepare_msg_bytes(cmd))
     await writer.drain()
 
     # Read response
     data = await asyncio.wait_for(reader.read(16384), timeout=10.0)
     if data:
         # Split by newlines (may have multiple messages)
-        messages = data.decode("utf-8").strip().split("\n")
-        responses = []
-        for msg in messages:
-            if msg.strip():
-                try:
-                    responses.append(json.loads(msg))
-                except json.JSONDecodeError as e:
-                    print(f"Error decoding: {e}")
-                    print(f"Raw data: {msg}")
-        return responses
+        try:
+            messages = Daemon.parse_msg_bytes(data)
+            responses = []
+            for msg in messages:
+                responses.append(msg)
+            return responses
+        except Exception as e:
+            print(e)
     return None
 
 
@@ -335,7 +334,7 @@ class TestSingleConnectionPolicy:
 
         # Second client should receive rejection message
         response = await reader2.read(16384)
-        data = json.loads(response.decode("utf-8").strip().split("\n")[0])
+        data = json.loads(response.decode("utf-8").strip().split("\n")[0][:-4])
 
         assert data["success"] is False
         assert "another client" in data["error"].lower()
@@ -376,7 +375,8 @@ class TestSingleConnectionPolicy:
 
         # Should receive welcome message
         response = await reader2.read(16384)
-        data = json.loads(response.decode("utf-8").strip().split("\n")[0])
+        response = response.decode("utf-8").strip().split("\n")[0][:-4]
+        data = json.loads(response)
 
         assert data["success"] is True
         assert "Connected" in data["data"]["message"]
@@ -450,7 +450,7 @@ class TestContinuousCommandListening:
 
         # Should receive error response
         data = await reader.read(16384)
-        response = json.loads(data.decode("utf-8").strip().split("\n")[0])
+        response = json.loads(data.decode("utf-8").strip().split("\n")[0][:-4])
 
         assert response["success"] is False
         assert "Invalid JSON" in response["error"]
@@ -489,7 +489,7 @@ class TestArbitraryDataSending:
     """Test daemon's ability to send arbitrary data to connected client."""
 
     @pytest.mark.anyio
-    async def test_broadcast_event(self, running_daemon):
+    async def test_broadcast_event(self, running_daemon: Daemon):
         """Test broadcasting event to connected client."""
         # Connect client
         if IS_WINDOWS:
@@ -503,28 +503,34 @@ class TestArbitraryDataSending:
         await reader.read(16384)  # Welcome message
 
         # Broadcast event
-        await running_daemon.broadcast_event("test_event", {"message": "Test"})
+        await running_daemon._send_notification(
+            NotificationEvent(
+                event_type=NotificationEventType.TEST, data={"message": "Test"}
+            )
+        )
 
         # Client should receive the event
         data = await asyncio.wait_for(reader.read(16384), timeout=2.0)
-        response = json.loads(data.decode("utf-8").strip().split("\n")[0])
+        response = Daemon.parse_msg_bytes(data)[0]
 
         assert response["success"] is True
-        assert response["data"]["event"] == "test_event"
-        assert response["data"]["event_data"]["message"] == "Test"
+        assert response["data"]["event"]["event_type"] == NotificationEventType.TEST
+        assert response["data"]["event"]["data"]["message"] == "Test"
 
         # Cleanup
         writer.close()
         await writer.wait_closed()
 
     @pytest.mark.anyio
-    async def test_broadcast_without_client(self, running_daemon):
+    async def test_broadcast_without_client(self, running_daemon: Daemon):
         """Test broadcasting when no client is connected."""
         # Should not raise exception
-        await running_daemon.broadcast_event("test_event", {})
+        await running_daemon._send_notification(
+            NotificationEvent(event_type=NotificationEventType.TEST)
+        )
 
     @pytest.mark.anyio
-    async def test_multiple_broadcasts(self, running_daemon):
+    async def test_multiple_broadcasts(self, running_daemon: Daemon):
         """Test multiple broadcasts in sequence."""
         # Connect client
         if IS_WINDOWS:
@@ -539,13 +545,17 @@ class TestArbitraryDataSending:
 
         # Send multiple broadcasts
         for i in range(3):
-            await running_daemon.broadcast_event(f"event_{i}", {"index": i})
+            await running_daemon._send_notification(
+                NotificationEvent(
+                    event_type=NotificationEventType.TEST, data={"count": i}
+                )
+            )
 
         await asyncio.sleep(0.2)
 
         # Read all events
         data = await reader.read(16384)
-        messages = data.decode("utf-8").strip().split("\n")
+        messages = Daemon.parse_msg_bytes(data)
 
         assert len(messages) >= 3
 
@@ -838,7 +848,7 @@ class TestDaemonShutdown:
 
         # Client should receive shutdown notification
         data = await asyncio.wait_for(reader.read(16384), timeout=2.0)
-        response = json.loads(data.decode("utf-8").strip().split("\n")[0])
+        response = json.loads(data.decode("utf-8").strip().split("\n")[0][:-4])
 
         assert response["success"] is True
         assert "daemon_shutdown" in response["data"]["event"]

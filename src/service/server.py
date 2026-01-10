@@ -6,11 +6,21 @@ Provides a clean interface to configure and manage server components.
 import asyncio
 import socket
 
-from typing import Optional, Dict, Tuple
+from typing import Optional, Dict, Tuple, Callable, Awaitable
 
 from config import ApplicationConfig, ServerConfig
 from model.client import ClientObj, ClientsManager, ScreenPosition
 from event.bus import AsyncEventBus
+from event.notification import (
+    NotificationEvent,
+    ServiceStartedEvent,
+    ServiceStoppedEvent,
+    ClientConnectedEvent as ClientConnectedNotification,
+    ClientDisconnectedEvent as ClientDisconnectedNotification,
+    ConfigSavedEvent,
+    StreamEnabledEvent,
+    StreamDisabledEvent,
+)
 from event import (
     EventType,
     ClientConnectedEvent,
@@ -154,10 +164,41 @@ class Server:
         # Connection handler
         self.connection_handler: Optional[ConnectionHandler] = None
 
+        # Notification callback (set by daemon or external controller)
+        self._notification_callback: Optional[
+            Callable[[NotificationEvent], Awaitable[None]]
+        ] = None
+
     @property
     def clients_manager(self) -> ClientsManager:
         """Access the ClientsManager from configuration"""
         return self.config.clients_manager
+
+    # ==================== Notification Callback Management ====================
+
+    def set_notification_callback(
+        self, callback: Optional[Callable[[NotificationEvent], Awaitable[None]]]
+    ) -> None:
+        """
+        Set callback for sending notifications about state changes.
+
+        Args:
+            callback: Async callback function that receives NotificationEvent
+        """
+        self._notification_callback = callback
+
+    async def _send_notification(self, event: NotificationEvent) -> None:
+        """
+        Send notification to registered callback.
+
+        Args:
+            event: NotificationEvent to send
+        """
+        if self._notification_callback:
+            try:
+                await self._notification_callback(event)
+            except Exception as e:
+                self._logger.error(f"Error sending notification: {e}")
 
     # ==================== Configuration Management ====================
 
@@ -182,6 +223,7 @@ class Server:
             # Clients are already in config.clients_manager, just save
             await self.config.save()
             self._logger.info("Configuration saved successfully")
+            await self._send_notification(ConfigSavedEvent(config_type="server"))
             return True
         except Exception as e:
             self._logger.error(f"Error saving configuration: {e}")
@@ -323,8 +365,7 @@ class Server:
 
             success, otp = await self._cert_sharing.start_sharing()
 
-            if success:
-                self._logger.info(f"Certificate sharing started. OTP: {otp}")
+            if success and otp:
                 return True, otp
             else:
                 self._logger.error("Failed to start certificate sharing")
@@ -531,6 +572,8 @@ class Server:
         await self.config.save()
         self._logger.info(f"Enabled stream: {stream_type}")
 
+        await self._send_notification(StreamEnabledEvent(stream_type=stream_type))
+
     async def disable_stream(self, stream_type: int) -> None:
         """
         Disable a specific stream type (applies before start or at runtime)
@@ -549,6 +592,8 @@ class Server:
         self.config.disable_stream(stream_type)
         await self.config.save()
         self._logger.info(f"Disabled stream: {stream_type}")
+
+        await self._send_notification(StreamDisabledEvent(stream_type=stream_type))
 
     def is_stream_enabled(self, stream_type: int) -> bool:
         """Check if a stream is enabled"""
@@ -627,6 +672,9 @@ class Server:
 
         self._logger.info("Starting Server...")
 
+        # Send starting notification
+        await self._send_notification(ServiceStartedEvent(service_name="Server"))
+
         # Initialize and start enabled streams
         try:
             await self._initialize_streams()
@@ -688,6 +736,9 @@ class Server:
             return
 
         self._logger.info("Stopping Server...")
+
+        # Send stopping notification
+        await self._send_notification(ServiceStoppedEvent(service_name="Server"))
 
         # Stop connection handler
         if self.connection_handler:
@@ -1018,6 +1069,17 @@ class Server:
             f"Client {client.get_net_id()} connected at position {client.screen_position}"
         )
 
+        # Send notification
+        await self._send_notification(
+            ClientConnectedNotification(
+                client_id=client.uid,
+                hostname=client.host_name,
+                screen_position=client.get_screen_position(),
+                streams=streams,
+                client_net_id=client.get_net_id(),
+            )
+        )
+
     async def _on_client_disconnected(self, client: ClientObj, streams: list[int]):
         """Handle client disconnection event"""
         await self.event_bus.dispatch(
@@ -1029,6 +1091,17 @@ class Server:
         await self.save_config()
         self._logger.info(
             f"Client {client.get_net_id()} disconnected from position {client.screen_position}"
+        )
+
+        # Send notification
+        await self._send_notification(
+            ClientDisconnectedNotification(
+                client_id=client.uid,
+                hostname=client.host_name,
+                screen_position=client.get_screen_position(),
+                streams=streams,
+                client_net_id=client.get_net_id(),
+            )
         )
 
     async def _on_client_stream_reconnected(

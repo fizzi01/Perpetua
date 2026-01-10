@@ -27,7 +27,7 @@ class TestApplicationConfig:
 
         assert config.service_name == "PyContinuity"
         assert config.app_name == "PyContinuity"
-        assert config.main_path == ""
+        assert config.main_path != ""
         assert config.ssl_path == "ssl/"
         assert config.server_config_file == "server_config.json"
         assert config.client_config_file == "client_config.json"
@@ -850,8 +850,8 @@ class TestServerInfoSerialization:
 
         server_info = ServerInfo.from_dict(data)
 
-        assert server_info.host == "127.0.0.1"
-        assert server_info.port == 5555
+        assert server_info.host == ApplicationConfig.DEFAULT_HOST
+        assert server_info.port == ApplicationConfig.DEFAULT_PORT
         assert server_info.heartbeat_interval == 1
         assert server_info.auto_reconnect is True
         assert server_info.ssl is False

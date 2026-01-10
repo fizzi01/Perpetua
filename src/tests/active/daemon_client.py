@@ -26,6 +26,7 @@ class DaemonClient:
     """CLI client for daemon interaction with persistent connection"""
 
     def __init__(self, socket_path: Optional[str] = None):
+        self._buffer = None
         self.socket_path = socket_path or Daemon.DEFAULT_SOCKET_PATH
         self.reader: Optional[asyncio.StreamReader] = None
         self.writer: Optional[asyncio.StreamWriter] = None
@@ -523,6 +524,8 @@ class DaemonClient:
         self._welcome_message = None
         self._stop_event.clear()
 
+        self._buffer = bytearray()
+
         print("\n✓ Disconnected from daemon")
 
     async def _listen_for_events(self):
@@ -531,6 +534,7 @@ class DaemonClient:
         This runs continuously until disconnection.
         """
         first_message = True
+        self._buffer = bytearray()
         try:
             while not self._stop_event.is_set() and self.connected:
                 if not self.reader:
@@ -538,29 +542,73 @@ class DaemonClient:
 
                 try:
                     # Read data from daemon
-                    data = await asyncio.wait_for(self.reader.read(65536), timeout=1.0)
+                    chunk = await asyncio.wait_for(self.reader.read(65536), timeout=1.0)
 
-                    if not data:
+                    if not chunk:
                         print("\n⚠ Connection closed by daemon")
                         break
 
-                    # Parse and handle response
-                    response = json.loads(data.decode("utf-8"))
+                    self._buffer.extend(chunk)
 
-                    # First message is the welcome message
-                    if first_message:
-                        first_message = False
-                        self._welcome_message = response
-                        self._welcome_received.set()
-                        continue
+                    # Process complete messages: message_bytes + 4-byte length + '\n'
+                    while True:
+                        # Check if we have at least the newline delimiter
+                        try:
+                            newline_idx = self._buffer.index(b"\n")
+                        except ValueError:
+                            # No complete message yet
+                            break
 
-                    await self._handle_daemon_message(response)
+                        # Extract everything before the newline
+                        complete_part = self._buffer[:newline_idx]
+
+                        # Check if we have at least 4 bytes for the length marker
+                        if len(complete_part) < 4:
+                            print("\n⚠ Malformed message: too short")
+                            self._buffer = self._buffer[newline_idx + 1 :]
+                            continue
+
+                        # Extract length marker (last 4 bytes before newline)
+                        length_bytes = complete_part[-4:]
+                        message_length = int.from_bytes(length_bytes, byteorder="big")
+
+                        # Extract message bytes (everything except the last 4 bytes)
+                        message_bytes = complete_part[:-4]
+
+                        # Verify length matches
+                        if len(message_bytes) != message_length:
+                            print(
+                                f"\n⚠ Length mismatch: expected {message_length}, got {len(message_bytes)}"
+                            )
+                            self._buffer = self._buffer[newline_idx + 1 :]
+                            continue
+
+                        # Remove processed message from buffer
+                        self._buffer = self._buffer[newline_idx + 1 :]
+
+                        # Decode and parse JSON
+                        try:
+                            message_str = message_bytes.decode("utf-8")
+                            response = json.loads(message_str)
+
+                            # First message is the welcome message
+                            if first_message:
+                                first_message = False
+                                self._welcome_message = response
+                                self._welcome_received.set()
+                                continue
+
+                            await self._handle_daemon_message(response)
+
+                        except json.JSONDecodeError as e:
+                            print(f"\n⚠ Invalid JSON received: {e}")
+                            continue
+                        except UnicodeDecodeError as e:
+                            print(f"\n⚠ Invalid UTF-8 encoding: {e}")
+                            continue
 
                 except asyncio.TimeoutError:
                     # Normal timeout, just continue listening
-                    continue
-                except json.JSONDecodeError as e:
-                    print(f"\n⚠ Invalid JSON received: {e}")
                     continue
 
         except asyncio.CancelledError:

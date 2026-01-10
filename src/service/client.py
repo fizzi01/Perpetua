@@ -6,11 +6,25 @@ Provides a clean interface to configure and manage client components.
 import asyncio
 import os
 from pathlib import Path
-from typing import Optional, Dict
+from typing import Optional, Dict, Callable, Awaitable
 
 from config import ApplicationConfig, ClientConfig
 from model.client import ClientObj, ClientsManager
 from event.bus import AsyncEventBus
+from event.notification import (
+    NotificationEvent,
+    ServiceStartedEvent,
+    ServiceStoppedEvent,
+    ConnectedEvent,
+    DisconnectedEvent,
+    OtpNeededEvent,
+    ServerListFoundEvent,
+    ServerChoiceMadeEvent,
+    ConfigSavedEvent,
+    StreamEnabledEvent,
+    StreamDisabledEvent,
+    ServerChoiceNeededEvent,
+)
 from event import EventType, ClientStreamReconnectedEvent
 from network.connection.client import ConnectionHandler
 from network.stream.handler.client import (
@@ -186,8 +200,14 @@ class Client:
         # Connection handler
         self.connection_handler: Optional[ConnectionHandler] = None
 
-        # -- Inner config state --
+        # Notification callback (set by daemon or external controller)
+        self._notification_callback: Optional[
+            Callable[[NotificationEvent], Awaitable[None]]
+        ] = None
+
+        # -- Inner state --
         self._state_lock = asyncio.Lock()
+        self._is_starting = asyncio.Event()
         # If ssl is enabled but no cert, we will wait for it in connection, so we need to set the otp future
         self._otp_needed: asyncio.Future[bool] = asyncio.Future()
         self._otp_received: asyncio.Future[str] = asyncio.Future()
@@ -196,6 +216,32 @@ class Client:
         self._server: asyncio.Future[Service] = (
             asyncio.Future()
         )  # We will set the result when user choose a server
+
+    # ==================== Notification Callback Management ====================
+
+    def set_notification_callback(
+        self, callback: Optional[Callable[[NotificationEvent], Awaitable[None]]]
+    ) -> None:
+        """
+        Set callback for sending notifications about state changes.
+
+        Args:
+            callback: Async callback function that receives NotificationEvent
+        """
+        self._notification_callback = callback
+
+    async def _send_notification(self, event: NotificationEvent) -> None:
+        """
+        Send notification to registered callback.
+
+        Args:
+            event: NotificationEvent to send
+        """
+        if self._notification_callback:
+            try:
+                await self._notification_callback(event)
+            except Exception as e:
+                self._logger.error(f"Error sending notification: {e}")
 
     # ==================== Configuration Management ====================
 
@@ -209,6 +255,7 @@ class Client:
         try:
             await self.config.save()
             self._logger.info("Configuration saved successfully")
+            await self._send_notification(ConfigSavedEvent(config_type="client"))
             return True
         except Exception as e:
             self._logger.error(f"Error saving configuration: {e}")
@@ -431,6 +478,8 @@ class Client:
         await self.config.save()
         self._logger.info(f"Enabled stream: {stream_type}")
 
+        await self._send_notification(StreamEnabledEvent(stream_type=stream_type))
+
     async def disable_stream(self, stream_type: int) -> None:
         """
         Disable a specific stream type (applies before start or at runtime)
@@ -449,6 +498,8 @@ class Client:
         self.config.disable_stream(stream_type)
         await self.config.save()
         self._logger.info(f"Disabled stream: {stream_type}")
+
+        await self._send_notification(StreamDisabledEvent(stream_type=stream_type))
 
     def is_stream_enabled(self, stream_type: int) -> bool:
         """Check if a stream is enabled"""
@@ -597,6 +648,17 @@ class Client:
                 if not self._server.done():
                     self._server.set_result(service)
 
+                # Send notification
+                asyncio.create_task(
+                    self._send_notification(
+                        ServerChoiceMadeEvent(
+                            server_host=service.address,
+                            server_port=service.port if service.port else 0,
+                            hostname=service.hostname,
+                            uid=service.uid,
+                        )
+                    )
+                )
                 return
 
         self._logger.error("Server not found among discovered services", uid=uid)
@@ -611,6 +673,10 @@ class Client:
         try:
             # changes: Recreate ServiceDiscovery instance to avoid stale cache
             self._found_services = await ServiceDiscovery().discover_services()
+
+            # Send notification about found servers
+            servers_info = [service.as_dict() for service in self._found_services]
+            await self._send_notification(ServerListFoundEvent(servers=servers_info))
         except Exception as e:
             self._logger.error(f"Error during server discovery -> {e}")
 
@@ -638,6 +704,9 @@ class Client:
                     self._logger.info(
                         "Waiting to receive certificate from server. Provide OTP to continue..."
                     )
+
+                    # Send notification that OTP is needed
+                    await self._send_notification(OtpNeededEvent(needed=True))
 
                     otp = await self._otp_received
                     if not await self.receive_certificate(otp=otp):
@@ -682,7 +751,7 @@ class Client:
                 self._logger.warning(f"Server {host}:{port} not reachable ({e})")
                 return False
 
-        self._logger.warning(f"No server configured")
+        self._logger.warning("No server configured")
         return False
 
     async def _handle_server_availability(self) -> bool:
@@ -713,11 +782,17 @@ class Client:
                     self.choose_server(self._found_services[0].uid)
                     self._need_server_choice.set_result(False)
                 else:
+                    servers = [s.as_dict() for s in self._found_services]
                     self._logger.info(
                         "Multiple servers found. Please choose one to connect.",
-                        servers=[s.as_dict() for s in self._found_services],
+                        servers=servers,
                     )
                     self._need_server_choice.set_result(True)
+                    await self._send_notification(
+                        ServerChoiceNeededEvent(
+                            servers=servers,
+                        )
+                    )
 
                 # If server not found, we wait the user to choose it and set the future
                 res = await self._server
@@ -749,6 +824,10 @@ class Client:
                 return False
 
             self._logger.info("Starting Client...")
+            self._is_starting.set()
+
+            # Send starting notification
+            await self._send_notification(ServiceStartedEvent(service_name="Client"))
 
             # Initial server availability check
             if not await self._handle_server_availability():
@@ -794,57 +873,72 @@ class Client:
             )
             return True
         finally:
-            # Release OTP futures
-            if not self._otp_needed.done():
-                self._otp_needed.set_result(False)
-            else:
-                async with self._state_lock:
-                    self._otp_needed = asyncio.Future()  # Reset for future use
+            await self._futures_cleanup()
 
-            if not self._need_server_choice.done():
-                self._need_server_choice.set_result(False)
-            else:
-                async with self._state_lock:
-                    self._need_server_choice = asyncio.Future()  # Reset for future use
-
-    async def stop(self):
+    async def stop(self) -> bool:
         """Stop all client components"""
-        if not self._running:
-            self._logger.warning("Client not running")
-            return
+        try:
+            if not self._running:
+                if not self._is_starting.is_set():
+                    self._logger.warning("Client not running")
+                    return False
 
-        self._logger.info("Stopping Client...")
+            self._logger.info("Stopping Client...")
 
-        # Stop all components
-        for component_name, component in list(self._components.items()):
-            try:
-                if hasattr(component, "stop"):
-                    if asyncio.iscoroutinefunction(component.stop):
-                        await component.stop()
-                    else:
-                        component.stop()
-            except Exception as e:
-                self._logger.error(f"Error stopping component {component_name}: {e}")
+            # Send stopping notification
+            await self._send_notification(ServiceStoppedEvent(service_name="Client"))
 
-        # Stop all stream handlers
-        for stream_type, handler in list(self._stream_handlers.items()):
-            try:
-                if hasattr(handler, "stop"):
-                    await handler.stop()
-            except Exception as e:
-                self._logger.error(f"Error stopping stream handler {stream_type}: {e}")
+            # Stop all components
+            for component_name, component in list(self._components.items()):
+                try:
+                    if hasattr(component, "stop"):
+                        if asyncio.iscoroutinefunction(component.stop):
+                            await component.stop()
+                        else:
+                            component.stop()
+                except Exception as e:
+                    self._logger.error(
+                        f"Error stopping component {component_name}: {e}"
+                    )
 
-        # Disconnect from server
-        if self.connection_handler:
-            await self.connection_handler.stop()
+            # Stop all stream handlers
+            for stream_type, handler in list(self._stream_handlers.items()):
+                try:
+                    if hasattr(handler, "stop"):
+                        await handler.stop()
+                except Exception as e:
+                    self._logger.error(
+                        f"Error stopping stream handler {stream_type}: {e}"
+                    )
 
-        # Wait a moment to ensure everything is cleaned up
-        await asyncio.sleep(self.CLEANUP_DELAY)
-        # Cleanup resources
-        self.cleanup()
-        self._running = False
-        self._connected = False
-        self._logger.info("Client stopped")
+            # Disconnect from server
+            if self.connection_handler:
+                await self.connection_handler.stop()
+
+            # Wait a moment to ensure everything is cleaned up
+            await asyncio.sleep(self.CLEANUP_DELAY)
+            # Cleanup resources
+            self.cleanup()
+            self._running = False
+            self._connected = False
+            self._logger.info("Client stopped")
+            return True
+        finally:
+            self._is_starting.clear()
+            await self._futures_cleanup()
+
+    async def _futures_cleanup(self):
+        # Release OTP futures
+        if not self._otp_needed.done():
+            self._otp_needed.set_result(False)
+        async with self._state_lock:
+            self._otp_needed = asyncio.Future()  # Reset for future use
+
+        if not self._need_server_choice.done():
+            self._need_server_choice.set_result(False)
+
+        async with self._state_lock:
+            self._need_server_choice = asyncio.Future()  # Reset for future use
 
     def cleanup(self):
         """Cleanup client resources"""
@@ -1111,6 +1205,13 @@ class Client:
 
         self._logger.info(f"Connected to server at {client.get_net_id()}")
 
+        # Send connection notification
+        await self._send_notification(
+            ConnectedEvent(
+                peer=client.get_net_id(), hostname=client.host_name, uid=client.uid
+            )
+        )
+
     async def _on_disconnected(self, client: ClientObj):
         """Handle disconnection from server event"""
         self._connected = False
@@ -1137,6 +1238,11 @@ class Client:
                 self._logger.error(f"Error stopping component {component_name}: {e}")
 
         self._logger.info(f"Disconnected from server at {client.get_net_id()}")
+
+        # Send disconnection notification
+        await self._send_notification(
+            DisconnectedEvent(peer=client.get_net_id(), hostname=client.host_name)
+        )
 
     async def _on_streams_reconnected(self, client: ClientObj, streams: list[int]):
         """Handle streams reconnected event"""

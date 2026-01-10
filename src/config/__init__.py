@@ -4,10 +4,12 @@ Handles server and client configurations with persistent storage support.
 """
 
 import asyncio
+import sys
 from dataclasses import dataclass, field
 from typing import Optional, Dict, Any, List
 import json
 import os
+from os import path
 
 import aiofiles
 
@@ -28,7 +30,7 @@ class ApplicationConfig:
 
     service_name: str = "PyContinuity"
     app_name: str = "PyContinuity"
-    main_path: str = ""  # Main application save path
+    mainpath: str = ""  # Main application save path
 
     ssl_path: str = "ssl/"
     ssl_certfile: str = "certfile.pem"
@@ -49,10 +51,19 @@ class ApplicationConfig:
 
     DEFAULT_HOST: str = "0.0.0.0"
     DEFAULT_PORT: int = 55655
+    DEFAULT_DAEMON_PORT: int = DEFAULT_PORT - 3
+
+    DEFAULT_UNIX_SOCK_NAME: str = "pycontinuity_daemon.sock"
 
     config_files: dict = field(default_factory=dict)
 
     version: str = "1.0.0"
+
+    @property
+    def main_path(self) -> str:
+        if len(self.mainpath) > 0:
+            return self.mainpath
+        return self.get_main_path()
 
     def __post_init__(self):
         self.config_files = {
@@ -61,10 +72,13 @@ class ApplicationConfig:
         }
 
     def set_save_path(self, path: str) -> None:
+        """
+        Used in test environments to set a custom save path for the application.
+        """
         # Validate and set the main application save path
         if not os.path.exists(path):
             os.makedirs(path, exist_ok=True)
-        self.main_path = path
+        self.mainpath = path
 
     def get_save_path(self) -> str:
         return self.main_path
@@ -74,6 +88,24 @@ class ApplicationConfig:
 
     def get_certificate_path(self) -> str:
         return os.path.join(self.get_config_dir(), self.ssl_path)
+
+    @classmethod
+    def get_main_path(cls) -> str:
+        # Define main path based on OS
+        p = sys.platform
+        if p == "win32":
+            base_path = path.join(
+                path.expanduser("~"), "AppData", "Local", cls.app_name
+            )
+        elif p == "darwin":
+            home = os.getenv("HOME")
+            if not home:
+                raise EnvironmentError("HOME environment variable not set on macOS")
+            base_path = path.join(home, "Library", "Caches", cls.app_name)
+        else:  # Linux and other OS
+            base_path = path.join(path.expanduser("~"), f".{cls.app_name.lower()}")
+
+        return base_path
 
 
 class ServerConfig:

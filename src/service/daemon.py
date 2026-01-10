@@ -11,17 +11,19 @@ import asyncio
 import errno
 import json
 import os
+from os import path
 import signal
 import socket
 import sys
 from typing import Optional, Dict, Any, Callable
-from enum import Enum
+from enum import StrEnum
 
 from config import ApplicationConfig, ServerConfig, ClientConfig
 from service.client import Client
 from service.server import Server
 from utils import UIDGenerator
 from utils.logging import Logger, get_logger
+from event.notification import NotificationManager, NotificationEvent, OtpGeneratedEvent
 
 # Determine platform for socket type
 IS_WINDOWS = sys.platform in ("win32", "cygwin", "cli")
@@ -45,7 +47,7 @@ class DaemonPortOccupiedException(DaemonException):
     pass
 
 
-class DaemonCommand(str, Enum):
+class DaemonCommand(StrEnum):
     """Available daemon commands"""
 
     # Service control
@@ -99,6 +101,23 @@ class DaemonCommand(str, Enum):
     SHUTDOWN = "shutdown"
     PING = "ping"
 
+    def __init__(self, params: Optional[Dict[str, Any]] = None):
+        super().__init__()
+        self._params = params if params is not None else {}
+
+    @property
+    def params(self) -> Dict[str, Any]:
+        return self._params
+
+    @staticmethod
+    def new(command: str, **kwargs) -> "DaemonCommand":
+        cmd = DaemonCommand(command)
+        cmd._params = kwargs
+        return cmd
+
+    def to_dict(self) -> Dict[str, Any]:
+        return {"command": self.value, "params": self._params}
+
 
 class DaemonResponse:
     """Standardized daemon response format"""
@@ -148,11 +167,10 @@ class Daemon:
     # Platform-specific default paths
     # On Windows, use TCP socket on localhost instead of named pipes for better asyncio compatibility
     if IS_WINDOWS:
-        DEFAULT_SOCKET_PATH = (
-            f"127.0.0.1:{ApplicationConfig.DEFAULT_PORT - 3}"  # TCP address:port
-        )
+        DEFAULT_SOCKET_PATH = f"127.0.0.1:{ApplicationConfig.DEFAULT_DAEMON_PORT}"
     else:
-        DEFAULT_SOCKET_PATH = "/tmp/pycontinuity_daemon.sock"  # Unix socket
+        DEFAULT_SOCKET_PATH: str = path.join(ApplicationConfig.get_main_path(),
+                                             ApplicationConfig.DEFAULT_UNIX_SOCK_NAME)
 
     MAX_CONNECTIONS = 1  # Only accept one connection at a time
     BUFFER_SIZE = 16384  # 16KB for larger responses
@@ -187,6 +205,11 @@ class Daemon:
         # Configurations
         self._server_config: Optional[ServerConfig] = None
         self._client_config: Optional[ClientConfig] = None
+
+        # Notification manager for event broadcasting
+        self._notification_manager = NotificationManager(
+            callback=self._send_notification
+        )
 
         # Daemon state
         self._running = False
@@ -499,9 +522,8 @@ class Daemon:
                         },
                     )
                     self._connected_client_writer.write(
-                        shutdown_msg.to_json().encode("utf-8")
+                        self.prepare_msg_bytes(shutdown_msg)
                     )
-                    self._connected_client_writer.write(b"\n")
                     await self._connected_client_writer.drain()
                 except Exception:
                     pass
@@ -567,17 +589,17 @@ class Daemon:
                         success=False,
                         error="Another client is already connected. Only one connection is allowed at a time.",
                     )
-                    writer.write(error_response.to_json().encode("utf-8"))
-                    writer.write(b"\n")
+                    writer.write(self.prepare_msg_bytes(error_response))
                     await writer.drain()
                 finally:
-                    writer.close()
-                    await writer.wait_closed()
+                    if writer:
+                        writer.close()
+                        await writer.wait_closed()
                 return
 
             # Accept the connection
-            self._connected_client_reader = reader
             self._connected_client_writer = writer
+            self._connected_client_reader = reader
             self._logger.info(f"Client connected from {addr}")
 
         try:
@@ -602,16 +624,14 @@ class Daemon:
                         self._logger.info("Client disconnected (no data)")
                         break
 
-                    # Parse command (support multiple commands separated by newline)
-                    commands_data = data.decode("utf-8").strip().split("\n")
+                    # Parse data
+                    commands_data = self.parse_msg_bytes(data)
 
-                    for command_str in commands_data:
-                        if not command_str.strip():
-                            continue
-
+                    for command_data in commands_data:
                         try:
-                            command_data = json.loads(command_str)
                             command = command_data.get("command")
+                            if not isinstance(command, str):
+                                raise ValueError("Missing or invalid 'command' field")
                             params = command_data.get("params", {})
                         except json.JSONDecodeError as e:
                             response = DaemonResponse(
@@ -679,6 +699,44 @@ class Daemon:
             except Exception:
                 pass
 
+    @staticmethod
+    def prepare_msg_bytes(data: DaemonResponse | dict) -> bytes:
+        if isinstance(data, dict):
+            r = json.dumps(data)
+        else:
+            r = data.to_json()
+        message_bytes = r.encode("utf-8")
+        length_prefix = len(message_bytes).to_bytes(4, byteorder="big")
+        return message_bytes + length_prefix + b"\n"
+
+    @staticmethod
+    def parse_msg_bytes(data: bytes) -> list[dict]:
+        offset = 0
+        d_len = len(data)
+        try:
+            if d_len > 5:
+                lines = []
+                while offset < d_len - 5:
+                    if offset + 4 > d_len:
+                        raise ValueError("Incomplete length prefix")
+                    # Find first \n index
+                    idx = data.find(b"\n", offset)
+                    if idx == -1:
+                        raise ValueError("No message delimiter found")
+                    length_bytes = data[idx - 4 : idx]
+                    msg_length = int.from_bytes(length_bytes, byteorder="big")
+                    msg_data = data[offset : offset + msg_length]
+                    message_str = msg_data.decode("utf-8").strip()
+                    lines.append(json.loads(message_str))
+                    offset += msg_length + 5  # Move past message and delimiter
+                return lines
+            else:
+                return []
+        except json.JSONDecodeError as e:
+            raise ValueError(f"Invalid JSON data -> {e}")
+        except ValueError:
+            raise
+
     async def _send_to_client(self, response: DaemonResponse) -> bool:
         """
         Send data to the connected client.
@@ -696,8 +754,7 @@ class Daemon:
                 return False
 
             try:
-                self._connected_client_writer.write(response.to_json().encode("utf-8"))
-                self._connected_client_writer.write(b"\n")  # Message delimiter
+                self._connected_client_writer.write(self.prepare_msg_bytes(response))
                 await self._connected_client_writer.drain()
                 return True
             except Exception as e:
@@ -707,30 +764,40 @@ class Daemon:
                 self._connected_client_writer = None
                 return False
 
-    def is_client_connected(self) -> bool:
-        """Check if a client is currently connected"""
-        return self._connected_client_writer is not None
-
-    async def broadcast_event(self, event_type: str, data: Any = None):
+    async def _send_notification(self, event: NotificationEvent) -> None:
         """
-        Broadcast an event to the connected client.
-        This is useful for pushing notifications/updates without being requested.
+        Internal callback for notification manager to send events to connected client.
 
         Args:
-            event_type: Type of event (e.g., "server_started", "client_connected")
-            data: Event data
+            event: NotificationEvent to send
         """
         if not self.is_client_connected():
             return
 
-        event_response = DaemonResponse(
+        response = DaemonResponse(
             success=True,
             data={
-                "event": event_type,
-                "event_data": data,
+                "notification": True,
+                "event": event.to_dict(),
             },
         )
-        await self._send_to_client(event_response)
+        asyncio.create_task(self._send_to_client(response))
+
+    async def _service_notification_callback(self, event: NotificationEvent) -> None:
+        """
+        Callback for service (Client/Server) to send notifications.
+        This bridges service events to the notification manager.
+
+        Args:
+            event: NotificationEvent from service
+        """
+        # Services now send NotificationEvent objects directly
+        # We forward them through the notification manager
+        await self._notification_manager.notify_event(event)
+
+    def is_client_connected(self) -> bool:
+        """Check if a client is currently connected"""
+        return self._connected_client_writer is not None
 
     async def _execute_command(
         self, command: str, params: Dict[str, Any]
@@ -773,6 +840,10 @@ class Daemon:
                     server_config=self._server_config,
                     auto_load_config=False,  # Already loaded
                 )
+                # Connect notification callback
+                self._server.set_notification_callback(
+                    self._service_notification_callback
+                )
             if self._client and self._client.is_running():
                 return DaemonResponse(
                     success=False, error="Cannot start server while client is running"
@@ -787,6 +858,10 @@ class Daemon:
                     app_config=self.app_config,
                     client_config=self._client_config,
                     auto_load_config=False,  # Already loaded
+                )
+                # Connect notification callback
+                self._client.set_notification_callback(
+                    self._service_notification_callback
                 )
             if self._server and self._server.is_running():
                 return DaemonResponse(
@@ -814,6 +889,11 @@ class Daemon:
             if not self._server:
                 return DaemonResponse(success=False, error="Server not initialized")
 
+            # Notify starting
+            await self._notification_manager.notify_service_started(
+                "Server", data={"status": "starting"}
+            )
+
             success = await self._server.start()
             if success:
                 response_data = {
@@ -823,8 +903,6 @@ class Daemon:
                     "enabled_streams": self._server.get_enabled_streams(),
                 }
                 self._logger.set_level(self._server.config.log_level)
-                # Broadcast event to connected client
-                # await self.broadcast_event("server_started", response_data)
 
                 return DaemonResponse(success=True, data=response_data)
             else:
@@ -842,9 +920,6 @@ class Daemon:
 
         try:
             await self._server.stop()
-
-            # Broadcast event to connected client
-            # await self.broadcast_event("server_stopped", {"message": "Server stopped"})
 
             return DaemonResponse(
                 success=True, data={"message": "Server stopped successfully"}
@@ -869,7 +944,9 @@ class Daemon:
             return DaemonResponse(success=False, error="Client not initialized")
 
         try:
-            success = await self._client.start()
+            start_task = asyncio.create_task(self._client.start())
+
+            success = await start_task
             if success:
                 response_data = {
                     "message": "Client started successfully",
@@ -878,28 +955,39 @@ class Daemon:
                     "enabled_streams": self._client.get_enabled_streams(),
                 }
                 self._logger.set_level(self._client.config.log_level)
-                # Broadcast event to connected client
-                # await self.broadcast_event("client_started", response_data)
+
+                # Notify started
+                await self._notification_manager.notify_service_started(
+                    "Client", data=response_data
+                )
 
                 return DaemonResponse(success=True, data=response_data)
             else:
+                await self._notification_manager.notify_service_error(
+                    "Client", "Failed to start client"
+                )
                 return DaemonResponse(success=False, error="Failed to start client")
         except Exception as e:
             self._logger.error(f"Error starting client -> {e}")
+            await self._notification_manager.notify_service_error("Client", str(e))
             return DaemonResponse(
                 success=False, error=f"Error starting client: {str(e)}"
             )
 
     async def _handle_stop_client(self, params: Dict[str, Any]) -> DaemonResponse:
         """Stop the client service"""
-        if not self._client or not self._client.is_running():
+        if not self._client:
             return DaemonResponse(success=False, error="Client not running")
 
         try:
-            await self._client.stop()
-            # self._client = None
+            res = await self._client.stop()
+            if not res:
+                return DaemonResponse(success=False, error="Failed to stop client")
 
-            # Broadcast event to connected client
+            # Notify stopped
+            await self._notification_manager.notify_service_stopped(
+                "Client", data={"message": "Client stopped"}
+            )
             # await self.broadcast_event("client_stopped", {"message": "Client stopped"})
 
             return DaemonResponse(
@@ -1568,17 +1656,25 @@ class Daemon:
         try:
             host = params.get("host", self._server.config.host)
             timeout = params.get("timeout", 30)
-            otp = await self._server.share_certificate(host=host, timeout=timeout)
-
-            return DaemonResponse(
-                success=True,
-                data={
-                    "message": "Certificate sharing started",
-                    "otp": otp,
-                    "timeout": timeout,
-                    "instructions": "Provide this OTP to clients to receive the certificate",
-                },
-            )
+            res, otp = await self._server.share_certificate(host=host, timeout=timeout)
+            # Send notification
+            if res and otp:
+                await self._notification_manager.send(
+                    OtpGeneratedEvent(otp=otp, timeout=timeout)
+                )
+                return DaemonResponse(
+                    success=True,
+                    data={
+                        "message": "Certificate sharing started",
+                        "otp": otp,
+                        "timeout": timeout,
+                        "instructions": "Provide this OTP to clients to receive the certificate",
+                    },
+                )
+            else:
+                return DaemonResponse(
+                    success=False, error="Failed to share certificate"
+                )
         except Exception as e:
             return DaemonResponse(
                 success=False, error=f"Error sharing certificate: {str(e)}"
@@ -1656,15 +1752,7 @@ class Daemon:
             # Convert services to dict format
             servers_data = []
             for s in servers:
-                servers_data.append(
-                    {
-                        "name": s.name,
-                        "address": s.address,
-                        "port": s.port,
-                        "hostname": s.hostname,
-                        "uid": s.uid,
-                    }
-                )
+                servers_data.append(s.as_dict())
 
             return DaemonResponse(
                 success=True, data={"servers": servers_data, "count": len(servers_data)}
@@ -1848,14 +1936,16 @@ async def send_daemon_command(
     """
     socket_path = socket_path or Daemon.DEFAULT_SOCKET_PATH
 
-    command_data = {"command": command, "params": params or {}}
+    command_data = DaemonCommand.new(
+        command=command, socket_path=socket_path, **(params or {})
+    )
 
     if IS_WINDOWS or ":" in socket_path:
         # Windows TCP socket or explicit TCP address
-        return await _send_tcp_command(socket_path, command_data, timeout)
+        return await _send_tcp_command(socket_path, command_data.to_dict(), timeout)
     else:
         # Unix socket
-        return await _send_unix_command(socket_path, command_data, timeout)
+        return await _send_unix_command(socket_path, command_data.to_dict(), timeout)
 
 
 async def _send_unix_command(
@@ -1873,7 +1963,7 @@ async def _send_unix_command(
 
     try:
         # Send command
-        writer.write(json.dumps(command_data).encode("utf-8"))
+        writer.write(Daemon.prepare_msg_bytes(command_data))
         await writer.drain()
 
         # Read response
@@ -1915,7 +2005,7 @@ async def _send_tcp_command(
 
     try:
         # Send command
-        writer.write(json.dumps(command_data).encode("utf-8"))
+        writer.write(Daemon.prepare_msg_bytes(command_data))
         await writer.drain()
 
         # Read response
