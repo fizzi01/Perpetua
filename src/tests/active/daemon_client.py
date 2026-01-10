@@ -636,18 +636,15 @@ class DaemonClient:
             print("\n⚠ Empty message received from daemon")
             return
 
-        event_type = data.get("event")
+        event_type = message.get("event_type")
 
         if event_type:
             # It's an event notification
             print(f"\n📢 Event: {event_type}")
-            if data.get("message"):
-                print(f"   {data['message']}")
-            if len(data) > 2:  # More than just 'event' and 'message'
-                print("   Data:")
-                self._print_data(
-                    {k: v for k, v in data.items() if k not in ["event", "message"]}
-                )
+            print("   Data:")
+            self._print_data(
+                {k: v for k, v in data.items() if k not in ["event", "message"]}
+            )
         else:
             # It's a command response
             if message.get("success"):
@@ -684,7 +681,7 @@ class DaemonClient:
             command_data = {"command": command, "params": params or {}}
 
             async with self._connection_lock:
-                self.writer.write(json.dumps(command_data).encode("utf-8"))
+                self.writer.write(Daemon.prepare_msg_bytes(command_data))
                 await self.writer.drain()
 
             if verbose:
@@ -900,20 +897,20 @@ class DaemonClient:
             else:
                 for key, value in data.items():
                     if isinstance(value, (dict, list)):
-                        print(f"  {key}:")
+                        print(f"\t\t\t{key}:")
                         if isinstance(value, dict) and len(value) <= 5:
                             # Small dict, print inline
                             for k, v in value.items():
-                                print(f"    {k}: {v}")
+                                print(f"\t\t\t{k}: {v}")
                         elif isinstance(value, list) and len(value) <= 10:
                             # Small list
                             for idx, item in enumerate(value):
                                 if isinstance(item, dict):
-                                    print(f"    [{idx}]:")
+                                    print(f"\t\t\t[{idx}]:")
                                     for k, v in item.items():
-                                        print(f"      {k}: {v}")
+                                        print(f"\t\t\t\t{k}: {v}")
                                 else:
-                                    print(f"    [{idx}] {item}")
+                                    print(f"\t\t\t\t[{idx}] {item}")
                         else:
                             # Large structure, use JSON
                             print(json.dumps(value, indent=4))

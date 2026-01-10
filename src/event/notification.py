@@ -100,6 +100,10 @@ class NotificationEventType(str, Enum):
     ERROR = "error"
     TEST = "test"
 
+    # Command result events
+    COMMAND_SUCCESS = "command_success"
+    COMMAND_ERROR = "command_error"
+
 
 @dataclass
 class NotificationEvent:
@@ -644,6 +648,38 @@ class InfoEvent(NotificationEvent):
         super().__init__(event_type=NotificationEventType.INFO, data=data, message=info)
 
 
+@dataclass
+class CommandSuccessEvent(NotificationEvent):
+    """Command executed successfully"""
+
+    def __init__(
+        self, command: str, message: Optional[str] = None, result_data: Optional[Dict[str, Any]] = None, **kwargs
+    ):
+        data = {"command": command}
+        if result_data:
+            data["result"] = result_data
+        data.update(kwargs)
+        super().__init__(
+            event_type=NotificationEventType.COMMAND_SUCCESS,
+            data=data,
+            message=message or f"Command {command} executed successfully",
+        )
+
+
+@dataclass
+class CommandErrorEvent(NotificationEvent):
+    """Command execution failed"""
+
+    def __init__(self, command: str, error: str, **kwargs):
+        data = {"command": command, "error": error}
+        data.update(kwargs)
+        super().__init__(
+            event_type=NotificationEventType.COMMAND_ERROR,
+            data=data,
+            message=f"Command {command} failed: {error}",
+        )
+
+
 class NotificationManager:
     """
     Manager for handling notification events.
@@ -866,3 +902,16 @@ class NotificationManager:
     async def notify_info(self, info: str, **kwargs) -> None:
         """Notify general information"""
         await self.send(InfoEvent(info=info, **kwargs))
+
+    async def notify_command_success(
+        self, command: str, message: Optional[str] = None, result_data: Optional[Dict[str, Any]] = None, **kwargs
+    ) -> None:
+        """Notify that a command executed successfully"""
+        await self.send(
+            CommandSuccessEvent(command=command, message=message, result_data=result_data, **kwargs)
+        )
+
+    async def notify_command_error(self, command: str, error: str, **kwargs) -> None:
+        """Notify that a command execution failed"""
+        await self.send(CommandErrorEvent(command=command, error=error, **kwargs))
+

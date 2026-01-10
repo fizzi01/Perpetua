@@ -105,6 +105,9 @@ class ApplicationConfig:
         else:  # Linux and other OS
             base_path = path.join(path.expanduser("~"), f".{cls.app_name.lower()}")
 
+        if not os.path.exists(base_path):
+            os.makedirs(base_path, exist_ok=True)
+
         return base_path
 
 
