@@ -1,19 +1,52 @@
 #[cfg(target_os = "macos")]
 use tauri::PhysicalPosition;
-use tauri::{TitleBarStyle, WebviewUrl, WebviewWindowBuilder, Position};
+use tauri::{AppHandle, Manager, Position, Runtime, TitleBarStyle, WebviewUrl, WebviewWindowBuilder};
 
-// Learn more about Tauri commands at https://tauri.app/develop/calling-rust/
-#[tauri::command]
-fn greet(name: &str) -> String {
-    format!("Hello, {}! You've been greeted from Rust!", name)
+use std::time::Duration;
+use ipc::{ConnectionHandler, DataListener};
+use ipc::connection::{connect, ConnectionError};
+use handler::{EventHandler, Handable};
+
+pub mod commands;
+pub mod handler;
+
+async fn setup_connection<'a, R>(manager: AppHandle<R>) -> Result<(), ConnectionError>
+where
+    R: Runtime,
+{
+    let (r,w) = connect(Duration::from_millis(100)).await?;
+    let c_w = w.get_writer().clone();
+
+    // Clone the writer for use in commands
+    manager.manage(c_w);
+
+    let mut handler = ConnectionHandler::new(r,w);
+    // Handle connection events here
+    if let Err(e) = handler.listen(|msg| {
+                EventHandler::new(msg).handle(&manager);
+            }, &Duration::from_secs(1)).await 
+    {
+        //TODO: Handle listen error (it should close the application or try to reconnect)
+        println!("Error listening to events: {:?}", e);
+    }
+    Ok(())
 }
 
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
     tauri::Builder::default()
         .plugin(tauri_plugin_opener::init())
-        .invoke_handler(tauri::generate_handler![greet])
+        .invoke_handler(tauri::generate_handler![commands::choose_service])
         .setup(|app| {
+            let app_handle = app.handle().clone();
+            // Initialize connection to the daemon
+            tauri::async_runtime::spawn(async move {
+                match setup_connection(app_handle).await {
+                    Ok(_) => {  println!("Connection established"); },
+                    Err(e) => println!("Failed to setup connection: {:?}", e),
+                }
+            });
+
             let win_builder =
                 WebviewWindowBuilder::new(app, "main", WebviewUrl::default())
                 .title("Perpetua")

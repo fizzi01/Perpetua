@@ -1,9 +1,7 @@
-use std::default;
-
 use serde_json::{Value};
 use serde::{Deserialize, Serialize};
 
-#[derive(Serialize, Deserialize, Debug, PartialEq)]
+#[derive(Serialize, Deserialize, Debug,Clone, PartialEq)]
 #[serde(rename_all = "snake_case")]
 pub enum EventType {
     // Service lifecycle events
@@ -90,6 +88,7 @@ pub enum EventType {
     Warning,
     Error,
     Test,
+    Pong,
 
     // Command result events
     CommandSuccess,
@@ -99,7 +98,7 @@ pub enum EventType {
     Other
 }
 
-#[derive(Serialize, Deserialize, Debug)]
+#[derive(Serialize, Deserialize, Debug, Clone)]
 pub struct NotificationEvent {
     pub event_type: EventType,
     pub data: Option<Value>,
@@ -109,17 +108,102 @@ pub struct NotificationEvent {
     pub metadata: Option<Value>,
 }
 
-pub struct EventParser;
+#[derive(Serialize, Deserialize, Debug, Clone, PartialEq)]
+#[serde(rename_all = "snake_case")]
+pub enum CommandType {
+    // Service control
+    ServiceChoice,
+    StartServer,
+    StopServer,
+    StartClient,
+    StopClient,
 
-pub trait Parser<T> {
-    fn parse_json(input: &str) -> Option<T>;
+    // Status queries
+    Status,
+    ServerStatus,
+    ClientStatus,
+
+    // Configuration management
+    GetServerConfig,
+    SetServerConfig,
+    GetClientConfig,
+    SetClientConfig,
+    SaveConfig,
+    ReloadConfig,
+
+    // Stream management
+    EnableStream,
+    DisableStream,
+    GetStreams,
+
+    // Client management (server only)
+    AddClient,
+    RemoveClient,
+    EditClient,
+    ListClients,
+
+    // SSL/Certificate management
+    EnableSsl,
+    DisableSsl,
+    ShareCertificate,
+    ReceiveCertificate,
+    SetOtp,
+
+    // Server selection (client)
+    CheckServerChoiceNeeded,
+    GetFoundServers,
+    ChooseServer,
+    CheckOtpNeeded,
+
+    // Service discovery
+    DiscoverServices,
+
+    // Daemon control
+    Shutdown,
+    Ping,
 }
 
-impl Parser<NotificationEvent> for EventParser {
-    fn parse_json(input: &str) -> Option<NotificationEvent> {
-        match serde_json::from_str::<NotificationEvent>(input) {
-            Ok(event) => Some(event),
-            Err(_) => None,
+#[derive(Serialize, Deserialize, Debug, Clone)]
+pub struct CommandEvent {
+    pub command: CommandType,
+    pub params: Option<Value>,
+}
+
+pub trait Event: Serialize + for<'de> Deserialize<'de> {}
+
+impl Event for NotificationEvent {}
+impl Event for CommandEvent {}
+
+pub struct EventParser;
+
+pub trait Parser<'a, T>
+where
+    T: Event,
+    {
+    /// Parse a JSON string into an event of type T.
+    fn parse_json(input: &'a str) -> Result<T, serde_json::Error>;
+
+    /// Serialize an event of type T into a JSON string.
+    fn serialize(event: &T) -> Result<String, serde_json::Error>
+    where
+        T: Serialize,
+    {
+        serde_json::to_string(event)
+    }
+}
+
+impl<'a,T: Event> Parser<'a, T> for EventParser {
+    fn parse_json(input: &'a str) -> Result<T, serde_json::Error>
+     {
+        match serde_json::from_str::<T>(input) {
+            Ok(event) => Ok(event),
+            Err(e) => Err(e),
         }
+    }
+
+    fn serialize(event: &T) -> Result<String, serde_json::Error>
+        where
+            T: Serialize, {
+        serde_json::to_string(event)
     }
 }
