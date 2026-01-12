@@ -612,10 +612,7 @@ class Daemon:
                         await asyncio.sleep(0.1)
                         continue
 
-                    if len(buff) < self.BUFFER_SIZE:
-                        buff.extend(data)
-                        await asyncio.sleep(0.1)
-                        continue
+                    buff.extend(data)
 
                     if len(buff) == 0:
                         await asyncio.sleep(0.1)
