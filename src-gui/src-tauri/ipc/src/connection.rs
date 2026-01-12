@@ -32,12 +32,12 @@ pub enum SocketPathError {
     HomeDirNotFound(VarError),
 }
 
-pub enum DefaultPath {
+enum DefaultPath {
     Unix(PathBuf),
     Tcp(String, u16),
 }
 
-pub fn default_path() -> Result<DefaultPath, SocketPathError> {
+fn default_path() -> Result<DefaultPath, SocketPathError> {
     #[cfg(all(unix, target_os = "macos"))]
     {
         let home = env::var("HOME").map_err(SocketPathError::HomeDirNotFound)?;
@@ -54,10 +54,10 @@ pub fn default_path() -> Result<DefaultPath, SocketPathError> {
     }
 }
 
-async fn wait_connection() -> Result<(AsyncReader, AsyncWriter), ConnectionError> {
+async fn wait_connection(t: Duration) -> Result<(AsyncReader, AsyncWriter), ConnectionError> {
     let path = default_path()?;
-    let mut timeout = Duration::from_millis(100);
-    let max_attempts = 10;
+    let mut timeout = t;
+    let max_attempts = 4;
     let mut attempts = 0;
 
     loop {
@@ -94,8 +94,8 @@ async fn wait_connection() -> Result<(AsyncReader, AsyncWriter), ConnectionError
     }
 }
 
-pub async fn connect() -> Result<(AsyncReader, AsyncWriter), ConnectionError> {
-    let Ok((reader, writer)) = wait_connection().await else {
+pub async fn connect(t: Duration) -> Result<(AsyncReader, AsyncWriter), ConnectionError> {
+    let Ok((reader, writer)) = wait_connection(t).await else {
         return Err(ConnectionError::Timeout);
     };
     Ok((reader, writer))
