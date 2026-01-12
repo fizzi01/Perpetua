@@ -599,6 +599,7 @@ class Daemon:
             )
             await self._send_to_client(welcome)
 
+            buff = bytearray()
             # Continuously listen for commands
             while self._running and not reader.at_eof():
                 try:
@@ -607,11 +608,24 @@ class Daemon:
                     )
 
                     if not data:
-                        self._logger.info("Client disconnected (no data)")
-                        break
+                        #self._logger.info("Client disconnected (no data)")
+                        await asyncio.sleep(0.1)
+                        continue
 
-                    # Parse data
-                    commands_data = self.parse_msg_bytes(data)
+                    if len(buff) < self.BUFFER_SIZE:
+                        buff.extend(data)
+                        await asyncio.sleep(0.1)
+                        continue
+
+                    if len(buff) == 0:
+                        await asyncio.sleep(0.1)
+                        continue
+
+                    commands_data, bytes_read = self.parse_msg_bytes(bytes(buff))
+
+                    # Clear read bytes from buffer
+                    if bytes_read > 0:
+                        buff = buff[bytes_read:]
 
                     for command_data in commands_data:
                         try:
@@ -685,7 +699,7 @@ class Daemon:
         return message_bytes + length_prefix + b"\n"
 
     @staticmethod
-    def parse_msg_bytes(data: bytes) -> list[dict]:
+    def parse_msg_bytes(data: bytes) -> tuple[list[dict], int]:
         """
         Parses a byte sequence containing serialized messages with length prefixes and a delimiter.
 
@@ -694,6 +708,7 @@ class Daemon:
 
         Returns:
             list[dict]: A list of Python dictionaries representing the parsed JSON messages.
+            offset: The number of bytes consumed from the input data.
 
         Raises:
             ValueError: If the byte sequence contains incomplete length prefixes, lacks message
@@ -711,16 +726,19 @@ class Daemon:
                     # Find first \n index
                     idx = data.find(b"\n", offset)
                     if idx == -1:
-                        raise ValueError("No message delimiter found")
+                        # Wait for more data
+                        # print(f"No delimiter found, stopping parse at offset {offset}")
+                        # print(f"Data: {data[offset:]}")
+                        break
                     length_bytes = data[idx - 4 : idx]
                     msg_length = int.from_bytes(length_bytes, byteorder="big")
                     msg_data = data[offset : offset + msg_length]
                     message_str = msg_data.decode("utf-8").strip()
                     lines.append(json.loads(message_str))
                     offset += msg_length + 5  # Move past message and delimiter
-                return lines
+                return lines, offset
             else:
-                return []
+                return [], 0
         except json.JSONDecodeError as e:
             raise ValueError(f"Invalid JSON data -> {e}")
         except ValueError:

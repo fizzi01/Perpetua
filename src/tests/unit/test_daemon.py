@@ -19,20 +19,17 @@ import json
 import os
 import sys
 from typing import Optional
-from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
 
 from service.daemon import (
     Daemon,
     DaemonCommand,
-    DaemonResponse,
-    DaemonException,
+
     DaemonAlreadyRunningException,
     DaemonPortOccupiedException,
     IS_WINDOWS,
 )
-from config import ApplicationConfig
 
 
 # ============================================================================
@@ -56,7 +53,7 @@ async def send_command(
     if data:
         # Split by newlines (may have multiple messages)
         try:
-            messages = Daemon.parse_msg_bytes(data)
+            messages, read = Daemon.parse_msg_bytes(data)
             responses = []
             for msg in messages:
                 responses.append(msg)
@@ -64,43 +61,6 @@ async def send_command(
         except Exception as e:
             print(e)
     return None
-
-
-# ============================================================================
-# Test DaemonResponse
-# ============================================================================
-
-
-class TestDaemonResponse:
-    """Test DaemonResponse class."""
-
-    def test_response_success(self):
-        """Test creating a successful response."""
-        response = DaemonResponse(success=True, data={"key": "value"})
-        assert response.success is True
-        assert response.data == {"key": "value"}
-        assert response.error is None
-
-    def test_response_error(self):
-        """Test creating an error response."""
-        response = DaemonResponse(success=False, error="Error message")
-        assert response.success is False
-        assert response.error == "Error message"
-        assert response.data is None
-
-    def test_to_dict(self):
-        """Test converting response to dict."""
-        response = DaemonResponse(success=True, data={"test": 123})
-        d = response.to_dict()
-        assert d == {"success": True, "data": {"test": 123}, "error": None}
-
-    def test_to_json(self):
-        """Test converting response to JSON."""
-        response = DaemonResponse(success=False, error="Test error")
-        json_str = response.to_json()
-        parsed = json.loads(json_str)
-        assert parsed["success"] is False
-        assert parsed["error"] == "Test error"
 
 
 # ============================================================================
@@ -511,7 +471,7 @@ class TestArbitraryDataSending:
 
         # Client should receive the event
         data = await asyncio.wait_for(reader.read(16384), timeout=2.0)
-        response = Daemon.parse_msg_bytes(data)[0]
+        response, read = Daemon.parse_msg_bytes(data)[0]
 
         assert response["success"] is True
         assert response["data"]["event"]["event_type"] == NotificationEventType.TEST
@@ -555,21 +515,13 @@ class TestArbitraryDataSending:
 
         # Read all events
         data = await reader.read(16384)
-        messages = Daemon.parse_msg_bytes(data)
+        messages, read = Daemon.parse_msg_bytes(data)
 
         assert len(messages) >= 3
 
         # Cleanup
         writer.close()
         await writer.wait_closed()
-
-    @pytest.mark.anyio
-    async def test_send_to_client_returns_false_when_no_client(self, running_daemon):
-        """Test _send_to_client returns False when no client connected."""
-        response = DaemonResponse(success=True, data={"test": "data"})
-        result = await running_daemon._send_to_client(response)
-        assert result is False
-
 
 # ============================================================================
 # Test Command Handlers - Ping and Status

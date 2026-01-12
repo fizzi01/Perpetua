@@ -679,7 +679,7 @@ class DaemonClient:
                     print(f"Parameters: {json.dumps(params, indent=2)}")
 
             command_data = {"command": command, "params": params or {}}
-
+            print(command_data)
             async with self._connection_lock:
                 self.writer.write(Daemon.prepare_msg_bytes(command_data))
                 await self.writer.drain()
