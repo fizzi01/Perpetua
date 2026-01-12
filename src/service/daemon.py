@@ -911,7 +911,7 @@ class Daemon:
                 self._client = None
 
             await self._notification_manager.notify_command_success(
-                command, f"Service set to {choice}"
+                command, choice
             )
 
         elif choice == "client":
@@ -935,7 +935,7 @@ class Daemon:
                 self._server = None
 
             await self._notification_manager.notify_command_success(
-                command, f"Service set to {choice}"
+                command, choice
             )
         else:
             await self._notification_manager.notify_command_error(
@@ -2013,10 +2013,7 @@ class Daemon:
 
     async def _handle_ping(self, params: Dict[str, Any]) -> None:
         """Simple ping command to check daemon is alive"""
-        command = DaemonCommand.PING.value
-        await self._notification_manager.notify_command_success(
-            command, "pong"
-        )
+        await self._notification_manager.notify_pong()
 
     # ==================== Utility Methods ====================
 

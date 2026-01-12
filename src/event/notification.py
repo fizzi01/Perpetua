@@ -104,6 +104,8 @@ class NotificationEventType(str, Enum):
     COMMAND_SUCCESS = "command_success"
     COMMAND_ERROR = "command_error"
 
+    PONG = "pong"
+
 
 @dataclass
 class NotificationEvent:
@@ -729,6 +731,7 @@ class NotificationManager:
             return
 
         try:
+            print(f"Sending notification: {event.to_json()}")
             await self._callback(event)
         except Exception as e:
             # Avoid circular errors - just log to stderr
@@ -914,4 +917,13 @@ class NotificationManager:
     async def notify_command_error(self, command: str, error: str, **kwargs) -> None:
         """Notify that a command execution failed"""
         await self.send(CommandErrorEvent(command=command, error=error, **kwargs))
+
+    async def notify_pong(self) -> None:
+        """Notify pong response with latency"""
+        await self.send(
+            NotificationEvent(
+                event_type=NotificationEventType.PONG,
+                message="pong",
+            )
+        )
 
