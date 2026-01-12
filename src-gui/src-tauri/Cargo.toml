@@ -27,3 +27,9 @@ serde_json = "1"
 objc2 = "0.6.3"
 objc2-app-kit = { version = "0.3.2", features = ["NSColor", "NSWindow"] }
 objc2-foundation = { version = "0.3.2", features = ["NSString"] }
+
+
+[workspace]
+members = [
+    "ipc"
+]
