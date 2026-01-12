@@ -1,5 +1,6 @@
 use tokio_stream::StreamExt;
 use futures::{sink::SinkExt};
+use tokio::time::{Duration, timeout};
 use tokio_util::codec::{FramedRead, FramedWrite, LinesCodecError, Decoder, Encoder};
 
 use bytes::{Buf, BufMut, BytesMut};
@@ -46,7 +47,8 @@ impl EventLinesCodec {
 
 fn utf8(buf: &[u8]) -> Result<&str, io::Error> {
     str::from_utf8(buf)
-        .map_err(|_| io::Error::new(io::ErrorKind::InvalidData, "Unable to decode input as UTF8"))
+        .map_err(|er| {
+            io::Error::new(io::ErrorKind::InvalidData, "Unable to decode input as UTF8")})
 }
 
 fn without_carriage_return(s: &[u8]) -> &[u8] {
@@ -95,13 +97,16 @@ impl Decoder for EventLinesCodec {
                     let newline_index = offset + self.next_index;
                     self.next_index = 0;
                     let line = buf.split_to(newline_index + 1);
-                    // Validate the line by reading the last 4 bytes to extract the length prefix
+                    // Remove the newline character
                     let line = &line[..line.len() - 1];
+                    // Validate the line by reading the last 4 bytes to extract the length prefix
                     let len_prefix = &line[line.len() - 4..];
                     
+                    // Get the actual line content excluding the length prefix and newline
+                    let line = &line[..line.len() - 4];
                     // Now check if the length prefix matches the actual line length
                     let expected_len = u32::from_be_bytes(len_prefix.try_into().unwrap()) as usize;
-                    let actual_len = line.len() - 4; // Exclude the length prefix
+                    let actual_len = line.len(); // Exclude the length prefix
                     if expected_len != actual_len {
                         // Discard the line if lengths do not match
                         buf.advance(read_to);
@@ -185,11 +190,20 @@ impl AsyncReader {
     }
 
     /// Reads a line from the underlying stream.
-    pub async fn read_line(&mut self) -> tokio::io::Result<Option<String>> {
-        let Some(Ok(line)) = self.reader.next().await else {
-            return Ok(None);
-        };
-        Ok(Some(line))
+    pub async fn read_line(&mut self, t: &Duration) -> tokio::io::Result<Option<String>> {
+
+        match timeout(*t, self.reader.next()).await {
+            Err(_) => {
+                // Timeout occurred
+                Ok(None)
+            },
+            Ok(result) => match result {
+                Some(Ok(line)) => Ok(Some(line)),
+                Some(Err(e)) => {
+                    Err(tokio::io::Error::new(tokio::io::ErrorKind::Other, format!("Failed to read line ({})", e)))},
+                None => Ok(None),
+            }
+        }
     }
 }
 
@@ -223,7 +237,7 @@ impl AsyncWriter {
 trait DataListener {
     async fn ping(&mut self) -> tokio::io::Result<()>;
 
-    async fn listen<F>(&mut self, callback: F) -> tokio::io::Result<()>
+    async fn listen<F>(&mut self, callback: F, t: &Duration) -> tokio::io::Result<()>
     where
         F: FnMut(String);
 
@@ -270,16 +284,16 @@ impl DataListener for ConnectionHandler {
         })
     }
 
-    async fn listen<F>(&mut self, mut callback: F) -> tokio::io::Result<()>
+    async fn listen<F>(&mut self, mut callback: F, t: &Duration) -> tokio::io::Result<()>
     where
         F: FnMut(String),
     {
         self.running = true;
         while self.running {
-            match self.reader.read_line().await {
+            match self.reader.read_line(t).await {
                 Ok(Some(line)) => {
                     callback(line);
-                }
+                },
                 Ok(None) => {
                     // Try to send a ping to check connection
                     // If it fails, we assume the connection is closed
@@ -287,7 +301,7 @@ impl DataListener for ConnectionHandler {
                         self.running = false;
                         return Err(e);
                     }
-                }
+                },
                 Err(e) => {
                     return Err(e);
                 }
@@ -301,8 +315,8 @@ impl DataListener for ConnectionHandler {
 #[cfg(test)]
 mod tests {
     use crate::connection::{DEFAULT_APP_DIR, DEFAULT_DAEMON_SOCKET};
-    pub use crate::connection::{connect, default_path, DefaultPath, ConnectionError};
-
+    use crate::connection::{connect, default_path, DefaultPath, ConnectionError};
+    use tokio::time::{Duration};
     use super::{ConnectionHandler, DataListener};
 
     #[tokio::test]
@@ -344,26 +358,27 @@ mod tests {
             Ok((reader, writer)) => {
                 let mut handler = ConnectionHandler::new(reader, writer);
                 // Test sending a message
-                let test_message = "{\"command\": \"test\"}";
+                let test_message = "{\"command\": \"ping\"}";
                 handler.send_message(test_message).await.unwrap();
 
                 // Test listening for messages
-                let mut received = false;
                 if let Err(e) = handler.listen(|msg| {
-                    print!("Received message: {}\n", msg);
-                    received = true;
-                }).await {
-                    print!("Error while listening: {}\n", e);
+                    println!("Received message: {}\n", msg);
+                }, &Duration::from_secs(1)).await {
+                    println!("Error while listening: {}\n", e);
                     assert!(false, "Listening failed");
                 }
+
+                println!("Connection established successfully.\n");
 
             }
             Err(e) => {
                 // Since there's no server running, we expect a timeout or connection error.
-                print!("Connection error: {}\n", e);
+                println!("Connection error: {}\n", e);
                 assert!(matches!(e, ConnectionError::Timeout | ConnectionError::Io(_)));
             }
         }
+        println!("Test completed.\n");
     }
     
 }
