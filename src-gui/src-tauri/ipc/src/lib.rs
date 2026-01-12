@@ -13,6 +13,10 @@ use tokio::net::unix::{OwnedReadHalf, OwnedWriteHalf};
 use tokio::net::tcp::{OwnedReadHalf, OwnedWriteHalf};
 
 pub mod connection;
+pub mod event;
+
+use event::{Parser, EventParser};
+pub use event::{EventType, NotificationEvent};
 
 pub struct EventLinesCodec {
     // Stored index of the next index to examine for a `\n` character.
@@ -47,7 +51,7 @@ impl EventLinesCodec {
 
 fn utf8(buf: &[u8]) -> Result<&str, io::Error> {
     str::from_utf8(buf)
-        .map_err(|er| {
+        .map_err(|_| {
             io::Error::new(io::ErrorKind::InvalidData, "Unable to decode input as UTF8")})
 }
 
@@ -233,13 +237,17 @@ impl AsyncWriter {
     }
 }
 
-
 trait DataListener {
+    /// Send a ping message to check connection
     async fn ping(&mut self) -> tokio::io::Result<()>;
 
+    /// Listen for incoming messages and invoke the callback for each message received
+    /// ### Arguments
+    /// * `callback` - A closure that will be called with each received message
+    /// * `t` - Duration to wait for messages before timing out
     async fn listen<F>(&mut self, callback: F, t: &Duration) -> tokio::io::Result<()>
     where
-        F: FnMut(String);
+        F: FnMut(NotificationEvent);
 
 }
 
@@ -278,7 +286,6 @@ impl ConnectionHandler {
 impl DataListener for ConnectionHandler {
 
     async fn ping(&mut self) -> tokio::io::Result<()> {
-        // Send a ping message to check connection
         self.writer.write_line("{\"command\": \"ping\"}").await.map_err(|e| {
             tokio::io::Error::new(tokio::io::ErrorKind::Other, format!("Failed to send ping ({})", e))
         })
@@ -286,13 +293,17 @@ impl DataListener for ConnectionHandler {
 
     async fn listen<F>(&mut self, mut callback: F, t: &Duration) -> tokio::io::Result<()>
     where
-        F: FnMut(String),
+        F: FnMut(NotificationEvent),
     {
         self.running = true;
         while self.running {
             match self.reader.read_line(t).await {
                 Ok(Some(line)) => {
-                    callback(line);
+                    let Some(parsed_event) = EventParser::parse_json(&line) else {
+                        println!("Failed to parse event from line: {}\n", line);
+                        continue;
+                    };
+                    callback(parsed_event);
                 },
                 Ok(None) => {
                     // Try to send a ping to check connection
@@ -363,7 +374,7 @@ mod tests {
 
                 // Test listening for messages
                 if let Err(e) = handler.listen(|msg| {
-                    println!("Received message: {}\n", msg);
+                    dbg!(msg);
                 }, &Duration::from_secs(1)).await {
                     println!("Error while listening: {}\n", e);
                     assert!(false, "Listening failed");
