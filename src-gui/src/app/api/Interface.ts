@@ -158,3 +158,11 @@ export enum CommandType {
     Shutdown,
     Ping,
 }
+
+export interface ClientData {
+  client_id: string;
+  hostname: string;
+  ip: string;
+  screen_position: string;
+  streams: number[];
+}

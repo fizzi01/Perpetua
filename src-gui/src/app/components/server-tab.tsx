@@ -1,12 +1,12 @@
-import { useState, useEffect, useRef } from 'react';
-import { Power, Settings, Users, Signal, Activity, Plus, Trash2, Key, MousePointer, Keyboard, Shield } from 'lucide-react';
+import { useState, useEffect, useRef} from 'react';
+import { Power, Settings, Users, Activity, Plus, Trash2, Key, Lock, MousePointer, Keyboard, Shield, Clipboard } from 'lucide-react';
 import { motion, AnimatePresence } from 'motion/react';
 import { InlineNotification, Notification } from './inline-notification';
 
 import { useEventListeners } from '../hooks/useEventListeners';
 import { startServer, stopServer } from '../api/Sender';
-import { listenCommand } from '../api/Listener';
-import { EventType, CommandType} from '../api/Interface';
+import { listenCommand, listenGeneralEvent } from '../api/Listener';
+import { EventType, CommandType, ClientData} from '../api/Interface';
 
 interface Client {
   id: string;
@@ -24,26 +24,24 @@ export function ServerTab({ onStatusChange }: TabProps) {
   const [showClients, setShowClients] = useState(false);
   const [showSecurity, setShowSecurity] = useState(false);
   const [port, setPort] = useState('8080');
-  const [protocol, setProtocol] = useState('TCP');
-  const [maxClients, setMaxClients] = useState('10');
+  const [host, setHost] = useState('0.0.0.0');
   const [enableMouse, setEnableMouse] = useState(true);
   const [enableKeyboard, setEnableKeyboard] = useState(true);
-  const [requireOtp, setRequireOtp] = useState(false);
+  const [enableClipboard, setEnableClipboard] = useState(false);
+  const [requireSSL, setRequireSSL] = useState(false);
   const [otp, setOtp] = useState('');
-  const [otpTimeout, setOtpTimeout] = useState(300);
-  const [acceptedClients, setAcceptedClients] = useState<Client[]>([
-    { id: '1', name: 'Laptop-Office', ip: '192.168.1.100', status: 'offline', position: 'top' },
-    { id: '2', name: 'Desktop-Home', ip: '192.168.1.101', status: 'offline', position: 'bottom' },
-  ]);
+  const [otpTimeout, setOtpTimeout] = useState(30);
+  const [acceptedClients, setAcceptedClients] = useState<Client[]>([]);
   const [newClientName, setNewClientName] = useState('');
   const [newClientIp, setNewClientIp] = useState('');
   const [newClientPosition, setNewClientPosition] = useState<'top' | 'bottom' | 'left' | 'right'>('top');
   const [connectedClients, setConnectedClients] = useState(0);
   const [uptime, setUptime] = useState(0);
-  const [dataTransferred, setDataTransferred] = useState(0);
   const [notifications, setNotifications] = useState<Notification[]>([]);
 
   const listeners = useEventListeners();
+
+  const otpFocus = useRef<HTMLDivElement>(null);
 
   const addNotification = (type: Notification['type'], message: string, description?: string) => {
     const newNotification: Notification = {
@@ -79,42 +77,43 @@ export function ServerTab({ onStatusChange }: TabProps) {
   useEffect(() => {
     if (!isRunning) return;
 
-    const clientInterval = setInterval(() => {
-      const random = Math.random();
-      const offlineClients = acceptedClients.filter(c => c.status === 'offline');
-      const onlineClients = acceptedClients.filter(c => c.status === 'online');
-      
-      if (random > 0.85 && offlineClients.length > 0 && connectedClients < parseInt(maxClients)) {
-        const client = offlineClients[Math.floor(Math.random() * offlineClients.length)];
-        setAcceptedClients(prev => prev.map(c => 
-          c.id === client.id ? { ...c, status: 'online', connectedAt: new Date() } : c
-        ));
-        setConnectedClients(prev => prev + 1);
-        addNotification('success', `${client.name} connected`, client.ip);
-      } else if (random < 0.15 && onlineClients.length > 0) {
-        const client = onlineClients[Math.floor(Math.random() * onlineClients.length)];
-        setAcceptedClients(prev => prev.map(c => 
-          c.id === client.id ? { ...c, status: 'offline' } : c
-        ));
-        setConnectedClients(prev => prev - 1);
-        addNotification('warning', `${client.name} disconnected`, client.ip);
-      }
-    }, 8000);
-
     const uptimeInterval = setInterval(() => {
       setUptime(prev => prev + 1);
     }, 1000);
 
-    const dataInterval = setInterval(() => {
-      setDataTransferred(prev => prev + Math.random() * 50);
-    }, 2000);
-
     return () => {
-      clearInterval(clientInterval);
       clearInterval(uptimeInterval);
-      clearInterval(dataInterval);
     };
-  }, [isRunning, acceptedClients, connectedClients, maxClients]);
+// }, [isRunning, acceptedClients, connectedClients, maxClients]);
+  }, [isRunning]);
+
+  const handleClientConnected = (clientData: ClientData, connected: boolean) => {
+    console.log(`Client connected: ${connected}`, clientData);
+    addNotification(
+      connected ? 'success' : 'warning', 
+      connected ? 'Client Connected' : 'Client Disconnected', 
+      `${clientData.hostname ? clientData.hostname : clientData.ip} (${clientData.screen_position.toUpperCase()})`
+    );
+    // Map to Client interface
+    setAcceptedClients(prev => {
+      const existingClient = prev.find(c => c.ip === clientData.ip);
+      if (existingClient) {
+        return prev.map(c =>
+          c.ip === clientData.ip ? { ...c, status: connected ? 'online' : 'offline', connectedAt: connected ? new Date() : c.connectedAt } : c
+        );
+      } else {
+        const newClient: Client = {
+          id: clientData.client_id,
+          name: clientData.hostname ? clientData.hostname : clientData.client_id,
+          ip: clientData.ip,
+          status: connected ? 'online' : 'offline',
+          position: clientData.screen_position as 'top' | 'bottom' | 'left' | 'right', 
+        };
+        return [...prev, newClient];
+      }
+    });
+    setConnectedClients(prev => prev + (connected ? 1 : -1));
+  };
 
   const handleToggleServer = () => {
     if (!isRunning) {
@@ -132,8 +131,35 @@ export function ServerTab({ onStatusChange }: TabProps) {
         }
         
         listeners.removeListener('start-server');
+        listeners.removeListener('start-server-error');
       }).then(unlisten => {
         listeners.addListener('start-server', unlisten);
+      });
+
+      listenCommand(EventType.CommandError, CommandType.StartServer, (event) => {
+        addNotification('error', 'Failed', event.data?.error || '');
+        setRunningPending(false);
+
+        listeners.removeListener('start-server');
+        listeners.removeListener('start-server-error');
+      }).then(unlisten => {
+        listeners.addListener('start-server-error', unlisten);
+      });
+
+      listenGeneralEvent(EventType.ClientConnected, (event) => {
+        // Handle client connected event here
+        let client_data = event.data as ClientData;
+        handleClientConnected(client_data, true);
+      }).then(unlisten => {
+        listeners.addListener('client-connected', unlisten);
+      });
+
+      listenGeneralEvent(EventType.ClientDisconnected, (event) => {
+        // Handle client disconnected event here
+        let client_data = event.data as ClientData;
+        handleClientConnected(client_data, false);
+      }).then(unlisten => {
+        listeners.addListener('client-disconnected', unlisten);
       });
 
       startServer().catch((err) => {
@@ -143,10 +169,16 @@ export function ServerTab({ onStatusChange }: TabProps) {
 
         // Cleanup
         listeners.removeListener('start-server');
+        listeners.removeListener('start-server-error');
+        listeners.removeListener('client-connected');
+        listeners.removeListener('client-disconnected');
       });
       
     } else {
       setRunningPending(true);
+
+      listeners.removeListener('client-connected');
+      listeners.removeListener('client-disconnected');
 
       // Setup one-time listener per lo stop del server
       listenCommand(EventType.CommandSuccess, CommandType.StopServer, (event) => {
@@ -155,7 +187,6 @@ export function ServerTab({ onStatusChange }: TabProps) {
         setAcceptedClients(prev => prev.map(c => ({ ...c, status: 'offline' })));
         setConnectedClients(0);
         setUptime(0);
-        setDataTransferred(0);
         setOtp('');
         addNotification('warning', 'Server stopped');
         onStatusChange(false);
@@ -178,6 +209,7 @@ export function ServerTab({ onStatusChange }: TabProps) {
   };
 
   const generateOtp = () => {
+    if (otp !== '') return;
     const newOtp = Math.floor(100000 + Math.random() * 900000).toString();
     setOtp(newOtp);
     addNotification('success', 'OTP Generated', `Code: ${newOtp}`);
@@ -186,6 +218,11 @@ export function ServerTab({ onStatusChange }: TabProps) {
       setOtp('');
       addNotification('info', 'OTP Expired');
     }, otpTimeout * 1000);
+
+    // Scroll to the OTP display
+    setTimeout(() => {
+    otpFocus.current?.scrollIntoView({ behavior: 'smooth' });
+    }, 5);
   };
 
   const addClient = () => {
@@ -222,13 +259,6 @@ export function ServerTab({ onStatusChange }: TabProps) {
     const hours = Math.floor(seconds / 3600);
     const minutes = Math.floor((seconds % 3600) / 60);
     return `${hours}h ${minutes}m`;
-  };
-
-  const formatData = (mb: number) => {
-    if (mb >= 1024) {
-      return `${(mb / 1024).toFixed(2)} GB`;
-    }
-    return `${mb.toFixed(0)} MB`;
   };
 
   return (
@@ -350,23 +380,71 @@ export function ServerTab({ onStatusChange }: TabProps) {
         </motion.div>
       </motion.div>
 
-      {/* Data Transfer - Full Width */}
+      {/* Active Permissions Panel - Always Visible */}
       <motion.div 
-        whileHover={{ scale: 1.01 }}
-        className="flex items-center gap-3 p-4 rounded-lg border backdrop-blur-sm"
+        initial={{ opacity: 0 }}
+        animate={{ opacity: 1 }}
+        transition={{ delay: 0.3 }}
+        className="p-4 rounded-lg border backdrop-blur-sm"
         style={{ 
           backgroundColor: 'var(--app-card-bg)',
           borderColor: 'var(--app-card-border)'
         }}
       >
-        <div className="w-10 h-10 rounded-lg flex items-center justify-center" style={{ backgroundColor: 'var(--app-primary)' }}>
-          <Signal size={20} style={{ color: 'white' }} />
-        </div>
-        <div className="flex-1">
-          <div className="text-xl font-bold" style={{ color: 'var(--app-text-primary)' }}>
-            {formatData(dataTransferred)}
-          </div>
-          <div className="text-xs" style={{ color: 'var(--app-text-muted)' }}>Data Transferred</div>
+        <h4 className="text-sm font-semibold mb-2" style={{ color: 'var(--app-text-primary)' }}>
+          Active Permissions
+        </h4>
+        <div className="flex gap-3">
+          <motion.button
+            whileHover={{ scale: 1.05 }}
+            whileTap={{ scale: 0.95 }}
+            onClick={() => {
+              setEnableMouse(!enableMouse);
+              // addNotification('info', `Mouse control ${!enableMouse ? 'enabled' : 'disabled'}`);
+            }}
+            className="flex items-center gap-2 px-3 py-2 rounded-lg transition-all cursor-pointer"
+            style={{ 
+              backgroundColor: enableMouse ? 'var(--app-success-bg)' : 'var(--app-danger-bg)',
+              color: enableMouse ? 'var(--app-success)' : 'var(--app-danger)'
+            }}
+          >
+            <MousePointer size={16} />
+            <span className="text-xs font-semibold">Mouse</span>
+          </motion.button>
+
+          <motion.button
+            whileHover={{ scale: 1.05 }}
+            whileTap={{ scale: 0.95 }}
+            onClick={() => {
+              setEnableKeyboard(!enableKeyboard);
+              // addNotification('info', `Keyboard control ${!enableKeyboard ? 'enabled' : 'disabled'}`);
+            }}
+            className="flex items-center gap-2 px-3 py-2 rounded-lg transition-all cursor-pointer"
+            style={{ 
+              backgroundColor: enableKeyboard ? 'var(--app-success-bg)' : 'var(--app-danger-bg)',
+              color: enableKeyboard ? 'var(--app-success)' : 'var(--app-danger)'
+            }}
+          >
+            <Keyboard size={16} />
+            <span className="text-xs font-semibold">Keyboard</span>
+          </motion.button>
+
+          <motion.button
+            whileHover={{ scale: 1.05 }}
+            whileTap={{ scale: 0.95 }}
+            onClick={() => {
+              setEnableClipboard(!enableClipboard);
+              // addNotification('info', `Clipboard control ${!enableClipboard ? 'enabled' : 'disabled'}`);
+            }}
+            className="flex items-center gap-2 px-3 py-2 rounded-lg transition-all cursor-pointer"
+            style={{
+              backgroundColor: enableClipboard ? 'var(--app-success-bg)' : 'var(--app-danger-bg)',
+              color: enableClipboard ? 'var(--app-success)' : 'var(--app-danger)'
+            }}
+          >
+            <Clipboard size={16} />
+            <span className="text-xs font-semibold">Clipboard</span>
+          </motion.button>
         </div>
       </motion.div>
 
@@ -417,139 +495,6 @@ export function ServerTab({ onStatusChange }: TabProps) {
           <span className="text-xs">Options</span>
         </motion.button>
       </div>
-
-      {/* Security Section */}
-      <AnimatePresence>
-        {showSecurity && (
-          <motion.div
-            initial={{ opacity: 0, height: 0 }}
-            animate={{ opacity: 1, height: 'auto' }}
-            exit={{ opacity: 0, height: 0 }}
-            transition={{ duration: 0.3 }}
-            className="overflow-hidden"
-          >
-            <div className="space-y-4 p-4 rounded-lg border"
-              style={{ 
-                backgroundColor: 'var(--app-card-bg)',
-                borderColor: 'var(--app-card-border)'
-              }}
-            >
-              <h3 className="font-semibold flex items-center gap-2"
-                style={{ color: 'var(--app-text-primary)' }}
-              >
-                <Shield size={18} />
-                Security Settings
-              </h3>
-
-              <div className="space-y-3">
-                <div className="flex items-center justify-between">
-                  <label htmlFor="enableMouse" className="flex items-center gap-2 cursor-pointer"
-                    style={{ color: 'var(--app-text-primary)' }}
-                  >
-                    <MousePointer size={18} />
-                    <span>Allow Mouse Control</span>
-                  </label>
-                  <input
-                    type="checkbox"
-                    id="enableMouse"
-                    checked={enableMouse}
-                    onChange={(e) => {
-                      setEnableMouse(e.target.checked);
-                      addNotification('info', `Mouse control ${e.target.checked ? 'enabled' : 'disabled'}`);
-                    }}
-                    className="w-5 h-5 cursor-pointer"
-                    style={{ accentColor: 'var(--app-primary)' }}
-                  />
-                </div>
-
-                <div className="flex items-center justify-between">
-                  <label htmlFor="enableKeyboard" className="flex items-center gap-2 cursor-pointer"
-                    style={{ color: 'var(--app-text-primary)' }}
-                  >
-                    <Keyboard size={18} />
-                    <span>Allow Keyboard Control</span>
-                  </label>
-                  <input
-                    type="checkbox"
-                    id="enableKeyboard"
-                    checked={enableKeyboard}
-                    onChange={(e) => {
-                      setEnableKeyboard(e.target.checked);
-                      addNotification('info', `Keyboard control ${e.target.checked ? 'enabled' : 'disabled'}`);
-                    }}
-                    className="w-5 h-5 cursor-pointer"
-                    style={{ accentColor: 'var(--app-primary)' }}
-                  />
-                </div>
-
-                <div className="flex items-center justify-between">
-                  <label htmlFor="requireOtp" className="flex items-center gap-2 cursor-pointer"
-                    style={{ color: 'var(--app-text-primary)' }}
-                  >
-                    <Key size={18} />
-                    <span>Require OTP</span>
-                  </label>
-                  <input
-                    type="checkbox"
-                    id="requireOtp"
-                    checked={requireOtp}
-                    onChange={(e) => {
-                      setRequireOtp(e.target.checked);
-                      addNotification('info', `OTP ${e.target.checked ? 'required' : 'optional'}`);
-                    }}
-                    className="w-5 h-5 cursor-pointer"
-                    style={{ accentColor: 'var(--app-primary)' }}
-                  />
-                </div>
-              </div>
-
-              {requireOtp && isRunning && (
-                <motion.div
-                  initial={{ opacity: 0, scale: 0.95 }}
-                  animate={{ opacity: 1, scale: 1 }}
-                  className="pt-4 space-y-3"
-                  style={{ borderTop: '1px solid var(--app-border)' }}
-                >
-                  <div className="flex items-center justify-between">
-                    <span style={{ color: 'var(--app-text-primary)' }}>One-Time Password</span>
-                    <motion.button
-                      whileHover={{ scale: 1.05 }}
-                      whileTap={{ scale: 0.95 }}
-                      onClick={generateOtp}
-                      className="px-4 py-2 rounded-lg transition-all flex items-center gap-2"
-                      style={{
-                        backgroundColor: 'var(--app-primary)',
-                        color: 'white'
-                      }}
-                    >
-                      <Key size={16} />
-                      Generate
-                    </motion.button>
-                  </div>
-                  {otp && (
-                    <motion.div
-                      initial={{ opacity: 0 }}
-                      animate={{ opacity: 1 }}
-                      className="text-center p-4 rounded-lg border"
-                      style={{
-                        backgroundColor: 'var(--app-input-bg)',
-                        borderColor: 'var(--app-primary)'
-                      }}
-                    >
-                      <p className="text-3xl font-bold tracking-wider"
-                        style={{ color: 'var(--app-primary-light)' }}
-                      >{otp}</p>
-                      <p className="text-sm mt-2"
-                        style={{ color: 'var(--app-text-muted)' }}
-                      >Expires in {otpTimeout}s</p>
-                    </motion.div>
-                  )}
-                </motion.div>
-              )}
-            </div>
-          </motion.div>
-        )}
-      </AnimatePresence>
 
       {/* Clients Section */}
       <AnimatePresence>
@@ -603,6 +548,24 @@ export function ServerTab({ onStatusChange }: TabProps) {
                   onFocus={(e) => e.currentTarget.style.borderColor = 'var(--app-primary)'}
                   onBlur={(e) => e.currentTarget.style.borderColor = 'var(--app-input-border)'}
                 />
+                {/* Position Selector */}
+                <select
+                  value={newClientPosition}
+                  onChange={(e) => setNewClientPosition(e.target.value as 'top' | 'bottom' | 'left' | 'right')}
+                  className="w-full h-9 p-5 rounded-lg focus:outline-none transition-colors"
+                  style={{
+                    backgroundColor: 'var(--app-input-bg)',
+                    border: '2px solid var(--app-input-border)',
+                    color: 'var(--app-text-primary)'
+                  }}
+                  onFocus={(e) => e.currentTarget.style.borderColor = 'var(--app-primary)'}
+                  onBlur={(e) => e.currentTarget.style.borderColor = 'var(--app-input-border)'}
+                >
+                  <option value="top">Top</option>
+                  <option value="bottom">Bottom</option>
+                  <option value="left">Left</option>
+                  <option value="right">Right</option>
+                </select>
                 <motion.button
                   whileHover={{ scale: 1.02 }}
                   whileTap={{ scale: 0.98 }}
@@ -640,6 +603,14 @@ export function ServerTab({ onStatusChange }: TabProps) {
                       >{client.ip}</p>
                     </div>
                     <div className="flex items-center gap-2">
+                      <span className="px-2 py-1 text-xs rounded"
+                        style={{ 
+                          backgroundColor: client.status === 'offline' ? 'var(--app-bg-tertiary)' : 'var(--app-input-bg)',
+                          color: 'var(--app-primary-light)' 
+                        }}
+                      >
+                        {client.position.charAt(0).toUpperCase() + client.position.slice(1)}
+                      </span>
                       <span className="px-2 py-1 rounded text-xs"
                         style={{
                           backgroundColor: client.status === 'online' ? 'var(--app-success-bg)' : 'var(--app-bg-tertiary)',
@@ -661,6 +632,100 @@ export function ServerTab({ onStatusChange }: TabProps) {
                   </motion.div>
                 ))}
               </div>
+            </div>
+          </motion.div>
+        )}
+      </AnimatePresence>
+
+      {/* Security Section */}
+      <AnimatePresence>
+        {showSecurity && (
+          <motion.div
+            initial={{ opacity: 0, height: 0 }}
+            animate={{ opacity: 1, height: 'auto' }}
+            exit={{ opacity: 0, height: 0 }}
+            transition={{ duration: 0.3 }}
+            className="overflow-hidden"
+          >
+            <div className="space-y-4 p-4 rounded-lg border"
+              style={{ 
+                backgroundColor: 'var(--app-card-bg)',
+                borderColor: 'var(--app-card-border)'
+              }}
+            >
+              <h3 className="font-semibold flex items-center gap-2"
+                style={{ color: 'var(--app-text-primary)' }}
+              >
+                <Shield size={18} />
+                Security Settings
+              </h3>
+
+              <div className="space-y-3">                   
+                <div className="flex items-center justify-between">
+                  <label htmlFor="requireSSL" className="flex items-center gap-2 cursor-pointer"
+                    style={{ color: 'var(--app-text-primary)' }}
+                  >
+                    <Lock size={18} />
+                    <span>Require SSL</span>
+                  </label>
+                  <input
+                    type="checkbox"
+                    id="requireSSL"
+                    checked={requireSSL}
+                    onChange={(e) => {
+                      setRequireSSL(e.target.checked);
+                      //#addNotification('info', `SSL ${e.target.checked ? 'required' : 'optional'}`);
+                    }}
+                    className="w-5 h-5 cursor-pointer"
+                    style={{ accentColor: 'var(--app-primary)' }}
+                  />
+                </div>
+              </div>
+
+              {requireSSL && isRunning && (
+                <motion.div
+                  initial={{ opacity: 0, scale: 0.95 }}
+                  animate={{ opacity: 1, scale: 1 }}
+                  className="pt-4 space-y-3"
+                  style={{ borderTop: '1px solid var(--app-border)' }}
+                >
+                  <div className="flex items-center justify-between">
+                    <span style={{ color: 'var(--app-text-primary)' }}>One-Time Password</span>
+                    <motion.button
+                      whileHover={{ scale: 1.05 }}
+                      whileTap={{ scale: 0.95 }}
+                      onClick={generateOtp}
+                      className="px-4 py-2 rounded-lg transition-all flex items-center gap-2"
+                      style={{
+                        backgroundColor: 'var(--app-primary)',
+                        color: 'white'
+                      }}
+                    >
+                      <Key size={16} />
+                      Generate
+                    </motion.button>
+                  </div>
+                  {otp && (
+                    <motion.div
+                      ref={otpFocus}
+                      initial={{ opacity: 0 }}
+                      animate={{ opacity: 1 }}
+                      className="text-center p-4 rounded-lg border"
+                      style={{
+                        backgroundColor: 'var(--app-input-bg)',
+                        borderColor: 'var(--app-primary)'
+                      }}
+                    >
+                      <p className="text-3xl font-bold tracking-wider"
+                        style={{ color: 'var(--app-primary-light)' }}
+                      >{otp}</p>
+                      <p className="text-sm mt-2"
+                        style={{ color: 'var(--app-text-muted)' }}
+                      >Expires in {otpTimeout}s</p>
+                    </motion.div>
+                  )}
+                </motion.div>
+              )}
             </div>
           </motion.div>
         )}
@@ -692,11 +757,11 @@ export function ServerTab({ onStatusChange }: TabProps) {
               <div>
                 <label className="block mb-2 font-semibold"
                   style={{ color: 'var(--app-text-primary)' }}
-                >Port</label>
+                >Host</label>
                 <input
                   type="text"
-                  value={port}
-                  onChange={(e) => setPort(e.target.value)}
+                  value={host}
+                  onChange={(e) => setHost(e.target.value)}
                   className="w-full p-3 rounded-lg focus:outline-none transition-colors disabled:opacity-50 disabled:cursor-not-allowed"
                   style={{
                     backgroundColor: 'var(--app-input-bg)',
@@ -712,33 +777,11 @@ export function ServerTab({ onStatusChange }: TabProps) {
               <div>
                 <label className="block mb-2 font-semibold"
                   style={{ color: 'var(--app-text-primary)' }}
-                >Protocol</label>
-                <select
-                  value={protocol}
-                  onChange={(e) => setProtocol(e.target.value)}
-                  className="w-full p-3 rounded-lg focus:outline-none transition-colors disabled:opacity-50 disabled:cursor-not-allowed"
-                  style={{
-                    backgroundColor: 'var(--app-input-bg)',
-                    border: '2px solid var(--app-input-border)',
-                    color: 'var(--app-text-primary)'
-                  }}
-                  onFocus={(e) => !isRunning && (e.currentTarget.style.borderColor = 'var(--app-primary)')}
-                  onBlur={(e) => e.currentTarget.style.borderColor = 'var(--app-input-border)'}
-                  disabled={isRunning}
-                >
-                  <option value="TCP">TCP</option>
-                  <option value="UDP">UDP</option>
-                </select>
-              </div>
-
-              <div>
-                <label className="block mb-2 font-semibold"
-                  style={{ color: 'var(--app-text-primary)' }}
-                >Max Clients</label>
+                >Port</label>
                 <input
                   type="text"
-                  value={maxClients}
-                  onChange={(e) => setMaxClients(e.target.value)}
+                  value={port}
+                  onChange={(e) => setPort(e.target.value)}
                   className="w-full p-3 rounded-lg focus:outline-none transition-colors disabled:opacity-50 disabled:cursor-not-allowed"
                   style={{
                     backgroundColor: 'var(--app-input-bg)',
