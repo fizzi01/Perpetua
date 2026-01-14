@@ -406,12 +406,14 @@ class ClientConnectedEvent(NotificationEvent):
         self,
         client_id: Optional[str] = None,
         hostname: Optional[str] = None,
+        ip: Optional[str] = None,
         screen_position: Optional[str] = None,
         **kwargs,
     ):
         data = {
             "client_id": client_id,
             "hostname": hostname,
+            "ip": ip,
             "screen_position": screen_position,
         }
         data.update(kwargs)
@@ -431,12 +433,14 @@ class ClientDisconnectedEvent(NotificationEvent):
         self,
         client_id: Optional[str] = None,
         hostname: Optional[str] = None,
+        ip: Optional[str] = None,
         screen_position: Optional[str] = None,
         **kwargs,
     ):
         data = {
             "client_id": client_id,
             "hostname": hostname,
+            "ip": ip,
             "screen_position": screen_position,
         }
         data.update(kwargs)
@@ -731,7 +735,8 @@ class NotificationManager:
             return
 
         try:
-            print(f"Sending notification: {event.to_json()}")
+            if event.event_type != NotificationEventType.PONG:
+                print(f"Sending notification: {event.to_json()}")
             await self._callback(event)
         except Exception as e:
             # Avoid circular errors - just log to stderr

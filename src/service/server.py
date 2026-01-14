@@ -694,26 +694,28 @@ class Server:
             keyfile=self.keyfile,
         )
 
-        try:
-            # Start mDNS service
-            await self._mdns_service.register_service(
+        # Start mDNS service
+        service_task = asyncio.create_task(self._mdns_service.register_service(
                 host=self.config.host, port=self.config.port, uid=self.config.uid
-            )
-            if (
-                self.config.uid is None
-            ):  # At this point we have a UID generated and assigned ^
-                self.config.uid = self._mdns_service.get_uid()
-                await self.save_config()
-        except Exception as e:
-            self._logger.error(f"Failed to start mDNS service -> {e}")
-            await self.stop()
-            return False
+            ))
 
         # Initialize and start enabled components
         try:
             await self._initialize_components()
         except Exception as e:
             self._logger.error(f"Failed to initialize components -> {e}")
+            await self.stop()
+            return False
+
+        try:
+            await service_task
+            if (
+                self.config.uid is None
+            ):  # At this point we have a UID generated and assigned
+                self.config.uid = self._mdns_service.get_uid()
+                await self.save_config()
+        except Exception as e:
+            self._logger.error(f"Failed to start mDNS service -> {e}")
             await self.stop()
             return False
 
@@ -1068,9 +1070,10 @@ class Server:
             ClientConnectedNotification(
                 client_id=client.uid,
                 hostname=client.host_name,
+                ip=client.ip_address,
                 screen_position=client.get_screen_position(),
                 streams=streams,
-                client_net_id=client.get_net_id(),
+                #client_net_id=client.get_net_id(),
             )
         )
 
@@ -1092,9 +1095,10 @@ class Server:
             ClientDisconnectedNotification(
                 client_id=client.uid,
                 hostname=client.host_name,
+                ip=client.ip_address,
                 screen_position=client.get_screen_position(),
                 streams=streams,
-                client_net_id=client.get_net_id(),
+                #client_net_id=client.get_net_id(),
             )
         )
 
