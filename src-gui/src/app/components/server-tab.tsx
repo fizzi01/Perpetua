@@ -1,17 +1,24 @@
-import { useState, useEffect } from 'react';
+import { useState, useEffect, useRef } from 'react';
 import { Power, Settings, Users, Signal, Activity, Plus, Trash2, Key, MousePointer, Keyboard, Shield } from 'lucide-react';
 import { motion, AnimatePresence } from 'motion/react';
 import { InlineNotification, Notification } from './inline-notification';
+
+import { useEventListeners } from '../hooks/useEventListeners';
+import { startServer, stopServer } from '../api/Sender';
+import { listenCommand } from '../api/Listener';
+import { EventType, CommandType} from '../api/Interface';
 
 interface Client {
   id: string;
   name: string;
   ip: string;
   status: 'online' | 'offline';
+  position: 'top' | 'bottom' | 'left' | 'right';
   connectedAt?: Date;
 }
 
-export function VpnServer() {
+export function ServerTab({ onStatusChange }: TabProps) {
+  const [runningPending, setRunningPending] = useState(false);
   const [isRunning, setIsRunning] = useState(false);
   const [showOptions, setShowOptions] = useState(false);
   const [showClients, setShowClients] = useState(false);
@@ -25,15 +32,18 @@ export function VpnServer() {
   const [otp, setOtp] = useState('');
   const [otpTimeout, setOtpTimeout] = useState(300);
   const [acceptedClients, setAcceptedClients] = useState<Client[]>([
-    { id: '1', name: 'Laptop-Office', ip: '192.168.1.100', status: 'offline' },
-    { id: '2', name: 'Desktop-Home', ip: '192.168.1.101', status: 'offline' },
+    { id: '1', name: 'Laptop-Office', ip: '192.168.1.100', status: 'offline', position: 'top' },
+    { id: '2', name: 'Desktop-Home', ip: '192.168.1.101', status: 'offline', position: 'bottom' },
   ]);
   const [newClientName, setNewClientName] = useState('');
   const [newClientIp, setNewClientIp] = useState('');
+  const [newClientPosition, setNewClientPosition] = useState<'top' | 'bottom' | 'left' | 'right'>('top');
   const [connectedClients, setConnectedClients] = useState(0);
   const [uptime, setUptime] = useState(0);
   const [dataTransferred, setDataTransferred] = useState(0);
   const [notifications, setNotifications] = useState<Notification[]>([]);
+
+  const listeners = useEventListeners();
 
   const addNotification = (type: Notification['type'], message: string, description?: string) => {
     const newNotification: Notification = {
@@ -108,16 +118,62 @@ export function VpnServer() {
 
   const handleToggleServer = () => {
     if (!isRunning) {
-      setIsRunning(true);
-      addNotification('success', 'Server started', `Port ${port}`);
+      setRunningPending(true);
+
+      listenCommand(EventType.CommandSuccess, CommandType.StartServer, (event) => {
+        console.log(`Server started successfully: ${event.message}`);
+        setIsRunning(true);
+        let res = event.data?.result;
+        if (res) {
+          addNotification('success', 'Server started', `Listening on ${res.host}:${res.port}`);
+          onStatusChange(true);
+          setPort(res.port.toString());
+          setRunningPending(false);
+        }
+        
+        listeners.removeListener('start-server');
+      }).then(unlisten => {
+        listeners.addListener('start-server', unlisten);
+      });
+
+      startServer().catch((err) => {
+        console.error('Error starting server:', err);
+        addNotification('error', 'Failed to start server');
+        setRunningPending(false);
+
+        // Cleanup
+        listeners.removeListener('start-server');
+      });
+      
     } else {
-      setIsRunning(false);
-      setAcceptedClients(prev => prev.map(c => ({ ...c, status: 'offline' })));
-      setConnectedClients(0);
-      setUptime(0);
-      setDataTransferred(0);
-      setOtp('');
-      addNotification('warning', 'Server stopped');
+      setRunningPending(true);
+
+      // Setup one-time listener per lo stop del server
+      listenCommand(EventType.CommandSuccess, CommandType.StopServer, (event) => {
+        console.log(`Server stopped successfully: ${event.message}`);
+        setIsRunning(false);
+        setAcceptedClients(prev => prev.map(c => ({ ...c, status: 'offline' })));
+        setConnectedClients(0);
+        setUptime(0);
+        setDataTransferred(0);
+        setOtp('');
+        addNotification('warning', 'Server stopped');
+        onStatusChange(false);
+        setRunningPending(false);
+        
+        // Auto-unlisten dopo la prima esecuzione
+        listeners.removeListener('stop-server');
+      }).then(unlisten => {
+        listeners.addListener('stop-server', unlisten);
+      });
+
+      stopServer().catch((err) => {
+        console.error('Error stopping server:', err);
+        addNotification('error', 'Failed to stop server');
+        setRunningPending(false);
+        // Cleanup listener in caso di errore
+        listeners.removeListener('stop-server');
+      });
     }
   };
 
@@ -133,7 +189,7 @@ export function VpnServer() {
   };
 
   const addClient = () => {
-    if (!newClientName || !newClientIp) {
+    if (!newClientName || !newClientIp || !newClientPosition) {
       addNotification('error', 'Missing information');
       return;
     }
@@ -143,11 +199,13 @@ export function VpnServer() {
       name: newClientName,
       ip: newClientIp,
       status: 'offline',
+      position: newClientPosition,
     };
 
     setAcceptedClients(prev => [...prev, newClient]);
     setNewClientName('');
     setNewClientIp('');
+    setNewClientPosition('top');
     addNotification('success', `${newClientName} added`);
   };
 
@@ -178,16 +236,41 @@ export function VpnServer() {
       {/* Power Button */}
       <div className="flex flex-col items-center">
         <motion.button
-          whileHover={{ scale: 1.05 }}
-          whileTap={{ scale: 0.95 }}
+          whileHover={!runningPending ? { scale: 1.05 } : {}}
+          whileTap={!runningPending ? { scale: 0.95 } : {}}
           onClick={handleToggleServer}
+          disabled={runningPending}
           className="w-24 h-24 rounded-full flex items-center justify-center transition-all duration-300 shadow-lg relative overflow-hidden"
           style={{
             backgroundColor: isRunning ? 'var(--app-success)' : 'var(--app-bg-tertiary)',
-            color: 'white'
+            color: 'white',
+            opacity: runningPending ? 0.7 : 1,
+            cursor: runningPending ? 'not-allowed' : 'pointer'
           }}
         >
-          {isRunning && (
+          {runningPending && (
+            <>
+              {/* Spinner Animation */}
+              <motion.div
+                className="absolute inset-0 z-10"
+                style={{
+                  background: 'conic-gradient(from 0deg, transparent, rgba(255,255,255,0.4), transparent)',
+                }}
+                animate={{ rotate: 360 }}
+                transition={{ duration: 1, repeat: Infinity, ease: 'linear' }}
+              />
+              {/* Pulse Effect */}
+              <motion.div
+                className="absolute inset-0 rounded-full"
+                style={{
+                  backgroundColor: 'rgba(255, 255, 255, 0.2)',
+                }}
+                animate={{ scale: [1, 1.2, 1], opacity: [0.5, 0, 0.5] }}
+                transition={{ duration: 1.5, repeat: Infinity, ease: 'easeInOut' }}
+              />
+            </>
+          )}
+          {isRunning && !runningPending && (
             <motion.div
               className="absolute inset-0 opacity-30"
               style={{ backgroundColor: 'var(--app-success)' }}
@@ -195,16 +278,20 @@ export function VpnServer() {
               transition={{ duration: 2, repeat: Infinity }}
             />
           )}
-          <Power size={48} className="relative z-10" />
+          <Power 
+            size={48} 
+            className="relative z-10" 
+            style={{ opacity: runningPending ? 0.5 : 1 }}
+          />
         </motion.button>
         <motion.p 
-          key={isRunning ? 'running' : 'stopped'}
+          key={runningPending ? 'pending' : (isRunning ? 'running' : 'stopped')}
           initial={{ opacity: 0, y: 10 }}
           animate={{ opacity: 1, y: 0 }}
           className="mt-3 font-semibold"
           style={{ color: 'var(--app-text-primary)' }}
         >
-          {isRunning ? 'Server Running' : 'Server Stopped'}
+          {runningPending ? '' : (isRunning ? 'Server Running' : 'Server Stopped')}
         </motion.p>
       </div>
 

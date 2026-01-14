@@ -3,7 +3,7 @@ import { Power, Settings, Wifi, Clock, Key, MousePointer, Keyboard, Shield, Serv
 import { motion, AnimatePresence } from 'motion/react';
 import { InlineNotification, Notification } from './inline-notification';
 
-export function VpnClient() {
+export function ClienTab({ onStatusChange }: TabProps) {
   const [isConnected, setIsConnected] = useState(false);
   const [showOptions, setShowOptions] = useState(false);
   const [showOtpInput, setShowOtpInput] = useState(false);

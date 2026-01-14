@@ -1,11 +1,12 @@
 import { motion } from 'motion/react';
 
 interface TitlebarProps {
+  disabled?: boolean;
   mode: 'client' | 'server';
   onModeChange: (mode: 'client' | 'server') => void;
 }
 
-export function Titlebar({ mode, onModeChange }: TitlebarProps) {
+export function Titlebar({ disabled, mode, onModeChange }: TitlebarProps) {
   return (
     <div 
       data-tauri-drag-region
@@ -19,18 +20,20 @@ export function Titlebar({ mode, onModeChange }: TitlebarProps) {
         className="titlebar-toggle w-[200px] rounded-md p-0.5 flex shadow-sm border"
       >
         <button
+          disabled={disabled}
           onClick={() => onModeChange('client')}
           className={`titlebar-button py-1.5 px-4 rounded-sm font-medium text-xs tracking-wide ${
             mode === 'client' ? 'active' : ''
-          }`}
+          } ${disabled ? 'opacity-50' : ''}`}
         >
           CLIENT
         </button>
         <button
+          disabled={disabled}
           onClick={() => onModeChange('server')}
           className={`titlebar-button py-1.5 px-4 rounded-sm font-medium text-xs tracking-wide ${
             mode === 'server' ? 'active' : ''
-          }`}
+          } ${disabled ? 'opacity-50' : ''}`}
         >
           SERVER
         </button>
