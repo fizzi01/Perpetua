@@ -196,6 +196,40 @@ impl AtomicAsyncWriter {
 }
 
 #[derive(Clone)]
+pub struct AtomicAsyncReader {
+    inner: Arc<Mutex<FramedRead<OwnedReadHalf, EventLinesCodec>>>,
+}
+
+impl AtomicAsyncReader {
+    pub async fn lock(&self) -> MutexGuard<'_, FramedRead<OwnedReadHalf, EventLinesCodec>>{
+        self.inner.lock().await
+    }
+
+    pub fn clone(&self) -> Self {
+        AtomicAsyncReader {
+            inner: Arc::clone(&self.inner),
+        }
+    }
+    
+    pub async fn read_line(&self, t: &Duration) -> tokio::io::Result<Option<String>> {
+        let mut reader = self.lock().await;
+
+        match timeout(*t, reader.next()).await {
+            Err(_) => {
+                // Timeout occurred
+                Ok(None)
+            },
+            Ok(result) => match result {
+                Some(Ok(line)) => Ok(Some(line)),
+                Some(Err(e)) => {
+                    Err(tokio::io::Error::new(tokio::io::ErrorKind::Other, format!("Failed to read line ({})", e)))},
+                None => Ok(None),
+            }
+        }
+    }
+}
+
+#[derive(Clone)]
 pub struct AsyncWriter {
     writer: AtomicAsyncWriter,
 }
@@ -220,8 +254,9 @@ impl AsyncWriter {
     }
 }
 
+#[derive(Clone)]
 pub struct AsyncReader {
-    reader: Mutex<FramedRead<OwnedReadHalf, EventLinesCodec>>,
+    reader: AtomicAsyncReader,
 
 }
 
@@ -230,30 +265,20 @@ impl AsyncReader {
     pub fn new(stream: OwnedReadHalf) -> Self
     {
         AsyncReader {
-            reader: Mutex::new(FramedRead::new(stream, EventLinesCodec::new())),
+            reader: AtomicAsyncReader {
+                inner: Arc::new(Mutex::new(FramedRead::new(stream, EventLinesCodec::new()))),
+            },
         }
     }
 
-    pub async fn get_reader(&self) -> MutexGuard<'_, FramedRead<OwnedReadHalf, EventLinesCodec>>{
-        self.reader.lock().await
+    pub fn get_reader(&self) -> &AtomicAsyncReader {
+        &self.reader
     }
 
     /// Reads a line from the underlying stream.
     pub async fn read_line(&mut self, t: &Duration) -> tokio::io::Result<Option<String>> {
-        let mut reader = self.get_reader().await;
-
-        match timeout(*t, reader.next()).await {
-            Err(_) => {
-                // Timeout occurred
-                Ok(None)
-            },
-            Ok(result) => match result {
-                Some(Ok(line)) => Ok(Some(line)),
-                Some(Err(e)) => {
-                    Err(tokio::io::Error::new(tokio::io::ErrorKind::Other, format!("Failed to read line ({})", e)))},
-                None => Ok(None),
-            }
-        }
+        let reader = self.get_reader();
+        reader.read_line(t).await
     }
 }
 

@@ -36,7 +36,10 @@ where
 pub fn run() {
     tauri::Builder::default()
         .plugin(tauri_plugin_opener::init())
-        .invoke_handler(tauri::generate_handler![commands::choose_service])
+        .invoke_handler(tauri::generate_handler![
+            commands::service_choice, 
+            commands::start_server, 
+            commands::stop_server])
         .setup(|app| {
             let app_handle = app.handle().clone();
             // Initialize connection to the daemon

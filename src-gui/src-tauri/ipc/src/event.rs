@@ -1,5 +1,16 @@
+use std::fmt::Display;
+
 use serde_json::{Value};
 use serde::{Deserialize, Serialize};
+
+pub trait Event: Serialize + for<'de> Deserialize<'de> {}
+pub trait Type: for<'de> Deserialize<'de> {}
+
+pub trait TypeToString 
+where Self: Type
+{
+    fn to_string(&self) -> Result<&'static str, serde_variant::UnsupportedType>;
+}
 
 #[derive(Serialize, Deserialize, Debug,Clone, PartialEq)]
 #[serde(rename_all = "snake_case")]
@@ -98,6 +109,14 @@ pub enum EventType {
     Other
 }
 
+impl Type for EventType {}
+
+impl TypeToString for EventType {
+    fn to_string(&self) -> Result<&'static str, serde_variant::UnsupportedType> {
+        serde_variant::to_variant_name(&self)
+    }
+}
+
 #[derive(Serialize, Deserialize, Debug, Clone)]
 pub struct NotificationEvent {
     pub event_type: EventType,
@@ -163,13 +182,56 @@ pub enum CommandType {
     Ping,
 }
 
+impl Type for CommandType {}
+
+impl TypeToString for CommandType {
+    fn to_string(&self) -> Result<&'static str, serde_variant::UnsupportedType> {
+        serde_variant::to_variant_name(&self)
+    }
+}
+
+impl Display for CommandType
+where Self: TypeToString
+{
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match TypeToString::to_string(self) {
+            Ok(name) => write!(f, "{}", name),
+            Err(_) => write!(f, "unknown_command"),
+        }
+    }
+}
+
 #[derive(Serialize, Deserialize, Debug, Clone)]
 pub struct CommandEvent {
     pub command: CommandType,
     pub params: Option<Value>,
 }
 
-pub trait Event: Serialize + for<'de> Deserialize<'de> {}
+impl CommandEvent {
+    pub fn build(command: CommandType, params: &str) -> Self {
+        let params_value: Option<Value> = if params.is_empty() {
+            None
+        } else {
+            serde_json::from_str(params).ok()
+        };
+
+        CommandEvent {
+            command,
+            params: params_value,
+        }
+    }
+
+    pub fn empty(command: CommandType) -> Self {
+        CommandEvent {
+            command,
+            params: None,
+        }
+    }
+
+    pub fn new(command: CommandType, params: Option<Value>) -> Self {
+        CommandEvent { command, params }
+    }
+}
 
 impl Event for NotificationEvent {}
 impl Event for CommandEvent {}
