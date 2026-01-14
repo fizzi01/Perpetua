@@ -862,8 +862,6 @@ class Daemon:
             command: Command to execute
             params: Command parameters
         """
-        self._logger.debug(f"Executing command: {command} with params: {params}")
-
         # Check if command exists
         handler = self._command_handlers.get(command)
         if not handler:
@@ -966,15 +964,14 @@ class Daemon:
                 )
                 return
 
-            # Notify starting
-            await self._notification_manager.notify_service_started(
-                "Server", data={"status": "starting"}
-            )
+            # # Notify starting
+            # await self._notification_manager.notify_service_started(
+            #     "Server", data={"status": "starting"}
+            # )
 
             success = await self._server.start()
             if success:
                 response_data = {
-                    "message": "Server started successfully",
                     "host": self._server.config.host,
                     "port": self._server.config.port,
                     "enabled_streams": self._server.get_enabled_streams(),

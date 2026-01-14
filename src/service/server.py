@@ -672,9 +672,6 @@ class Server:
 
         self._logger.info("Starting Server...")
 
-        # Send starting notification
-        await self._send_notification(ServiceStartedEvent(service_name="Server"))
-
         # Initialize and start enabled streams
         try:
             await self._initialize_streams()
@@ -736,9 +733,6 @@ class Server:
             return
 
         self._logger.info("Stopping Server...")
-
-        # Send stopping notification
-        await self._send_notification(ServiceStoppedEvent(service_name="Server"))
 
         # Stop connection handler
         if self.connection_handler:
