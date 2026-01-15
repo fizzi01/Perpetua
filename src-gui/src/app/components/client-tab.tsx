@@ -2,6 +2,7 @@ import { useState, useEffect } from 'react';
 import { Power, Settings, Wifi, Clock, Key, MousePointer, Keyboard, Shield, Server } from 'lucide-react';
 import { motion, AnimatePresence } from 'motion/react';
 import { InlineNotification, Notification } from './inline-notification';
+import { TabProps } from '../commons/Tab';
 
 export function ClienTab({ onStatusChange }: TabProps) {
   const [isConnected, setIsConnected] = useState(false);

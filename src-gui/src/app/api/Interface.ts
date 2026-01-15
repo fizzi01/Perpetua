@@ -159,10 +159,59 @@ export enum CommandType {
     Ping,
 }
 
-export interface ClientData {
-  client_id: string;
-  hostname: string;
-  ip: string;
+export enum StreamType {
+    Mouse = 1,
+    Keyboard = 4,
+    Clipboard = 12,
+}
+
+// -- Status Interfaces --
+export interface ClientObj {
+  uid: string;
+  host_name: string;
+  ip_address: string;
   screen_position: string;
-  streams: number[];
+  ssl: boolean;
+  streams_enabled: number[];
+  is_connected: boolean;
+}
+
+export interface ServerStatus {
+  running: boolean;
+  uid: string;
+  host: string;
+  port: number;
+  heartbeat_interval: number;
+  streams_enabled: Object;
+  ssl_enabled: boolean;
+  authorized_clients: ClientObj[];
+}
+
+export interface ClientStatus
+{
+  running: boolean;
+  uid: string;
+  client_hostname: string;
+  streams_enabled: number[];
+  ssl_enabled: boolean;
+  server_info: {
+    uid: string;
+    host: string;
+    hostname: string;
+    port: number;
+    ssl: boolean;
+    auto_reconnect: boolean;
+  };
+}
+
+export interface ServiceStatus {
+  server_info?: ServerStatus;
+  client_info?: ClientStatus;
+}
+
+// -- SSL/OTP Interfaces --
+export interface OtpInfo {
+  otp: string;
+  timeout: number; // in seconds
+  instructions: string;
 }

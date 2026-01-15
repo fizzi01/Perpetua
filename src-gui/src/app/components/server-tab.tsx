@@ -4,9 +4,13 @@ import { motion, AnimatePresence } from 'motion/react';
 import { InlineNotification, Notification } from './inline-notification';
 
 import { useEventListeners } from '../hooks/useEventListeners';
-import { startServer, stopServer } from '../api/Sender';
+import { shareCertificate, startServer, stopServer } from '../api/Sender';
 import { listenCommand, listenGeneralEvent } from '../api/Listener';
-import { EventType, CommandType, ClientData} from '../api/Interface';
+import { EventType, CommandType, ClientObj, StreamType, ServerStatus, OtpInfo} from '../api/Interface';
+
+import { ServerTabProps } from '../commons/Tab'
+import { parseStreams } from '../api/Utility';
+import { listen } from '@tauri-apps/api/event';
 
 interface Client {
   id: string;
@@ -17,19 +21,23 @@ interface Client {
   connectedAt?: Date;
 }
 
-export function ServerTab({ onStatusChange }: TabProps) {
+export function ServerTab({ onStatusChange, state }: ServerTabProps) {
+  let previousState: ServerStatus | null = null;
+
   const [runningPending, setRunningPending] = useState(false);
   const [isRunning, setIsRunning] = useState(false);
   const [showOptions, setShowOptions] = useState(false);
   const [showClients, setShowClients] = useState(false);
   const [showSecurity, setShowSecurity] = useState(false);
-  const [port, setPort] = useState('8080');
-  const [host, setHost] = useState('0.0.0.0');
-  const [enableMouse, setEnableMouse] = useState(true);
-  const [enableKeyboard, setEnableKeyboard] = useState(true);
+  const [uid, setUid] = useState(state.uid);
+  const [port, setPort] = useState(state.port.toString());
+  const [host, setHost] = useState(state.host);
+  const [enableMouse, setEnableMouse] = useState(false);
+  const [enableKeyboard, setEnableKeyboard] = useState(false);
   const [enableClipboard, setEnableClipboard] = useState(false);
-  const [requireSSL, setRequireSSL] = useState(false);
+  const [requireSSL, setRequireSSL] = useState(state.ssl_enabled);
   const [otp, setOtp] = useState('');
+  const [otpRequested, setOtpRequested] = useState(false);
   const [otpTimeout, setOtpTimeout] = useState(30);
   const [acceptedClients, setAcceptedClients] = useState<Client[]>([]);
   const [newClientName, setNewClientName] = useState('');
@@ -39,7 +47,7 @@ export function ServerTab({ onStatusChange }: TabProps) {
   const [uptime, setUptime] = useState(0);
   const [notifications, setNotifications] = useState<Notification[]>([]);
 
-  const listeners = useEventListeners();
+  const listeners = useEventListeners('server-tab');
 
   const otpFocus = useRef<HTMLDivElement>(null);
 
@@ -87,32 +95,85 @@ export function ServerTab({ onStatusChange }: TabProps) {
 // }, [isRunning, acceptedClients, connectedClients, maxClients]);
   }, [isRunning]);
 
-  const handleClientConnected = (clientData: ClientData, connected: boolean) => {
-    console.log(`Client connected: ${connected}`, clientData);
-    addNotification(
-      connected ? 'success' : 'warning', 
-      connected ? 'Client Connected' : 'Client Disconnected', 
-      `${clientData.hostname ? clientData.hostname : clientData.ip} (${clientData.screen_position.toUpperCase()})`
-    );
+  useEffect(() => {
+    if (previousState === null) {
+      previousState = state;
+    } else if (JSON.stringify(previousState) !== JSON.stringify(state)) {
+      previousState = state;
+    } else {
+      return; // No changes detected
+    }
+    console.log('Server state updated:', state);
+    setIsRunning(state.running);
+    onStatusChange(state.running);
+    setUid(state.uid);
+    setHost(state.host);
+    setPort(state.port.toString());
+    setRequireSSL(state.ssl_enabled);
+    let permissions = parseStreams(state.streams_enabled);
+    setEnableMouse(permissions.includes(StreamType.Mouse));
+    setEnableKeyboard(permissions.includes(StreamType.Keyboard));
+    setEnableClipboard(permissions.includes(StreamType.Clipboard));
+
+    let clients = state.authorized_clients;
+    clients.forEach(client => {
+      handleClientConnected(client, client.is_connected, false);
+    });
+
+    if (state.running) { handleClientEventListeners(); }
+
+  }, [state]);
+
+  const handleClientConnected = (clientData: ClientObj, connected: boolean, notify: boolean = false) => {
+    if (notify) {
+      addNotification(
+        connected ? 'success' : 'warning', 
+        connected ? 'Client Connected' : 'Client Disconnected', 
+        `${clientData.host_name ? clientData.host_name : clientData.ip_address} (${clientData.screen_position.toUpperCase()})`
+      );
+    }
     // Map to Client interface
     setAcceptedClients(prev => {
-      const existingClient = prev.find(c => c.ip === clientData.ip);
+      const existingClient = prev.find(c => c.id === clientData.uid);
+      console.log('Existing client:', existingClient);
       if (existingClient) {
         return prev.map(c =>
-          c.ip === clientData.ip ? { ...c, status: connected ? 'online' : 'offline', connectedAt: connected ? new Date() : c.connectedAt } : c
+          c.id === clientData.uid ? { ...c, status: connected ? 'online' : 'offline', connectedAt: connected ? new Date() : c.connectedAt } : c
         );
       } else {
+        console.log('Adding new client to acceptedClients');
         const newClient: Client = {
-          id: clientData.client_id,
-          name: clientData.hostname ? clientData.hostname : clientData.client_id,
-          ip: clientData.ip,
+          id: clientData.uid,
+          name: clientData.host_name ? clientData.host_name : clientData.uid,
+          ip: clientData.ip_address,
           status: connected ? 'online' : 'offline',
           position: clientData.screen_position as 'top' | 'bottom' | 'left' | 'right', 
         };
         return [...prev, newClient];
       }
     });
-    setConnectedClients(prev => prev + (connected ? 1 : -1));
+
+    setConnectedClients(prev => {
+      return connected ? prev + 1 : Math.max(prev - 1, 0);
+    });
+  };
+
+  const handleClientEventListeners = () => {
+      listenGeneralEvent(EventType.ClientConnected, (event) => {
+        // Handle client connected event here
+        let client_data = event.data as ClientObj;
+        handleClientConnected(client_data, true, true);
+      }).then(unlisten => {
+        listeners.addListener('client-connected', unlisten);
+      });
+
+      listenGeneralEvent(EventType.ClientDisconnected, (event) => {
+        // Handle client disconnected event here
+        let client_data = event.data as ClientObj;
+        handleClientConnected(client_data, false, true);
+      }).then(unlisten => {
+        listeners.addListener('client-disconnected', unlisten);
+      });
   };
 
   const handleToggleServer = () => {
@@ -146,21 +207,7 @@ export function ServerTab({ onStatusChange }: TabProps) {
         listeners.addListener('start-server-error', unlisten);
       });
 
-      listenGeneralEvent(EventType.ClientConnected, (event) => {
-        // Handle client connected event here
-        let client_data = event.data as ClientData;
-        handleClientConnected(client_data, true);
-      }).then(unlisten => {
-        listeners.addListener('client-connected', unlisten);
-      });
-
-      listenGeneralEvent(EventType.ClientDisconnected, (event) => {
-        // Handle client disconnected event here
-        let client_data = event.data as ClientData;
-        handleClientConnected(client_data, false);
-      }).then(unlisten => {
-        listeners.addListener('client-disconnected', unlisten);
-      });
+      handleClientEventListeners();
 
       startServer().catch((err) => {
         console.error('Error starting server:', err);
@@ -210,19 +257,54 @@ export function ServerTab({ onStatusChange }: TabProps) {
 
   const generateOtp = () => {
     if (otp !== '') return;
-    const newOtp = Math.floor(100000 + Math.random() * 900000).toString();
-    setOtp(newOtp);
-    addNotification('success', 'OTP Generated', `Code: ${newOtp}`);
+    if (otpRequested) return;
+    // const newOtp = Math.floor(100000 + Math.random() * 900000).toString();
+    // setOtp(newOtp);
+    // addNotification('success', 'OTP Generated', `Code: ${newOtp}`);
 
-    setTimeout(() => {
+    // setTimeout(() => {
+    //   setOtp('');
+    //   addNotification('info', 'OTP Expired');
+    // }, otpTimeout * 1000);
+
+    // // Scroll to the OTP display
+    // setTimeout(() => {
+    // otpFocus.current?.scrollIntoView({ behavior: 'smooth' });
+    // }, 5);
+    
+    listenCommand(EventType.CommandSuccess, CommandType.ShareCertificate, (event) => {
+      console.log(`Certificate shared successfully`, event);
+      let result = event.data?.result as OtpInfo;
+      if (result && result.otp) {
+        setOtp(result.otp);
+        addNotification('success', 'OTP Generated', `Code: ${result.otp}`);
+        if (result.timeout && result.timeout > 0) {
+          setTimeout(() => {
+            setOtp('');
+            addNotification('info', 'OTP Expired');
+          }, result.timeout * 1000);
+        }
+
+        setTimeout(() => {
+          otpFocus.current?.scrollIntoView({ behavior: 'smooth' }); 
+        }, 5);
+      } else {
+        addNotification('error', 'Failed to generate OTP');
+      }
+
+      setOtpRequested(false);
+      listeners.removeListener('share-certificate');
+    }).then(unlisten => {
+        listeners.addListener('share-certificate', unlisten);
+    });
+
+    shareCertificate(otpTimeout).catch((err) => {
+      console.error('Error sharing certificate:', err);
+      addNotification('error', 'Failed to share certificate');
       setOtp('');
-      addNotification('info', 'OTP Expired');
-    }, otpTimeout * 1000);
-
-    // Scroll to the OTP display
-    setTimeout(() => {
-    otpFocus.current?.scrollIntoView({ behavior: 'smooth' });
-    }, 5);
+      setOtpRequested(false);
+    });
+    setOtpRequested(true);
   };
 
   const addClient = () => {
@@ -672,9 +754,10 @@ export function ServerTab({ onStatusChange }: TabProps) {
                     type="checkbox"
                     id="requireSSL"
                     checked={requireSSL}
+                    disabled={otp !== '' || otpRequested}
                     onChange={(e) => {
+                      if (otp !== '' || otpRequested) return;
                       setRequireSSL(e.target.checked);
-                      //#addNotification('info', `SSL ${e.target.checked ? 'required' : 'optional'}`);
                     }}
                     className="w-5 h-5 cursor-pointer"
                     style={{ accentColor: 'var(--app-primary)' }}
@@ -692,12 +775,13 @@ export function ServerTab({ onStatusChange }: TabProps) {
                   <div className="flex items-center justify-between">
                     <span style={{ color: 'var(--app-text-primary)' }}>One-Time Password</span>
                     <motion.button
-                      whileHover={{ scale: 1.05 }}
+                      whileHover={otp !== '' || otpRequested ? { scale: 1.05 } : undefined}
                       whileTap={{ scale: 0.95 }}
+                      disabled={otp !== '' || otpRequested}
                       onClick={generateOtp}
                       className="px-4 py-2 rounded-lg transition-all flex items-center gap-2"
                       style={{
-                        backgroundColor: 'var(--app-primary)',
+                        backgroundColor: otp !== '' || otpRequested ? 'var(--app-bg-tertiary)' : 'var(--app-primary)',
                         color: 'white'
                       }}
                     >

@@ -13,3 +13,11 @@ export function startServer(): Promise<void> {
 export function stopServer(): Promise<void> {
     return invoke(getType(CommandType, CommandType.StopServer));
 }
+
+export function shareCertificate(timeout: number): Promise<void> {
+    return invoke(getType(CommandType, CommandType.ShareCertificate), { timeout });
+}
+
+export function getStatus(): Promise<any> {
+    return invoke(getType(CommandType, CommandType.Status));
+}
