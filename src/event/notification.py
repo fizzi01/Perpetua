@@ -404,19 +404,12 @@ class ClientConnectedEvent(NotificationEvent):
 
     def __init__(
         self,
-        client_id: Optional[str] = None,
-        hostname: Optional[str] = None,
-        ip: Optional[str] = None,
-        screen_position: Optional[str] = None,
-        **kwargs,
+        client: Optional[dict] = None,
     ):
-        data = {
-            "client_id": client_id,
-            "hostname": hostname,
-            "ip": ip,
-            "screen_position": screen_position,
-        }
-        data.update(kwargs)
+        data = client
+        if data is None:
+            data = {}
+        hostname = data.get("hostname", "unknown")
         super().__init__(
             event_type=NotificationEventType.CLIENT_CONNECTED,
             data=data,
@@ -431,19 +424,12 @@ class ClientDisconnectedEvent(NotificationEvent):
 
     def __init__(
         self,
-        client_id: Optional[str] = None,
-        hostname: Optional[str] = None,
-        ip: Optional[str] = None,
-        screen_position: Optional[str] = None,
-        **kwargs,
+        client: Optional[dict] = None,
     ):
-        data = {
-            "client_id": client_id,
-            "hostname": hostname,
-            "ip": ip,
-            "screen_position": screen_position,
-        }
-        data.update(kwargs)
+        data = client
+        if data is None:
+            data = {}
+        hostname = data.get("hostname", "unknown")
         super().__init__(
             event_type=NotificationEventType.CLIENT_DISCONNECTED,
             data=data,
@@ -837,35 +823,23 @@ class NotificationManager:
 
     async def notify_client_connected(
         self,
-        client_id: str,
-        hostname: str,
-        screen_position: Optional[str] = None,
-        **kwargs,
+        client: Optional[dict] = None,
     ) -> None:
         """Notify that a client connected to the server"""
         await self.send(
             ClientConnectedEvent(
-                client_id=client_id,
-                hostname=hostname,
-                screen_position=screen_position,
-                **kwargs,
+                client=client,
             )
         )
 
     async def notify_client_disconnected(
         self,
-        client_id: str,
-        hostname: str,
-        screen_position: Optional[str] = None,
-        **kwargs,
+        client: Optional[dict] = None,
     ) -> None:
         """Notify that a client disconnected from the server"""
         await self.send(
             ClientDisconnectedEvent(
-                client_id=client_id,
-                hostname=hostname,
-                screen_position=screen_position,
-                **kwargs,
+                client=client,
             )
         )
 

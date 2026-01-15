@@ -1068,12 +1068,7 @@ class Server:
         # Send notification
         await self._send_notification(
             ClientConnectedNotification(
-                client_id=client.uid,
-                hostname=client.host_name,
-                ip=client.ip_address,
-                screen_position=client.get_screen_position(),
-                streams=streams,
-                #client_net_id=client.get_net_id(),
+                client=client.to_dict(),
             )
         )
 
@@ -1093,12 +1088,7 @@ class Server:
         # Send notification
         await self._send_notification(
             ClientDisconnectedNotification(
-                client_id=client.uid,
-                hostname=client.host_name,
-                ip=client.ip_address,
-                screen_position=client.get_screen_position(),
-                streams=streams,
-                #client_net_id=client.get_net_id(),
+                client=client.to_dict(),
             )
         )
 

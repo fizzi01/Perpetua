@@ -1106,38 +1106,25 @@ class Daemon:
         """Get overall daemon status"""
         command = DaemonCommand.STATUS.value
 
-        server_running = self._server and self._server.is_running()
-        client_running = self._client and self._client.is_running()
+        server_running = self._server.is_running() if self._server else False
+        client_running = self._client.is_running() if self._client else False
 
         status = {
-            "daemon_running": self._running,
-            "server_running": server_running,
-            "client_running": client_running,
             "platform": "windows" if IS_WINDOWS else "unix",
             "socket_path": self.socket_path,
             "client_connected": self.is_client_connected(),
         }
 
-        if server_running and self._server_config and self._server:
-            connected_clients = self._server_config.get_clients()
+        if self._server_config and self._server:
             status["server_info"] = {  # type: ignore
-                "host": self._server_config.host,
-                "port": self._server_config.port,
-                "connected_clients": len(connected_clients),
-                "enabled_streams": self._server.get_enabled_streams(),
-                "active_streams": self._server.get_active_streams(),
-                "ssl_enabled": self._server_config.ssl_enabled,
+                **self._server_config.to_dict(),
+                "running": server_running,
             }
 
-        if client_running and self._client_config and self._client:
+        if self._client_config and self._client:
             status["client_info"] = {  # type: ignore
-                "server_host": self._client_config.get_server_host(),
-                "server_port": self._client_config.get_server_port(),
-                "connected": self._client.is_connected(),
-                "enabled_streams": self._client.get_enabled_streams(),
-                "active_streams": self._client.get_active_streams(),
-                "ssl_enabled": self._client_config.ssl_enabled,
-                "has_certificate": self._client.has_certificate(),
+                **self._client_config.to_dict(),
+                "running": client_running,
             }
 
         await self._notification_manager.notify_command_success(
@@ -1750,7 +1737,7 @@ class Daemon:
                     result_data={
                         "otp": otp,
                         "timeout": timeout,
-                        "instructions": "Provide this OTP to clients to receive the certificate",
+                        "instructions": "Provide this OTP to clients",
                     }
                 )
             else:

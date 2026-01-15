@@ -232,6 +232,7 @@ class ClientObj:
             "screen_position": self.screen_position,
             "screen_resolution": self.screen_resolution,
             "ssl": self.ssl,
+            "is_connected": self.is_connected,
             "additional_params": self.additional_params,
         }
 
