@@ -39,3 +39,29 @@ pub async fn stop_server(s: tauri::State<'_, AtomicAsyncWriter>) -> Result<(), S
     s.send(command).await.map_err(|e| format!("Failed to send {} command ({})", CommandType::StopServer, e))?;
     Ok(())
 }
+
+#[tauri::command]
+pub async fn share_certificate(timeout: i32, s: tauri::State<'_, AtomicAsyncWriter>) -> Result<(), String>
+{
+    let command = CommandEvent::build(
+        CommandType::ShareCertificate, 
+        &format!(r#"{{ "timeout": {} }}"#, timeout));
+    let command = EventParser::serialize(&command).map_err(
+        |e| format!("Failed to serialize {} command: {}", CommandType::ShareCertificate, e)
+    )?;
+    s.send(command).await.map_err(|e| format!("Failed to send {} command ({})", CommandType::ShareCertificate, e))?;
+    Ok(())
+}
+
+#[tauri::command]
+pub async fn status(s: tauri::State<'_, AtomicAsyncWriter>) -> Result<(), String>
+{
+    let command = CommandEvent::build(
+        CommandType::Status, 
+        "{}");
+    let command = EventParser::serialize(&command).map_err(
+        |e| format!("Failed to serialize {} command: {}", CommandType::Status, e)
+    )?;
+    s.send(command).await.map_err(|e| format!("Failed to send {} command ({})", CommandType::Status, e))?;
+    Ok(())
+}
