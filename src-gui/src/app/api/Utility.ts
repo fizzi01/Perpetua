@@ -33,13 +33,13 @@ export function getEnumValue<T extends Record<string, string | number>>(
   enumType: T,
   name: string
 ): T[keyof T] | undefined {
-  // Converte snake_case in PascalCase
+  // Convert snake_case to PascalCase
   const pascalCase = name
     .split('_')
     .map(word => word.charAt(0).toUpperCase() + word.slice(1).toLowerCase())
     .join('');
   
-  // Cerca il valore nell'enum
+  // Search for the value in the enum
   for (const [key, value] of Object.entries(enumType)) {
     if (key === pascalCase) {
       return value as T[keyof T];
@@ -64,4 +64,15 @@ export function parseStreams(streams: Object): StreamType[] {
     }
   }
   return result;
+}
+
+/**
+ * Check if the given string is a valid IP address.
+ */                                                
+export function isValidIpAddress(ip: string): boolean {
+  const ipv4Regex = /^(?:(?:25[0-5]|2[0-4][0-9]|[01]?[0-9][0-9]?)\.){3}(?:25[0-5]|2[0-4][0-9]|[01]?[0-9][0-9]?)$/;
+  
+  const ipv6Regex = /^(?:[0-9a-fA-F]{1,4}:){7}[0-9a-fA-F]{1,4}$|^::(?:[0-9a-fA-F]{1,4}:){0,6}[0-9a-fA-F]{1,4}$|^[0-9a-fA-F]{1,4}::(?:[0-9a-fA-F]{1,4}:){0,5}[0-9a-fA-F]{1,4}$|^(?:[0-9a-fA-F]{1,4}:){1,6}:$/;
+  
+  return ipv4Regex.test(ip) || ipv6Regex.test(ip);
 }

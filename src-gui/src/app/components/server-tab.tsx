@@ -2,24 +2,23 @@ import { useState, useEffect, useRef} from 'react';
 import { Power, Settings, Users, Activity, Plus, Trash2, Key, Lock, MousePointer, Keyboard, Shield, Clipboard } from 'lucide-react';
 import { motion, AnimatePresence } from 'motion/react';
 import { InlineNotification, Notification } from './inline-notification';
+import { ClientInfoPopup } from './client-info-popup';
+import { CopyableBadge, abbreviateText } from './copyable-badge';
 
 import { useEventListeners } from '../hooks/useEventListeners';
-import { shareCertificate, startServer, stopServer } from '../api/Sender';
+import { useClientManagement } from '../hooks/useClientManagement';
+import { 
+  shareCertificate, 
+  startServer, stopServer, 
+  saveServerConfig, 
+  addClient as addClientCommand, removeClient as removeClientCommand, 
+  enableStream, disableStream} from '../api/Sender';
 import { listenCommand, listenGeneralEvent } from '../api/Listener';
-import { EventType, CommandType, ClientObj, StreamType, ServerStatus, OtpInfo} from '../api/Interface';
+import { EventType, CommandType, ClientObj, StreamType, ServerStatus, OtpInfo, ClientEditObj} from '../api/Interface';
 
 import { ServerTabProps } from '../commons/Tab'
-import { parseStreams } from '../api/Utility';
+import { parseStreams, isValidIpAddress } from '../api/Utility'
 import { listen } from '@tauri-apps/api/event';
-
-interface Client {
-  id: string;
-  name: string;
-  ip: string;
-  status: 'online' | 'offline';
-  position: 'top' | 'bottom' | 'left' | 'right';
-  connectedAt?: Date;
-}
 
 export function ServerTab({ onStatusChange, state }: ServerTabProps) {
   let previousState: ServerStatus | null = null;
@@ -39,17 +38,21 @@ export function ServerTab({ onStatusChange, state }: ServerTabProps) {
   const [otp, setOtp] = useState('');
   const [otpRequested, setOtpRequested] = useState(false);
   const [otpTimeout, setOtpTimeout] = useState(30);
-  const [acceptedClients, setAcceptedClients] = useState<Client[]>([]);
-  const [newClientName, setNewClientName] = useState('');
   const [newClientIp, setNewClientIp] = useState('');
   const [newClientPosition, setNewClientPosition] = useState<'top' | 'bottom' | 'left' | 'right'>('top');
-  const [connectedClients, setConnectedClients] = useState(0);
   const [uptime, setUptime] = useState(0);
   const [notifications, setNotifications] = useState<Notification[]>([]);
+  const [hoveredClientId, setHoveredClientId] = useState<string | null>(null);
+  const [showPopup, setShowPopup] = useState(false);
+  const [clientRect, setClientRect] = useState<DOMRect | null>(null);
 
+  const clientManager = useClientManagement();
   const listeners = useEventListeners('server-tab');
 
   const otpFocus = useRef<HTMLDivElement>(null);
+  const hoverTimeoutRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const closeTimeoutRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const saveOptionsTimeoutRef = useRef<ReturnType<typeof setTimeout> | null>(null);
 
   const addNotification = (type: Notification['type'], message: string, description?: string) => {
     const newNotification: Notification = {
@@ -92,7 +95,6 @@ export function ServerTab({ onStatusChange, state }: ServerTabProps) {
     return () => {
       clearInterval(uptimeInterval);
     };
-// }, [isRunning, acceptedClients, connectedClients, maxClients]);
   }, [isRunning]);
 
   useEffect(() => {
@@ -125,6 +127,7 @@ export function ServerTab({ onStatusChange, state }: ServerTabProps) {
   }, [state]);
 
   const handleClientConnected = (clientData: ClientObj, connected: boolean, notify: boolean = false) => {
+    console.log("Processing client connection event:", clientData, connected);
     if (notify) {
       addNotification(
         connected ? 'success' : 'warning', 
@@ -132,30 +135,7 @@ export function ServerTab({ onStatusChange, state }: ServerTabProps) {
         `${clientData.host_name ? clientData.host_name : clientData.ip_address} (${clientData.screen_position.toUpperCase()})`
       );
     }
-    // Map to Client interface
-    setAcceptedClients(prev => {
-      const existingClient = prev.find(c => c.id === clientData.uid);
-      console.log('Existing client:', existingClient);
-      if (existingClient) {
-        return prev.map(c =>
-          c.id === clientData.uid ? { ...c, status: connected ? 'online' : 'offline', connectedAt: connected ? new Date() : c.connectedAt } : c
-        );
-      } else {
-        console.log('Adding new client to acceptedClients');
-        const newClient: Client = {
-          id: clientData.uid,
-          name: clientData.host_name ? clientData.host_name : clientData.uid,
-          ip: clientData.ip_address,
-          status: connected ? 'online' : 'offline',
-          position: clientData.screen_position as 'top' | 'bottom' | 'left' | 'right', 
-        };
-        return [...prev, newClient];
-      }
-    });
-
-    setConnectedClients(prev => {
-      return connected ? prev + 1 : Math.max(prev - 1, 0);
-    });
+    clientManager.updateClientStatus(clientData, connected);
   };
 
   const handleClientEventListeners = () => {
@@ -164,7 +144,7 @@ export function ServerTab({ onStatusChange, state }: ServerTabProps) {
         let client_data = event.data as ClientObj;
         handleClientConnected(client_data, true, true);
       }).then(unlisten => {
-        listeners.addListener('client-connected', unlisten);
+        listeners.addListenerOnce('client-connected', unlisten);
       });
 
       listenGeneralEvent(EventType.ClientDisconnected, (event) => {
@@ -172,7 +152,7 @@ export function ServerTab({ onStatusChange, state }: ServerTabProps) {
         let client_data = event.data as ClientObj;
         handleClientConnected(client_data, false, true);
       }).then(unlisten => {
-        listeners.addListener('client-disconnected', unlisten);
+        listeners.addListenerOnce('client-disconnected', unlisten);
       });
   };
 
@@ -227,19 +207,18 @@ export function ServerTab({ onStatusChange, state }: ServerTabProps) {
       listeners.removeListener('client-connected');
       listeners.removeListener('client-disconnected');
 
-      // Setup one-time listener per lo stop del server
+      // Setup one-time listener
       listenCommand(EventType.CommandSuccess, CommandType.StopServer, (event) => {
         console.log(`Server stopped successfully: ${event.message}`);
         setIsRunning(false);
-        setAcceptedClients(prev => prev.map(c => ({ ...c, status: 'offline' })));
-        setConnectedClients(0);
+        clientManager.disconnectAll();
         setUptime(0);
         setOtp('');
         addNotification('warning', 'Server stopped');
         onStatusChange(false);
         setRunningPending(false);
         
-        // Auto-unlisten dopo la prima esecuzione
+        // Auto-unlisten
         listeners.removeListener('stop-server');
       }).then(unlisten => {
         listeners.addListener('stop-server', unlisten);
@@ -249,7 +228,7 @@ export function ServerTab({ onStatusChange, state }: ServerTabProps) {
         console.error('Error stopping server:', err);
         addNotification('error', 'Failed to stop server');
         setRunningPending(false);
-        // Cleanup listener in caso di errore
+        // Cleanup listener
         listeners.removeListener('stop-server');
       });
     }
@@ -258,20 +237,7 @@ export function ServerTab({ onStatusChange, state }: ServerTabProps) {
   const generateOtp = () => {
     if (otp !== '') return;
     if (otpRequested) return;
-    // const newOtp = Math.floor(100000 + Math.random() * 900000).toString();
-    // setOtp(newOtp);
-    // addNotification('success', 'OTP Generated', `Code: ${newOtp}`);
 
-    // setTimeout(() => {
-    //   setOtp('');
-    //   addNotification('info', 'OTP Expired');
-    // }, otpTimeout * 1000);
-
-    // // Scroll to the OTP display
-    // setTimeout(() => {
-    // otpFocus.current?.scrollIntoView({ behavior: 'smooth' });
-    // }, 5);
-    
     listenCommand(EventType.CommandSuccess, CommandType.ShareCertificate, (event) => {
       console.log(`Certificate shared successfully`, event);
       let result = event.data?.result as OtpInfo;
@@ -308,34 +274,134 @@ export function ServerTab({ onStatusChange, state }: ServerTabProps) {
   };
 
   const addClient = () => {
-    if (!newClientName || !newClientIp || !newClientPosition) {
+    if (!newClientIp || !newClientPosition) {
       addNotification('error', 'Missing information');
       return;
     }
 
-    const newClient: Client = {
-      id: Date.now().toString(),
-      name: newClientName,
-      ip: newClientIp,
-      status: 'offline',
-      position: newClientPosition,
-    };
+    let ip = isValidIpAddress(newClientIp) ? newClientIp : '';
+    let hostname = ip === '' ? newClientIp : '';
 
-    setAcceptedClients(prev => [...prev, newClient]);
-    setNewClientName('');
-    setNewClientIp('');
-    setNewClientPosition('top');
-    addNotification('success', `${newClientName} added`);
+    // Check if a client with the same IP or hostname already exists
+    let existing = clientManager.clients.find(c => ip !== '' ? c.ip === ip : hostname !== '' ? c.name === hostname : null);
+    if (existing) {
+      addNotification('error', 'Client already exists');
+      return;
+    }
+
+    listenCommand(EventType.CommandSuccess, CommandType.AddClient, (event) => {
+      console.log(`Client added successfully: ${event.message}`);
+      let result = event.data?.result as ClientEditObj;
+      if (result) {
+        addNotification('info', 'Client added', `${hostname || ip} (${newClientPosition.toUpperCase()})`);
+        setNewClientIp('');
+        setNewClientPosition('top');
+
+        clientManager.addClient(hostname, ip, newClientPosition);
+
+        listeners.removeListener('add-client');
+        listeners.removeListener('add-client-error');
+      }
+    }).then(unlisten => {
+        listeners.addListener('add-client', unlisten);
+    });
+
+    listenCommand(EventType.CommandError, CommandType.AddClient, (event) => {
+      addNotification('error', 'Failed to add client', event.data?.error || '');
+      listeners.removeListener('add-client-error');
+      listeners.removeListener('add-client');
+    }).then(unlisten => {
+        listeners.addListener('add-client-error', unlisten);
+    });
+    
+    addClientCommand(hostname, ip, newClientPosition).catch((err) => {
+      console.error('Error adding client:', err);
+      addNotification('error', err.toString());
+      listeners.forceRemoveListener('add-client');
+      listeners.forceRemoveListener('add-client-error');
+    });
+
   };
 
   const removeClient = (id: string) => {
-    const client = acceptedClients.find(c => c.id === id);
-    setAcceptedClients(prev => prev.filter(c => c.id !== id));
-    if (client?.status === 'online') {
-      setConnectedClients(prev => prev - 1);
-    }
-    addNotification('info', `${client?.name} removed`);
+    const client = clientManager.clients.find(c => c.id === id);
+
+    listenCommand(EventType.CommandSuccess, CommandType.RemoveClient, (event) => {
+      console.log(`Client removed successfully: ${event.message}`);
+      clientManager.removeClient(id);
+      addNotification('info', `${client?.name || client?.ip} removed`);
+      listeners.removeListener('remove-client');
+      listeners.removeListener('remove-client-error');
+    }).then(unlisten => {
+        listeners.addListener('remove-client', unlisten);
+    });
+
+    listenCommand(EventType.CommandError, CommandType.RemoveClient, (event) => {
+      addNotification('error', 'Failed to remove client', event.data?.error || '');
+      listeners.removeListener('remove-client-error');
+      listeners.removeListener('remove-client');
+    }).then(unlisten => {
+        listeners.addListener('remove-client-error', unlisten);
+    });
+
+    removeClientCommand(client?.name || '', client?.ip || '').catch((err) => {
+      console.error('Error removing client:', err);
+      addNotification('error', err.toString());
+      listeners.forceRemoveListener('remove-client');
+      listeners.forceRemoveListener('remove-client-error');
+    });
   };
+
+  const handleStreamToggle = (streamType: StreamType, enable: boolean, setState: React.Dispatch<React.SetStateAction<boolean>>) => {
+    if (enable) {
+      listenCommand(EventType.CommandSuccess, CommandType.EnableStream, (event) => {
+        console.log(`Stream enabled successfully: ${event.message}`);
+        setState(true);
+        listeners.removeListener('enable-stream-' + StreamType[streamType]);
+      }).then(unlisten => {
+          listeners.addListener('enable-stream-' + StreamType[streamType], unlisten);
+      });
+
+      listenCommand(EventType.CommandError, CommandType.EnableStream, (event) => {
+        addNotification('error', `Failed to enable ${StreamType[streamType]} stream`, event.data?.error || '');
+        setState(false);
+        listeners.removeListener('enable-stream-error-' + StreamType[streamType]);
+      }).then(unlisten => {
+          listeners.addListener('enable-stream-error-' + StreamType[streamType], unlisten);
+      });
+
+      enableStream(streamType).catch((err) => {
+        console.error(`Error enabling ${StreamType[streamType]} stream:`, err);
+        addNotification('error', `Failed to enable ${StreamType[streamType]} stream`);
+        listeners.forceRemoveListener('enable-stream-' + StreamType[streamType]);
+        listeners.forceRemoveListener('enable-stream-error-' + StreamType[streamType]);
+      });
+
+    } else {
+      listenCommand(EventType.CommandSuccess, CommandType.DisableStream, (event) => {
+        console.log(`Stream disabled successfully: ${event.message}`);
+        setState(false);
+        listeners.removeListener('disable-stream-' + StreamType[streamType]);
+      }).then(unlisten => {
+          listeners.addListener('disable-stream-' + StreamType[streamType], unlisten);
+      });
+
+      listenCommand(EventType.CommandError, CommandType.DisableStream, (event) => {
+        addNotification('error', `Failed to disable ${StreamType[streamType]} stream`, event.data?.error || '');
+        setState(true);
+        listeners.removeListener('disable-stream-error-' + StreamType[streamType]);
+      }).then(unlisten => {
+          listeners.addListener('disable-stream-error-' + StreamType[streamType], unlisten);
+      });
+
+      disableStream(streamType).catch((err) => {
+        console.error(`Error disabling ${StreamType[streamType]} stream:`, err);
+        addNotification('error', `Failed to disable ${StreamType[streamType]} stream`);
+        listeners.forceRemoveListener('disable-stream-' + StreamType[streamType]);
+        listeners.forceRemoveListener('disable-stream-error-' + StreamType[streamType]);
+      });
+    }
+  }
 
   const formatUptime = (seconds: number) => {
     const hours = Math.floor(seconds / 3600);
@@ -343,8 +409,113 @@ export function ServerTab({ onStatusChange, state }: ServerTabProps) {
     return `${hours}h ${minutes}m`;
   };
 
+  const handleSaveOptions = (hostValue: string, portValue: string, sslEnabledValue: boolean) => {
+    console.log('Saving options:', { host: hostValue, port: portValue, sslEnabled: sslEnabledValue});
+    
+    listenCommand(EventType.CommandSuccess, CommandType.SetServerConfig, (event) => {
+      console.log(`Server config saved successfully: ${event.message}`);
+      addNotification('success', 'Options saved');
+      listeners.removeListener('set-server-config');
+    }).then(unlisten => {
+        listeners.addListenerOnce('set-server-config', unlisten);
+    });
+    listenCommand(EventType.CommandError, CommandType.SetServerConfig, (event) => {
+      addNotification('error', 'Failed to save options', event.data?.error || '');
+      listeners.removeListener('set-server-config-error');
+    }).then(unlisten => {
+        listeners.addListenerOnce('set-server-config-error', unlisten);
+    });
+    
+    const portNum = parseInt(portValue, 10);
+    saveServerConfig(hostValue, portNum, sslEnabledValue).catch((err) => {
+      console.error('Error saving options:', err);
+      addNotification('error', 'Failed to save options');
+      listeners.forceRemoveListener('set-server-config');
+      listeners.forceRemoveListener('set-server-config-error');
+    });
+    
+  };
+
+  const scheduleOptionsSave = (hostValue: string, portValue: string, sslEnabledValue: boolean) => {
+    // Clear existing timeout
+    if (saveOptionsTimeoutRef.current) {
+      clearTimeout(saveOptionsTimeoutRef.current);
+    }
+    
+    // Schedule new save after 2 seconds of inactivity
+    saveOptionsTimeoutRef.current = setTimeout(() => {
+      handleSaveOptions(hostValue, portValue, sslEnabledValue);
+    }, 2000);
+  };
+
+  const handleClientMouseEnter = (clientId: string, event: React.MouseEvent<HTMLDivElement>) => {
+    // Don't show popup if hovering over interactive elements
+    const target = event.target as HTMLElement;
+    if (target.closest('button, a, input, select, textarea')) {
+      return;
+    }
+
+    // Delete any existing close timeout
+    if (closeTimeoutRef.current) {
+      clearTimeout(closeTimeoutRef.current);
+      closeTimeoutRef.current = null;
+    }
+
+    setHoveredClientId(clientId);
+    const rect = event.currentTarget.getBoundingClientRect();
+    setClientRect(rect);
+    // Show popup after 500ms
+    hoverTimeoutRef.current = setTimeout(() => {
+      setShowPopup(true);
+    }, 500);
+  };
+
+  const handleClientMouseLeave = () => {
+    // Clear the timeout if the user leaves before 500ms
+    if (hoverTimeoutRef.current) {
+      clearTimeout(hoverTimeoutRef.current);
+      hoverTimeoutRef.current = null;
+    }
+    
+    // Give the user time to enter the popup before closing it
+    closeTimeoutRef.current = setTimeout(() => {
+      setShowPopup(false);
+      setHoveredClientId(null);
+      setClientRect(null);
+    }, 200); // 200ms grace period to move the cursor into the popup
+  };
+
+  const handlePopupMouseEnter = () => {
+    // Clear the close timeout when the mouse enters the popup
+    if (closeTimeoutRef.current) {
+      clearTimeout(closeTimeoutRef.current);
+      closeTimeoutRef.current = null;
+    }
+    // Clear the hover timeout if present
+    if (hoverTimeoutRef.current) {
+      clearTimeout(hoverTimeoutRef.current);
+      hoverTimeoutRef.current = null;
+    }
+  };
+
+  const handlePopupMouseLeave = () => {
+    // Close the popup when the mouse leaves the popup
+    setShowPopup(false);
+    setHoveredClientId(null);
+    setClientRect(null);
+  };
+
   return (
     <div className="space-y-5">
+      {/* Client Info Popup - Rendered at top level */}
+      <ClientInfoPopup 
+        uid={clientManager.clients.find(c => c.id === hoveredClientId)?.uid}
+        show={showPopup && hoveredClientId !== null}
+        clientRect={clientRect || undefined}
+        onMouseEnter={handlePopupMouseEnter}
+        onMouseLeave={handlePopupMouseLeave}
+      />
+
       {/* Power Button */}
       <div className="flex flex-col items-center">
         <motion.button
@@ -405,6 +576,16 @@ export function ServerTab({ onStatusChange, state }: ServerTabProps) {
         >
           {runningPending ? '' : (isRunning ? 'Server Running' : 'Server Stopped')}
         </motion.p>
+        {/* Server UID - Compact and clickable */}
+        {isRunning && uid && (
+          <CopyableBadge
+            key={uid}
+            fullText={uid}
+            displayText={abbreviateText(uid)}
+            label="UID"
+            className="mt-2"
+          />
+        )}
       </div>
 
       {/* Inline Notifications */}
@@ -430,13 +611,13 @@ export function ServerTab({ onStatusChange, state }: ServerTabProps) {
           </div>
           <div className="flex-1">
             <motion.div 
-              key={connectedClients}
+              key={clientManager.connectedCount}
               initial={{ scale: 1.3 }}
               animate={{ scale: 1 }}
               className="text-xl font-bold"
               style={{ color: 'var(--app-text-primary)' }}
             >
-              {connectedClients}
+              {clientManager.connectedCount}
             </motion.div>
             <div className="text-xs" style={{ color: 'var(--app-text-muted)' }}>Connected</div>
           </div>
@@ -481,8 +662,7 @@ export function ServerTab({ onStatusChange, state }: ServerTabProps) {
             whileHover={{ scale: 1.05 }}
             whileTap={{ scale: 0.95 }}
             onClick={() => {
-              setEnableMouse(!enableMouse);
-              // addNotification('info', `Mouse control ${!enableMouse ? 'enabled' : 'disabled'}`);
+              handleStreamToggle(StreamType.Mouse, !enableMouse, setEnableMouse);
             }}
             className="flex items-center gap-2 px-3 py-2 rounded-lg transition-all cursor-pointer"
             style={{ 
@@ -498,8 +678,7 @@ export function ServerTab({ onStatusChange, state }: ServerTabProps) {
             whileHover={{ scale: 1.05 }}
             whileTap={{ scale: 0.95 }}
             onClick={() => {
-              setEnableKeyboard(!enableKeyboard);
-              // addNotification('info', `Keyboard control ${!enableKeyboard ? 'enabled' : 'disabled'}`);
+              handleStreamToggle(StreamType.Keyboard, !enableKeyboard, setEnableKeyboard);
             }}
             className="flex items-center gap-2 px-3 py-2 rounded-lg transition-all cursor-pointer"
             style={{ 
@@ -515,8 +694,7 @@ export function ServerTab({ onStatusChange, state }: ServerTabProps) {
             whileHover={{ scale: 1.05 }}
             whileTap={{ scale: 0.95 }}
             onClick={() => {
-              setEnableClipboard(!enableClipboard);
-              // addNotification('info', `Clipboard control ${!enableClipboard ? 'enabled' : 'disabled'}`);
+              handleStreamToggle(StreamType.Clipboard, !enableClipboard, setEnableClipboard);
             }}
             className="flex items-center gap-2 px-3 py-2 rounded-lg transition-all cursor-pointer"
             style={{
@@ -588,7 +766,7 @@ export function ServerTab({ onStatusChange, state }: ServerTabProps) {
             transition={{ duration: 0.3 }}
             className="overflow-hidden"
           >
-            <div className="space-y-4 p-4 rounded-lg border"
+            <div className="space-y-4 p-4 rounded-lg border overflow-visible"
               style={{ 
                 backgroundColor: 'var(--app-card-bg)',
                 borderColor: 'var(--app-card-border)'
@@ -602,7 +780,7 @@ export function ServerTab({ onStatusChange, state }: ServerTabProps) {
               </h3>
               
               <div className="space-y-2">
-                <input
+                {/* <input
                   type="text"
                   placeholder="Client name"
                   value={newClientName}
@@ -615,10 +793,10 @@ export function ServerTab({ onStatusChange, state }: ServerTabProps) {
                   }}
                   onFocus={(e) => e.currentTarget.style.borderColor = 'var(--app-primary)'}
                   onBlur={(e) => e.currentTarget.style.borderColor = 'var(--app-input-border)'}
-                />
+                /> */}
                 <input
                   type="text"
-                  placeholder="IP Address"
+                  placeholder="IP Address or Hostname"
                   value={newClientIp}
                   onChange={(e) => setNewClientIp(e.target.value)}
                   className="w-full p-3 rounded-lg focus:outline-none transition-colors"
@@ -664,7 +842,7 @@ export function ServerTab({ onStatusChange, state }: ServerTabProps) {
               </div>
 
               <div className="space-y-2 max-h-60 overflow-y-auto">
-                {acceptedClients.map(client => (
+                {clientManager.clients.map(client => (
                   <motion.div
                     key={client.id}
                     initial={{ opacity: 0, x: -20 }}
@@ -676,7 +854,7 @@ export function ServerTab({ onStatusChange, state }: ServerTabProps) {
                       borderColor: client.status === 'online' ? 'var(--app-success)' : 'var(--app-input-border)'
                     }}
                   >
-                    <div>
+                  <div>
                       <p className="font-semibold"
                         style={{ color: 'var(--app-text-primary)' }}
                       >{client.name}</p>
@@ -685,22 +863,35 @@ export function ServerTab({ onStatusChange, state }: ServerTabProps) {
                       >{client.ip}</p>
                     </div>
                     <div className="flex items-center gap-2">
-                      <span className="px-2 py-1 text-xs rounded"
-                        style={{ 
-                          backgroundColor: client.status === 'offline' ? 'var(--app-bg-tertiary)' : 'var(--app-input-bg)',
-                          color: 'var(--app-primary-light)' 
-                        }}
-                      >
-                        {client.position.charAt(0).toUpperCase() + client.position.slice(1)}
-                      </span>
-                      <span className="px-2 py-1 rounded text-xs"
-                        style={{
-                          backgroundColor: client.status === 'online' ? 'var(--app-success-bg)' : 'var(--app-bg-tertiary)',
-                          color: client.status === 'online' ? 'var(--app-success)' : 'var(--app-text-muted)'
-                        }}
-                      >
-                        {client.status}
-                      </span>
+                      <div className="flex flex-col items-center gap-2">
+                        <div className="flex items-center gap-2">
+                          <span className="px-2 py-1 text-xs rounded"
+                            style={{ 
+                              backgroundColor: client.status === 'offline' ? 'var(--app-bg-tertiary)' : 'var(--app-input-bg)',
+                              color: 'var(--app-primary-light)' 
+                            }}
+                          >
+                            {client.position.charAt(0).toUpperCase() + client.position.slice(1)}
+                          </span>
+                          <span className="px-2 py-1 rounded text-xs"
+                            style={{
+                              backgroundColor: client.status === 'online' ? 'var(--app-success-bg)' : 'var(--app-bg-tertiary)',
+                              color: client.status === 'online' ? 'var(--app-success)' : 'var(--app-text-muted)'
+                            }}
+                          >
+                            {client.status}
+                          </span>
+                        </div>
+                        { client.uid && (
+                          <CopyableBadge
+                            key={client.uid}
+                            fullText={client.uid}
+                            displayText={abbreviateText(client.uid, 2, 2)}
+                            label=""
+                            titleText={`Click to copy Client UID: ${client.uid}`}
+                          />
+                        ) }
+                      </div>
                       <motion.button
                         whileHover={{ scale: 1.1 }}
                         whileTap={{ scale: 0.9 }}
@@ -758,6 +949,7 @@ export function ServerTab({ onStatusChange, state }: ServerTabProps) {
                     onChange={(e) => {
                       if (otp !== '' || otpRequested) return;
                       setRequireSSL(e.target.checked);
+                      handleSaveOptions(host, port, e.target.checked);
                     }}
                     className="w-5 h-5 cursor-pointer"
                     style={{ accentColor: 'var(--app-primary)' }}
@@ -845,7 +1037,11 @@ export function ServerTab({ onStatusChange, state }: ServerTabProps) {
                 <input
                   type="text"
                   value={host}
-                  onChange={(e) => setHost(e.target.value)}
+                  onChange={(e) => {
+                    const newHost = e.target.value;
+                    setHost(newHost);
+                    scheduleOptionsSave(newHost, port, requireSSL);
+                  }}
                   className="w-full p-3 rounded-lg focus:outline-none transition-colors disabled:opacity-50 disabled:cursor-not-allowed"
                   style={{
                     backgroundColor: 'var(--app-input-bg)',
@@ -865,7 +1061,11 @@ export function ServerTab({ onStatusChange, state }: ServerTabProps) {
                 <input
                   type="text"
                   value={port}
-                  onChange={(e) => setPort(e.target.value)}
+                  onChange={(e) => {
+                    const newPort = e.target.value;
+                    setPort(newPort);
+                    scheduleOptionsSave(host, newPort, requireSSL);
+                  }}
                   className="w-full p-3 rounded-lg focus:outline-none transition-colors disabled:opacity-50 disabled:cursor-not-allowed"
                   style={{
                     backgroundColor: 'var(--app-input-bg)',
@@ -885,7 +1085,9 @@ export function ServerTab({ onStatusChange, state }: ServerTabProps) {
                 <input
                   type="number"
                   value={otpTimeout}
-                  onChange={(e) => setOtpTimeout(parseInt(e.target.value))}
+                  onChange={(e) => {
+                    setOtpTimeout(parseInt(e.target.value));
+                  }}
                   className="w-full p-3 rounded-lg focus:outline-none transition-colors"
                   style={{
                     backgroundColor: 'var(--app-input-bg)',

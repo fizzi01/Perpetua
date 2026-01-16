@@ -44,7 +44,7 @@ export default function App() {
           }
           listeners.removeListener('status');
         }).then((unlisten) => {
-            listeners.addListener('status', () => {
+            listeners.addListenerOnce('status', () => {
               console.log('Removing status listener');
               unlisten();
               setListenersAdded(false);
@@ -74,7 +74,7 @@ export default function App() {
             }
             listeners.removeListener('service-choice');
           }).then((unlisten) => {
-              listeners.addListener('service-choice', unlisten);
+              listeners.addListenerOnce('service-choice', unlisten);
           });
 
           chooseService(newMode).catch((err) => {

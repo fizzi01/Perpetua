@@ -1,4 +1,5 @@
 // src/app/hooks/useEventListeners.ts
+import { add } from 'date-fns';
 import { useRef, useCallback, useEffect } from 'react';
 
 type UnlistenFn = () => void;
@@ -18,6 +19,17 @@ export function useEventListeners(id: string = 'global') {
   const addListeners = useCallback((key: string, count: number, unlistenFn: UnlistenFn) => {
     for (let i = 0; i < count; i++) {
       addListener(key, unlistenFn);
+    }
+  }, []);
+
+  const addListenerOnce = useCallback((key: string, unlistenFn: UnlistenFn) => {
+    if (!listenersRef.current.has(key)) {
+      addListener(key, unlistenFn);
+      console.log(`Listener "${key}" added once with ref count 1`);
+    } else {
+      console.log(`Listener "${key}" already exists`);
+      // unlisten current one
+      unlistenFn();
     }
   }, []);
 
@@ -91,6 +103,7 @@ export function useEventListeners(id: string = 'global') {
   return {
     addListeners,
     addListener,
+    addListenerOnce,
     removeListener,
     forceRemoveListener,
     removeAll,

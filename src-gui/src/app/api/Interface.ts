@@ -174,6 +174,14 @@ export interface ClientObj {
   ssl: boolean;
   streams_enabled: number[];
   is_connected: boolean;
+  first_connection_date: string;
+  last_connection_date: string;
+}
+
+export interface ClientEditObj {
+  hostname?: string;
+  ip_address?: string;
+  screen_position?: string;
 }
 
 export interface ServerStatus {

@@ -41,9 +41,15 @@ pub fn run() {
             commands::start_server, 
             commands::stop_server,
             commands::share_certificate,
+            commands::add_client,
+            commands::remove_client,
+            commands::set_server_config,
             // -- General Commands --
             commands::status,
             commands::service_choice, 
+            // -- Stream Commands --
+            commands::enable_stream,
+            commands::disable_stream,
             ])
         .setup(|app| {
             let app_handle = app.handle().clone();
@@ -69,25 +75,6 @@ pub fn run() {
             .title_bar_style(TitleBarStyle::Overlay).traffic_light_position(Position::Physical(PhysicalPosition { x: 30, y: 50 }));
 
             win_builder.build().unwrap();
-
-            // set background color only when building for macOS
-            // #[cfg(target_os = "macos")]
-            // {
-            //     use objc2_app_kit::{NSColor, NSWindow};
-            //     use objc2::rc::Retained;
-            //     use objc2::runtime::AnyObject;
-
-            //     let ns_window = window.ns_window().unwrap() as *mut AnyObject;
-            //     let ns_window: Retained<NSWindow> = unsafe { Retained::retain(ns_window as *mut NSWindow).unwrap() };
-                
-            //     let bg_color = NSColor::colorWithRed_green_blue_alpha(
-            //         15.0 / 255.0,
-            //         23.0 / 255.0,
-            //         42.0 / 255.0,
-            //         1.0,
-            //     );
-            //     ns_window.setBackgroundColor(Some(&bg_color));
-            // }
 
             Ok(())
         })
