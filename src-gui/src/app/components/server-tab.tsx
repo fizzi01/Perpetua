@@ -18,7 +18,6 @@ import { EventType, CommandType, ClientObj, StreamType, ServerStatus, OtpInfo, C
 
 import { ServerTabProps } from '../commons/Tab'
 import { parseStreams, isValidIpAddress } from '../api/Utility'
-import { listen } from '@tauri-apps/api/event';
 
 export function ServerTab({ onStatusChange, state }: ServerTabProps) {
   let previousState: ServerStatus | null = null;
@@ -448,42 +447,42 @@ export function ServerTab({ onStatusChange, state }: ServerTabProps) {
     }, 2000);
   };
 
-  const handleClientMouseEnter = (clientId: string, event: React.MouseEvent<HTMLDivElement>) => {
-    // Don't show popup if hovering over interactive elements
-    const target = event.target as HTMLElement;
-    if (target.closest('button, a, input, select, textarea')) {
-      return;
-    }
+  // const handleClientMouseEnter = (clientId: string, event: React.MouseEvent<HTMLDivElement>) => {
+  //   // Don't show popup if hovering over interactive elements
+  //   const target = event.target as HTMLElement;
+  //   if (target.closest('button, a, input, select, textarea')) {
+  //     return;
+  //   }
 
-    // Delete any existing close timeout
-    if (closeTimeoutRef.current) {
-      clearTimeout(closeTimeoutRef.current);
-      closeTimeoutRef.current = null;
-    }
+  //   // Delete any existing close timeout
+  //   if (closeTimeoutRef.current) {
+  //     clearTimeout(closeTimeoutRef.current);
+  //     closeTimeoutRef.current = null;
+  //   }
 
-    setHoveredClientId(clientId);
-    const rect = event.currentTarget.getBoundingClientRect();
-    setClientRect(rect);
-    // Show popup after 500ms
-    hoverTimeoutRef.current = setTimeout(() => {
-      setShowPopup(true);
-    }, 500);
-  };
+  //   setHoveredClientId(clientId);
+  //   const rect = event.currentTarget.getBoundingClientRect();
+  //   setClientRect(rect);
+  //   // Show popup after 500ms
+  //   hoverTimeoutRef.current = setTimeout(() => {
+  //     setShowPopup(true);
+  //   }, 500);
+  // };
 
-  const handleClientMouseLeave = () => {
-    // Clear the timeout if the user leaves before 500ms
-    if (hoverTimeoutRef.current) {
-      clearTimeout(hoverTimeoutRef.current);
-      hoverTimeoutRef.current = null;
-    }
+  // const handleClientMouseLeave = () => {
+  //   // Clear the timeout if the user leaves before 500ms
+  //   if (hoverTimeoutRef.current) {
+  //     clearTimeout(hoverTimeoutRef.current);
+  //     hoverTimeoutRef.current = null;
+  //   }
     
-    // Give the user time to enter the popup before closing it
-    closeTimeoutRef.current = setTimeout(() => {
-      setShowPopup(false);
-      setHoveredClientId(null);
-      setClientRect(null);
-    }, 200); // 200ms grace period to move the cursor into the popup
-  };
+  //   // Give the user time to enter the popup before closing it
+  //   closeTimeoutRef.current = setTimeout(() => {
+  //     setShowPopup(false);
+  //     setHoveredClientId(null);
+  //     setClientRect(null);
+  //   }, 200); // 200ms grace period to move the cursor into the popup
+  // };
 
   const handlePopupMouseEnter = () => {
     // Clear the close timeout when the mouse enters the popup

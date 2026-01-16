@@ -4,5 +4,3 @@
 fn main() {
     perpetua_lib::run()
 }
-
-

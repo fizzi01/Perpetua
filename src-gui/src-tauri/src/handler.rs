@@ -1,8 +1,8 @@
-use tauri::{AppHandle,Emitter, Runtime};
+use ipc::event::TypeToString;
 use ipc::{EventType, NotificationEvent};
-use ipc::event::{TypeToString};
+use tauri::{AppHandle, Emitter, Runtime};
 
-pub trait Handable{
+pub trait Handable {
     fn handle<R: Runtime>(&self, app: &AppHandle<R>);
 }
 
@@ -22,17 +22,14 @@ impl Handable for EventHandler {
             EventType::Pong => {
                 // Silently ignore pong events
             }
-            _ => {
-                match self.event.event_type.to_string() {
-                    Ok(event_type) => {
-                        app.emit(&event_type, &self.event).unwrap();
-                    }
-                    Err(e) => {
-                        println!("Failed to convert event type to string ({:?})", e);
-                    }
-                } 
-                
-            }
+            _ => match self.event.event_type.to_string() {
+                Ok(event_type) => {
+                    app.emit(&event_type, &self.event).unwrap();
+                }
+                Err(e) => {
+                    println!("Failed to convert event type to string ({:?})", e);
+                }
+            },
         }
     }
 }

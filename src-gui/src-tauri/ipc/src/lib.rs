@@ -1,12 +1,12 @@
-use tokio_stream::StreamExt;
-use futures::{sink::SinkExt};
-use tokio::time::{Duration, timeout};
-use tokio_util::codec::{FramedRead, FramedWrite, LinesCodecError, Decoder, Encoder};
-use tokio::sync::{Mutex, MutexGuard};
 use bytes::{Buf, BufMut, BytesMut};
+use futures::sink::SinkExt;
+use log;
 use std::sync::Arc;
 use std::{cmp, io, str};
-use log;
+use tokio::sync::{Mutex, MutexGuard};
+use tokio::time::{Duration, timeout};
+use tokio_stream::StreamExt;
+use tokio_util::codec::{Decoder, Encoder, FramedRead, FramedWrite, LinesCodecError};
 
 #[cfg(unix)]
 use tokio::net::unix::{OwnedReadHalf, OwnedWriteHalf};
@@ -17,8 +17,8 @@ use tokio::net::tcp::{OwnedReadHalf, OwnedWriteHalf};
 pub mod connection;
 pub mod event;
 
-pub use event::{Parser, EventParser};
-pub use event::{EventType, NotificationEvent, CommandEvent};
+pub use event::{CommandEvent, EventType, NotificationEvent};
+pub use event::{EventParser, Parser};
 
 pub struct EventLinesCodec {
     // Stored index of the next index to examine for a `\n` character.
@@ -46,15 +46,11 @@ impl EventLinesCodec {
             is_discarding: false,
         }
     }
-
-
-
 }
 
 fn utf8(buf: &[u8]) -> Result<&str, io::Error> {
     str::from_utf8(buf)
-        .map_err(|_| {
-            io::Error::new(io::ErrorKind::InvalidData, "Unable to decode input as UTF8")})
+        .map_err(|_| io::Error::new(io::ErrorKind::InvalidData, "Unable to decode input as UTF8"))
 }
 
 fn without_carriage_return(s: &[u8]) -> &[u8] {
@@ -107,7 +103,7 @@ impl Decoder for EventLinesCodec {
                     let line = &line[..line.len() - 1];
                     // Validate the line by reading the last 4 bytes to extract the length prefix
                     let len_prefix = &line[line.len() - 4..];
-                    
+
                     // Get the actual line content excluding the length prefix and newline
                     let line = &line[..line.len() - 4];
                     // Now check if the length prefix matches the actual line length
@@ -163,21 +159,19 @@ where
     }
 }
 
-
 #[derive(Clone)]
 pub struct AtomicAsyncWriter {
     inner: Arc<Mutex<FramedWrite<OwnedWriteHalf, EventLinesCodec>>>,
 }
 
 impl AtomicAsyncWriter {
-    pub fn new(stream: OwnedWriteHalf) -> Self
-    {
+    pub fn new(stream: OwnedWriteHalf) -> Self {
         AtomicAsyncWriter {
             inner: Arc::new(Mutex::new(FramedWrite::new(stream, EventLinesCodec::new()))),
         }
     }
 
-    pub async fn lock(&self) -> MutexGuard<'_, FramedWrite<OwnedWriteHalf, EventLinesCodec>>{
+    pub async fn lock(&self) -> MutexGuard<'_, FramedWrite<OwnedWriteHalf, EventLinesCodec>> {
         self.inner.lock().await
     }
 
@@ -190,7 +184,10 @@ impl AtomicAsyncWriter {
     pub async fn send(&self, line: String) -> tokio::io::Result<()> {
         let mut writer = self.lock().await;
         writer.send(line).await.map_err(|e| {
-            tokio::io::Error::new(tokio::io::ErrorKind::Other, format!("Failed to send line ({})", e))
+            tokio::io::Error::new(
+                tokio::io::ErrorKind::Other,
+                format!("Failed to send line ({})", e),
+            )
         })
     }
 }
@@ -201,7 +198,7 @@ pub struct AtomicAsyncReader {
 }
 
 impl AtomicAsyncReader {
-    pub async fn lock(&self) -> MutexGuard<'_, FramedRead<OwnedReadHalf, EventLinesCodec>>{
+    pub async fn lock(&self) -> MutexGuard<'_, FramedRead<OwnedReadHalf, EventLinesCodec>> {
         self.inner.lock().await
     }
 
@@ -210,7 +207,7 @@ impl AtomicAsyncReader {
             inner: Arc::clone(&self.inner),
         }
     }
-    
+
     pub async fn read_line(&self, t: &Duration) -> tokio::io::Result<Option<String>> {
         let mut reader = self.lock().await;
 
@@ -218,13 +215,15 @@ impl AtomicAsyncReader {
             Err(_) => {
                 // Timeout occurred
                 Ok(None)
-            },
+            }
             Ok(result) => match result {
                 Some(Ok(line)) => Ok(Some(line)),
-                Some(Err(e)) => {
-                    Err(tokio::io::Error::new(tokio::io::ErrorKind::Other, format!("Failed to read line ({})", e)))},
+                Some(Err(e)) => Err(tokio::io::Error::new(
+                    tokio::io::ErrorKind::Other,
+                    format!("Failed to read line ({})", e),
+                )),
                 None => Ok(None),
-            }
+            },
         }
     }
 }
@@ -235,9 +234,7 @@ pub struct AsyncWriter {
 }
 
 impl AsyncWriter {
-
-    pub fn new(stream: OwnedWriteHalf) -> Self
-    {
+    pub fn new(stream: OwnedWriteHalf) -> Self {
         AsyncWriter {
             writer: AtomicAsyncWriter::new(stream),
         }
@@ -257,13 +254,10 @@ impl AsyncWriter {
 #[derive(Clone)]
 pub struct AsyncReader {
     reader: AtomicAsyncReader,
-
 }
 
 impl AsyncReader {
-
-    pub fn new(stream: OwnedReadHalf) -> Self
-    {
+    pub fn new(stream: OwnedReadHalf) -> Self {
         AsyncReader {
             reader: AtomicAsyncReader {
                 inner: Arc::new(Mutex::new(FramedRead::new(stream, EventLinesCodec::new()))),
@@ -284,18 +278,20 @@ impl AsyncReader {
 
 pub trait DataListener {
     /// Send a ping message to check connection
-    fn ping(&self) -> impl Future<Output =tokio::io::Result<()>>;
+    fn ping(&self) -> impl Future<Output = tokio::io::Result<()>>;
 
     /// Listen for incoming messages and invoke the callback for each message received
     /// ### Arguments
     /// * `callback` - A closure that will be called with each received message
     /// * `t` - Duration to wait for messages before timing out
-    fn listen<F>(&mut self, callback: F, t: &Duration) -> impl Future<Output =tokio::io::Result<()>>
+    fn listen<F>(
+        &mut self,
+        callback: F,
+        t: &Duration,
+    ) -> impl Future<Output = tokio::io::Result<()>>
     where
         F: FnMut(NotificationEvent);
-
 }
-
 
 pub struct ConnectionHandler {
     reader: AsyncReader,
@@ -305,7 +301,11 @@ pub struct ConnectionHandler {
 
 impl ConnectionHandler {
     pub fn new(reader: AsyncReader, writer: AsyncWriter) -> Self {
-        ConnectionHandler { reader, writer, running: false }
+        ConnectionHandler {
+            reader,
+            writer,
+            running: false,
+        }
     }
 
     pub fn get_writer(&self) -> &AsyncWriter {
@@ -315,7 +315,7 @@ impl ConnectionHandler {
     pub fn get_reader(&self) -> &AsyncReader {
         &self.reader
     }
-    
+
     pub fn is_running(&self) -> bool {
         self.running
     }
@@ -330,11 +330,16 @@ impl ConnectionHandler {
 }
 
 impl DataListener for ConnectionHandler {
-
     async fn ping(&self) -> tokio::io::Result<()> {
-        self.writer.write_line("{\"command\": \"ping\"}").await.map_err(|e| {
-            tokio::io::Error::new(tokio::io::ErrorKind::Other, format!("Failed to send ping ({})", e))
-        })
+        self.writer
+            .write_line("{\"command\": \"ping\"}")
+            .await
+            .map_err(|e| {
+                tokio::io::Error::new(
+                    tokio::io::ErrorKind::Other,
+                    format!("Failed to send ping ({})", e),
+                )
+            })
     }
 
     async fn listen<F>(&mut self, mut callback: F, t: &Duration) -> tokio::io::Result<()>
@@ -353,7 +358,7 @@ impl DataListener for ConnectionHandler {
                         }
                     };
                     callback(parsed_event);
-                },
+                }
                 Ok(None) => {
                     // Try to send a ping to check connection
                     // If it fails, we assume the connection is closed
@@ -361,7 +366,7 @@ impl DataListener for ConnectionHandler {
                         self.running = false;
                         return Err(e);
                     }
-                },
+                }
                 Err(e) => {
                     return Err(e);
                 }
@@ -371,12 +376,11 @@ impl DataListener for ConnectionHandler {
     }
 }
 
-
 #[cfg(test)]
 mod tests {
-    use crate::connection::{connect, ConnectionError};
-    use tokio::time::{Duration};
     use super::{ConnectionHandler, DataListener};
+    use crate::connection::{ConnectionError, connect};
+    use tokio::time::Duration;
 
     #[tokio::test]
     async fn test_connection_handler_and_connectio() {
@@ -388,23 +392,30 @@ mod tests {
                 handler.send_message(test_message).await.unwrap();
 
                 // Test listening for messages
-                if let Err(e) = handler.listen(|msg| {
-                    dbg!(msg);
-                }, &Duration::from_secs(1)).await {
+                if let Err(e) = handler
+                    .listen(
+                        |msg| {
+                            dbg!(msg);
+                        },
+                        &Duration::from_secs(1),
+                    )
+                    .await
+                {
                     println!("Error while listening: {}\n", e);
                     assert!(false, "Listening failed");
                 }
 
                 println!("Connection established successfully.\n");
-
             }
             Err(e) => {
                 // Since there's no server running, we expect a timeout or connection error.
                 println!("Connection error: {}\n", e);
-                assert!(matches!(e, ConnectionError::Timeout | ConnectionError::Io(_)));
+                assert!(matches!(
+                    e,
+                    ConnectionError::Timeout | ConnectionError::Io(_)
+                ));
             }
         }
         println!("Test completed.\n");
     }
-    
 }

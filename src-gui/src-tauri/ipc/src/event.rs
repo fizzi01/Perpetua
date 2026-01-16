@@ -1,18 +1,19 @@
 use std::fmt::Display;
 
-use serde_json::{Value};
 use serde::{Deserialize, Serialize};
+use serde_json::Value;
 
 pub trait Event: Serialize + for<'de> Deserialize<'de> {}
 pub trait Type: for<'de> Deserialize<'de> {}
 
-pub trait TypeToString 
-where Self: Type
+pub trait TypeToString
+where
+    Self: Type,
 {
     fn to_string(&self) -> Result<&'static str, serde_variant::UnsupportedType>;
 }
 
-#[derive(Serialize, Deserialize, Debug,Clone, PartialEq)]
+#[derive(Serialize, Deserialize, Debug, Clone, PartialEq)]
 #[serde(rename_all = "snake_case")]
 pub enum EventType {
     // Service lifecycle events
@@ -106,7 +107,7 @@ pub enum EventType {
     CommandError,
 
     #[serde(other)]
-    Other
+    Other,
 }
 
 impl Type for EventType {}
@@ -191,7 +192,8 @@ impl TypeToString for CommandType {
 }
 
 impl Display for CommandType
-where Self: TypeToString
+where
+    Self: TypeToString,
 {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         match TypeToString::to_string(self) {
@@ -241,7 +243,7 @@ pub struct EventParser;
 pub trait Parser<'a, T>
 where
     T: Event,
-    {
+{
     /// Parse a JSON string into an event of type T.
     fn parse_json(input: &'a str) -> Result<T, serde_json::Error>;
 
@@ -254,9 +256,8 @@ where
     }
 }
 
-impl<'a,T: Event> Parser<'a, T> for EventParser {
-    fn parse_json(input: &'a str) -> Result<T, serde_json::Error>
-     {
+impl<'a, T: Event> Parser<'a, T> for EventParser {
+    fn parse_json(input: &'a str) -> Result<T, serde_json::Error> {
         match serde_json::from_str::<T>(input) {
             Ok(event) => Ok(event),
             Err(e) => Err(e),
@@ -264,8 +265,9 @@ impl<'a,T: Event> Parser<'a, T> for EventParser {
     }
 
     fn serialize(event: &T) -> Result<String, serde_json::Error>
-        where
-            T: Serialize, {
+    where
+        T: Serialize,
+    {
         serde_json::to_string(event)
     }
 }

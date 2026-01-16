@@ -1,5 +1,5 @@
-use ipc::{AtomicAsyncWriter};
 use ipc::event::{CommandEvent, CommandType, EventParser, Parser};
+use ipc::AtomicAsyncWriter;
 
 /**
  * Helper function to handle optional string parameters
@@ -13,47 +13,74 @@ fn handle_string_param(param: String) -> String {
 }
 
 #[tauri::command]
-pub async fn service_choice(service: String, s: tauri::State<'_, AtomicAsyncWriter>) -> Result<(), String>
-{
+pub async fn service_choice(
+    service: String,
+    s: tauri::State<'_, AtomicAsyncWriter>,
+) -> Result<(), String> {
     let command = CommandEvent::build(
-        CommandType::ServiceChoice, 
-        &format!(r#"{{ "service": {} }}"#, handle_string_param(service)));
-    let command = EventParser::serialize(&command).map_err(
-        |e| format!("Failed to serialize {} command: {}", CommandType::ServiceChoice, e)
-    )?;
-    s.send(command).await.map_err(|e| format!("Failed to send {} command ({})", CommandType::ServiceChoice, e))?;
+        CommandType::ServiceChoice,
+        &format!(r#"{{ "service": {} }}"#, handle_string_param(service)),
+    );
+    let command = EventParser::serialize(&command).map_err(|e| {
+        format!(
+            "Failed to serialize {} command: {}",
+            CommandType::ServiceChoice,
+            e
+        )
+    })?;
+    s.send(command).await.map_err(|e| {
+        format!(
+            "Failed to send {} command ({})",
+            CommandType::ServiceChoice,
+            e
+        )
+    })?;
     Ok(())
 }
 
 #[tauri::command]
-pub async fn start_server(s: tauri::State<'_, AtomicAsyncWriter>) -> Result<(), String>
-{
-    let command = CommandEvent::build(
-        CommandType::StartServer, 
-        "{}");
-    let command = EventParser::serialize(&command).map_err(
-        |e| format!("Failed to serialize {} command: {}", CommandType::StartServer, e)
-    )?;
-    s.send(command).await.map_err(|e| format!("Failed to send {} command ({})", CommandType::StartServer, e))?;
+pub async fn start_server(s: tauri::State<'_, AtomicAsyncWriter>) -> Result<(), String> {
+    let command = CommandEvent::build(CommandType::StartServer, "{}");
+    let command = EventParser::serialize(&command).map_err(|e| {
+        format!(
+            "Failed to serialize {} command: {}",
+            CommandType::StartServer,
+            e
+        )
+    })?;
+    s.send(command).await.map_err(|e| {
+        format!(
+            "Failed to send {} command ({})",
+            CommandType::StartServer,
+            e
+        )
+    })?;
     Ok(())
 }
 
 #[tauri::command]
-pub async fn stop_server(s: tauri::State<'_, AtomicAsyncWriter>) -> Result<(), String>
-{
-    let command = CommandEvent::build(
-        CommandType::StopServer, 
-        "{}");
-    let command = EventParser::serialize(&command).map_err(
-        |e| format!("Failed to serialize {} command: {}", CommandType::StopServer, e)
-    )?;
-    s.send(command).await.map_err(|e| format!("Failed to send {} command ({})", CommandType::StopServer, e))?;
+pub async fn stop_server(s: tauri::State<'_, AtomicAsyncWriter>) -> Result<(), String> {
+    let command = CommandEvent::build(CommandType::StopServer, "{}");
+    let command = EventParser::serialize(&command).map_err(|e| {
+        format!(
+            "Failed to serialize {} command: {}",
+            CommandType::StopServer,
+            e
+        )
+    })?;
+    s.send(command)
+        .await
+        .map_err(|e| format!("Failed to send {} command ({})", CommandType::StopServer, e))?;
     Ok(())
 }
 
 #[tauri::command]
-pub async fn add_client(hostname: String, ip_address: String, screen_position: String, s: tauri::State<'_, AtomicAsyncWriter>) -> Result<(), String>
-{
+pub async fn add_client(
+    hostname: String,
+    ip_address: String,
+    screen_position: String,
+    s: tauri::State<'_, AtomicAsyncWriter>,
+) -> Result<(), String> {
     if hostname.is_empty() && ip_address.is_empty() {
         return Err("Either hostname or ip address must be provided".to_string());
     }
@@ -61,108 +88,183 @@ pub async fn add_client(hostname: String, ip_address: String, screen_position: S
     if screen_position.is_empty() {
         return Err("Screen position must be provided".to_string());
     }
-    
+
     let command = CommandEvent::build(
-        CommandType::AddClient, 
+        CommandType::AddClient,
         &format!(
-            r#"{{ "hostname": {}, "ip_address": {}, "screen_position": {} }}"#, 
-            handle_string_param(hostname), 
-            handle_string_param(ip_address), 
-            handle_string_param(screen_position))
-        );
+            r#"{{ "hostname": {}, "ip_address": {}, "screen_position": {} }}"#,
+            handle_string_param(hostname),
+            handle_string_param(ip_address),
+            handle_string_param(screen_position)
+        ),
+    );
 
-    let command = EventParser::serialize(&command).map_err(
-        |e| format!("Failed to serialize {} command: {}", CommandType::AddClient, e)
-    )?;
+    let command = EventParser::serialize(&command).map_err(|e| {
+        format!(
+            "Failed to serialize {} command: {}",
+            CommandType::AddClient,
+            e
+        )
+    })?;
 
-    s.send(command).await.map_err(|e| format!("Failed to send {} command ({})", CommandType::AddClient, e))?;
+    s.send(command)
+        .await
+        .map_err(|e| format!("Failed to send {} command ({})", CommandType::AddClient, e))?;
     Ok(())
 }
 
 #[tauri::command]
-pub async fn remove_client(hostname: String, ip_address: String, s: tauri::State<'_, AtomicAsyncWriter>) -> Result<(), String>
-{
+pub async fn remove_client(
+    hostname: String,
+    ip_address: String,
+    s: tauri::State<'_, AtomicAsyncWriter>,
+) -> Result<(), String> {
     if hostname.is_empty() && ip_address.is_empty() {
         return Err("Either hostname or ip address must be provided".to_string());
     }
-    
+
     let command = CommandEvent::build(
-        CommandType::RemoveClient, 
+        CommandType::RemoveClient,
         &format!(
-            r#"{{ "hostname": {}, "ip_address": {} }}"#, 
+            r#"{{ "hostname": {}, "ip_address": {} }}"#,
             handle_string_param(hostname),
             handle_string_param(ip_address)
-        )
+        ),
     );
-    let command = EventParser::serialize(&command).map_err(
-        |e| format!("Failed to serialize {} command: {}", CommandType::RemoveClient, e)
-    )?;
+    let command = EventParser::serialize(&command).map_err(|e| {
+        format!(
+            "Failed to serialize {} command: {}",
+            CommandType::RemoveClient,
+            e
+        )
+    })?;
 
-    s.send(command).await.map_err(|e| format!("Failed to send {} command ({})", CommandType::RemoveClient, e))?;
+    s.send(command).await.map_err(|e| {
+        format!(
+            "Failed to send {} command ({})",
+            CommandType::RemoveClient,
+            e
+        )
+    })?;
     Ok(())
 }
 
 #[tauri::command]
-pub async fn enable_stream(stream_type: i8, s: tauri::State<'_, AtomicAsyncWriter>) -> Result<(), String>
-{
+pub async fn enable_stream(
+    stream_type: i8,
+    s: tauri::State<'_, AtomicAsyncWriter>,
+) -> Result<(), String> {
     let command = CommandEvent::build(
-        CommandType::EnableStream, 
-        &format!(r#"{{ "stream_type": {} }}"#, stream_type));
-    let command = EventParser::serialize(&command).map_err(
-        |e| format!("Failed to serialize {} command: {}", CommandType::EnableStream, e)
-    )?;
-    s.send(command).await.map_err(|e| format!("Failed to send {} command ({})", CommandType::EnableStream, e))?;
+        CommandType::EnableStream,
+        &format!(r#"{{ "stream_type": {} }}"#, stream_type),
+    );
+    let command = EventParser::serialize(&command).map_err(|e| {
+        format!(
+            "Failed to serialize {} command: {}",
+            CommandType::EnableStream,
+            e
+        )
+    })?;
+    s.send(command).await.map_err(|e| {
+        format!(
+            "Failed to send {} command ({})",
+            CommandType::EnableStream,
+            e
+        )
+    })?;
     Ok(())
 }
 
 #[tauri::command]
-pub async fn disable_stream(stream_type: i8, s: tauri::State<'_, AtomicAsyncWriter>) -> Result<(), String>
-{
+pub async fn disable_stream(
+    stream_type: i8,
+    s: tauri::State<'_, AtomicAsyncWriter>,
+) -> Result<(), String> {
     let command = CommandEvent::build(
-        CommandType::DisableStream, 
-        &format!(r#"{{ "stream_type": {} }}"#, stream_type));
-    let command = EventParser::serialize(&command).map_err(
-        |e| format!("Failed to serialize {} command: {}", CommandType::DisableStream, e)
-    )?;
-    s.send(command).await.map_err(|e| format!("Failed to send {} command ({})", CommandType::DisableStream, e))?;
+        CommandType::DisableStream,
+        &format!(r#"{{ "stream_type": {} }}"#, stream_type),
+    );
+    let command = EventParser::serialize(&command).map_err(|e| {
+        format!(
+            "Failed to serialize {} command: {}",
+            CommandType::DisableStream,
+            e
+        )
+    })?;
+    s.send(command).await.map_err(|e| {
+        format!(
+            "Failed to send {} command ({})",
+            CommandType::DisableStream,
+            e
+        )
+    })?;
     Ok(())
 }
 
 #[tauri::command]
-pub async fn set_server_config(host: String, port: i32, ssl_enabled: bool, s: tauri::State<'_, AtomicAsyncWriter>) -> Result<(), String>
-{
+pub async fn set_server_config(
+    host: String,
+    port: i32,
+    ssl_enabled: bool,
+    s: tauri::State<'_, AtomicAsyncWriter>,
+) -> Result<(), String> {
     let command = CommandEvent::build(
-        CommandType::SetServerConfig, 
-        &format!(r#"{{ "host": "{}", "port": {}, "ssl_enabled": {} }}"#, host, port, ssl_enabled));
-    let command = EventParser::serialize(&command).map_err(
-        |e| format!("Failed to serialize {} command: {}", CommandType::SetServerConfig, e)
-    )?;
-    s.send(command).await.map_err(|e| format!("Failed to send {} command ({})", CommandType::SetServerConfig, e))?;
+        CommandType::SetServerConfig,
+        &format!(
+            r#"{{ "host": "{}", "port": {}, "ssl_enabled": {} }}"#,
+            host, port, ssl_enabled
+        ),
+    );
+    let command = EventParser::serialize(&command).map_err(|e| {
+        format!(
+            "Failed to serialize {} command: {}",
+            CommandType::SetServerConfig,
+            e
+        )
+    })?;
+    s.send(command).await.map_err(|e| {
+        format!(
+            "Failed to send {} command ({})",
+            CommandType::SetServerConfig,
+            e
+        )
+    })?;
     Ok(())
 }
 
 #[tauri::command]
-pub async fn share_certificate(timeout: i32, s: tauri::State<'_, AtomicAsyncWriter>) -> Result<(), String>
-{
+pub async fn share_certificate(
+    timeout: i32,
+    s: tauri::State<'_, AtomicAsyncWriter>,
+) -> Result<(), String> {
     let command = CommandEvent::build(
-        CommandType::ShareCertificate, 
-        &format!(r#"{{ "timeout": {} }}"#, timeout));
-    let command = EventParser::serialize(&command).map_err(
-        |e| format!("Failed to serialize {} command: {}", CommandType::ShareCertificate, e)
-    )?;
-    s.send(command).await.map_err(|e| format!("Failed to send {} command ({})", CommandType::ShareCertificate, e))?;
+        CommandType::ShareCertificate,
+        &format!(r#"{{ "timeout": {} }}"#, timeout),
+    );
+    let command = EventParser::serialize(&command).map_err(|e| {
+        format!(
+            "Failed to serialize {} command: {}",
+            CommandType::ShareCertificate,
+            e
+        )
+    })?;
+    s.send(command).await.map_err(|e| {
+        format!(
+            "Failed to send {} command ({})",
+            CommandType::ShareCertificate,
+            e
+        )
+    })?;
     Ok(())
 }
 
 #[tauri::command]
-pub async fn status(s: tauri::State<'_, AtomicAsyncWriter>) -> Result<(), String>
-{
-    let command = CommandEvent::build(
-        CommandType::Status, 
-        "{}");
-    let command = EventParser::serialize(&command).map_err(
-        |e| format!("Failed to serialize {} command: {}", CommandType::Status, e)
-    )?;
-    s.send(command).await.map_err(|e| format!("Failed to send {} command ({})", CommandType::Status, e))?;
+pub async fn status(s: tauri::State<'_, AtomicAsyncWriter>) -> Result<(), String> {
+    let command = CommandEvent::build(CommandType::Status, "{}");
+    let command = EventParser::serialize(&command)
+        .map_err(|e| format!("Failed to serialize {} command: {}", CommandType::Status, e))?;
+    s.send(command)
+        .await
+        .map_err(|e| format!("Failed to send {} command ({})", CommandType::Status, e))?;
     Ok(())
 }

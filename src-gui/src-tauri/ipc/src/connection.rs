@@ -1,6 +1,11 @@
 use crate::{AsyncReader, AsyncWriter};
+use std::{
+    env::{self, VarError},
+    io,
+    path::{Path, PathBuf},
+    time::Duration,
+};
 use thiserror::Error;
-use std::{env::{self, VarError}, io, path::{Path, PathBuf}, time::Duration};
 
 #[cfg(unix)]
 use tokio::net::UnixStream;
@@ -32,6 +37,7 @@ pub enum SocketPathError {
     HomeDirNotFound(VarError),
 }
 
+#[allow(unused)]
 enum DefaultPath {
     Unix(PathBuf),
     Tcp(String, u16),
@@ -43,14 +49,20 @@ fn default_path() -> Result<DefaultPath, SocketPathError> {
         let home = env::var("HOME").map_err(SocketPathError::HomeDirNotFound)?;
 
         Ok(DefaultPath::Unix(
-            Path::new(&home).join("Library").join("Caches").join(DEFAULT_APP_DIR).join(DEFAULT_DAEMON_SOCKET)
-            )
-        )
+            Path::new(&home)
+                .join("Library")
+                .join("Caches")
+                .join(DEFAULT_APP_DIR)
+                .join(DEFAULT_DAEMON_SOCKET),
+        ))
     }
 
     #[cfg(windows)]
     {
-        Ok(DefaultPath::Tcp("127.0.0.1".to_string(), DEFAULT_DAEMON_PORT))
+        Ok(DefaultPath::Tcp(
+            "127.0.0.1".to_string(),
+            DEFAULT_DAEMON_PORT,
+        ))
     }
 }
 
@@ -90,7 +102,7 @@ async fn wait_connection(t: Duration) -> Result<(AsyncReader, AsyncWriter), Conn
         }
         attempts += 1;
         tokio::time::sleep(timeout).await;
-        timeout = std::cmp::min(timeout * 2, Duration::from_secs(1)); 
+        timeout = std::cmp::min(timeout * 2, Duration::from_secs(1));
     }
 }
 
