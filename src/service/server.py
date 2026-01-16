@@ -421,17 +421,21 @@ class Server:
         Returns:
             The created ClientObj
         """
-        client = self.config.add_client(
-            ip_address=ip_address, hostname=hostname, screen_position=screen_position
-        )
+        try:
+            client = self.config.add_client(
+                ip_address=ip_address, hostname=hostname, screen_position=screen_position
+            )
 
-        if auto_save:
-            await self.save_config()
+            if auto_save:
+                await self.save_config()
 
-        self._logger.info(
-            f"Added client {ip_address if ip_address else hostname} at position {screen_position}"
-        )
-        return client
+            self._logger.info(
+                f"Added client {ip_address if ip_address else hostname} at position {screen_position}"
+            )
+            return client
+        except ValueError as ve:
+            self._logger.error(f"Error adding client: {ve}")
+            raise
 
     async def remove_client(
         self,
@@ -736,16 +740,18 @@ class Server:
 
         self._logger.info("Stopping Server...")
 
+        tasks: list[asyncio.Task] = []
+
         # Stop connection handler
         if self.connection_handler:
-            await self.connection_handler.stop()
+            tasks.append(asyncio.create_task(self.connection_handler.stop()))
 
         # Stop all components
         for component_name, component in list(self._components.items()):
             try:
                 if hasattr(component, "stop"):
                     if asyncio.iscoroutinefunction(component.stop):
-                        await component.stop()
+                        tasks.append(asyncio.create_task(component.stop()))
                     else:
                         component.stop()
             except Exception as e:
@@ -755,20 +761,24 @@ class Server:
         for stream_type, handler in list(self._stream_handlers.items()):
             try:
                 if hasattr(handler, "stop"):
-                    await handler.stop()
+                    tasks.append(asyncio.create_task(handler.stop()))
             except Exception as e:
                 self._logger.error(
                     f"Error stopping stream handler {stream_type} -> {e}"
                 )
 
         # Stop performance monitor
-        await self._performance_monitor.stop()
+        tasks.append(asyncio.create_task(self._performance_monitor.stop()))
 
         # mDNS service unregister
-        await self._mdns_service.unregister_service()
+        tasks.append(asyncio.create_task(self._mdns_service.unregister_service()))
 
         # Wait a moment for cleanup
         await asyncio.sleep(self.CLEANUP_DELAY)
+
+        # Await all stop tasks
+        if len(tasks) > 0:
+            await asyncio.gather(*tasks, return_exceptions=True)
 
         self.cleanup()
         self._running = False

@@ -651,7 +651,7 @@ class Daemon:
                     self._logger.error(f"Client disconnected ({e})")
                     break
                 except Exception as e:
-                    self._logger.error(f"Error processing command -> {e}")
+                    self._logger.error(f"{e}")
                     response = ErrorEvent(error=f"Internal error -> {e}")
                     try:
                         await self._send_to_client(response)
@@ -660,7 +660,7 @@ class Daemon:
                     await asyncio.sleep(0.5)
 
         except Exception as e:
-            self._logger.error(f"Error handling client connection -> {e}")
+            self._logger.error(f"{e}")
 
         finally:
             # Cleanup connection
@@ -762,7 +762,7 @@ class Daemon:
                 await self._connected_client_writer.drain()
                 return True
             except Exception as e:
-                self._logger.error(f"Error sending notification to client -> {e}")
+                self._logger.error(f"{e}")
                 # Connection broken, clear it
                 self._connected_client_reader = None
                 self._connected_client_writer = None
@@ -875,7 +875,7 @@ class Daemon:
         try:
             await handler(params)
         except Exception as e:
-            self._logger.error(f"Error executing command {command} -> {e}")
+            self._logger.error(f"{command} -> {e}")
             await self._notification_manager.notify_error(
                 f"Command execution failed: {str(e)}",
                 data={"command": command, "error": str(e)}
@@ -986,9 +986,9 @@ class Daemon:
                     command, "Failed to start server"
                 )
         except Exception as e:
-            self._logger.error(f"Error starting server -> {e}")
+            self._logger.error(f"{e}")
             await self._notification_manager.notify_command_error(
-                command, f"Error starting server: {str(e)}"
+                command, f"{str(e)}"
             )
 
     async def _handle_stop_server(self, params: Dict[str, Any]) -> None:
@@ -1008,7 +1008,7 @@ class Daemon:
             )
         except Exception as e:
             await self._notification_manager.notify_command_error(
-                command, f"Error stopping server: {str(e)}"
+                command, f"{str(e)}"
             )
 
     async def _handle_start_client(self, params: Dict[str, Any]) -> None:
@@ -1063,10 +1063,10 @@ class Daemon:
                     command, "Failed to start client"
                 )
         except Exception as e:
-            self._logger.error(f"Error starting client -> {e}")
+            self._logger.error(f"{e}")
             await self._notification_manager.notify_service_error("Client", str(e))
             await self._notification_manager.notify_command_error(
-                command, f"Error starting client: {str(e)}"
+                command, f"{str(e)}"
             )
 
     async def _handle_stop_client(self, params: Dict[str, Any]) -> None:
@@ -1097,7 +1097,7 @@ class Daemon:
             # )
         except Exception as e:
             await self._notification_manager.notify_command_error(
-                command, f"Error stopping client: {str(e)}"
+                command, f"{str(e)}"
             )
 
     # ==================== Command Handlers: Status ====================
@@ -1252,12 +1252,16 @@ class Daemon:
             if "streams_enabled" in params:
                 self._server_config.streams_enabled = params["streams_enabled"]
 
+            # Silently try to save config
+            if self._server:
+                await self._server.save_config()
+
             await self._notification_manager.notify_command_success(
                 command, "Server configuration updated"
             )
         except Exception as e:
             await self._notification_manager.notify_command_error(
-                command, f"Error updating server configuration: {str(e)}"
+                command, f"{str(e)}"
             )
 
     async def _handle_get_client_config(self, params: Dict[str, Any]) -> None:
@@ -1332,12 +1336,15 @@ class Daemon:
             if "uid" in params:
                 self._client_config.uid = params.get("uid")
 
+            if self._client:
+                await self._client.save_config()
+
             await self._notification_manager.notify_command_success(
                 command, "Client configuration updated"
             )
         except Exception as e:
             await self._notification_manager.notify_command_error(
-                command, f"Error updating client configuration: {str(e)}"
+                command, f"{str(e)}"
             )
 
     async def _handle_save_config(self, params: Dict[str, Any]) -> None:
@@ -1362,7 +1369,7 @@ class Daemon:
             )
         except Exception as e:
             await self._notification_manager.notify_command_error(
-                command, f"Error saving configuration: {str(e)}"
+                command, f"{str(e)}"
             )
 
     async def _handle_reload_config(self, params: Dict[str, Any]) -> None:
@@ -1387,7 +1394,7 @@ class Daemon:
             )
         except Exception as e:
             await self._notification_manager.notify_command_error(
-                command, f"Error reloading configuration: {str(e)}"
+                command, f"{str(e)}"
             )
 
     # ==================== Command Handlers: Stream Management ====================
@@ -1415,11 +1422,16 @@ class Daemon:
                 await self._notification_manager.notify_command_error(command, error)
                 return
 
+            if not service:
+                await self._notification_manager.notify_command_error(
+                    command, "No active service to enable stream on"
+                )
+                return
+
             # Enable stream
             await service.enable_stream_runtime(stream_type)
 
             result_data = {
-                "message": f"Stream {stream_type} enabled on {service_name}",
                 "service": service_name,
                 "stream_type": stream_type,
                 "active_streams": service.get_active_streams(),
@@ -1429,7 +1441,7 @@ class Daemon:
             )
         except Exception as e:
             await self._notification_manager.notify_command_error(
-                command, f"Error enabling stream: {str(e)}"
+                command, f"{str(e)}"
             )
 
     async def _handle_disable_stream(self, params: Dict[str, Any]) -> None:
@@ -1455,11 +1467,16 @@ class Daemon:
                 await self._notification_manager.notify_command_error(command, error)
                 return
 
+            if not service:
+                await self._notification_manager.notify_command_error(
+                    command, "No active service to disable stream on"
+                )
+                return
+
             # Disable stream
             await service.disable_stream_runtime(stream_type)
 
             result_data = {
-                "message": f"Stream {stream_type} disabled on {service_name}",
                 "service": service_name,
                 "stream_type": stream_type,
                 "active_streams": service.get_active_streams(),
@@ -1469,7 +1486,7 @@ class Daemon:
             )
         except Exception as e:
             await self._notification_manager.notify_command_error(
-                command, f"Error disabling stream: {str(e)}"
+                command, f"{str(e)}"
             )
 
     async def _handle_get_streams(self, params: Dict[str, Any]) -> None:
@@ -1485,8 +1502,8 @@ class Daemon:
 
         result_data = {
             "service": service_name,
-            "enabled_streams": service.get_enabled_streams(),
-            "active_streams": service.get_active_streams(),
+            "enabled_streams": service.get_enabled_streams() if service else [],
+            "active_streams": service.get_active_streams() if service else [],
         }
         await self._notification_manager.notify_command_success(
             command, f"Streams info for {service_name}", result_data=result_data
@@ -1533,7 +1550,7 @@ class Daemon:
             )
         except Exception as e:
             await self._notification_manager.notify_command_error(
-                command, f"Error adding client: {str(e)}"
+                command, f"{str(e)}"
             )
 
     async def _handle_remove_client(self, params: Dict[str, Any]) -> None:
@@ -1564,7 +1581,7 @@ class Daemon:
             )
         except Exception as e:
             await self._notification_manager.notify_command_error(
-                command, f"Error removing client: {str(e)}"
+                command, f"{str(e)}"
             )
 
     async def _handle_edit_client(self, params: Dict[str, Any]) -> None:
@@ -1606,7 +1623,7 @@ class Daemon:
             )
         except Exception as e:
             await self._notification_manager.notify_command_error(
-                command, f"Error editing client: {str(e)}"
+                command, f"{str(e)}"
             )
 
     async def _handle_list_clients(self, params: Dict[str, Any]) -> None:
@@ -1640,7 +1657,7 @@ class Daemon:
             )
         except Exception as e:
             await self._notification_manager.notify_command_error(
-                command, f"Error listing clients: {str(e)}"
+                command, f"{str(e)}"
             )
 
     # ==================== Command Handlers: SSL/Certificate ====================
@@ -1681,7 +1698,7 @@ class Daemon:
                 )
         except Exception as e:
             await self._notification_manager.notify_command_error(
-                command, f"Error enabling SSL: {str(e)}"
+                command, f"{str(e)}"
             )
 
     async def _handle_disable_ssl(self, params: Dict[str, Any]) -> None:
@@ -1710,7 +1727,7 @@ class Daemon:
             )
         except Exception as e:
             await self._notification_manager.notify_command_error(
-                command, f"Error disabling SSL: {str(e)}"
+                command, f"{str(e)}"
             )
 
     async def _handle_share_certificate(self, params: Dict[str, Any]) -> None:
@@ -1746,7 +1763,7 @@ class Daemon:
                 )
         except Exception as e:
             await self._notification_manager.notify_command_error(
-                command, f"Error sharing certificate: {str(e)}"
+                command, f"{str(e)}"
             )
 
     async def _handle_receive_certificate(self, params: Dict[str, Any]) -> None:
@@ -1780,7 +1797,7 @@ class Daemon:
                 )
         except Exception as e:
             await self._notification_manager.notify_command_error(
-                command, f"Error receiving certificate: {str(e)}"
+                command, f"{str(e)}"
             )
 
     # ==================== Command Handlers: Server Selection & OTP ====================
@@ -1810,7 +1827,7 @@ class Daemon:
             )
         except Exception as e:
             await self._notification_manager.notify_command_error(
-                command, f"Error checking server choice: {str(e)}"
+                command, f"{str(e)}"
             )
 
     async def _handle_get_found_servers(self, params: Dict[str, Any]) -> None:
@@ -1837,7 +1854,7 @@ class Daemon:
             )
         except Exception as e:
             await self._notification_manager.notify_command_error(
-                command, f"Error getting found servers: {str(e)}"
+                command, f"{str(e)}"
             )
 
     async def _handle_choose_server(self, params: Dict[str, Any]) -> None:
@@ -1870,7 +1887,7 @@ class Daemon:
             )
         except Exception as e:
             await self._notification_manager.notify_command_error(
-                command, f"Error choosing server: {str(e)}"
+                command, f"{str(e)}"
             )
 
     async def _handle_check_otp_needed(self, params: Dict[str, Any]) -> None:
@@ -1898,7 +1915,7 @@ class Daemon:
             )
         except Exception as e:
             await self._notification_manager.notify_command_error(
-                command, f"Error checking OTP status: {str(e)}"
+                command, f"{str(e)}"
             )
 
     async def _handle_set_otp(self, params: Dict[str, Any]) -> None:
@@ -1936,7 +1953,7 @@ class Daemon:
                 )
         except Exception as e:
             await self._notification_manager.notify_command_error(
-                command, f"Error setting OTP: {str(e)}"
+                command, f"{str(e)}"
             )
 
     # ==================== Command Handlers: Service Discovery ====================
@@ -1973,7 +1990,7 @@ class Daemon:
                 )
         except Exception as e:
             await self._notification_manager.notify_command_error(
-                command, f"Error discovering services: {str(e)}"
+                command, f"{str(e)}"
             )
 
     # ==================== Command Handlers: Daemon Control ====================
