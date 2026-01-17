@@ -32,6 +32,11 @@
   background-color: var(--app-window-control-hover) !important;
 }
 
+.window-close:hover {
+  background-color: var(--app-window-close-hover) !important;
+  color: white !important;
+}
+
 .titlebar-button:not(.active) {
   background-color: transparent;
   color: var(--app-text-muted);

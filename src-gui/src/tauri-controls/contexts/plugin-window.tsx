@@ -1,4 +1,4 @@
-import type { Window } from "@tauri-apps/api/window"
+import { getCurrentWindow, Window } from "@tauri-apps/api/window"
 import React, { createContext, useCallback, useEffect, useState } from "react"
 import { getOsType } from "../libs/plugin-os"
 
@@ -9,6 +9,7 @@ interface TauriAppWindowContextType {
   maximizeWindow: () => Promise<void>
   fullscreenWindow: () => Promise<void>
   closeWindow: () => Promise<void>
+  isResizable: boolean
 }
 
 const TauriAppWindowContext = createContext<TauriAppWindowContextType>({
@@ -18,6 +19,7 @@ const TauriAppWindowContext = createContext<TauriAppWindowContextType>({
   maximizeWindow: () => Promise.resolve(),
   fullscreenWindow: () => Promise.resolve(),
   closeWindow: () => Promise.resolve(),
+  isResizable: false,
 })
 
 interface TauriAppWindowProviderProps {
@@ -29,6 +31,7 @@ export const TauriAppWindowProvider: React.FC<TauriAppWindowProviderProps> = ({
 }: any) => {
   const [appWindow, setAppWindow] = useState<Window | null>(null)
   const [isWindowMaximized, setIsWindowMaximized] = useState(false)
+  const [isResizable, setIsResizable] = useState(false)
 
   // Fetch the Tauri window plugin when the component mounts
   // Dynamically import plugin-window for next.js, sveltekit, nuxt etc. support:
@@ -100,6 +103,11 @@ export const TauriAppWindowProvider: React.FC<TauriAppWindowProviderProps> = ({
     }
   }
 
+  const updateIsResizable = async () => {
+    let resizable = await getCurrentWindow().isResizable()
+    setIsResizable(resizable)
+  }
+
   // Provide the context values to the children components
   return (
     <TauriAppWindowContext.Provider
@@ -110,6 +118,7 @@ export const TauriAppWindowProvider: React.FC<TauriAppWindowProviderProps> = ({
         maximizeWindow,
         fullscreenWindow,
         closeWindow,
+        isResizable,
       }}
     >
       {children}

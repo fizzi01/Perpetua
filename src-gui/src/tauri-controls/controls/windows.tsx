@@ -5,7 +5,7 @@ import { cn } from "../libs/utils"
 import { Button } from "../components/button"
 
 export function Windows({ className, ...props }: HTMLProps<HTMLDivElement>) {
-  const { isWindowMaximized, minimizeWindow, maximizeWindow, closeWindow } =
+  const { isWindowMaximized, minimizeWindow, maximizeWindow, closeWindow, isResizable } =
     useContext(TauriAppWindowContext)
 
   return (
@@ -16,6 +16,7 @@ export function Windows({ className, ...props }: HTMLProps<HTMLDivElement>) {
       >
         <Icons.minimizeWin />
       </Button>
+      {isResizable && (
       <Button
         onClick={maximizeWindow}
         className={cn(
@@ -30,9 +31,10 @@ export function Windows({ className, ...props }: HTMLProps<HTMLDivElement>) {
           <Icons.maximizeRestoreWin />
         )}
       </Button>
+      )}
       <Button
         onClick={closeWindow}
-        className="max-h-8 w-[46px] cursor-default rounded-none bg-transparent text-black/90 hover:bg-[#c42b1c] hover:text-white active:bg-[#c42b1c]/90 dark:text-white"
+        className="window-close max-h-8 w-[46px] cursor-default rounded-none bg-transparent text-black/90 hover:bg-[#c42b1c] hover:text-white active:bg-[#c42b1c]/90 dark:text-white"
       >
         <Icons.closeWin />
       </Button>

@@ -8,11 +8,16 @@ interface TitlebarProps {
   onModeChange: (mode: 'client' | 'server') => void;
 }
 
-export function InnerBar({ disabled, mode, onModeChange }: TitlebarProps) {
+interface InnerBarProps extends TitlebarProps {
+  justify_mode: "between" | "center";
+}
+
+export function InnerBar({ disabled, mode, justify_mode, onModeChange }: InnerBarProps) {
   return (<div 
         data-tauri-drag-region
-        className="titlebar w-full px-6 py-1.5 flex items-center justify-center border-b backdrop-blur-md"
+        className={`titlebar w-full px-6 py-1.5 flex items-center justify-${justify_mode} border-b backdrop-blur-md`}
       >
+        <div></div>
         {/* Mode Toggle */}
         <motion.div 
           initial={{ opacity: 0, scale: 0.95 }}
@@ -53,10 +58,10 @@ export function Titlebar({ disabled, mode, onModeChange }: TitlebarProps) {
         platform: 'windows',
         className: 'titlebar-system-group h-full border-b backdrop-blur-md',
       }}>
-        <InnerBar disabled={disabled} mode={mode} onModeChange={onModeChange} />
+        <InnerBar disabled={disabled} mode={mode} justify_mode='between' onModeChange={onModeChange} />
       </WindowTitlebar>
     ) : (
-      <InnerBar disabled={disabled} mode={mode} onModeChange={onModeChange} />
+      <InnerBar disabled={disabled} mode={mode} justify_mode='center' onModeChange={onModeChange} />
     )
   );
 }

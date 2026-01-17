@@ -119,7 +119,7 @@ pub fn run() {
 
             let win_builder = WebviewWindowBuilder::new(app, "main", WebviewUrl::default())
                 .title("Perpetua")
-                .inner_size(420.0, 600.0)
+                .inner_size(435.0, 600.0)
                 .resizable(false);
 
             // Set macOS-specific window properties
