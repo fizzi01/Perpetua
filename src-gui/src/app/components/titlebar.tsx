@@ -1,5 +1,5 @@
 import { motion } from 'motion/react';
-import { WindowTitlebar } from 'tauri-controls';
+import { WindowTitlebar } from '../../tauri-controls/window-titlebar';
 import { platform } from '@tauri-apps/plugin-os';
 
 interface TitlebarProps {
