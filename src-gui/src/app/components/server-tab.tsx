@@ -47,6 +47,7 @@ export function ServerTab({ onStatusChange, state }: ServerTabProps) {
 
   const clientManager = useClientManagement();
   const listeners = useEventListeners('server-tab');
+  const clientEventHandler = handleClientEventListeners();
 
   const otpFocus = useRef<HTMLDivElement>(null);
   const hoverTimeoutRef = useRef<ReturnType<typeof setTimeout> | null>(null);
@@ -137,22 +138,32 @@ export function ServerTab({ onStatusChange, state }: ServerTabProps) {
     clientManager.updateClientStatus(clientData, connected);
   };
 
-  const handleClientEventListeners = () => {
-      listenGeneralEvent(EventType.ClientConnected, (event) => {
-        // Handle client connected event here
-        let client_data = event.data as ClientObj;
-        handleClientConnected(client_data, true, true);
-      }).then(unlisten => {
-        listeners.addListenerOnce('client-connected', unlisten);
-      });
+  function handleClientEventListeners() {
 
-      listenGeneralEvent(EventType.ClientDisconnected, (event) => {
-        // Handle client disconnected event here
-        let client_data = event.data as ClientObj;
-        handleClientConnected(client_data, false, true);
-      }).then(unlisten => {
-        listeners.addListenerOnce('client-disconnected', unlisten);
-      });
+      const setup = () => {
+        listenGeneralEvent(EventType.ClientConnected, (event) => {
+          // Handle client connected event here
+          let client_data = event.data as ClientObj;
+          handleClientConnected(client_data, true, true);
+        }).then(unlisten => {
+          listeners.addListenerOnce('client-connected', unlisten);
+        });
+
+        listenGeneralEvent(EventType.ClientDisconnected, (event) => {
+          // Handle client disconnected event here
+          let client_data = event.data as ClientObj;
+          handleClientConnected(client_data, false, true);
+        }).then(unlisten => {
+          listeners.addListenerOnce('client-disconnected', unlisten);
+        });
+      };
+
+      const cleanup = () => {
+        listeners.removeListener('client-connected');
+        listeners.removeListener('client-disconnected');
+      };
+
+      return {cleanup, setup};
   };
 
   const handleToggleServer = () => {
@@ -186,7 +197,7 @@ export function ServerTab({ onStatusChange, state }: ServerTabProps) {
         listeners.addListener('start-server-error', unlisten);
       });
 
-      handleClientEventListeners();
+      clientEventHandler.setup();
 
       startServer().catch((err) => {
         console.error('Error starting server:', err);
@@ -196,15 +207,13 @@ export function ServerTab({ onStatusChange, state }: ServerTabProps) {
         // Cleanup
         listeners.removeListener('start-server');
         listeners.removeListener('start-server-error');
-        listeners.removeListener('client-connected');
-        listeners.removeListener('client-disconnected');
+        clientEventHandler.cleanup(); // Remove client event listeners
       });
       
     } else {
       setRunningPending(true);
 
-      listeners.removeListener('client-connected');
-      listeners.removeListener('client-disconnected');
+      clientEventHandler.cleanup();
 
       // Setup one-time listener
       listenCommand(EventType.CommandSuccess, CommandType.StopServer, (event) => {

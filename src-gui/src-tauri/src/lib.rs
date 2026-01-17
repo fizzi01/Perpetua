@@ -2,7 +2,7 @@
 use tauri::{PhysicalPosition, Position, TitleBarStyle};
 
 use tauri::{
-    menu::{Menu, MenuItem},
+    menu::{MenuItem, MenuBuilder},
     tray::TrayIconBuilder,
     AppHandle, Manager, Runtime, WebviewUrl, WebviewWindowBuilder,
 };
@@ -101,6 +101,9 @@ pub fn run() {
             commands::add_client,
             commands::remove_client,
             commands::set_server_config,
+            // -- Client Commands --
+            commands::start_client,
+            commands::stop_client,
             // -- General Commands --
             commands::status,
             commands::service_choice,
@@ -133,12 +136,22 @@ pub fn run() {
 
             win_builder.build().unwrap();
 
+            let show_window = MenuItem::with_id(app, "show_window", "Show Window", true, None::<&str>)?;
             let quit_i = MenuItem::with_id(app, "quit", "Quit", true, None::<&str>)?;
-            let menu = Menu::with_items(app, &[&quit_i])?;
+            let menu = MenuBuilder::new(app)
+                .item(&show_window)
+                .separator()
+                .item(&quit_i)
+                .build()?;
 
             TrayIconBuilder::new()
                 .menu(&menu)
                 .on_menu_event(|app, event| match event.id.as_ref() {
+                    "show_window" => {
+                        let window = app.get_webview_window("main").unwrap();
+                        window.show().unwrap();
+                        window.set_focus().unwrap();
+                    }
                     "quit" => {
                         let handle = app.clone();
                         // Call shutdown command
@@ -159,9 +172,21 @@ pub fn run() {
 
             Ok(())
         })
+        .on_window_event(|window, event| match event {
+            tauri::WindowEvent::CloseRequested { api, .. } => {
+                let app_handle = window.app_handle();
+                let state = app_handle.state::<Mutex<AppState>>();
+                let state = state.lock().unwrap();
+                if !state.hard_close {
+                    // Prevent the window from closing
+                    api.prevent_close();
+                    window.hide().unwrap();
+                }
+            }
+            _ => {}
+        })
         .build(tauri::generate_context!())
         .expect("error while running tauri application");
-
     app.run(|_app_handle, _e| match _e {
         tauri::RunEvent::ExitRequested { api, .. } => {
             let state = _app_handle.state::<Mutex<AppState>>();

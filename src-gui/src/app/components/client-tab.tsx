@@ -2,10 +2,18 @@ import { useState, useEffect } from 'react';
 import { Power, Settings, Wifi, Clock, Key, MousePointer, Keyboard, Shield, Server } from 'lucide-react';
 import { motion, AnimatePresence } from 'motion/react';
 import { InlineNotification, Notification } from './inline-notification';
-import { TabProps } from '../commons/Tab';
+import { ClientTabProps } from '../commons/Tab';
+import { ClientStatus, CommandType, EventType, ServerChoice } from '../api/Interface';
+import { listenCommand, listenGeneralEvent } from '../api/Listener';
+import { startClient, stopClient } from '../api/Sender';
+import { useEventListeners } from '../hooks/useEventListeners';
 
-export function ClienTab({ onStatusChange }: TabProps) {
-  const [isConnected, setIsConnected] = useState(false);
+export function ClientTab({ onStatusChange, state }: ClientTabProps) {
+  let previousState: ClientStatus | null = null;
+
+  const [runningPending, setRunningPending] = useState(false);
+  const [isRunning, setIsRunning] = useState(state.running);
+  const [isConnected, setIsConnected] = useState(state.connected);
   const [showOptions, setShowOptions] = useState(false);
   const [showOtpInput, setShowOtpInput] = useState(false);
   const [serverAddress, setServerAddress] = useState('192.168.1.1:8080');
@@ -18,6 +26,9 @@ export function ClienTab({ onStatusChange }: TabProps) {
   const [dataUsage, setDataUsage] = useState(0);
   const [controlStatus, setControlStatus] = useState<'none' | 'controlled' | 'idle'>('none');
   const [notifications, setNotifications] = useState<Notification[]>([]);
+
+  const listeners = useEventListeners('client-tab');
+  const connectionListeners = handleConnectionListeners();
 
   const addNotification = (type: Notification['type'], message: string, description?: string) => {
     const newNotification: Notification = {
@@ -62,17 +73,115 @@ export function ClienTab({ onStatusChange }: TabProps) {
     };
   }, [isConnected, enableMouse, enableKeyboard]);
 
-  const handleToggleConnection = () => {
-    if (!isConnected) {
-      setShowOtpInput(true);
+  function handleConnectionListeners() {
+
+    const setup = () => {
+      listenGeneralEvent(EventType.Connected, (event) => {
+        setIsConnected(true);
+        setShowOtpInput(false);
+        addNotification('success', 'Connected', serverAddress);
+      }).then((unlisten) => {
+        listeners.addListenerOnce('client-connected', unlisten);
+      });
+
+      listenGeneralEvent(EventType.Disconnected, (event) => {
+        setIsConnected(false);
+        setConnectionTime(0);
+        setDataUsage(0);
+        setControlStatus('none');
+        setShowOtpInput(false);
+        setOtpInput('');
+        addNotification('warning', 'Disconnected');
+      }).then((unlisten) => {
+        listeners.addListenerOnce('client-disconnected', unlisten);
+      });
+
+      listenGeneralEvent(EventType.ServerChoiceNeeded, (event) => {
+        let res = event.data as ServerChoice;
+        if (res) {
+          
+        }
+
+      }).then((unlisten) => {
+        listeners.addListenerOnce('server-choice-needed', unlisten);
+      });
+
+      listenGeneralEvent(EventType.OtpNeeded, (event) => {
+        setShowOtpInput(true);
+        listeners.removeListener('otp-needed');
+      }).then((unlisten) => {
+        listeners.addListenerOnce('otp-needed', unlisten);
+      });
+    }
+
+    const cleanup = () => {
+      listeners.forceRemoveListener('client-connected');
+      listeners.forceRemoveListener('client-disconnected');
+      listeners.forceRemoveListener('server-choice-needed');
+      listeners.forceRemoveListener('otp-needed');
+    }
+
+    return { setup, cleanup };
+  };
+
+  const handleToggleClient = () => {
+    // if (!isConnected) {
+    //   setShowOtpInput(true);
+    // } else {
+    //   setIsConnected(false);
+    //   setConnectionTime(0);
+    //   setDataUsage(0);
+    //   setControlStatus('none');
+    //   setShowOtpInput(false);
+    //   setOtpInput('');
+    //   addNotification('warning', 'Disconnected');
+    // }
+
+    if (!isRunning) {
+      setRunningPending(true);
+      
+      listenCommand(EventType.CommandSuccess, CommandType.StartClient, (event) => {
+        console.log(`Client started successfully: ${event.message}`);
+        setIsRunning(true);
+        let res = event.data?.result;
+        if (res) {
+          let server_ip = res.ip_address as string;
+          let port = res.port as number;
+          setServerAddress(`${server_ip}:${port}`);
+          addNotification('success', 'Connected', `${server_ip}:${port}`);
+          setRunningPending(false);
+        }
+
+        listeners.removeListener('client-start');
+        listeners.removeListener('client-start-error');
+      }).then(unlisten => {
+        listeners.addListenerOnce('client-start', unlisten);
+      });
+
+      listenCommand(EventType.CommandError, CommandType.StartClient, (event) => {
+        console.error(`Error starting client: ${event.message}`);
+        addNotification('error', 'Connection Failed', event.data?.error || 'Unknown error');
+        setRunningPending(false);
+        setIsRunning(false);
+
+        listeners.removeListener('client-start-error');
+        listeners.removeListener('client-start');
+      }).then(unlisten => {
+        listeners.addListenerOnce('client-start-error', unlisten);
+      });
+
+      startClient().then(() => {
+        connectionListeners.setup();
+      }).catch((err) => {
+        console.error('Error invoking startClient:', err);
+        addNotification('error', 'Connection Failed', err.message || 'Unknown error');
+        setRunningPending(false);
+        listeners.forceRemoveListener('client-start-error');
+        listeners.forceRemoveListener('client-start');
+      });
+
     } else {
-      setIsConnected(false);
-      setConnectionTime(0);
-      setDataUsage(0);
-      setControlStatus('none');
-      setShowOtpInput(false);
-      setOtpInput('');
-      addNotification('warning', 'Disconnected');
+      connectionListeners.cleanup();
     }
   };
 
@@ -107,7 +216,7 @@ export function ClienTab({ onStatusChange }: TabProps) {
         <motion.button
           whileHover={{ scale: 1.05 }}
           whileTap={{ scale: 0.95 }}
-          onClick={handleToggleConnection}
+          onClick={handleToggleClient}
           className="w-24 h-24 rounded-full flex items-center justify-center transition-all duration-300 shadow-lg relative overflow-hidden"
           style={{
             backgroundColor: isConnected ? 'var(--app-success)' : 'var(--app-bg-tertiary)',

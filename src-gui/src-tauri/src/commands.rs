@@ -259,6 +259,46 @@ pub async fn share_certificate(
 }
 
 #[tauri::command]
+pub async fn start_client(s: tauri::State<'_, AtomicAsyncWriter>) -> Result<(), String> {
+    let command = CommandEvent::build(CommandType::StartClient, "{}");
+    let command = EventParser::serialize(&command).map_err(|e| {
+        format!(
+            "Failed to serialize {} command: {}",
+            CommandType::StartClient,
+            e
+        )
+    })?;
+    s.send(command).await.map_err(|e| {
+        format!(
+            "Failed to send {} command ({})",
+            CommandType::StartClient,
+            e
+        )
+    })?;
+    Ok(())
+}
+
+#[tauri::command]
+pub async fn stop_client(s: tauri::State<'_, AtomicAsyncWriter>) -> Result<(), String> {
+    let command = CommandEvent::build(CommandType::StopClient, "{}");
+    let command = EventParser::serialize(&command).map_err(|e| {
+        format!(
+            "Failed to serialize {} command: {}",
+            CommandType::StopClient,
+            e
+        )
+    })?;
+    s.send(command).await.map_err(|e| {
+        format!(
+            "Failed to send {} command ({})",
+            CommandType::StopClient,
+            e
+        )
+    })?;
+    Ok(())
+}
+
+#[tauri::command]
 pub async fn status(s: tauri::State<'_, AtomicAsyncWriter>) -> Result<(), String> {
     let command = CommandEvent::build(CommandType::Status, "{}");
     let command = EventParser::serialize(&command)

@@ -198,6 +198,7 @@ export interface ServerStatus {
 export interface ClientStatus
 {
   running: boolean;
+  connected: boolean;
   uid: string;
   client_hostname: string;
   streams_enabled: number[];
@@ -222,4 +223,16 @@ export interface OtpInfo {
   otp: string;
   timeout: number; // in seconds
   instructions: string;
+}
+
+
+export interface ServerFound {
+  uid: string;
+  address: string;
+  hostname: string;
+  port: number;
+}
+
+export interface ServerChoice {
+  servers: ServerFound[];
 }

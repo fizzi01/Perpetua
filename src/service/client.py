@@ -826,9 +826,6 @@ class Client:
             self._logger.info("Starting Client...")
             self._is_starting.set()
 
-            # Send starting notification
-            await self._send_notification(ServiceStartedEvent(service_name="Client"))
-
             # Initial server availability check
             if not await self._handle_server_availability():
                 return False
@@ -884,9 +881,6 @@ class Client:
                     return False
 
             self._logger.info("Stopping Client...")
-
-            # Send stopping notification
-            await self._send_notification(ServiceStoppedEvent(service_name="Client"))
 
             # Stop all components
             for component_name, component in list(self._components.items()):

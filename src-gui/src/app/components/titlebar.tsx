@@ -1,5 +1,5 @@
 import { motion } from 'motion/react';
-import { WindowTitlebar, WindowControls } from 'tauri-controls';
+import { WindowTitlebar } from 'tauri-controls';
 import { platform } from '@tauri-apps/plugin-os';
 
 interface TitlebarProps {
@@ -11,7 +11,7 @@ interface TitlebarProps {
 export function InnerBar({ disabled, mode, onModeChange }: TitlebarProps) {
   return (<div 
         data-tauri-drag-region
-        className="titlebar w-full px-6 py-1.5 flex items-center justify-between border-b backdrop-blur-md"
+        className="titlebar w-full px-6 py-1.5 flex items-center justify-center border-b backdrop-blur-md"
       >
         {/* Mode Toggle */}
         <motion.div 

@@ -1,5 +1,5 @@
-import { useEffect, useState } from 'react';
-import { ClienTab } from './components/client-tab';
+import { useEffect, useState, useRef } from 'react';
+import { ClientTab } from './components/client-tab';
 import { ServerTab } from './components/server-tab';
 import { Titlebar } from './components/titlebar';
 import { motion } from 'motion/react';
@@ -19,7 +19,10 @@ export default function App() {
   const listeners = useEventListeners();
 
   const serverState = useAppSelector(state => state.server);
+  const clientState = useAppSelector(state => state.client);
   const dispatch = useAppDispatch();
+
+  const isStartupRef = useRef(true);
 
   useEffect(() => {
     if (!stateListenersAdded) {
@@ -40,8 +43,11 @@ export default function App() {
           }
           if (client_status) {
             // Update client state in the store
+            if (client_status.running) {
+              setMode('client');
+            }
             // Dispatch action to update client state
-            // dispatch({type: ActionType.CLIENT_STATE, payload: client_status});
+            dispatch({type: ActionType.CLIENT_STATE, payload: client_status});
           }
           listeners.removeListener('status');
         }).then((unlisten) => {
@@ -51,6 +57,16 @@ export default function App() {
               setListenersAdded(false);
             });
         });
+
+        let isStartup = isStartupRef.current;
+        if (isStartup) {
+          console.log('Fetching initial status on startup');
+          isStartupRef.current = false;
+          chooseService(mode).catch((err) => {
+            console.error('Error changing service:', err);
+            listeners.forceRemoveListener('service-choice');
+          });
+        }
         
         getStatus().catch((err) => {
           console.error('Error fetching status:', err);
@@ -59,29 +75,34 @@ export default function App() {
     }
 
   }, [mode]);
+
+  function changeMode(newMode: 'client' | 'server', force: boolean = false) {
+    console.log(`Changing mode to ${newMode} (force: ${force}, previous: ${mode})`);
+    if (newMode === mode && !force) return;
+
+    listenCommand(EventType.CommandSuccess, CommandType.ServiceChoice, (event) => {         
+      console.log(`Service choice changed successfully: ${event.message}`);
+      let mode = event.message?.toLowerCase();
+      if (mode === 'client' || mode === 'server') {
+        setMode(mode);
+      }
+      listeners.removeListener('service-choice');
+    }).then((unlisten) => {
+        listeners.addListenerOnce('service-choice', unlisten);
+    });
+
+    chooseService(newMode).catch((err) => {
+      console.error('Error changing service:', err);
+      listeners.forceRemoveListener('service-choice');
+    });
+  }
   
   return (
     <div className="min-h-screen w-full flex items-center justify-center" style={{ backgroundColor: 'var(--app-bg)' }}>
       <div className="w-[420px] h-[600px] rounded-lg overflow-hidden flex flex-col" style={{ backgroundColor: 'var(--app-bg-secondary)', borderColor: 'var(--app-border)' }}>
         {/* Titlebar */}
         <Titlebar disabled={disableModeSwitch} mode={mode} onModeChange={(newMode) => {
-          if (newMode === mode) return;
-
-          listenCommand(EventType.CommandSuccess, CommandType.ServiceChoice, (event) => {         
-            console.log(`Service choice changed successfully: ${event.message}`);
-            let mode = event.message?.toLowerCase();
-            if (mode === 'client' || mode === 'server') {
-              setMode(mode);
-            }
-            listeners.removeListener('service-choice');
-          }).then((unlisten) => {
-              listeners.addListenerOnce('service-choice', unlisten);
-          });
-
-          chooseService(newMode).catch((err) => {
-            console.error('Error changing service:', err);
-            listeners.forceRemoveListener('service-choice');
-          });
+          changeMode(newMode);
 
           // Fetch status after changing service
           getStatus().catch((err) => {
@@ -98,7 +119,7 @@ export default function App() {
             animate={{ opacity: 1, scale: 1 }}
             transition={{ duration: 0.3 }}
           >
-            {mode === 'client' ? <ClienTab onStatusChange={setDisableModeSwitch}/> : <ServerTab onStatusChange={setDisableModeSwitch} state={serverState}/>}
+            {mode === 'client' ? <ClientTab onStatusChange={setDisableModeSwitch} state={clientState}/> : <ServerTab onStatusChange={setDisableModeSwitch} state={serverState}/>}
           </motion.div>
         </div>
       </div>

@@ -1040,25 +1040,16 @@ class Daemon:
             success = await start_task
             if success:
                 response_data = {
-                    "message": "Client started successfully",
                     "server_host": self._client.config.get_server_host(),
                     "server_port": self._client.config.get_server_port(),
                     "enabled_streams": self._client.get_enabled_streams(),
                 }
                 self._logger.set_level(self._client.config.log_level)
 
-                # Notify started
-                await self._notification_manager.notify_service_started(
-                    "Client", data=response_data
-                )
-
                 await self._notification_manager.notify_command_success(
                     command, "Client started successfully", result_data=response_data
                 )
             else:
-                await self._notification_manager.notify_service_error(
-                    "Client", "Failed to start client"
-                )
                 await self._notification_manager.notify_command_error(
                     command, "Failed to start client"
                 )
@@ -1087,14 +1078,9 @@ class Daemon:
                 )
                 return
 
-            # Notify stopped
-            await self._notification_manager.notify_service_stopped(
-                "Client", data={"message": "Client stopped"}
+            await self._notification_manager.notify_command_success(
+                command, "Client stopped successfully"
             )
-
-            # await self._notification_manager.notify_command_success(
-            #     command, "Client stopped successfully"
-            # )
         except Exception as e:
             await self._notification_manager.notify_command_error(
                 command, f"{str(e)}"
@@ -1106,9 +1092,6 @@ class Daemon:
         """Get overall daemon status"""
         command = DaemonCommand.STATUS.value
 
-        server_running = self._server.is_running() if self._server else False
-        client_running = self._client.is_running() if self._client else False
-
         status = {
             "platform": "windows" if IS_WINDOWS else "unix",
             "socket_path": self.socket_path,
@@ -1118,13 +1101,14 @@ class Daemon:
         if self._server_config and self._server:
             status["server_info"] = {  # type: ignore
                 **self._server_config.to_dict(),
-                "running": server_running,
+                "running": self._server.is_running() ,
             }
 
         if self._client_config and self._client:
             status["client_info"] = {  # type: ignore
                 **self._client_config.to_dict(),
-                "running": client_running,
+                "running": self._client.is_running(),
+                "connected": self._client.is_connected(),
             }
 
         await self._notification_manager.notify_command_success(
