@@ -268,3 +268,19 @@ pub async fn status(s: tauri::State<'_, AtomicAsyncWriter>) -> Result<(), String
         .map_err(|e| format!("Failed to send {} command ({})", CommandType::Status, e))?;
     Ok(())
 }
+
+#[tauri::command]
+pub async fn shutdown(s: tauri::State<'_, AtomicAsyncWriter>) -> Result<(), String> {
+    let command = CommandEvent::build(CommandType::Shutdown, "{}");
+    let command = EventParser::serialize(&command).map_err(|e| {
+        format!(
+            "Failed to serialize {} command: {}",
+            CommandType::Shutdown,
+            e
+        )
+    })?;
+    s.send(command)
+        .await
+        .map_err(|e| format!("Failed to send {} command ({})", CommandType::Shutdown, e))?;
+    Ok(())
+}
