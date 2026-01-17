@@ -3,6 +3,7 @@ import { ClienTab } from './components/client-tab';
 import { ServerTab } from './components/server-tab';
 import { Titlebar } from './components/titlebar';
 import { motion } from 'motion/react';
+
 import { EventType, CommandType, ServiceStatus, ServerStatus, ClientStatus } from './api/Interface';
 
 import { chooseService, getStatus } from './api/Sender';
@@ -88,7 +89,6 @@ export default function App() {
             listeners.forceRemoveListener('service-choice');
           });
         }} />
-        
         {/* Scrollable Content */}
         <div className="flex-1 overflow-y-auto px-8 py-6 relative">
           {/* Content */}

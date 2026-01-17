@@ -153,3 +153,5 @@ _test_config/
 poetry.lock
 
 .DS_Store
+
+src-gui/node_modules/*

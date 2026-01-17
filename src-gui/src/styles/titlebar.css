@@ -14,6 +14,24 @@
   flex: 1;
 }
 
+.titlebar-system-group {
+  max-height: 100%;
+  border-color: rgba(99, 102, 241, 0.2);
+  background-color: rgba(15, 23, 42, 0.8);
+}
+
+.titlebar-system-group > button {
+  max-height: 100%;
+  color: var(--app-primary);
+  background-color: rgba(15, 23, 42, 0.8);
+}
+
+
+.titlebar-system-group > button[class*="hover:bg-black"]:hover {
+  color: white !important;
+  background-color: var(--app-window-control-hover) !important;
+}
+
 .titlebar-button:not(.active) {
   background-color: transparent;
   color: var(--app-text-muted);
@@ -27,3 +45,4 @@
 .titlebar-button:hover:not(.active) {
   background-color: rgba(71, 85, 105, 0.3);
 }
+

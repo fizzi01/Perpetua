@@ -1,9 +1,10 @@
 #[cfg(target_os = "macos")]
-use tauri::PhysicalPosition;
+use tauri::{PhysicalPosition, Position, TitleBarStyle};
+
 use tauri::{
     menu::{Menu, MenuItem},
     tray::TrayIconBuilder,
-    AppHandle, Manager, Position, Runtime, TitleBarStyle, WebviewUrl, WebviewWindowBuilder,
+    AppHandle, Manager, Runtime, WebviewUrl, WebviewWindowBuilder,
 };
 use tauri_plugin_dialog::{DialogExt, MessageDialogKind};
 
@@ -88,6 +89,7 @@ where
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
     let app = tauri::Builder::default()
+        .plugin(tauri_plugin_os::init())
         .plugin(tauri_plugin_dialog::init())
         .plugin(tauri_plugin_opener::init())
         .manage(Mutex::new(AppState { hard_close: false }))
@@ -114,16 +116,20 @@ pub fn run() {
 
             let win_builder = WebviewWindowBuilder::new(app, "main", WebviewUrl::default())
                 .title("Perpetua")
-                .hidden_title(true)
-                .title_bar_style(TitleBarStyle::Overlay)
                 .inner_size(420.0, 600.0)
                 .resizable(false);
 
             // Set macOS-specific window properties
             #[cfg(target_os = "macos")]
             let win_builder = win_builder
+                .hidden_title(true)
                 .title_bar_style(TitleBarStyle::Overlay)
                 .traffic_light_position(Position::Physical(PhysicalPosition { x: 30, y: 50 }));
+
+            #[cfg(target_os = "windows")]
+            let win_builder = win_builder
+                .decorations(false)
+                .transparent(true);
 
             win_builder.build().unwrap();
 
