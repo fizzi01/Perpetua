@@ -122,7 +122,10 @@ export function ServerTab({ onStatusChange, state }: ServerTabProps) {
       handleClientConnected(client, client.is_connected, false);
     });
 
-    if (state.running) { handleClientEventListeners(); }
+    if (state.running) { 
+      clientEventHandler.cleanup();
+      clientEventHandler.setup(); 
+    }
 
   }, [state]);
 
