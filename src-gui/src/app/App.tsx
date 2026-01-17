@@ -61,7 +61,7 @@ export default function App() {
   
   return (
     <div className="min-h-screen w-full flex items-center justify-center" style={{ backgroundColor: 'var(--app-bg)' }}>
-      <div className="w-[450px] h-[600px] rounded-lg overflow-hidden flex flex-col" style={{ backgroundColor: 'var(--app-bg-secondary)', borderColor: 'var(--app-border)' }}>
+      <div className="w-[420px] h-[600px] rounded-lg overflow-hidden flex flex-col" style={{ backgroundColor: 'var(--app-bg-secondary)', borderColor: 'var(--app-border)' }}>
         {/* Titlebar */}
         <Titlebar disabled={disableModeSwitch} mode={mode} onModeChange={(newMode) => {
           if (newMode === mode) return;
