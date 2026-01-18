@@ -99,7 +99,7 @@ export default function App() {
   
   return (
     <div className="min-h-screen w-full flex items-center justify-center" style={{ backgroundColor: 'var(--app-bg)' }}>
-      <div className="w-[435px] h-[600px] rounded-lg overflow-hidden flex flex-col" style={{ backgroundColor: 'var(--app-bg-secondary)', borderColor: 'var(--app-border)' }}>
+      <div className="w-[435px] h-[600px] overflow-hidden flex flex-col" style={{ backgroundColor: 'var(--app-bg-secondary)', borderColor: 'var(--app-border)' }}>
         {/* Titlebar */}
         <Titlebar disabled={disableModeSwitch} mode={mode} onModeChange={(newMode) => {
           changeMode(newMode);
@@ -111,7 +111,7 @@ export default function App() {
           });
         }} />
         {/* Scrollable Content */}
-        <div className="flex-1 overflow-y-auto px-8 py-6 relative">
+        <div className="flex-1 rounded-lg overflow-y-auto px-8 py-6 relative">
           {/* Content */}
           <motion.div 
             key={mode}
