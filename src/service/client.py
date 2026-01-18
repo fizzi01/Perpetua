@@ -13,8 +13,6 @@ from model.client import ClientObj, ClientsManager
 from event.bus import AsyncEventBus
 from event.notification import (
     NotificationEvent,
-    ServiceStartedEvent,
-    ServiceStoppedEvent,
     ConnectedEvent,
     DisconnectedEvent,
     OtpNeededEvent,
@@ -854,6 +852,7 @@ class Client:
                 clients=self.clients_manager,
                 open_streams=enabled_streams,
                 auto_reconnect=self.config.do_auto_reconnect(),
+                use_ssl=self.config.ssl_enabled,
                 certfile=certfile,
             )
 
@@ -870,6 +869,7 @@ class Client:
             )
             return True
         finally:
+            self._is_starting.clear()
             await self._futures_cleanup()
 
     async def stop(self) -> bool:
@@ -947,7 +947,7 @@ class Client:
 
     def is_running(self) -> bool:
         """Check if client is running"""
-        return self._running
+        return self._running or self._is_starting.is_set()
 
     def is_connected(self) -> bool:
         """Check if connected to server"""
@@ -1202,7 +1202,7 @@ class Client:
         # Send connection notification
         await self._send_notification(
             ConnectedEvent(
-                peer=client.get_net_id(), hostname=client.host_name, uid=client.uid
+                connection_data=self.config.server_info.to_dict(),
             )
         )
 
@@ -1235,7 +1235,7 @@ class Client:
 
         # Send disconnection notification
         await self._send_notification(
-            DisconnectedEvent(peer=client.get_net_id(), hostname=client.host_name)
+            DisconnectedEvent(connection_data=self.config.server_info.to_dict())
         )
 
     async def _on_streams_reconnected(self, client: ClientObj, streams: list[int]):

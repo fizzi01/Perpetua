@@ -1040,8 +1040,7 @@ class Daemon:
             success = await start_task
             if success:
                 response_data = {
-                    "server_host": self._client.config.get_server_host(),
-                    "server_port": self._client.config.get_server_port(),
+                    **self._client.config.server_info.to_dict(),
                     "enabled_streams": self._client.get_enabled_streams(),
                 }
                 self._logger.set_level(self._client.config.log_level)

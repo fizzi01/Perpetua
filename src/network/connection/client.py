@@ -48,6 +48,7 @@ class ConnectionHandler(BaseConnectionHandler):
         clients: Optional[ClientsManager] = None,
         open_streams: Optional[list[int]] = None,
         certfile: Optional[str] = None,
+        use_ssl: bool = False,
         auto_reconnect: bool = True,
     ):
         """
@@ -79,7 +80,10 @@ class ConnectionHandler(BaseConnectionHandler):
         self.auto_reconnect = auto_reconnect
 
         self.certfile = certfile
-        self.use_ssl = bool(certfile)
+        self.use_ssl = use_ssl
+
+        if self.use_ssl and self.certfile is None:
+            raise ValueError("SSL is enabled but no certificate file provided")
 
         self.clients = (
             clients if clients is not None else ClientsManager(client_mode=True)

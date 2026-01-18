@@ -247,11 +247,11 @@ class ConnectionEvent(NotificationEvent):
     def __init__(
         self,
         event_type: NotificationEventType,
-        peer: Optional[str] = None,
+        connection_data: Optional[Dict[str, Any]] = None,
         message: Optional[str] = None,
         **kwargs,
     ):
-        data = {"peer": peer}
+        data = connection_data or {}
         data.update(kwargs)
         super().__init__(event_type=event_type, data=data, message=message)
 
@@ -260,12 +260,11 @@ class ConnectionEvent(NotificationEvent):
 class ConnectedEvent(ConnectionEvent):
     """Successfully connected to peer"""
 
-    def __init__(self, peer: Optional[str] = None, **kwargs):
+    def __init__(self, connection_data: Optional[Dict[str, Any]] = None):
         super().__init__(
             event_type=NotificationEventType.CONNECTED,
-            peer=peer,
-            message=f"Connected to {peer}",
-            **kwargs,
+            connection_data=connection_data,
+            message="Successfully connected",
         )
 
 
@@ -274,17 +273,13 @@ class DisconnectedEvent(ConnectionEvent):
     """Disconnected from peer"""
 
     def __init__(
-        self, peer: Optional[str] = None, reason: Optional[str] = None, **kwargs
+        self,
+        connection_data: Optional[Dict[str, Any]] = None
     ):
-        message = f"Disconnected from {peer}"
-        if reason:
-            message += f": {reason}"
-            kwargs["reason"] = reason
         super().__init__(
             event_type=NotificationEventType.DISCONNECTED,
-            peer=peer,
-            message=message,
-            **kwargs,
+            connection_data=connection_data,
+            message="Disconnected"
         )
 
 
