@@ -1,9 +1,9 @@
 import { useState, useEffect, useRef} from 'react';
-import { Power, Settings, Users, Activity, Plus, Trash2, Key, Lock, MousePointer, Keyboard, Shield, Clipboard } from 'lucide-react';
+import { Settings, Users, Activity, Plus, Trash2, Key, Lock, Shield } from 'lucide-react';
 import { motion, AnimatePresence } from 'motion/react';
 import { InlineNotification, Notification } from './inline-notification';
-import { ClientInfoPopup } from './client-info-popup';
-import { CopyableBadge, abbreviateText } from './copyable-badge';
+import { PowerButton } from './power-button';
+import { PermissionsPanel } from './permissions-panel';
 
 import { useEventListeners } from '../hooks/useEventListeners';
 import { useClientManagement } from '../hooks/useClientManagement';
@@ -11,13 +11,13 @@ import {
   shareCertificate, 
   startServer, stopServer, 
   saveServerConfig, 
-  addClient as addClientCommand, removeClient as removeClientCommand, 
-  enableStream, disableStream} from '../api/Sender';
+  addClient as addClientCommand, removeClient as removeClientCommand} from '../api/Sender';
 import { listenCommand, listenGeneralEvent } from '../api/Listener';
 import { EventType, CommandType, ClientObj, StreamType, ServerStatus, OtpInfo, ClientEditObj} from '../api/Interface';
 
 import { ServerTabProps } from '../commons/Tab'
 import { parseStreams, isValidIpAddress } from '../api/Utility'
+import { abbreviateText, CopyableBadge } from './copyable-badge';
 
 export function ServerTab({ onStatusChange, state }: ServerTabProps) {
   let previousState: ServerStatus | null = null;
@@ -41,17 +41,12 @@ export function ServerTab({ onStatusChange, state }: ServerTabProps) {
   const [newClientPosition, setNewClientPosition] = useState<'top' | 'bottom' | 'left' | 'right'>('top');
   const [uptime, setUptime] = useState(0);
   const [notifications, setNotifications] = useState<Notification[]>([]);
-  const [hoveredClientId, setHoveredClientId] = useState<string | null>(null);
-  const [showPopup, setShowPopup] = useState(false);
-  const [clientRect, setClientRect] = useState<DOMRect | null>(null);
 
   const clientManager = useClientManagement();
   const listeners = useEventListeners('server-tab');
   const clientEventHandler = handleClientEventListeners();
 
   const otpFocus = useRef<HTMLDivElement>(null);
-  const hoverTimeoutRef = useRef<ReturnType<typeof setTimeout> | null>(null);
-  const closeTimeoutRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const saveOptionsTimeoutRef = useRef<ReturnType<typeof setTimeout> | null>(null);
 
   const addNotification = (type: Notification['type'], message: string, description?: string) => {
@@ -200,9 +195,9 @@ export function ServerTab({ onStatusChange, state }: ServerTabProps) {
         listeners.addListener('start-server-error', unlisten);
       });
 
-      clientEventHandler.setup();
-
-      startServer().catch((err) => {
+      startServer().then(() => {
+        clientEventHandler.setup();
+      }).catch((err) => {
         console.error('Error starting server:', err);
         addNotification('error', 'Failed to start server');
         setRunningPending(false);
@@ -210,7 +205,6 @@ export function ServerTab({ onStatusChange, state }: ServerTabProps) {
         // Cleanup
         listeners.removeListener('start-server');
         listeners.removeListener('start-server-error');
-        clientEventHandler.cleanup(); // Remove client event listeners
       });
       
     } else {
@@ -363,61 +357,11 @@ export function ServerTab({ onStatusChange, state }: ServerTabProps) {
     });
   };
 
-  const handleStreamToggle = (streamType: StreamType, enable: boolean, setState: React.Dispatch<React.SetStateAction<boolean>>) => {
-    if (enable) {
-      listenCommand(EventType.CommandSuccess, CommandType.EnableStream, (event) => {
-        console.log(`Stream enabled successfully: ${event.message}`);
-        setState(true);
-        listeners.removeListener('enable-stream-' + StreamType[streamType]);
-      }).then(unlisten => {
-          listeners.addListener('enable-stream-' + StreamType[streamType], unlisten);
-      });
-
-      listenCommand(EventType.CommandError, CommandType.EnableStream, (event) => {
-        addNotification('error', `Failed to enable ${StreamType[streamType]} stream`, event.data?.error || '');
-        setState(false);
-        listeners.removeListener('enable-stream-error-' + StreamType[streamType]);
-      }).then(unlisten => {
-          listeners.addListener('enable-stream-error-' + StreamType[streamType], unlisten);
-      });
-
-      enableStream(streamType).catch((err) => {
-        console.error(`Error enabling ${StreamType[streamType]} stream:`, err);
-        addNotification('error', `Failed to enable ${StreamType[streamType]} stream`);
-        listeners.forceRemoveListener('enable-stream-' + StreamType[streamType]);
-        listeners.forceRemoveListener('enable-stream-error-' + StreamType[streamType]);
-      });
-
-    } else {
-      listenCommand(EventType.CommandSuccess, CommandType.DisableStream, (event) => {
-        console.log(`Stream disabled successfully: ${event.message}`);
-        setState(false);
-        listeners.removeListener('disable-stream-' + StreamType[streamType]);
-      }).then(unlisten => {
-          listeners.addListener('disable-stream-' + StreamType[streamType], unlisten);
-      });
-
-      listenCommand(EventType.CommandError, CommandType.DisableStream, (event) => {
-        addNotification('error', `Failed to disable ${StreamType[streamType]} stream`, event.data?.error || '');
-        setState(true);
-        listeners.removeListener('disable-stream-error-' + StreamType[streamType]);
-      }).then(unlisten => {
-          listeners.addListener('disable-stream-error-' + StreamType[streamType], unlisten);
-      });
-
-      disableStream(streamType).catch((err) => {
-        console.error(`Error disabling ${StreamType[streamType]} stream:`, err);
-        addNotification('error', `Failed to disable ${StreamType[streamType]} stream`);
-        listeners.forceRemoveListener('disable-stream-' + StreamType[streamType]);
-        listeners.forceRemoveListener('disable-stream-error-' + StreamType[streamType]);
-      });
-    }
-  }
-
   const formatUptime = (seconds: number) => {
     const hours = Math.floor(seconds / 3600);
     const minutes = Math.floor((seconds % 3600) / 60);
-    return `${hours}h ${minutes}m`;
+    const secs = seconds % 60;
+    return `${hours}:${minutes.toString().padStart(2, '0')}:${secs.toString().padStart(2, '0')}`;
   };
 
   const handleSaveOptions = (hostValue: string, portValue: string, sslEnabledValue: boolean) => {
@@ -459,145 +403,16 @@ export function ServerTab({ onStatusChange, state }: ServerTabProps) {
     }, 2000);
   };
 
-  // const handleClientMouseEnter = (clientId: string, event: React.MouseEvent<HTMLDivElement>) => {
-  //   // Don't show popup if hovering over interactive elements
-  //   const target = event.target as HTMLElement;
-  //   if (target.closest('button, a, input, select, textarea')) {
-  //     return;
-  //   }
-
-  //   // Delete any existing close timeout
-  //   if (closeTimeoutRef.current) {
-  //     clearTimeout(closeTimeoutRef.current);
-  //     closeTimeoutRef.current = null;
-  //   }
-
-  //   setHoveredClientId(clientId);
-  //   const rect = event.currentTarget.getBoundingClientRect();
-  //   setClientRect(rect);
-  //   // Show popup after 500ms
-  //   hoverTimeoutRef.current = setTimeout(() => {
-  //     setShowPopup(true);
-  //   }, 500);
-  // };
-
-  // const handleClientMouseLeave = () => {
-  //   // Clear the timeout if the user leaves before 500ms
-  //   if (hoverTimeoutRef.current) {
-  //     clearTimeout(hoverTimeoutRef.current);
-  //     hoverTimeoutRef.current = null;
-  //   }
-    
-  //   // Give the user time to enter the popup before closing it
-  //   closeTimeoutRef.current = setTimeout(() => {
-  //     setShowPopup(false);
-  //     setHoveredClientId(null);
-  //     setClientRect(null);
-  //   }, 200); // 200ms grace period to move the cursor into the popup
-  // };
-
-  const handlePopupMouseEnter = () => {
-    // Clear the close timeout when the mouse enters the popup
-    if (closeTimeoutRef.current) {
-      clearTimeout(closeTimeoutRef.current);
-      closeTimeoutRef.current = null;
-    }
-    // Clear the hover timeout if present
-    if (hoverTimeoutRef.current) {
-      clearTimeout(hoverTimeoutRef.current);
-      hoverTimeoutRef.current = null;
-    }
-  };
-
-  const handlePopupMouseLeave = () => {
-    // Close the popup when the mouse leaves the popup
-    setShowPopup(false);
-    setHoveredClientId(null);
-    setClientRect(null);
-  };
-
   return (
     <div className="space-y-5">
-      {/* Client Info Popup - Rendered at top level */}
-      <ClientInfoPopup 
-        uid={clientManager.clients.find(c => c.id === hoveredClientId)?.uid}
-        show={showPopup && hoveredClientId !== null}
-        clientRect={clientRect || undefined}
-        onMouseEnter={handlePopupMouseEnter}
-        onMouseLeave={handlePopupMouseLeave}
-      />
-
       {/* Power Button */}
-      <div className="flex flex-col items-center">
-        <motion.button
-          whileHover={!runningPending ? { scale: 1.05 } : {}}
-          whileTap={!runningPending ? { scale: 0.95 } : {}}
-          onClick={handleToggleServer}
-          disabled={runningPending}
-          className="w-24 h-24 rounded-full flex items-center justify-center transition-all duration-300 shadow-lg relative overflow-hidden"
-          style={{
-            backgroundColor: isRunning ? 'var(--app-success)' : 'var(--app-bg-tertiary)',
-            color: 'white',
-            opacity: runningPending ? 0.7 : 1,
-            cursor: runningPending ? 'not-allowed' : 'pointer'
-          }}
-        >
-          {runningPending && (
-            <>
-              {/* Spinner Animation */}
-              <motion.div
-                className="absolute inset-0 z-10"
-                style={{
-                  background: 'conic-gradient(from 0deg, transparent, rgba(255,255,255,0.4), transparent)',
-                }}
-                animate={{ rotate: 360 }}
-                transition={{ duration: 1, repeat: Infinity, ease: 'linear' }}
-              />
-              {/* Pulse Effect */}
-              <motion.div
-                className="absolute inset-0 rounded-full"
-                style={{
-                  backgroundColor: 'rgba(255, 255, 255, 0.2)',
-                }}
-                animate={{ scale: [1, 1.2, 1], opacity: [0.5, 0, 0.5] }}
-                transition={{ duration: 1.5, repeat: Infinity, ease: 'easeInOut' }}
-              />
-            </>
-          )}
-          {isRunning && !runningPending && (
-            <motion.div
-              className="absolute inset-0 opacity-30"
-              style={{ backgroundColor: 'var(--app-success)' }}
-              animate={{ scale: [1, 1.5, 1] }}
-              transition={{ duration: 2, repeat: Infinity }}
-            />
-          )}
-          <Power 
-            size={48} 
-            className="relative z-10" 
-            style={{ opacity: runningPending ? 0.5 : 1 }}
-          />
-        </motion.button>
-        <motion.p 
-          key={runningPending ? 'pending' : (isRunning ? 'running' : 'stopped')}
-          initial={{ opacity: 0, y: 10 }}
-          animate={{ opacity: 1, y: 0 }}
-          className="mt-3 font-semibold"
-          style={{ color: 'var(--app-text-primary)' }}
-        >
-          {runningPending ? '' : (isRunning ? 'Server Running' : 'Server Stopped')}
-        </motion.p>
-        {/* Server UID - Compact and clickable */}
-        {isRunning && uid && (
-          <CopyableBadge
-            key={uid}
-            fullText={uid}
-            displayText={abbreviateText(uid)}
-            label="UID"
-            className="mt-2"
-          />
-        )}
-      </div>
+      <PowerButton
+        status={runningPending ? 'pending' : isRunning ? 'running' : 'stopped'}
+        onClick={handleToggleServer}
+        stoppedLabel="Server Stopped"
+        runningLabel="Server Running"
+        uid={isRunning ? uid : undefined}
+      />
 
       {/* Inline Notifications */}
       <InlineNotification notifications={notifications} />
@@ -655,69 +470,16 @@ export function ServerTab({ onStatusChange, state }: ServerTabProps) {
       </motion.div>
 
       {/* Active Permissions Panel - Always Visible */}
-      <motion.div 
-        initial={{ opacity: 0 }}
-        animate={{ opacity: 1 }}
-        transition={{ delay: 0.3 }}
-        className="p-4 rounded-lg border backdrop-blur-sm"
-        style={{ 
-          backgroundColor: 'var(--app-card-bg)',
-          borderColor: 'var(--app-card-border)'
-        }}
-      >
-        <h4 className="text-sm font-semibold mb-2" style={{ color: 'var(--app-text-primary)' }}>
-          Active Permissions
-        </h4>
-        <div className="flex gap-3">
-          <motion.button
-            whileHover={{ scale: 1.05 }}
-            whileTap={{ scale: 0.95 }}
-            onClick={() => {
-              handleStreamToggle(StreamType.Mouse, !enableMouse, setEnableMouse);
-            }}
-            className="flex items-center gap-2 px-3 py-2 rounded-lg transition-all cursor-pointer"
-            style={{ 
-              backgroundColor: enableMouse ? 'var(--app-success-bg)' : 'var(--app-danger-bg)',
-              color: enableMouse ? 'var(--app-success)' : 'var(--app-danger)'
-            }}
-          >
-            <MousePointer size={16} />
-            <span className="text-xs font-semibold">Mouse</span>
-          </motion.button>
-
-          <motion.button
-            whileHover={{ scale: 1.05 }}
-            whileTap={{ scale: 0.95 }}
-            onClick={() => {
-              handleStreamToggle(StreamType.Keyboard, !enableKeyboard, setEnableKeyboard);
-            }}
-            className="flex items-center gap-2 px-3 py-2 rounded-lg transition-all cursor-pointer"
-            style={{ 
-              backgroundColor: enableKeyboard ? 'var(--app-success-bg)' : 'var(--app-danger-bg)',
-              color: enableKeyboard ? 'var(--app-success)' : 'var(--app-danger)'
-            }}
-          >
-            <Keyboard size={16} />
-            <span className="text-xs font-semibold">Keyboard</span>
-          </motion.button>
-
-          <motion.button
-            whileHover={{ scale: 1.05 }}
-            whileTap={{ scale: 0.95 }}
-            onClick={() => {
-              handleStreamToggle(StreamType.Clipboard, !enableClipboard, setEnableClipboard);
-            }}
-            className="flex items-center gap-2 px-3 py-2 rounded-lg transition-all cursor-pointer"
-            style={{
-              backgroundColor: enableClipboard ? 'var(--app-success-bg)' : 'var(--app-danger-bg)',
-              color: enableClipboard ? 'var(--app-success)' : 'var(--app-danger)'
-            }}
-          >
-            <Clipboard size={16} />
-            <span className="text-xs font-semibold">Clipboard</span>
-          </motion.button>
-        </div>
-      </motion.div>
+      <PermissionsPanel
+        enableMouse={enableMouse}
+        enableKeyboard={enableKeyboard}
+        enableClipboard={enableClipboard}
+        setEnableMouse={setEnableMouse}
+        setEnableKeyboard={setEnableKeyboard}
+        setEnableClipboard={setEnableClipboard}
+        addNotification={addNotification}
+        listeners={listeners}
+      />
 
       {/* Action Buttons */}
       <div className="grid grid-cols-3 gap-2">

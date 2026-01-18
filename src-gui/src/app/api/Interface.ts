@@ -195,6 +195,15 @@ export interface ServerStatus {
   authorized_clients: ClientObj[];
 }
 
+export interface ClientConnectionInfo {
+  uid: string;
+  host: string;
+  hostname: string;
+  port: number;
+  ssl: boolean;
+  auto_reconnect: boolean;
+}
+
 export interface ClientStatus
 {
   running: boolean;
@@ -203,14 +212,7 @@ export interface ClientStatus
   client_hostname: string;
   streams_enabled: number[];
   ssl_enabled: boolean;
-  server_info: {
-    uid: string;
-    host: string;
-    hostname: string;
-    port: number;
-    ssl: boolean;
-    auto_reconnect: boolean;
-  };
+  server_info: ClientConnectionInfo;
 }
 
 export interface ServiceStatus {
