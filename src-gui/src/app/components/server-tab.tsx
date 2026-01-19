@@ -37,16 +37,16 @@ export function ServerTab({ onStatusChange, state }: ServerTabProps) {
   let previousState = useRef<ServerStatus | null>(null);
 
   const [runningPending, setRunningPending] = useState(false);
-  const [isRunning, setIsRunning] = useState(false);
+  const [isRunning, setIsRunning] = useState(state.running);
   const [showOptions, setShowOptions] = useState(false);
   const [showClients, setShowClients] = useState(false);
   const [showSecurity, setShowSecurity] = useState(false);
   const [uid, setUid] = useState(state.uid);
   const [port, setPort] = useState(state.port.toString());
   const [host, setHost] = useState(state.host);
-  const [enableMouse, setEnableMouse] = useState(false);
-  const [enableKeyboard, setEnableKeyboard] = useState(false);
-  const [enableClipboard, setEnableClipboard] = useState(false);
+  const [enableMouse, setEnableMouse] = useState(parseStreams(state.streams_enabled).includes(StreamType.Mouse));
+  const [enableKeyboard, setEnableKeyboard] = useState(parseStreams(state.streams_enabled).includes(StreamType.Keyboard));
+  const [enableClipboard, setEnableClipboard] = useState(parseStreams(state.streams_enabled).includes(StreamType.Clipboard));
   const [requireSSL, setRequireSSL] = useState(state.ssl_enabled);
   const [otp, setOtp] = useState('');
   const [otpRequested, setOtpRequested] = useState(false);
