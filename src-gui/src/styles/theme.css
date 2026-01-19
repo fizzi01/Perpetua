@@ -1,8 +1,15 @@
 @custom-variant dark (&:is(.dark *));
 
-/* width */
+/* Hide scrollbar globally */
 ::-webkit-scrollbar {
   width: 0px;
+}
+
+/* Firefox scrollbar styling */
+.custom-scrollbar {
+  scrollbar-width: thin;
+  scrollbar-color: var(--app-primary) transparent;
+  transition: scrollbar-color 0.3s ease;
 }
 
 :root {

@@ -111,7 +111,7 @@ export default function App() {
           });
         }} />
         {/* Scrollable Content */}
-        <div className="flex-1 rounded-lg overflow-y-auto px-8 py-6 relative">
+        <div className="flex-1 rounded-lg overflow-y-auto px-8 py-6 relative custom-scrollbar">
           {/* Content */}
           <motion.div 
             key={mode}

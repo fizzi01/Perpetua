@@ -615,7 +615,7 @@ export function ServerTab({ onStatusChange, state }: ServerTabProps) {
                 </motion.button>
               </div>
 
-              <div className="space-y-2 max-h-60 overflow-y-auto">
+              <div className="space-y-2 max-h-60 overflow-y-auto custom-scrollbar">
                 {clientManager.clients.map(client => (
                   <motion.div
                     key={client.id}
