@@ -86,12 +86,27 @@ where
     Ok(())
 }
 
+#[cfg(debug_assertions)]
+fn prevent_default_ctxmenu() -> tauri::plugin::TauriPlugin<tauri::Wry> {
+    tauri_plugin_prevent_default::debug()
+}
+
+#[cfg(not(debug_assertions))]
+fn prevent_default_ctxmenu() -> tauri::plugin::TauriPlugin<tauri::Wry> {
+    use tauri_plugin_prevent_default::Flags;
+
+    tauri_plugin_prevent_default::Builder::new()
+        .with_flags(Flags::all())
+        .build()
+}
+
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
     let app = tauri::Builder::default()
         .plugin(tauri_plugin_os::init())
         .plugin(tauri_plugin_dialog::init())
         .plugin(tauri_plugin_opener::init())
+        .plugin(prevent_default_ctxmenu())
         .manage(Mutex::new(AppState { hard_close: false }))
         .invoke_handler(tauri::generate_handler![
             // -- Server Commands --

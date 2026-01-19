@@ -17,9 +17,9 @@ use tokio::net::TcpStream;
 const DEFAULT_DAEMON_PORT: u16 = 55652;
 
 #[cfg(unix)]
-pub const DEFAULT_APP_DIR: &str = "PyContinuity";
+pub const DEFAULT_APP_DIR: &str = "Perpetua";
 #[cfg(unix)]
-pub const DEFAULT_DAEMON_SOCKET: &str = "pycontinuity_daemon.sock";
+pub const DEFAULT_DAEMON_SOCKET: &str = "perpetua_daemon.sock";
 
 #[derive(Debug, Error)]
 pub enum ConnectionError {

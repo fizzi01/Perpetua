@@ -4,6 +4,9 @@ import { ActionType } from './actions';
 const initialState: ClientStatus = {
     connected: false,
     running: false,
+    otp_needed: false,
+    service_choice_needed: false,
+    available_servers: [],
     uid: '',
     client_hostname: '',
     streams_enabled: [],
