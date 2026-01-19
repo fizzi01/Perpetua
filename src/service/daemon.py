@@ -282,7 +282,7 @@ class Daemon:
             if not self._client_config.get_uid():
                 try:
                     key = self._client_config.get_hostname()
-                    if not key:
+                    if not key or key == "":
                         key = socket.gethostname()
                         self._logger.warning(
                             "Client configuration missing hostname, setting new one",
