@@ -19,12 +19,13 @@ class Builder:
 
     def __init__(self, project_root: Path, skip_gui: bool = False,
                  skip_daemon: bool = False, clean: bool = False,
-                 release: bool = True):
+                 release: bool = True, nuitka_args: Optional[list[str]] = None):
         self.project_root = project_root
         self.skip_gui = skip_gui
         self.skip_daemon = skip_daemon
         self.clean = clean
         self.release = release
+        self.nuitka_args = nuitka_args or []
         self.log = get_logger("build", verbose=True)
 
         self.gui_dir = project_root / "src-gui"
@@ -37,6 +38,10 @@ class Builder:
         self.is_macos = self.system == "Darwin"
         self.is_windows = self.system == "Windows"
         self.is_linux = self.system == "Linux"
+
+        # Add .exe extension for Windows
+        if self.is_windows:
+            self.gui_exe = self.gui_exe.with_suffix('.exe')
 
     def _run(self, cmd: list[str], cwd: Optional[Path] = None) -> subprocess.CompletedProcess:
         cwd = cwd or self.project_root
@@ -121,13 +126,13 @@ class Builder:
         if self.is_windows:
             nuitka_cmd.extend([
                 "--standalone",
-                "--onefile",
                 "--windows-console-mode=disable",
                 f"--windows-icon-from-ico={self.project_root / 'logo' / 'logo.ico'}",
             ])
 
+        nuitka_cmd.extend(self.nuitka_args)
         nuitka_cmd.append(str(launcher_py))
-        self._run(nuitka_cmd)
+        self._run(nuitka_cmd, cwd=self.src_dir)
 
     def _summary(self):
         build_type = 'Release' if self.release else 'Debug'
@@ -165,6 +170,7 @@ def main():
     parser.add_argument("--skip-daemon", action="store_true", help="Skip daemon build")
     parser.add_argument("--clean", action="store_true", help="Clean before build")
     parser.add_argument("--debug", action="store_true", help="Debug build")
+    parser.add_argument("--nuitka-args", nargs=argparse.REMAINDER, default=[], help="Extra arguments for Nuitka")
     args = parser.parse_args()
 
     builder = Builder(
@@ -172,7 +178,8 @@ def main():
         skip_gui=args.skip_gui,
         skip_daemon=args.skip_daemon,
         clean=args.clean,
-        release=not args.debug
+        release=not args.debug,
+        nuitka_args=args.nuitka_args
     )
     builder.build()
 
