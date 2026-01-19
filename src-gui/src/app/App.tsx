@@ -26,49 +26,64 @@ export default function App() {
 
   const isStartupRef = useRef(true);
 
+  function firstStartup() {
+      let isStartup = isStartupRef.current;
+      if (isStartup) {
+        console.log('[App] First startup detected, choosing service and setting up listeners');
+        setupStatusListener();
+        isStartupRef.current = false;
+        chooseService(mode).catch((err) => {
+          console.error('Error changing service:', err);
+          listeners.forceRemoveListener('service-choice');
+        });
+
+        getStatus().catch((err) => {
+          console.error('Error fetching status:', err);
+        });
+      }
+  }
+
+  function setupStatusListener() {
+      setListenersAdded(true);
+      listenCommand(EventType.CommandSuccess, CommandType.Status, (event) => {
+            console.log(`Status received`, event);
+            let result = event.data?.result as ServiceStatus;
+            let server_status = result.server_info as ServerStatus;
+            let client_status = result.client_info as ClientStatus;
+            if (server_status) {
+              if (server_status.running) {
+                setMode('server');
+              }
+              // Dispatch action to update server state
+              dispatch({type: ActionType.SERVER_STATE, payload: server_status});
+            }
+            if (client_status) {
+              // Update client state in the store
+              if (client_status.running) {
+                setMode('client');
+              }
+              // Dispatch action to update client state
+              dispatch({type: ActionType.CLIENT_STATE, payload: client_status});
+            }
+            listeners.removeListener('status');
+          }).then((unlisten) => {
+              listeners.addListenerOnce('status', () => {
+                console.log('Removing status listener');
+                unlisten();
+                setListenersAdded(false);
+              });
+          });
+  }
+
+  useEffect(() => {
+    firstStartup();
+  }, []);
+
   useEffect(() => {
     if (!stateListenersAdded) {
       console.log('Setting up event listeners');
-      setListenersAdded(true);
       return () => {
-        listenCommand(EventType.CommandSuccess, CommandType.Status, (event) => {
-          console.log(`Status received`, event);
-          let result = event.data?.result as ServiceStatus;
-          let server_status = result.server_info as ServerStatus;
-          let client_status = result.client_info as ClientStatus;
-          if (server_status) {
-            if (server_status.running) {
-              setMode('server');
-            }
-            // Dispatch action to update server state
-            dispatch({type: ActionType.SERVER_STATE, payload: server_status});
-          }
-          if (client_status) {
-            // Update client state in the store
-            if (client_status.running) {
-              setMode('client');
-            }
-            // Dispatch action to update client state
-            dispatch({type: ActionType.CLIENT_STATE, payload: client_status});
-          }
-          listeners.removeListener('status');
-        }).then((unlisten) => {
-            listeners.addListenerOnce('status', () => {
-              console.log('Removing status listener');
-              unlisten();
-              setListenersAdded(false);
-            });
-        });
-
-        let isStartup = isStartupRef.current;
-        if (isStartup) {
-          console.log('Fetching initial status on startup');
-          isStartupRef.current = false;
-          chooseService(mode).catch((err) => {
-            console.error('Error changing service:', err);
-            listeners.forceRemoveListener('service-choice');
-          });
-        }
+        setupStatusListener();
         
         getStatus().catch((err) => {
           console.error('Error fetching status:', err);
