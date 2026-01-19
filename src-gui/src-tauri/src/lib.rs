@@ -104,6 +104,9 @@ pub fn run() {
             // -- Client Commands --
             commands::start_client,
             commands::stop_client,
+            commands::set_otp,
+            commands::choose_server,
+            commands::set_client_config,
             // -- General Commands --
             commands::status,
             commands::service_choice,

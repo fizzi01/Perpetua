@@ -208,6 +208,9 @@ export interface ClientStatus
 {
   running: boolean;
   connected: boolean;
+  otp_needed: boolean;
+  service_choice_needed: boolean;
+  available_servers?: ServerFound[];
   uid: string;
   client_hostname: string;
   streams_enabled: number[];

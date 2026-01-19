@@ -8,6 +8,15 @@ interface ClientInfoPopupProps {
   onMouseLeave?: () => void;
 }
 
+// {/* Client Info Popup - Rendered at top level */}
+// <ClientInfoPopup 
+//   uid={clientManager.clients.find(c => c.id === hoveredClientId)?.uid}
+//   show={showPopup && hoveredClientId !== null}
+//   clientRect={clientRect || undefined}
+//   onMouseEnter={handlePopupMouseEnter}
+//   onMouseLeave={handlePopupMouseLeave}
+// />
+
 export function ClientInfoPopup({ uid, show, clientRect, onMouseEnter, onMouseLeave }: ClientInfoPopupProps) {
   if (!uid || !clientRect) return null;
 

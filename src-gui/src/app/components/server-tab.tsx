@@ -20,7 +20,7 @@ import { parseStreams, isValidIpAddress } from '../api/Utility'
 import { abbreviateText, CopyableBadge } from './copyable-badge';
 
 export function ServerTab({ onStatusChange, state }: ServerTabProps) {
-  let previousState: ServerStatus | null = null;
+  let previousState = useRef<ServerStatus | null>(null);
 
   const [runningPending, setRunningPending] = useState(false);
   const [isRunning, setIsRunning] = useState(false);
@@ -93,16 +93,16 @@ export function ServerTab({ onStatusChange, state }: ServerTabProps) {
   }, [isRunning]);
 
   useEffect(() => {
-    if (previousState === null) {
-      previousState = state;
-    } else if (JSON.stringify(previousState) !== JSON.stringify(state)) {
-      previousState = state;
+    if (previousState.current === null) {
+      previousState.current = state;
+    } else if (JSON.stringify(previousState.current) !== JSON.stringify(state)) {
+      previousState.current = state;
     } else {
       return; // No changes detected
     }
-    console.log('Server state updated:', state);
-    setIsRunning(state.running);
+    console.log('[Server] State updated', state);
     onStatusChange(state.running);
+    setIsRunning(state.running);
     setUid(state.uid);
     setHost(state.host);
     setPort(state.port.toString());
@@ -479,6 +479,7 @@ export function ServerTab({ onStatusChange, state }: ServerTabProps) {
         setEnableClipboard={setEnableClipboard}
         addNotification={addNotification}
         listeners={listeners}
+        disableAllStreams={false}
       />
 
       {/* Action Buttons */}

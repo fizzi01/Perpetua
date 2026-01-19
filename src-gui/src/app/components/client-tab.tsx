@@ -1,34 +1,50 @@
-import { useState, useEffect } from 'react';
-import { Power, Settings, Wifi, Clock, Key, MousePointer, Keyboard, Shield, Server } from 'lucide-react';
+import { useState, useEffect, useRef } from 'react';
+import { Settings, Wifi, Clock, Lock, Key, MousePointer, Keyboard, Shield, Server, Info } from 'lucide-react';
 import { motion, AnimatePresence } from 'motion/react';
 import { InlineNotification, Notification } from './inline-notification';
+import { PowerButton } from './power-button';
 import { ClientTabProps } from '../commons/Tab';
-import { ClientStatus, CommandType, EventType, ServerChoice } from '../api/Interface';
+import { ClientConnectionInfo, ClientStatus, CommandType, EventType, ServerChoice, ServerFound, StreamType } from '../api/Interface';
 import { listenCommand, listenGeneralEvent } from '../api/Listener';
-import { startClient, stopClient } from '../api/Sender';
+import { setOtp, startClient, stopClient, chooseServer, saveClientConfig } from '../api/Sender';
 import { useEventListeners } from '../hooks/useEventListeners';
 
+import { parseStreams, isValidIpAddress } from '../api/Utility'
+import { PermissionsPanel } from './permissions-panel';
+import { abbreviateText, CopyableBadge } from './copyable-badge';
+import { ServerSelectionPanel } from './server-selection-panel';
+import { isValid, set } from 'date-fns';
+
 export function ClientTab({ onStatusChange, state }: ClientTabProps) {
-  let previousState: ClientStatus | null = null;
+  let previousState = useRef<ClientStatus | null>(null);
 
   const [runningPending, setRunningPending] = useState(false);
   const [isRunning, setIsRunning] = useState(state.running);
   const [isConnected, setIsConnected] = useState(state.connected);
+  const [showSecurity, setShowSecurity] = useState(false);
   const [showOptions, setShowOptions] = useState(false);
   const [showOtpInput, setShowOtpInput] = useState(false);
-  const [serverAddress, setServerAddress] = useState('192.168.1.1:8080');
+  const [showServerChoice, setShowServerChoice] = useState(false);
+  const [availableServers, setAvailableServers] = useState<ServerFound[] | null>(null);
+  const [currentConnection, setCurrentConnection] = useState<ClientConnectionInfo | null>(null);
   const [autoConnect, setAutoConnect] = useState(false);
-  const [encryption, setEncryption] = useState('AES-256');
-  const [enableMouse, setEnableMouse] = useState(true);
-  const [enableKeyboard, setEnableKeyboard] = useState(true);
+  const [autoReconnect, setAutoReconnect] = useState(state.server_info.auto_reconnect);
+  const [enableMouse, setEnableMouse] = useState(parseStreams(state.streams_enabled).includes(StreamType.Mouse));
+  const [enableKeyboard, setEnableKeyboard] = useState(parseStreams(state.streams_enabled).includes(StreamType.Keyboard));
+  const [enableClipboard, setEnableClipboard] = useState(parseStreams(state.streams_enabled).includes(StreamType.Clipboard));
+  const [requireSSL, setRequireSSL] = useState(state.ssl_enabled);
+  const [hostname, setHostname] = useState(state.server_info.hostname || '');
+  const [host, setHost] = useState(state.server_info.host || state.server_info.hostname || '');
+  const [port, setPort] = useState(state.server_info.port ? state.server_info.port.toString() : '8080');
   const [otpInput, setOtpInput] = useState('');
   const [connectionTime, setConnectionTime] = useState(0);
-  const [dataUsage, setDataUsage] = useState(0);
+  // const [dataUsage, setDataUsage] = useState(0);
   const [controlStatus, setControlStatus] = useState<'none' | 'controlled' | 'idle'>('none');
   const [notifications, setNotifications] = useState<Notification[]>([]);
 
   const listeners = useEventListeners('client-tab');
   const connectionListeners = handleConnectionListeners();
+  const saveOptionsTimeoutRef = useRef<ReturnType<typeof setTimeout> | null>(null);
 
   const addNotification = (type: Notification['type'], message: string, description?: string) => {
     const newNotification: Notification = {
@@ -43,43 +59,88 @@ export function ClientTab({ onStatusChange, state }: ClientTabProps) {
     }, 4000);
   };
 
-  const ipAddress = isConnected ? '10.8.0.2' : 'Not Connected';
+  const handleToggleSecurity = () => {
+    setShowSecurity(!showSecurity);
+    setShowOptions(false);
+  };
+
+  const handleToggleOptions = () => {
+    setShowOptions(!showOptions);
+    setShowSecurity(false);
+  };
 
   useEffect(() => {
     if (!isConnected) return;
 
-    const controlInterval = setInterval(() => {
-      const random = Math.random();
-      if (random > 0.9) {
-        setControlStatus('controlled');
-        addNotification('warning', 'Server is controlling', `${enableMouse ? 'Mouse' : ''}${enableMouse && enableKeyboard ? ' & ' : ''}${enableKeyboard ? 'Keyboard' : ''}`);
-      } else if (random < 0.1) {
-        setControlStatus('idle');
-      }
-    }, 12000);
+    // const controlInterval = setInterval(() => {
+    //   const random = Math.random();
+    //   if (random > 0.9) {
+    //     setControlStatus('controlled');
+    //     addNotification('warning', 'Server is controlling', `${enableMouse ? 'Mouse' : ''}${enableMouse && enableKeyboard ? ' & ' : ''}${enableKeyboard ? 'Keyboard' : ''}`);
+    //   } else if (random < 0.1) {
+    //     setControlStatus('idle');
+    //   }
+    // }, 1000);
 
     const timeInterval = setInterval(() => {
       setConnectionTime(prev => prev + 1);
     }, 1000);
 
-    const dataInterval = setInterval(() => {
-      setDataUsage(prev => prev + Math.random() * 30);
-    }, 2000);
+    // const dataInterval = setInterval(() => {
+    //   setDataUsage(prev => prev + Math.random() * 30);
+    // }, 2000);
 
     return () => {
-      clearInterval(controlInterval);
+      // clearInterval(controlInterval);
       clearInterval(timeInterval);
-      clearInterval(dataInterval);
+      // clearInterval(dataInterval);
     };
-  }, [isConnected, enableMouse, enableKeyboard]);
+  }, [isConnected]);
+
+  useEffect(() => {
+    if (previousState.current === null) {
+      previousState.current = state;
+    } else if (JSON.stringify(previousState.current) !== JSON.stringify(state)) {
+      previousState.current = state;
+    } else {
+      return; // No changes detected
+    }
+    console.log('[Client] State updated', state);
+    onStatusChange(state.running);
+    setIsRunning(state.running);
+    setIsConnected(state.connected);
+    setShowOtpInput(state.otp_needed);
+    setCurrentConnection(state.server_info);
+
+    setHost(state.server_info.host || '');
+    setHostname(state.server_info.hostname || '');
+    setPort(state.server_info.port ? state.server_info.port.toString() : '');
+    setAutoReconnect(state.server_info.auto_reconnect);
+    setRequireSSL(state.ssl_enabled);
+    setShowServerChoice(state.service_choice_needed);
+    if (state.service_choice_needed && state.available_servers) {
+      setAvailableServers(state.available_servers);
+    }
+    let permissions = parseStreams(state.streams_enabled);
+    setEnableMouse(permissions.includes(StreamType.Mouse));
+    setEnableKeyboard(permissions.includes(StreamType.Keyboard));
+    setEnableClipboard(permissions.includes(StreamType.Clipboard));
+
+    connectionListeners.cleanup();
+    connectionListeners.setup();
+  }, [state]);
 
   function handleConnectionListeners() {
 
     const setup = () => {
       listenGeneralEvent(EventType.Connected, (event) => {
+        let res = event.data as ClientConnectionInfo;
+        setCurrentConnection(res);
+        setHost(res.host);
+        setPort(res.port.toString());
         setIsConnected(true);
         setShowOtpInput(false);
-        addNotification('success', 'Connected', serverAddress);
+        addNotification('success', 'Connected', `${res.host}:${res.port}`);
       }).then((unlisten) => {
         listeners.addListenerOnce('client-connected', unlisten);
       });
@@ -87,8 +148,8 @@ export function ClientTab({ onStatusChange, state }: ClientTabProps) {
       listenGeneralEvent(EventType.Disconnected, (event) => {
         setIsConnected(false);
         setConnectionTime(0);
-        setDataUsage(0);
-        setControlStatus('none');
+        // setDataUsage(0);
+        setControlStatus('none'); //TODO: Implement in backend
         setShowOtpInput(false);
         setOtpInput('');
         addNotification('warning', 'Disconnected');
@@ -97,9 +158,11 @@ export function ClientTab({ onStatusChange, state }: ClientTabProps) {
       });
 
       listenGeneralEvent(EventType.ServerChoiceNeeded, (event) => {
+        console.log('Server choice needed event received', event);
         let res = event.data as ServerChoice;
-        if (res) {
-          
+        if (res && res.servers && res.servers.length > 0) {
+          setAvailableServers(res.servers);
+          setShowServerChoice(true);
         }
 
       }).then((unlisten) => {
@@ -124,31 +187,68 @@ export function ClientTab({ onStatusChange, state }: ClientTabProps) {
     return { setup, cleanup };
   };
 
-  const handleToggleClient = () => {
-    // if (!isConnected) {
-    //   setShowOtpInput(true);
-    // } else {
-    //   setIsConnected(false);
-    //   setConnectionTime(0);
-    //   setDataUsage(0);
-    //   setControlStatus('none');
-    //   setShowOtpInput(false);
-    //   setOtpInput('');
-    //   addNotification('warning', 'Disconnected');
-    // }
+  const handleStopClient = () => {
+    setRunningPending(true);
 
+    listeners.removeListener('client-start');
+    listeners.removeListener('client-start-error');
+    connectionListeners.cleanup();
+
+    listenCommand(EventType.CommandSuccess, CommandType.StopClient, (event) => {
+      console.log(`Client stopped successfully`, event);
+      setIsRunning(false);
+      setIsConnected(false);
+      setConnectionTime(0);
+      // setDataUsage(0);
+      setShowOtpInput(false);
+      setOtpInput('');
+      setAvailableServers(null);
+      setShowServerChoice(false);
+      setControlStatus('none');
+      onStatusChange(false);
+      addNotification('info', 'Stopped');
+      setRunningPending(false);
+
+      listeners.removeListener('client-stop');
+      listeners.removeListener('client-stop-error');
+    }).then(unlisten => {
+      listeners.addListenerOnce('client-stop', unlisten);
+    });
+
+    listenCommand(EventType.CommandError, CommandType.StopClient, (event) => {
+      console.error(`Error stopping client: ${event.message}`);
+      addNotification('error', 'Failed to Stop', event.data?.error || 'Unknown error');
+
+      listeners.removeListener('client-stop-error');
+      listeners.removeListener('client-stop');
+    }).then(unlisten => {
+      listeners.addListenerOnce('client-stop-error', unlisten);
+    });
+
+    stopClient().catch((err) => {
+      console.error('Error invoking stopClient:', err);
+      addNotification('error', 'Failed to Stop', err.message || 'Unknown error');
+      setRunningPending(false);
+      listeners.forceRemoveListener('client-stop-error');
+      listeners.forceRemoveListener('client-stop');
+    });
+  }
+
+  const handleToggleClient = () => {
     if (!isRunning) {
       setRunningPending(true);
       
       listenCommand(EventType.CommandSuccess, CommandType.StartClient, (event) => {
-        console.log(`Client started successfully: ${event.message}`);
+        console.log(`Client started successfully`, event);
         setIsRunning(true);
-        let res = event.data?.result;
+        let res = event.data?.result as ClientConnectionInfo;
         if (res) {
-          let server_ip = res.ip_address as string;
-          let port = res.port as number;
-          setServerAddress(`${server_ip}:${port}`);
-          addNotification('success', 'Connected', `${server_ip}:${port}`);
+          let permissions = parseStreams(event.data?.result.enabled_streams as number[]);
+          setEnableMouse(permissions.includes(StreamType.Mouse));
+          setEnableKeyboard(permissions.includes(StreamType.Keyboard));
+          setEnableClipboard(permissions.includes(StreamType.Clipboard));
+          onStatusChange(true);
+          addNotification('success', 'Started');
           setRunningPending(false);
         }
 
@@ -163,9 +263,17 @@ export function ClientTab({ onStatusChange, state }: ClientTabProps) {
         addNotification('error', 'Connection Failed', event.data?.error || 'Unknown error');
         setRunningPending(false);
         setIsRunning(false);
+        setIsConnected(false);
+
+        setShowOtpInput(false);
+        setOtpInput('');
+        setShowServerChoice(false);
+        setAvailableServers(null);
+
 
         listeners.removeListener('client-start-error');
         listeners.removeListener('client-start');
+        connectionListeners.cleanup();
       }).then(unlisten => {
         listeners.addListenerOnce('client-start-error', unlisten);
       });
@@ -181,18 +289,113 @@ export function ClientTab({ onStatusChange, state }: ClientTabProps) {
       });
 
     } else {
-      connectionListeners.cleanup();
+      handleStopClient();
     }
   };
 
   const handleOtpSubmit = () => {
-    if (otpInput.length === 6) {
-      setIsConnected(true);
+    listenCommand(EventType.CommandSuccess, CommandType.SetOtp, (event) => {
+      console.log(`OTP accepted`, event);
       setShowOtpInput(false);
-      addNotification('success', 'Connected', serverAddress);
-    } else {
-      addNotification('error', 'Invalid OTP', 'Enter 6-digit code');
+      setOtpInput('');
+      addNotification('success', 'OTP Accepted');
+
+      listeners.removeListener('otp-success');
+      listeners.removeListener('otp-error');
+    }).then(unlisten => {
+      listeners.addListenerOnce('otp-success', unlisten);
+    });
+
+    listenCommand(EventType.CommandError, CommandType.SetOtp, (event) => {
+      console.error(`OTP rejected`, event);
+      addNotification('error', 'OTP Rejected', event.data?.error || 'Unknown error');
+      setShowOtpInput(false);
+      setOtpInput('');
+      listeners.removeListener('otp-error');
+      listeners.removeListener('otp-success');
+      handleStopClient(); // Stop the client since OTP failed
+    }).then(unlisten => {
+      listeners.addListenerOnce('otp-error', unlisten);
+    });
+
+    setOtp(otpInput)
+    .catch((err) => {
+      console.error('Error sending OTP:', err);
+      addNotification('error', 'OTP Submission Failed', err.message || 'Unknown error');
+    });
+  };
+
+  const handleServerSelect = (serverUid: string) => {
+    // Set up listeners for the command response
+    listenCommand(EventType.CommandSuccess, CommandType.ChooseServer, (res) => {
+      addNotification('success', 'Server Selected');
+      setShowServerChoice(false);
+      setAvailableServers(null);
+      listeners.removeListener('server-select-success');
+      listeners.removeListener('server-select-error');
+    }).then(unlisten => {
+      listeners.addListenerOnce('server-select-success', unlisten);
+    });
+
+    listenCommand(EventType.CommandError, CommandType.ChooseServer, (err) => {
+      console.error('Server selection error:', err);
+      addNotification('error', 'Server Selection Failed', err.data?.error || 'Failed to choose selected server');
+      // Don't close the panel on error, allow user to try again
+      listeners.removeListener('server-select-error');
+      listeners.removeListener('server-select-success');
+    }).then(unlisten => {
+      listeners.addListenerOnce('server-select-error', unlisten);
+    });
+
+    chooseServer(serverUid)
+    .catch((err) => {
+      console.error('Error choosing server:', err);
+      addNotification('error', 'Server Selection Failed', err.message || 'Unknown error');
+    });
+  };
+
+  const handleCancelServerSelection = () => {
+    setShowServerChoice(false);
+    setAvailableServers(null);
+    addNotification('info', 'Selection Cancelled', 'Server selection was cancelled');
+    handleStopClient(); // Stop the client since server selection was cancelled
+  };
+
+  const handleSaveOptions = (hostValue: string, hostnameValue: string, portValue: string, sslEnabledValue: boolean, autoReconnectValue: boolean) => {
+
+    listenCommand(EventType.CommandSuccess, CommandType.SetClientConfig, (event) => {
+      console.log(`Client config saved successfully`, event);
+      addNotification('success', 'Options Saved');
+      listeners.removeListener('save-client-config-success');
+    }).then(unlisten => {
+      listeners.addListenerOnce('save-client-config-success', unlisten);
+    });
+
+    listenCommand(EventType.CommandError, CommandType.SetClientConfig, (event) => {
+      console.error(`Error saving client config: ${event.message}`);
+      addNotification('error', 'Save Failed', event.data?.error || 'Unknown error');
+      listeners.removeListener('save-client-config-error');
+    }).then(unlisten => {
+      listeners.addListenerOnce('save-client-config-error', unlisten);
+    });
+
+    saveClientConfig(hostValue, hostnameValue, Number(portValue), sslEnabledValue, autoReconnectValue)
+    .catch((err) => {
+      console.error('Error saving client config:', err);
+      addNotification('error', 'Save Failed', err.message || 'Unknown error');
+    });
+  };
+
+  const scheduleOptionsSave = (hostValue: string, hostnameValue: string, portValue: string, sslEnabledValue: boolean, autoReconnectValue: boolean) => {
+    // Clear existing timeout
+    if (saveOptionsTimeoutRef.current) {
+      clearTimeout(saveOptionsTimeoutRef.current);
     }
+    
+    // Schedule new save after 2 seconds of inactivity
+    saveOptionsTimeoutRef.current = setTimeout(() => {
+      handleSaveOptions(hostValue, hostnameValue, portValue, sslEnabledValue, autoReconnectValue);
+    }, 2000);
   };
 
   const formatTime = (seconds: number) => {
@@ -202,47 +405,30 @@ export function ClientTab({ onStatusChange, state }: ClientTabProps) {
     return `${hours}:${minutes.toString().padStart(2, '0')}:${secs.toString().padStart(2, '0')}`;
   };
 
-  const formatData = (mb: number) => {
-    if (mb >= 1024) {
-      return `${(mb / 1024).toFixed(2)} GB`;
-    }
-    return `${mb.toFixed(0)} MB`;
-  };
+  // const formatData = (mb: number) => {
+  //   if (mb >= 1024) {
+  //     return `${(mb / 1024).toFixed(2)} GB`;
+  //   }
+  //   return `${mb.toFixed(0)} MB`;
+  // };
 
   return (
     <div className="space-y-5">
       {/* Power Button */}
-      <div className="flex flex-col items-center">
-        <motion.button
-          whileHover={{ scale: 1.05 }}
-          whileTap={{ scale: 0.95 }}
-          onClick={handleToggleClient}
-          className="w-24 h-24 rounded-full flex items-center justify-center transition-all duration-300 shadow-lg relative overflow-hidden"
-          style={{
-            backgroundColor: isConnected ? 'var(--app-success)' : 'var(--app-bg-tertiary)',
-            color: 'white'
-          }}
-        >
-          {isConnected && (
-            <motion.div
-              className="absolute inset-0 opacity-30"
-              style={{ backgroundColor: 'var(--app-success)' }}
-              animate={{ scale: [1, 1.5, 1] }}
-              transition={{ duration: 2, repeat: Infinity }}
-            />
-          )}
-          <Power size={48} className="relative z-10" />
-        </motion.button>
-        <motion.p 
-          key={isConnected ? 'connected' : 'disconnected'}
-          initial={{ opacity: 0, y: 10 }}
-          animate={{ opacity: 1, y: 0 }}
-          className="mt-3 font-semibold"
-          style={{ color: 'var(--app-text-primary)' }}
-        >
-          {isConnected ? 'Connected' : 'Disconnected'}
-        </motion.p>
-      </div>
+      <PowerButton
+        status={
+          runningPending ? 'pending' :
+          isRunning && !isConnected ? 'connecting' :
+          isConnected ? 'running' :
+          'stopped'
+        }
+        onClick={handleToggleClient}
+        onForceStop={handleStopClient}
+        uid={state.uid}
+        stoppedLabel="Disconnected"
+        runningLabel="Connected"
+        connectingLabel="Connecting"
+      />
 
       {/* Inline Notifications */}
       <InlineNotification notifications={notifications} />
@@ -301,8 +487,15 @@ export function ClientTab({ onStatusChange, state }: ClientTabProps) {
         )}
       </AnimatePresence>
 
+      <ServerSelectionPanel
+        serverChoice={availableServers}
+        onServerSelect={handleServerSelect}
+        isVisible={showServerChoice}
+        onCancel={handleCancelServerSelection}
+      />
+
       {/* Disconnected Status Info */}
-      {!isConnected && !showOtpInput && (
+      {!isConnected && !showOtpInput && host && port && (
         <motion.div
           initial={{ opacity: 0 }}
           animate={{ opacity: 1 }}
@@ -320,33 +513,29 @@ export function ClientTab({ onStatusChange, state }: ClientTabProps) {
             <div className="w-10 h-10 rounded-lg flex items-center justify-center" style={{ backgroundColor: 'var(--app-bg-tertiary)' }}>
               <Server size={20} style={{ color: 'var(--app-text-muted)' }} />
             </div>
-            <div className="flex-1">
-              <div className="text-sm font-bold" style={{ color: 'var(--app-text-primary)' }}>
-                {serverAddress}
+            <div className="flex-1 grid grid-cols-2 gap-1">
+              <div>
+                <div className="text-sm font-bold" style={{ color: 'var(--app-text-primary)' }}>
+                  {`${host || hostname}:${port}`}
+                </div>
+                <div className="text-xs" style={{ color: 'var(--app-text-muted)' }}>Server Address</div>
               </div>
-              <div className="text-xs" style={{ color: 'var(--app-text-muted)' }}>Server Address</div>
+              {/* Server UID Badge */}
+              {currentConnection?.uid && (
+                <div className="flex justify-center pt-1">
+                  <CopyableBadge
+                    key={currentConnection.uid}
+                    fullText={currentConnection.uid}
+                    displayText={abbreviateText(currentConnection.uid, 5, 4)}
+                    label=""
+                    titleText={`Click to copy Server UID: ${currentConnection.uid}`}
+                  />
+                </div>
+              )}
             </div>
           </motion.div>
 
-          <div className="flex gap-2">
-            <motion.div 
-              whileHover={{ scale: 1.02 }}
-              className="flex-1 flex items-center gap-3 p-4 rounded-lg border backdrop-blur-sm"
-              style={{ 
-                backgroundColor: 'var(--app-card-bg)',
-                borderColor: 'var(--app-card-border)'
-              }}
-            >
-              <div className="w-10 h-10 rounded-lg flex items-center justify-center" style={{ backgroundColor: 'var(--app-bg-tertiary)' }}>
-                <Shield size={20} style={{ color: 'var(--app-text-muted)' }} />
-              </div>
-              <div className="flex-1">
-                <div className="text-sm font-bold" style={{ color: 'var(--app-text-primary)' }}>
-                  {encryption}
-                </div>
-                <div className="text-xs" style={{ color: 'var(--app-text-muted)' }}>Encryption</div>
-              </div>
-            </motion.div>
+          {/* <div className="flex gap-2">
 
             <motion.div 
               whileHover={{ scale: 1.02 }}
@@ -366,7 +555,7 @@ export function ClientTab({ onStatusChange, state }: ClientTabProps) {
                 <div className="text-xs" style={{ color: 'var(--app-text-muted)' }}>Status</div>
               </div>
             </motion.div>
-          </div>
+          </div> */}
         </motion.div>
       )}
 
@@ -381,20 +570,34 @@ export function ClientTab({ onStatusChange, state }: ClientTabProps) {
           <div className="flex gap-2">
             <motion.div 
               whileHover={{ scale: 1.02 }}
-              className="flex-1 flex items-center gap-3 p-4 rounded-lg border backdrop-blur-sm"
+              className="flex-1 flex flex-col gap-1 p-4 rounded-lg border backdrop-blur-sm"
               style={{ 
                 backgroundColor: 'var(--app-card-bg)',
                 borderColor: 'var(--app-card-border)'
               }}
             >
-              <div className="w-10 h-10 rounded-lg flex items-center justify-center" style={{ backgroundColor: 'var(--app-primary)' }}>
-                <Wifi size={20} style={{ color: 'white' }} />
-              </div>
-              <div className="flex-1">
-                <div className="text-sm font-bold" style={{ color: 'var(--app-text-primary)' }}>
-                  {ipAddress}
+              <div className="flex items-center gap-3">
+                <div className="w-10 h-10 rounded-lg flex items-center justify-center" style={{ backgroundColor: 'var(--app-primary)' }}>
+                  <Wifi size={20} style={{ color: 'white' }} />
                 </div>
-                <div className="text-xs" style={{ color: 'var(--app-text-muted)' }}>IP Address</div>
+                <div className="flex-1">
+                  <div className="text-sm font-bold" style={{ color: 'var(--app-text-primary)' }}>
+                    {currentConnection ? `${currentConnection.host}:${currentConnection.port}` : 'Unknown'}
+                  </div>
+                  {/* Server UID Badge */}
+                  {currentConnection?.uid && (
+                    <div className="flex justify-center pt-1">
+                      <CopyableBadge
+                        key={currentConnection.uid}
+                        fullText={currentConnection.uid}
+                        displayText={abbreviateText(currentConnection.uid, 5, 4)}
+                        label=""
+                        titleText={`Click to copy Server UID: ${currentConnection.uid}`}
+                      />
+                    </div>
+                  )}
+                  {/* <div className="text-xs" style={{ color: 'var(--app-text-muted)' }}>IP Address</div> */}
+                </div>
               </div>
             </motion.div>
 
@@ -419,7 +622,7 @@ export function ClientTab({ onStatusChange, state }: ClientTabProps) {
           </div>
 
           {/* Data Usage - Full Width */}
-          <motion.div 
+          {/* <motion.div 
             whileHover={{ scale: 1.01 }}
             className="flex items-center gap-3 p-4 rounded-lg border backdrop-blur-sm"
             style={{ 
@@ -436,7 +639,7 @@ export function ClientTab({ onStatusChange, state }: ClientTabProps) {
               </div>
               <div className="text-xs" style={{ color: 'var(--app-text-muted)' }}>Data Usage</div>
             </div>
-          </motion.div>
+          </motion.div> */}
 
           {/* Control Status */}
           {controlStatus !== 'none' && (
@@ -459,43 +662,19 @@ export function ClientTab({ onStatusChange, state }: ClientTabProps) {
       )}
 
       {/* Active Permissions Panel - Always Visible */}
-      <motion.div 
-        initial={{ opacity: 0 }}
-        animate={{ opacity: 1 }}
-        transition={{ delay: 0.3 }}
-        whileHover={{ scale: 1.01 }}
-        className="p-4 rounded-lg border backdrop-blur-sm"
-        style={{ 
-          backgroundColor: 'var(--app-card-bg)',
-          borderColor: 'var(--app-card-border)'
-        }}
-      >
-        <h4 className="text-sm font-semibold mb-2" style={{ color: 'var(--app-text-primary)' }}>
-          Active Permissions
-        </h4>
-        <div className="flex gap-3">
-          <div className="flex items-center gap-2 px-3 py-2 rounded-lg"
-            style={{ 
-              backgroundColor: enableMouse ? 'var(--app-success-bg)' : 'var(--app-danger-bg)',
-              color: enableMouse ? 'var(--app-success)' : 'var(--app-danger)'
-            }}
-          >
-            <MousePointer size={16} />
-            <span className="text-xs font-semibold">Mouse</span>
-          </div>
-          <div className="flex items-center gap-2 px-3 py-2 rounded-lg"
-            style={{ 
-              backgroundColor: enableKeyboard ? 'var(--app-success-bg)' : 'var(--app-danger-bg)',
-              color: enableKeyboard ? 'var(--app-success)' : 'var(--app-danger)'
-            }}
-          >
-            <Keyboard size={16} />
-            <span className="text-xs font-semibold">Keyboard</span>
-          </div>
-        </div>
-      </motion.div>
+      <PermissionsPanel
+        enableMouse={enableMouse}
+        enableKeyboard={enableKeyboard}
+        enableClipboard={enableClipboard}
+        setEnableMouse={setEnableMouse}
+        setEnableKeyboard={setEnableKeyboard}
+        setEnableClipboard={setEnableClipboard}
+        addNotification={addNotification}
+        listeners={listeners}
+        disableAllStreams={isConnected}
+      />
 
-      {/* Settings Button */}
+      {/* Settings Button
       <motion.button
         whileHover={{ scale: 1.02 }}
         whileTap={{ scale: 0.98 }}
@@ -509,7 +688,91 @@ export function ClientTab({ onStatusChange, state }: ClientTabProps) {
       >
         <Settings size={20} />
         <span>Settings</span>
-      </motion.button>
+      </motion.button> */}
+
+      {/* Action Buttons */}
+      <div className="grid grid-cols-2 gap-2">
+        <motion.button
+          whileHover={{ scale: 1.02 }}
+          whileTap={{ scale: 0.98 }}
+          onClick={handleToggleSecurity}
+          className="p-3 rounded-lg transition-all duration-300 flex flex-col items-center gap-1 border-2"
+          style={{
+            backgroundColor: showSecurity ? 'var(--app-primary)' : 'var(--app-bg-tertiary)',
+            borderColor: 'var(--app-primary)',
+            color: showSecurity ? 'white' : 'var(--app-text-primary)'
+          }}
+        >
+          <Shield size={20} />
+          <span className="text-xs">Security</span>
+        </motion.button>
+
+        <motion.button
+          whileHover={{ scale: 1.02 }}
+          whileTap={{ scale: 0.98 }}
+          onClick={handleToggleOptions}
+          className="flex-1 p-3 rounded-lg transition-all duration-300 flex flex-col items-center gap-1 border-2"
+          style={{
+            backgroundColor: showOptions ? 'var(--app-primary)' : 'var(--app-bg-tertiary)',
+            borderColor: 'var(--app-primary)',
+            color: showOptions ? 'white' : 'var(--app-text-primary)'
+          }}
+        >
+          <Settings size={20} />
+          <span className="text-xs">Options</span>
+        </motion.button>
+      </div>
+
+      {/* Security Section */}
+      <AnimatePresence>
+        {showSecurity && (
+          <motion.div
+            initial={{ opacity: 0, height: 0 }}
+            animate={{ opacity: 1, height: 'auto' }}
+            exit={{ opacity: 0, height: 0 }}
+            transition={{ duration: 0.3 }}
+            className="overflow-hidden"
+          >
+            <div className="space-y-4 p-4 rounded-lg border"
+              style={{ 
+                backgroundColor: 'var(--app-card-bg)',
+                borderColor: 'var(--app-card-border)'
+              }}
+            >
+              <h3 className="font-semibold flex items-center gap-2"
+                style={{ color: 'var(--app-text-primary)' }}
+              >
+                <Shield size={18} />
+                Security Settings
+              </h3>
+
+              <div className="space-y-3">                   
+                <div className="flex items-center justify-between">
+                  <label htmlFor="requireSSL" className="flex items-center gap-2 cursor-pointer"
+                    style={{ color: 'var(--app-text-primary)' }}
+                  >
+                    <Lock size={18} />
+                    <span>Require SSL</span>
+                  </label>
+                  <input
+                    type="checkbox"
+                    id="requireSSL"
+                    checked={requireSSL}
+                    disabled={isConnected}
+                    onChange={(e) => {
+                      if (isConnected) return;
+                      setRequireSSL(e.target.checked);
+                      handleSaveOptions(host, hostname, port, e.target.checked, autoReconnect);
+                    }}
+                    className="w-5 h-5 cursor-pointer"
+                    style={{ accentColor: 'var(--app-primary)' }}
+                  />
+                </div>
+              </div>
+            </div>
+          </motion.div>
+        )}
+      </AnimatePresence>
 
       {/* Options Panel */}
       <AnimatePresence>
@@ -534,47 +797,99 @@ export function ClientTab({ onStatusChange, state }: ClientTabProps) {
                 Client Settings
               </h3>
 
+              <AnimatePresence mode="wait">
+                {(host === '' && hostname === '') || port === '' && (
+                  <motion.div
+                    initial={{ opacity: 0, height: 0, scale: 0.95 }}
+                    animate={{ opacity: 1, height: 'auto', scale: 1 }}
+                    exit={{ opacity: 0, height: 0, scale: 0.95 }}
+                    transition={{ duration: 0.2, ease: "easeOut" }}
+                    className="flex items-start gap-3 p-3 rounded-lg border overflow-hidden"
+                    style={{ 
+                      backgroundColor: 'var(--app-bg-secondary)',
+                      borderColor: 'var(--app-primary)',
+                      borderWidth: '1px'
+                    }}
+                  >
+                    <Info size={18} style={{ color: 'var(--app-primary)', marginTop: '2px', flexShrink: 0 }} />
+                    <p className="text-xs leading-relaxed" style={{ color: 'var(--app-text-secondary)' }}>
+                      <strong style={{ color: 'var(--app-text-primary)' }}>Auto-discovery enabled:</strong> Host and port are optional. Leave them empty to automatically connect to available servers on your network.
+                    </p>
+                  </motion.div>
+                )}
+              </AnimatePresence>
+
               <div>
                 <label className="block mb-2 font-semibold"
                   style={{ color: 'var(--app-text-primary)' }}
-                >Server Address</label>
+                >
+                  Host
+                  <span className="ml-2 text-xs font-normal" style={{ color: 'var(--app-text-muted)' }}>(optional)</span>
+                </label>
                 <input
                   type="text"
-                  value={serverAddress}
-                  onChange={(e) => setServerAddress(e.target.value)}
+                  placeholder="Auto-detect"
+                  value={host || hostname}
+                  onChange={(e) => {
+                    const newHost = e.target.value;
+                    if (newHost === '') {
+                      console.log('Clearing host and hostname');
+                      setHost(newHost);
+                      setHostname(newHost);
+                    }
+
+                    let is_ip = isValidIpAddress(newHost);
+                    if (!is_ip && newHost !== hostname) {
+                      setHostname(newHost);
+                      setHost('');
+                      scheduleOptionsSave('', newHost, port, requireSSL, autoReconnect);
+                    } else if (newHost !== host) {
+                      setHostname('');
+                      setHost(newHost);
+                      scheduleOptionsSave(newHost, '', port, requireSSL, autoReconnect);
+                    } 
+                  }}
                   className="w-full p-3 rounded-lg focus:outline-none transition-colors disabled:opacity-50 disabled:cursor-not-allowed"
                   style={{
                     backgroundColor: 'var(--app-input-bg)',
                     border: '2px solid var(--app-input-border)',
                     color: 'var(--app-text-primary)'
                   }}
-                  onFocus={(e) => !isConnected && (e.currentTarget.style.borderColor = 'var(--app-primary)')}
+                  onFocus={(e) => !isRunning && (e.currentTarget.style.borderColor = 'var(--app-primary)')}
                   onBlur={(e) => e.currentTarget.style.borderColor = 'var(--app-input-border)'}
-                  disabled={isConnected}
+                  disabled={isRunning}
                 />
               </div>
 
               <div>
                 <label className="block mb-2 font-semibold"
                   style={{ color: 'var(--app-text-primary)' }}
-                >Encryption</label>
-                <select
-                  value={encryption}
-                  onChange={(e) => setEncryption(e.target.value)}
+                >
+                  Port
+                  <span className="ml-2 text-xs font-normal" style={{ color: 'var(--app-text-muted)' }}>(optional)</span>
+                </label>
+                <input
+                  type="text"
+                  placeholder="Auto-detect"
+                  value={port}
+                  onChange={(e) => {
+                    const newPort = e.target.value;
+                    if (newPort !== '' && !/^\d*$/.test(newPort)) {
+                      return; // Only allow numeric input
+                    }
+                    setPort(newPort);
+                    scheduleOptionsSave(host, hostname, newPort, requireSSL, autoReconnect);
+                  }}
                   className="w-full p-3 rounded-lg focus:outline-none transition-colors disabled:opacity-50 disabled:cursor-not-allowed"
                   style={{
                     backgroundColor: 'var(--app-input-bg)',
                     border: '2px solid var(--app-input-border)',
                     color: 'var(--app-text-primary)'
                   }}
-                  onFocus={(e) => !isConnected && (e.currentTarget.style.borderColor = 'var(--app-primary)')}
+                  onFocus={(e) => !isRunning && (e.currentTarget.style.borderColor = 'var(--app-primary)')}
                   onBlur={(e) => e.currentTarget.style.borderColor = 'var(--app-input-border)'}
-                  disabled={isConnected}
-                >
-                  <option value="AES-256">AES-256</option>
-                  <option value="AES-128">AES-128</option>
-                  <option value="ChaCha20">ChaCha20</option>
-                </select>
+                  disabled={isRunning}
+                />
               </div>
 
               <div className="space-y-3">
@@ -582,7 +897,7 @@ export function ClientTab({ onStatusChange, state }: ClientTabProps) {
                   <label htmlFor="autoConnect" className="flex items-center gap-2 cursor-pointer"
                     style={{ color: 'var(--app-text-primary)' }}
                   >
-                    <span>Auto-connect on startup</span>
+                    <span>Start automatically</span>
                   </label>
                   <input
                     type="checkbox"
@@ -590,47 +905,28 @@ export function ClientTab({ onStatusChange, state }: ClientTabProps) {
                     checked={autoConnect}
                     onChange={(e) => {
                       setAutoConnect(e.target.checked);
-                      addNotification('info', `Auto-connect ${e.target.checked ? 'enabled' : 'disabled'}`);
+                      //TODO: Implement auto-connect (backend support needed)
                     }}
                     className="w-5 h-5 cursor-pointer"
                     style={{ accentColor: 'var(--app-primary)' }}
                   />
                 </div>
+              </div>
 
+              <div className="space-y-3">
                 <div className="flex items-center justify-between">
-                  <label htmlFor="enableMouseClient" className="flex items-center gap-2 cursor-pointer"
+                  <label htmlFor="autoReconnect" className="flex items-center gap-2 cursor-pointer"
                     style={{ color: 'var(--app-text-primary)' }}
                   >
-                    <MousePointer size={18} />
-                    <span>Allow Mouse Control</span>
+                    <span>Auto-reconnect</span>
                   </label>
                   <input
                     type="checkbox"
-                    id="enableMouseClient"
-                    checked={enableMouse}
+                    id="autoReconnect"
+                    checked={autoReconnect}
                     onChange={(e) => {
-                      setEnableMouse(e.target.checked);
-                      addNotification('info', `Mouse control ${e.target.checked ? 'enabled' : 'disabled'}`);
-                    }}
-                    className="w-5 h-5 cursor-pointer"
-                    style={{ accentColor: 'var(--app-primary)' }}
-                  />
-                </div>
-
-                <div className="flex items-center justify-between">
-                  <label htmlFor="enableKeyboardClient" className="flex items-center gap-2 cursor-pointer"
-                    style={{ color: 'var(--app-text-primary)' }}
-                  >
-                    <Keyboard size={18} />
-                    <span>Allow Keyboard Control</span>
-                  </label>
-                  <input
-                    type="checkbox"
-                    id="enableKeyboardClient"
-                    checked={enableKeyboard}
-                    onChange={(e) => {
-                      setEnableKeyboard(e.target.checked);
-                      addNotification('info', `Keyboard control ${e.target.checked ? 'enabled' : 'disabled'}`);
+                      setAutoReconnect(e.target.checked);
+                      handleSaveOptions(host, hostname, port, requireSSL, e.target.checked);
                     }}
                     className="w-5 h-5 cursor-pointer"
                     style={{ accentColor: 'var(--app-primary)' }}

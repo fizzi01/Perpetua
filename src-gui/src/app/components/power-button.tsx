@@ -1,5 +1,5 @@
 import { motion } from 'motion/react';
-import { Power } from 'lucide-react';
+import { Power, X } from 'lucide-react';
 import { CopyableBadge, abbreviateText } from './copyable-badge';
 
 type PowerButtonStatus = 'stopped' | 'running' | 'pending' | 'connecting';
@@ -9,6 +9,8 @@ interface PowerButtonProps {
   status: PowerButtonStatus;
   /** Callback when button is clicked */
   onClick: () => void;
+  /** Callback when force stop is clicked (only shown when connecting) */
+  onForceStop?: () => void;
   /** Label to show when stopped */
   stoppedLabel?: string;
   /** Label to show when running */
@@ -26,6 +28,7 @@ interface PowerButtonProps {
 export function PowerButton({
   status,
   onClick,
+  onForceStop,
   stoppedLabel = 'Stopped',
   runningLabel = 'Running',
   pendingLabel = '',
@@ -36,7 +39,7 @@ export function PowerButton({
   const isPending = status === 'pending';
   const isConnecting = status === 'connecting';
   const isRunning = status === 'running';
-  const isActive = isRunning || isConnecting;
+  const isActive = isRunning ;
 
   const getStatusLabel = () => {
     switch (status) {
@@ -54,60 +57,132 @@ export function PowerButton({
 
   return (
     <div className={`flex flex-col items-center ${className}`}>
-      <motion.button
-        whileHover={!isPending && !isConnecting ? { scale: 1.05 } : {}}
-        whileTap={!isPending && !isConnecting ? { scale: 0.95 } : {}}
-        onClick={onClick}
-        disabled={isPending || isConnecting}
-        className="w-24 h-24 rounded-full flex items-center justify-center transition-all duration-300 shadow-lg relative overflow-hidden"
-        style={{
-          backgroundColor: isActive ? 'var(--app-success)' : 'var(--app-bg-tertiary)',
-          color: 'white',
-          opacity: isPending || isConnecting ? 0.7 : 1,
-          cursor: isPending || isConnecting ? 'not-allowed' : 'pointer',
-        }}
-      >
-        {/* Pending/Connecting Animation */}
-        {(isPending || isConnecting) && (
+      <div className="relative flex items-center justify-center">
+        <motion.button
+          whileHover={!isPending && !isConnecting ? { scale: 1.05 } : {}}
+          whileTap={!isPending && !isConnecting ? { scale: 0.95 } : {}}
+          onClick={onClick}
+          disabled={isPending || isConnecting}
+          className="w-24 h-24 rounded-full flex items-center justify-center transition-all duration-300 shadow-lg relative overflow-hidden"
+          style={{
+            backgroundColor: isActive ? 'var(--app-success)' : 'var(--app-bg-tertiary)',
+            color: 'white',
+            opacity: isPending || isConnecting ? 0.7 : 1,
+            cursor: isPending || isConnecting ? 'not-allowed' : 'pointer',
+          }}
+        >
+          {/* Pending/Connecting Animation */}
+          {(isPending || isConnecting) && (
+            <>
+              {/* Spinner Animation */}
+              <motion.div
+                className="absolute inset-0 z-10"
+                style={{
+                  background: 'conic-gradient(from 0deg, transparent, rgba(255,255,255,0.4), transparent)',
+                }}
+                animate={{ rotate: 360 }}
+                transition={{ duration: 1, repeat: Infinity, ease: 'linear' }}
+              />
+              {/* Pulse Effect */}
+              <motion.div
+                className="absolute inset-0 rounded-full"
+                style={{
+                  backgroundColor: 'rgba(255, 255, 255, 0.2)',
+                }}
+                animate={{ scale: [1, 1.2, 1], opacity: [0.5, 0, 0.5] }}
+                transition={{ duration: 1.5, repeat: Infinity, ease: 'easeInOut' }}
+              />
+            </>
+          )}
+          
+          {/* Running Animation */}
+          {isRunning && !isPending && !isConnecting && (
+            <motion.div
+              className="absolute inset-0 opacity-30"
+              style={{ backgroundColor: 'var(--app-success)' }}
+              animate={{ scale: [1, 1.5, 1] }}
+              transition={{ duration: 2, repeat: Infinity }}
+            />
+          )}
+          
+          {/* Power Icon */}
+          <Power
+            size={48}
+            className="relative z-10"
+            style={{ opacity: isPending || isConnecting ? 0.5 : 1 }}
+          />
+        </motion.button>
+
+        {/* Force Stop Button (only visible when connecting) */}
+        {(isPending || isConnecting) && onForceStop && (
           <>
-            {/* Spinner Animation */}
+            {/* Subtle pulse backdrop */}
             <motion.div
-              className="absolute inset-0 z-10"
-              style={{
-                background: 'conic-gradient(from 0deg, transparent, rgba(255,255,255,0.4), transparent)',
+              initial={{ opacity: 0, scale: 0.8 }}
+              animate={{ 
+                opacity: [0.2, 0.35, 0.2],
+                scale: [1, 1.2, 1]
               }}
-              animate={{ rotate: 360 }}
-              transition={{ duration: 1, repeat: Infinity, ease: 'linear' }}
-            />
-            {/* Pulse Effect */}
-            <motion.div
-              className="absolute inset-0 rounded-full"
-              style={{
-                backgroundColor: 'rgba(255, 255, 255, 0.2)',
+              exit={{ opacity: 0 }}
+              transition={{
+                opacity: { duration: 2, repeat: Infinity, ease: "easeInOut" },
+                scale: { duration: 2, repeat: Infinity, ease: "easeInOut" }
               }}
-              animate={{ scale: [1, 1.2, 1], opacity: [0.5, 0, 0.5] }}
-              transition={{ duration: 1.5, repeat: Infinity, ease: 'easeInOut' }}
+              className="absolute w-10 h-10 rounded-full z-10"
+              style={{
+                backgroundColor: 'var(--app-danger)',
+                top: '-5px',
+                right: '-5px',
+                filter: 'blur(6px)',
+              }}
             />
+            
+            {/* Force stop button */}
+            <motion.button
+              initial={{ 
+                opacity: 0,
+                scale: 0,
+                rotate: -180
+              }}
+              animate={{ 
+                opacity: 1,
+                scale: 1,
+                rotate: 0
+              }}
+              exit={{ 
+                opacity: 0,
+                scale: 0,
+                rotate: 180
+              }}
+              transition={{
+                type: "spring",
+                stiffness: 300,
+                damping: 15,
+                delay: 0.1
+              }}
+              whileHover={{ 
+                scale: 1.1,
+                rotate: 90,
+                transition: { duration: 0.2 }
+              }}
+              whileTap={{ scale: 0.9 }}
+              onClick={onForceStop}
+              className="absolute w-10 h-10 rounded-full flex items-center justify-center z-20 border-2"
+              style={{
+                backgroundColor: 'var(--app-danger)',
+                borderColor: 'white',
+                color: 'white',
+                top: '-5px',
+                right: '-5px',
+                boxShadow: '0 4px 6px rgba(0, 0, 0, 0.3)',
+              }}
+              title="Force Stop"
+            >
+              <X size={20} strokeWidth={3} />
+            </motion.button>
           </>
         )}
-        
-        {/* Running Animation */}
-        {isRunning && !isPending && !isConnecting && (
-          <motion.div
-            className="absolute inset-0 opacity-30"
-            style={{ backgroundColor: 'var(--app-success)' }}
-            animate={{ scale: [1, 1.5, 1] }}
-            transition={{ duration: 2, repeat: Infinity }}
-          />
-        )}
-        
-        {/* Power Icon */}
-        <Power
-          size={48}
-          className="relative z-10"
-          style={{ opacity: isPending || isConnecting ? 0.5 : 1 }}
-        />
-      </motion.button>
+      </div>
 
       {/* Status Label */}
       <motion.p
@@ -121,7 +196,7 @@ export function PowerButton({
       </motion.p>
 
       {/* UID Badge (optional) */}
-      {isRunning && uid && (
+      {(isRunning || isConnecting) && uid && (
         <CopyableBadge
           key={uid}
           fullText={uid}

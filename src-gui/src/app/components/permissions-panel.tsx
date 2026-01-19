@@ -21,6 +21,8 @@ interface PermissionsPanelProps {
   setEnableClipboard: React.Dispatch<React.SetStateAction<boolean>>;
   /** Notification callback for errors */
   addNotification: (type: 'error' | 'success' | 'warning' | 'info', message: string, description?: string) => void;
+  /** Optional callback to disable all streams */
+  disableAllStreams: boolean;
   /** Event listeners manager */
   listeners: ReturnType<typeof useEventListeners>;
   /** Optional custom className */
@@ -37,6 +39,7 @@ export function PermissionsPanel({
   addNotification,
   listeners,
   className = '',
+  disableAllStreams = false,
 }: PermissionsPanelProps) {
 
   const handleStreamToggle = (
@@ -109,13 +112,15 @@ export function PermissionsPanel({
       </h4>
       <div className="flex gap-3">
         <motion.button
-          whileHover={{ scale: 1.05 }}
-          whileTap={{ scale: 0.95 }}
+          disabled={disableAllStreams}
+          whileHover={!disableAllStreams ? { scale: 1.05 } : {}}
+          whileTap={!disableAllStreams ? { scale: 0.95 } : {}}
           onClick={() => handleStreamToggle(StreamType.Mouse, !enableMouse, setEnableMouse)}
-          className="flex items-center gap-2 px-3 py-2 rounded-lg transition-all cursor-pointer"
+          className="flex items-center gap-2 px-3 py-2 rounded-lg transition-all"
           style={{
             backgroundColor: enableMouse ? 'var(--app-success-bg)' : 'var(--app-danger-bg)',
             color: enableMouse ? 'var(--app-success)' : 'var(--app-danger)',
+            opacity: disableAllStreams ? 0.5 : 1,
           }}
         >
           <MousePointer size={16} />
@@ -123,13 +128,15 @@ export function PermissionsPanel({
         </motion.button>
 
         <motion.button
-          whileHover={{ scale: 1.05 }}
-          whileTap={{ scale: 0.95 }}
+          disabled={disableAllStreams}
+          whileHover={!disableAllStreams ? { scale: 1.05 } : {}}
+          whileTap={!disableAllStreams ? { scale: 0.95 } : {}}
           onClick={() => handleStreamToggle(StreamType.Keyboard, !enableKeyboard, setEnableKeyboard)}
-          className="flex items-center gap-2 px-3 py-2 rounded-lg transition-all cursor-pointer"
+          className="flex items-center gap-2 px-3 py-2 rounded-lg transition-all"
           style={{
             backgroundColor: enableKeyboard ? 'var(--app-success-bg)' : 'var(--app-danger-bg)',
             color: enableKeyboard ? 'var(--app-success)' : 'var(--app-danger)',
+            opacity: disableAllStreams ? 0.5 : 1,
           }}
         >
           <Keyboard size={16} />
@@ -137,13 +144,15 @@ export function PermissionsPanel({
         </motion.button>
 
         <motion.button
-          whileHover={{ scale: 1.05 }}
-          whileTap={{ scale: 0.95 }}
+          disabled={disableAllStreams}
+          whileHover={!disableAllStreams ? { scale: 1.05 } : {}}
+          whileTap={!disableAllStreams ? { scale: 0.95 } : {}}
           onClick={() => handleStreamToggle(StreamType.Clipboard, !enableClipboard, setEnableClipboard)}
-          className="flex items-center gap-2 px-3 py-2 rounded-lg transition-all cursor-pointer"
+          className="flex items-center gap-2 px-3 py-2 rounded-lg transition-all"
           style={{
             backgroundColor: enableClipboard ? 'var(--app-success-bg)' : 'var(--app-danger-bg)',
             color: enableClipboard ? 'var(--app-success)' : 'var(--app-danger)',
+            opacity: disableAllStreams ? 0.5 : 1,
           }}
         >
           <Clipboard size={16} />

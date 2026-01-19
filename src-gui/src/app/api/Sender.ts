@@ -38,6 +38,18 @@ export function stopClient(): Promise<void> {
     return invoke(getType(CommandType, CommandType.StopClient));
 }
 
+export function setOtp(otp: string): Promise<void> {
+    return invoke(getType(CommandType, CommandType.SetOtp), { otp });
+}
+
+export function chooseServer(uid: string): Promise<void> {
+    return invoke(getType(CommandType, CommandType.ChooseServer), { uid });
+}
+
+export function saveClientConfig(serverHost: string, serverHostname: string, serverPort: number, sslEnabled: boolean, autoReconnect: boolean): Promise<void> {
+    return invoke(getType(CommandType, CommandType.SetClientConfig), { serverHost, serverHostname, serverPort, sslEnabled, autoReconnect });
+}
+
 // -- GENERAL API CALLS --
 
 export function chooseService(service: 'client' | 'server'): Promise<void> {

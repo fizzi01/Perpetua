@@ -299,6 +299,78 @@ pub async fn stop_client(s: tauri::State<'_, AtomicAsyncWriter>) -> Result<(), S
 }
 
 #[tauri::command]
+pub async fn set_otp(otp: String, s: tauri::State<'_, AtomicAsyncWriter>) -> Result<(), String> {
+    let command = CommandEvent::build(
+        CommandType::SetOtp,
+        &format!(r#"{{ "otp": "{}" }}"#, otp),
+    );
+    let command = EventParser::serialize(&command).map_err(|e| {
+        format!(
+            "Failed to serialize {} command: {}",
+            CommandType::SetOtp,
+            e
+        )
+    })?;
+    s.send(command)
+        .await
+        .map_err(|e| format!("Failed to send {} command ({})", CommandType::SetOtp, e))?;
+    Ok(())
+}
+
+#[tauri::command]
+pub async fn choose_server(
+    uid: String,
+    s: tauri::State<'_, AtomicAsyncWriter>,
+) -> Result<(), String> {
+    let command = CommandEvent::build(
+        CommandType::ChooseServer,
+        &format!(r#"{{ "uid": "{}" }}"#, uid),
+    );
+    let command = EventParser::serialize(&command).map_err(|e| {
+        format!(
+            "Failed to serialize {} command: {}",
+            CommandType::ChooseServer,
+            e
+        )
+    })?;
+    s.send(command)
+        .await
+        .map_err(|e| format!("Failed to send {} command ({})", CommandType::ChooseServer, e))?;
+    Ok(())
+}
+
+#[tauri::command]
+pub async fn set_client_config(
+    server_host: String,
+    server_hostname: String,
+    server_port: i32,
+    ssl_enabled: bool,
+    auto_reconnect: bool,
+    s: tauri::State<'_, AtomicAsyncWriter>,
+) -> Result<(), String> {
+    let command = CommandEvent::build(
+        CommandType::SetClientConfig,
+        &format!(r#"{{ "server_host": "{}", "server_hostname": "{}", "server_port": {}, "ssl_enabled": {}, "auto_reconnect": {} }}"#,
+            server_host, server_hostname, server_port, ssl_enabled, auto_reconnect)
+    );
+    let command = EventParser::serialize(&command).map_err(|e| {
+        format!(
+            "Failed to serialize {} command: {}",
+            CommandType::SetClientConfig,
+            e
+        )
+    })?;
+    s.send(command).await.map_err(|e| {
+        format!(
+            "Failed to send {} command ({})",
+            CommandType::SetClientConfig,
+            e
+        )
+    })?;
+    Ok(())
+}
+
+#[tauri::command]
 pub async fn status(s: tauri::State<'_, AtomicAsyncWriter>) -> Result<(), String> {
     let command = CommandEvent::build(CommandType::Status, "{}");
     let command = EventParser::serialize(&command)

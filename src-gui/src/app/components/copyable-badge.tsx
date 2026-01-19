@@ -48,10 +48,15 @@ export function CopyableBadge({
 
   return (
     <motion.button
-      initial={{ opacity: 0, y: 5 }}
+      initial={{ 
+        // opacity: 0, 
+        // y: 5,
+        backgroundColor: 'var(--app-bg-tertiary)',
+        borderColor: 'var(--app-border)',
+      }}
       animate={{ 
-        opacity: 1, 
-        y: 0,
+        // opacity: 1, 
+        // y: 0,
         backgroundColor: isCopied ? 'var(--app-success-bg)' : 'var(--app-bg-tertiary)',
         borderColor: isCopied ? 'var(--app-success)' : 'var(--app-border)',
       }}
@@ -61,7 +66,7 @@ export function CopyableBadge({
       className={`px-3 py-1 rounded-md flex items-center gap-2 transition-all ${className}`}
       style={{
         color: isCopied ? 'var(--app-success)' : 'var(--app-text-muted)',
-        border: '1px solid var(--app-border)',
+        border: isCopied ? '1px solid var(--app-success)' : '1px solid var(--app-border)',
         ...style,
       }}
       title={title}
