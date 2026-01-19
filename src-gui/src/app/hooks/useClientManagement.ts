@@ -96,6 +96,8 @@ export function useClientManagement() {
             return {
               ...c,
               uid: clientData.uid || c.uid, // Update UID if now available
+              name: clientData.host_name || c.name,
+              ip: clientData.ip_address || c.ip,
               status: connected ? 'online' as const : 'offline' as const,
               connectedAt: connected 
                 ? new Date(clientData.last_connection_date || clientData.first_connection_date)
