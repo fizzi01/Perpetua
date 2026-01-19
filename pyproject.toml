@@ -36,6 +36,13 @@ packages = [
     { include = "*", from = "src" }
 ]
 
+[tool.poetry.scripts]
+build = "build:main"
+build-gui = "scripts:build_gui"
+build-daemon = "scripts:build_daemon"
+clean-build = "scripts:clean_build"
+launcher = "launcher:main"
+
 [tool.poetry.group.dev.dependencies]
 ty = "^0.0.3"
 ruff = "^0.14.10"
