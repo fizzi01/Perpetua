@@ -25,8 +25,8 @@ class TestApplicationConfig:
         """Test that ApplicationConfig initializes with default values."""
         config = ApplicationConfig()
 
-        assert config.service_name == "PyContinuity"
-        assert config.app_name == "PyContinuity"
+        assert config.service_name == "Perpetua"
+        assert config.app_name == "Perpetua"
         assert config.main_path != ""
         assert config.ssl_path == "ssl/"
         assert config.server_config_file == "server_config.json"

@@ -37,7 +37,7 @@ class TestStructLoggerInitialization:
         logger = StructLogger()
 
         assert logger.logging_enabled is True
-        assert logger.logger_name == "PyContinuity"
+        assert logger.logger_name == "main_app"
         assert logger._logger is not None
 
     def test_initialization_with_name(self):
@@ -51,7 +51,7 @@ class TestStructLoggerInitialization:
         """Test logger initialization with __main__ name"""
         logger = StructLogger(name="__main__")
 
-        assert logger.logger_name == "PyContinuity"
+        assert logger.logger_name == "main_app"
 
     def test_initialization_verbose_false(self):
         """Test logger initialization with verbose=False"""
@@ -65,7 +65,7 @@ class TestStructLoggerInitialization:
         logger = StructLogger(level=BaseLogger.ERROR, is_root=True)
 
         assert StructLogger._global_config["level"] == logging.ERROR
-        assert StructLogger._logger_levels.get("PyContinuity") == logging.ERROR
+        assert StructLogger._logger_levels.get("main_app") == logging.ERROR
 
     def test_initialization_with_context(self):
         """Test logger initialization with initial context"""
@@ -571,7 +571,7 @@ class TestStructLoggerEdgeCases:
     def test_logger_with_none_name(self):
         """Test logger with None as name"""
         logger = StructLogger(name=None)
-        assert logger.logger_name == "PyContinuity"
+        assert logger.logger_name == "main_app"
 
     def test_logger_with_empty_name(self):
         """Test logger with empty string as name"""

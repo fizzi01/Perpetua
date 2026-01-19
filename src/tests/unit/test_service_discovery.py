@@ -50,21 +50,21 @@ def sample_services():
     """Provide sample services for testing."""
     return [
         Service(
-            name="service1._pycontinuity._tcp.local.",
+            name="service1._perpetua._tcp.local.",
             address="192.168.1.100",
             port=8000,
             uid="uid1",
             hostname="host1.local",
         ),
         Service(
-            name="service2._pycontinuity._tcp.local.",
+            name="service2._perpetua._tcp.local.",
             address="192.168.1.101",
             port=8001,
             uid="uid2",
             hostname="host2.local",
         ),
         Service(
-            name="service3._pycontinuity._tcp.local.",
+            name="service3._perpetua._tcp.local.",
             address="192.168.1.102",
             port=8002,
             uid="uid3",
@@ -698,8 +698,8 @@ class TestServiceListener:
         # Mock AsyncServiceInfo
         with patch("service.AsyncServiceInfo", return_value=mock_async_service_info):
             # Add service
-            service_type = "_pycontinuity._tcp.local."
-            service_name = "test_uid._pycontinuity._tcp.local."
+            service_type = "_perpetua._tcp.local."
+            service_name = "test_uid._perpetua._tcp.local."
             listener.add_service(mock_zeroconf, service_type, service_name)
 
             # Wait for the async task to complete
@@ -727,8 +727,8 @@ class TestServiceListener:
         # Mock AsyncServiceInfo to return None after async_request
         with patch("service.AsyncServiceInfo", return_value=mock_async_service_info):
             # Add service
-            service_type = "_pycontinuity._tcp.local."
-            service_name = "test._pycontinuity._tcp.local."
+            service_type = "_perpetua._tcp.local."
+            service_name = "test._perpetua._tcp.local."
             listener.add_service(mock_zeroconf, service_type, service_name)
 
             await asyncio.sleep(0.1)
@@ -765,12 +765,12 @@ class TestServiceListener:
             mock_async_info_class.side_effect = [mock_async_info1, mock_async_info2]
 
             # Add services
-            service_type = "_pycontinuity._tcp.local."
+            service_type = "_perpetua._tcp.local."
             listener.add_service(
-                mock_zeroconf, service_type, "uid1._pycontinuity._tcp.local."
+                mock_zeroconf, service_type, "uid1._perpetua._tcp.local."
             )
             listener.add_service(
-                mock_zeroconf, service_type, "uid2._pycontinuity._tcp.local."
+                mock_zeroconf, service_type, "uid2._perpetua._tcp.local."
             )
 
             await asyncio.sleep(0.2)
@@ -805,8 +805,8 @@ class TestServiceListener:
 
             mock_async_info_class.return_value = info1
 
-            service_type = "_pycontinuity._tcp.local."
-            service_name = "test_uid._pycontinuity._tcp.local."
+            service_type = "_perpetua._tcp.local."
+            service_name = "test_uid._perpetua._tcp.local."
 
             listener.add_service(mock_zeroconf, service_type, service_name)
             await asyncio.sleep(0.2)
@@ -855,8 +855,8 @@ class TestServiceListener:
             mock_async_info_class.return_value = info
 
             # Update non-existent service (should not crash)
-            service_type = "_pycontinuity._tcp.local."
-            service_name = "nonexistent._pycontinuity._tcp.local."
+            service_type = "_perpetua._tcp.local."
+            service_name = "nonexistent._perpetua._tcp.local."
             listener.update_service(mock_zeroconf, service_type, service_name)
             await asyncio.sleep(0.1)
 
@@ -888,8 +888,8 @@ class TestServiceListener:
             mock_zeroconf.get_service_info.return_value = mock_async_info_class
 
             # Add service
-            service_type = "_pycontinuity._tcp.local."
-            service_name = "test_uid._pycontinuity._tcp.local."
+            service_type = "_perpetua._tcp.local."
+            service_name = "test_uid._perpetua._tcp.local."
             listener.add_service(mock_zeroconf, service_type, service_name)
             await asyncio.sleep(0.1)
             # Verify service was added without hostname

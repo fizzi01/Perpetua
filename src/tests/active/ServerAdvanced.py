@@ -77,7 +77,7 @@ async def interactive_server():
         return
 
     print("\n" + "=" * 60)
-    print("PyContinuity Interactive Server")
+    print("Server")
     print("=" * 60)
     helper()
     print("=" * 60 + "\n")
