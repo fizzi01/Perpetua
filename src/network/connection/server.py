@@ -376,6 +376,9 @@ class ConnectionHandler(BaseConnectionHandler):
                 elif client is None:
                     # Try again to get client by IP if hostname not provided
                     client = self.clients.get_client(ip_address=client_addr)
+                elif client and tmp_host_name:
+                    # Update hostname if needed
+                    client.host_name = tmp_host_name
 
                 if (
                     client is None
