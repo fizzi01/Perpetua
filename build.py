@@ -41,7 +41,7 @@ class Builder:
     def _run(self, cmd: list[str], cwd: Optional[Path] = None) -> subprocess.CompletedProcess:
         cwd = cwd or self.project_root
         self.log.debug(f"$ {' '.join(cmd)}")
-        return subprocess.run(cmd, cwd=cwd, check=True, capture_output=False, text=True)
+        return subprocess.run(cmd, cwd=cwd, check=True, capture_output=False, shell=self.is_windows, text=True)
 
     def _clean(self):
         self.log.info("Cleaning build artifacts")
@@ -68,13 +68,13 @@ class Builder:
         self.log.info("Building GUI")
 
         try:
-            subprocess.run(["npm", "--version"], check=True, capture_output=True)
+            subprocess.run(["npm", "--version"], shell=self.is_windows, check=True, capture_output=True)
         except (subprocess.CalledProcessError, FileNotFoundError):
             self.log.error("npm not found")
             sys.exit(1)
 
         try:
-            subprocess.run(["cargo", "--version"], check=True, capture_output=True)
+            subprocess.run(["cargo", "--version"], shell=self.is_windows, check=True, capture_output=True)
         except (subprocess.CalledProcessError, FileNotFoundError):
             self.log.error("cargo not found")
             sys.exit(1)
