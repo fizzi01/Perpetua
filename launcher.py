@@ -37,7 +37,7 @@ def start_daemon() -> Process:
 
 
 def start_gui(executable_dir: str) -> bool:
-    gui_path = os.path.join(executable_dir, 'perpetua')
+    gui_path = os.path.join(executable_dir, '_perpetua')
     
     if not (os.path.isfile(gui_path) and os.access(gui_path, os.X_OK)):
         log.error("GUI not found", path=gui_path)

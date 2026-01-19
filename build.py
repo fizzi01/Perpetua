@@ -110,15 +110,17 @@ class Builder:
         nuitka_cmd = [
             sys.executable, "-m", "nuitka",
             f"--output-dir={self.build_dir}",
+            f"--output-filename={APP_NAME}",
+            f"--output-folder-name={APP_NAME}",
             "--include-package=utils",
             "--include-package=input",
-            f"--include-data-files={self.gui_exe}={GUI_EXECUTABLE}",
+            f"--include-data-files={self.gui_exe}=_{GUI_EXECUTABLE}",
         ]
 
         if self.is_macos:
             nuitka_cmd.extend([
                 "--macos-create-app-bundle",
-                # Accessibility permission
+                f"--macos-sign-identity={APP_NAME}",
                 "--macos-app-protected-resource=NSAppleEventsUsageDescription:Automation Control",
                 f"--macos-app-name={APP_NAME}",
                 f"--macos-app-icon={self.project_root / 'logo' / 'logo.icns'}",
