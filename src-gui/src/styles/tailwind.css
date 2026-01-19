@@ -1,4 +1,6 @@
 @import 'tailwindcss';
+
+@plugin 'tailwindcss-animate';
 @source '../**/*.{js,ts,jsx,tsx}';
 @source '../../node_modules/tauri-controls/**/*.{js,ts,jsx,tsx}';
 

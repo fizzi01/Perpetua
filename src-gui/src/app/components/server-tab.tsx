@@ -1,4 +1,15 @@
 import { useState, useEffect, useRef} from 'react';
+
+import {
+  Select,
+  SelectContent,
+  SelectGroup,
+  SelectItem,
+  SelectLabel,
+  SelectTrigger,
+  SelectValue,
+} from "./ui/select";
+
 import { Settings, Users, Activity, Plus, Trash2, Key, Lock, Shield } from 'lucide-react';
 import { motion, AnimatePresence } from 'motion/react';
 import { InlineNotification, Notification } from './inline-notification';
@@ -18,6 +29,8 @@ import { EventType, CommandType, ClientObj, StreamType, ServerStatus, OtpInfo, C
 import { ServerTabProps } from '../commons/Tab'
 import { parseStreams, isValidIpAddress } from '../api/Utility'
 import { abbreviateText, CopyableBadge } from './copyable-badge';
+import { SelectPortal, SelectViewport } from '@radix-ui/react-select';
+import { set } from 'date-fns';
 
 export function ServerTab({ onStatusChange, state }: ServerTabProps) {
   let previousState = useRef<ServerStatus | null>(null);
@@ -38,6 +51,7 @@ export function ServerTab({ onStatusChange, state }: ServerTabProps) {
   const [otpRequested, setOtpRequested] = useState(false);
   const [otpTimeout, setOtpTimeout] = useState(30);
   const [newClientIp, setNewClientIp] = useState('');
+  const [firstInit, setFirstInit] = useState(true);
   const [newClientPosition, setNewClientPosition] = useState<'top' | 'bottom' | 'left' | 'right'>('top');
   const [uptime, setUptime] = useState(0);
   const [notifications, setNotifications] = useState<Notification[]>([]);
@@ -583,23 +597,29 @@ export function ServerTab({ onStatusChange, state }: ServerTabProps) {
                   onBlur={(e) => e.currentTarget.style.borderColor = 'var(--app-input-border)'}
                 />
                 {/* Position Selector */}
-                <select
-                  value={newClientPosition}
-                  onChange={(e) => setNewClientPosition(e.target.value as 'top' | 'bottom' | 'left' | 'right')}
-                  className="w-full h-9 p-5 rounded-lg focus:outline-none transition-colors"
-                  style={{
-                    backgroundColor: 'var(--app-input-bg)',
-                    border: '2px solid var(--app-input-border)',
-                    color: 'var(--app-text-primary)'
-                  }}
-                  onFocus={(e) => e.currentTarget.style.borderColor = 'var(--app-primary)'}
-                  onBlur={(e) => e.currentTarget.style.borderColor = 'var(--app-input-border)'}
-                >
-                  <option value="top">Top</option>
-                  <option value="bottom">Bottom</option>
-                  <option value="left">Left</option>
-                  <option value="right">Right</option>
-                </select>
+                <Select value={firstInit ? '' : newClientPosition} onValueChange={(v) => {
+                  if (firstInit) setFirstInit(false);
+                  setNewClientPosition(v as 'top' | 'bottom' | 'left' | 'right');
+                }}>
+                  <SelectTrigger className="SelectTrigger">
+                    <SelectValue placeholder="Select Position" />
+                  </SelectTrigger>
+                  <SelectPortal>
+                    <SelectContent className="SelectContent">
+                      <SelectViewport className="SelectViewport">
+                        <SelectGroup>
+                          <SelectLabel className="SelectLabel"> Screen Position</SelectLabel>
+                          <SelectItem className="SelectItem" disabled={clientManager.clients.some(c => c.position === 'top')} value="top">Top</SelectItem>
+                          <SelectItem className="SelectItem" disabled={clientManager.clients.some(c => c.position === 'bottom')} value="bottom">Bottom</SelectItem>
+                          <SelectItem className="SelectItem" disabled={clientManager.clients.some(c => c.position === 'left')} value="left">Left</SelectItem>
+                          <SelectItem className="SelectItem" disabled={clientManager.clients.some(c => c.position === 'right')} value="right">Right</SelectItem>
+                        </SelectGroup>
+                      </SelectViewport>
+                    </SelectContent>
+                  </SelectPortal>
+
+                </Select>
+
                 <motion.button
                   whileHover={{ scale: 1.02 }}
                   whileTap={{ scale: 0.98 }}
@@ -615,7 +635,7 @@ export function ServerTab({ onStatusChange, state }: ServerTabProps) {
                 </motion.button>
               </div>
 
-              <div className="space-y-2 max-h-60 overflow-y-auto custom-scrollbar">
+              <div className="space-y-2 max-h-60 overflow-y-auto custom-scrollbar w-full">
                 {clientManager.clients.map(client => (
                   <motion.div
                     key={client.id}
