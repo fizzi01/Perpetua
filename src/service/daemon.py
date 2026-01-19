@@ -103,7 +103,7 @@ class DaemonCommand(StrEnum):
     PING = "ping"
 
     def __init__(self, params: Optional[Dict[str, Any]] = None):
-        super().__init__()
+        #super().__init__()
         self._params = params if params is not None else {}
 
     @property
@@ -134,7 +134,7 @@ class Daemon:
     Example:
         # Create and start daemon (Unix)
         daemon = Daemon(
-            socket_path="/tmp/pycontinuity.sock",
+            socket_path="/tmp/temp.sock",
             app_config=ApplicationConfig()
         )
 
@@ -1292,11 +1292,16 @@ class Daemon:
                 host = params.get("server_host", self._client_config.get_server_host())
                 hostname = params.get("server_hostname", self._client_config.get_server_hostname())
                 port = params.get("server_port", self._client_config.get_server_port())
+                uid = params.get("server_uid", self._client_config.get_server_uid())
                 auto_reconnect = params.get(
                     "auto_reconnect", self._client_config.do_auto_reconnect()
                 )
+
+                if host == "" and hostname == "": # Clear server connection
+                    uid = ""
+
                 self._client_config.set_server_connection(
-                    host=host, hostname=hostname, port=port, auto_reconnect=auto_reconnect
+                  uid=uid, host=host, hostname=hostname, port=port, auto_reconnect=auto_reconnect
                 )
 
             if "heartbeat_interval" in params:
@@ -2140,6 +2145,7 @@ async def main():
         help="Socket path (Unix socket) or host:port (TCP on Windows)",
     )
     parser.add_argument("--config-dir", help="Configuration directory path")
+    parser.add_argument("--debug", action="store_true", help="Enable debug directory")
 
     args = parser.parse_args()
 
@@ -2147,7 +2153,8 @@ async def main():
     app_config = ApplicationConfig()
     if args.config_dir:
         app_config.set_save_path(args.config_dir)
-    app_config.config_path = "_test_config/"
+    if args.debug:
+        app_config.config_path = "_test_config/"
 
     # Create and start daemon
     daemon = Daemon(
@@ -2173,7 +2180,6 @@ async def main():
 
 
 if __name__ == "__main__":
-    # Use uvloop for better performance if available
     try:
         if IS_WINDOWS:
             import winloop as asyncloop  # ty:ignore[unresolved-import]

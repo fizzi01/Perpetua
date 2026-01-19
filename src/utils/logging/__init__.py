@@ -109,14 +109,13 @@ class BaseLogger(ABC):
 
 class Logger(BaseLogger):
     """
-    Wrapper del package logging di Python.
-    Ogni istanza è associata a un modulo specifico per tracciare l'origine dei log.
-    I logger dell'applicazione sono isolati nel namespace 'pyContinuity' per non interferire con le librerie esterne.
+    Python logger wrapper for simple logging.
+    Provides colored output in verbose mode and silent output otherwise.
     """
 
     _app_logger_configured = False
     _lock = threading.Lock()
-    _app_namespace = "PyContinuity"
+    _app_namespace = "main_app"
     _shared_handler = None
 
     def __init__(
@@ -126,7 +125,7 @@ class Logger(BaseLogger):
         Inizializza un logger per un modulo specifico.
 
         Args:
-            name: Nome del logger (tipicamente __name__ del modulo). Se None, usa 'pyContinuity'
+            name: Nome del logger (tipicamente __name__ del modulo). Se None, use default app namespace
             verbose: Se True usa ColoredFormatter con DEBUG, altrimenti SilentFormatter con INFO
             level: Livello di logging iniziale (Logger.DEBUG, Logger.INFO, ecc.). Se None, usa DEBUG se verbose è True, altrimenti INFO
             stdout: Funzione di output custom (deprecato, mantenuto per compatibilità)
@@ -286,7 +285,7 @@ class StructLogger(BaseLogger):
     """
 
     _lock = threading.Lock()
-    _app_namespace = "PyContinuity"
+    _app_namespace = "main_app"
     _configured = False
     _global_config: dict[str, bool | int] = {
         "verbose": True,
@@ -427,7 +426,7 @@ class StructLogger(BaseLogger):
             if configured_level is None:
                 raise structlog.DropEvent
 
-            # Ottieni il nome del logger dall'event_dict
+            # Get the logger name from event_dict
             logger_name = event_dict.get("logger", "")
 
             # We get as min_levlel the max between the global configured level and the specific logger level
@@ -461,7 +460,7 @@ class StructLogger(BaseLogger):
         wrapper_cls = structlog.BoundLogger
 
         if verbose:
-            # Modalità verbose: output colorato con tutti i dettagli
+            # Verbose mode: colored output with all details
             structlog.configure(
                 processors=shared_processors
                 + [
@@ -477,7 +476,7 @@ class StructLogger(BaseLogger):
                 cache_logger_on_first_use=False,
             )
         else:
-            # Modalità silent: output minimale senza colori
+            # Silent mode: minimal output without colors
             structlog.configure(
                 processors=shared_processors
                 + [

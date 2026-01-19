@@ -1,5 +1,5 @@
 """
-Unified configuration management system for PyContinuity.
+Unified configuration management system.
 Handles server and client configurations with persistent storage support.
 """
 
@@ -28,8 +28,8 @@ async def _write(file, content: str) -> None:
 class ApplicationConfig:
     """Application-wide configuration settings"""
 
-    service_name: str = "PyContinuity"
-    app_name: str = "PyContinuity"
+    service_name: str = "Perpetua"
+    app_name: str = "Perpetua"
     mainpath: str = ""  # Main application save path
 
     ssl_path: str = "ssl/"
@@ -53,7 +53,7 @@ class ApplicationConfig:
     DEFAULT_PORT: int = 55655
     DEFAULT_DAEMON_PORT: int = DEFAULT_PORT - 3
 
-    DEFAULT_UNIX_SOCK_NAME: str = "pycontinuity_daemon.sock"
+    DEFAULT_UNIX_SOCK_NAME: str = f"{service_name.lower()}_daemon.sock"
 
     config_files: dict = field(default_factory=dict)
 

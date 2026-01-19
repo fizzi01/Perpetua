@@ -737,15 +737,16 @@ class Client:
         """Check if server is configured in client config"""
         if (
             self.config.get_server_uid() != ""
-            or ((
+            and ((
                 self.config.get_server_host() != ""
-                or self.config.get_server_hostname() is not None
-                or self.config.get_server_hostname() != ""
+                or (self.config.get_server_hostname() is not None
+                and self.config.get_server_hostname() != "")
             )
             and self.config.get_server_port() != 0)
         ):
             # Try to establish a TCP connection to verify server is reachable
-            host = self.config.get_server_host() or self.config.get_server_hostname()
+            host = self.config.get_server_host() \
+                if self.config.get_server_host() != "" else self.config.get_server_hostname()
             port = self.config.get_server_port()
 
             try:
