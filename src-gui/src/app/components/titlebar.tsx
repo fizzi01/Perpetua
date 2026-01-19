@@ -50,7 +50,7 @@ export function InnerBar({ disabled, mode, justify_mode, onModeChange }: InnerBa
 
 export function Titlebar({ disabled, mode, onModeChange }: TitlebarProps) {
 
-  const currentPlatform = platform() as 'windows' | 'macos' | 'linux' | 'unknown';
+  const currentPlatform = platform();
 
   return (
     currentPlatform === "windows" ? (

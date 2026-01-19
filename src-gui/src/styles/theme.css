@@ -201,6 +201,7 @@
 
   html {
     font-size: var(--font-size);
+    overflow-y: scroll;
   }
 
   h1 {
