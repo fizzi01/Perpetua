@@ -10,6 +10,8 @@ import {
   SelectValue,
 } from "./ui/select";
 
+import { ScrollArea } from './ui/scrollbar';
+
 import { Settings, Users, Activity, Plus, Trash2, Key, Lock, Shield } from 'lucide-react';
 import { motion, AnimatePresence } from 'motion/react';
 import { InlineNotification, Notification } from './inline-notification';
@@ -30,7 +32,6 @@ import { ServerTabProps } from '../commons/Tab'
 import { parseStreams, isValidIpAddress } from '../api/Utility'
 import { abbreviateText, CopyableBadge } from './copyable-badge';
 import { SelectPortal, SelectViewport } from '@radix-ui/react-select';
-import { set } from 'date-fns';
 
 export function ServerTab({ onStatusChange, state }: ServerTabProps) {
   let previousState = useRef<ServerStatus | null>(null);
@@ -635,7 +636,7 @@ export function ServerTab({ onStatusChange, state }: ServerTabProps) {
                 </motion.button>
               </div>
 
-              <div className="space-y-2 max-h-60 overflow-y-auto custom-scrollbar w-full">
+              <ScrollArea extraPadding='pl-2.5' className="space-y-2 max-h-60 overflow-y-auto custom-scrollbar w-full">
                 {clientManager.clients.map(client => (
                   <motion.div
                     key={client.id}
@@ -698,7 +699,7 @@ export function ServerTab({ onStatusChange, state }: ServerTabProps) {
                     </div>
                   </motion.div>
                 ))}
-              </div>
+              </ScrollArea>
             </div>
           </motion.div>
         )}

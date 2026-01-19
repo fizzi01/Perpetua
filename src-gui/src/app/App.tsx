@@ -11,7 +11,8 @@ import { listenCommand } from './api/Listener';
 import { useEventListeners } from './hooks/useEventListeners';
 import { useAppSelector, useAppDispatch } from './hooks/redux';
 import { ActionType } from './store/actions';
-import { platform } from '@tauri-apps/plugin-os';
+import { ScrollArea } from './components/ui/scrollbar';
+
 
 export default function App() {
   const [mode, setMode] = useState<'client' | 'server'>('client');
@@ -97,9 +98,6 @@ export default function App() {
       listeners.forceRemoveListener('service-choice');
     });
   }
-
-  const currentPlatform = platform();
-  const extraPadding = (currentPlatform === 'windows') ? 'pl-10' : '';
   
   return (
     <div className="min-h-screen w-full flex items-center justify-center" style={{ backgroundColor: 'var(--app-bg)' }}>
@@ -115,7 +113,7 @@ export default function App() {
           });
         }} />
         {/* Scrollable Content */}
-        <div className={`flex-1 rounded-lg overflow-y-auto ${extraPadding} px-8 py-6 relative custom-scrollbar`}>
+        <ScrollArea extraPadding='pl-10' className={`flex-1 rounded-lg overflow-y-auto px-8 py-6 relative`}>
           {/* Content */}
           <motion.div 
             key={mode}
@@ -125,7 +123,7 @@ export default function App() {
           >
             {mode === 'client' ? <ClientTab onStatusChange={setDisableModeSwitch} state={clientState}/> : <ServerTab onStatusChange={setDisableModeSwitch} state={serverState}/>}
           </motion.div>
-        </div>
+        </ScrollArea>
       </div>
     </div>
   );
