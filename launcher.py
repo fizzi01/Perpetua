@@ -8,6 +8,7 @@ from time import sleep
 
 sys.path.insert(0, str(Path(__file__).parent / "src"))
 from utils.logging import get_logger
+from utils.permissions import PermissionChecker
 
 log = get_logger("launcher", verbose=True)
 
@@ -17,9 +18,9 @@ def _run_daemon():
 
     try:
         if IS_WINDOWS:
-            import winloop as asyncloop
+            import winloop as asyncloop # type: ignore
         else:
-            import uvloop as asyncloop
+            import uvloop as asyncloop # type: ignore
         asyncloop.run(main())
     except ImportError:
         asyncio.run(main())
@@ -48,6 +49,16 @@ def start_gui(executable_dir: str) -> bool:
 
 
 def main():
+    permission_checker = PermissionChecker(log)
+    permissions = permission_checker.get_missing_permissions()
+    if len(permissions)>0:
+        log.info("Requesting missing permissions", permissions=permissions)
+        for permission in permissions:
+            result = permission_checker.request_permission(permission.permission_type)
+            if not result.is_granted:
+                log.error("Permission not granted", permission=permission)
+                return 1
+
     daemon = start_daemon()
     if not daemon.is_alive():
         log.error("Failed to start daemon")
@@ -65,5 +76,7 @@ if __name__ == "__main__":
         log.info("Interrupted")
         sys.exit(130)
     except Exception:
+        import traceback
         log.exception("Fatal error")
+        log.exception(traceback.format_exc())
         sys.exit(1)
