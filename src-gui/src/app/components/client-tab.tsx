@@ -1,5 +1,5 @@
 import { useState, useEffect, useRef } from 'react';
-import { Settings, Wifi, Clock, Lock, Key, MousePointer, Keyboard, Shield, Server, Info } from 'lucide-react';
+import { Settings, Wifi, Clock, Lock, Key, Shield, Server, Info } from 'lucide-react';
 import { motion, AnimatePresence } from 'motion/react';
 import { InlineNotification, Notification } from './inline-notification';
 import { PowerButton } from './power-button';
@@ -13,7 +13,6 @@ import { parseStreams, isValidIpAddress } from '../api/Utility'
 import { PermissionsPanel } from './permissions-panel';
 import { abbreviateText, CopyableBadge } from './copyable-badge';
 import { ServerSelectionPanel } from './server-selection-panel';
-import { isValid, set } from 'date-fns';
 
 export function ClientTab({ onStatusChange, state }: ClientTabProps) {
   let previousState = useRef<ClientStatus | null>(null);
@@ -145,7 +144,7 @@ export function ClientTab({ onStatusChange, state }: ClientTabProps) {
         listeners.addListenerOnce('client-connected', unlisten);
       });
 
-      listenGeneralEvent(EventType.Disconnected, (event) => {
+      listenGeneralEvent(EventType.Disconnected, () => {
         setIsConnected(false);
         setConnectionTime(0);
         // setDataUsage(0);
@@ -169,7 +168,7 @@ export function ClientTab({ onStatusChange, state }: ClientTabProps) {
         listeners.addListenerOnce('server-choice-needed', unlisten);
       });
 
-      listenGeneralEvent(EventType.OtpNeeded, (event) => {
+      listenGeneralEvent(EventType.OtpNeeded, () => {
         setShowOtpInput(true);
         listeners.removeListener('otp-needed');
       }).then((unlisten) => {
@@ -327,7 +326,7 @@ export function ClientTab({ onStatusChange, state }: ClientTabProps) {
 
   const handleServerSelect = (serverUid: string) => {
     // Set up listeners for the command response
-    listenCommand(EventType.CommandSuccess, CommandType.ChooseServer, (res) => {
+    listenCommand(EventType.CommandSuccess, CommandType.ChooseServer, () => {
       addNotification('success', 'Server Selected');
       setShowServerChoice(false);
       setAvailableServers(null);

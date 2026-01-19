@@ -189,6 +189,7 @@ function ServerCard({ server, index, isSelected, isProcessing, onSelect }: Serve
 
   return (
     <motion.button
+      key={index}
       whileTap={{ scale: 0.98 }}
       onClick={() => !isProcessing && onSelect(server.uid)}
       onHoverStart={() => setIsHovered(true)}
