@@ -1127,9 +1127,11 @@ class Server:
         """Get a specific component by name"""
         return self._components.get(component_name)
 
-    def get_enabled_streams(self) -> list[int]:
+    def get_enabled_streams(self, parse: bool = False) -> list[int] | dict[int, bool]:
         """Get list of enabled stream types"""
-        return [k for k, v in self.config.streams_enabled.items() if v]
+        if parse:
+            return [k for k, v in self.config.streams_enabled.items() if v]
+        return self.config.streams_enabled
 
     def get_active_streams(self) -> list[int]:
         """Get list of currently active stream types"""

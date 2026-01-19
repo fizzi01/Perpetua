@@ -456,7 +456,7 @@ class ClientConfig:
 
     # Default values
     DEFAULT_UID: str = ""
-    DEFAULT_SERVER_HOST = ApplicationConfig.DEFAULT_HOST
+    DEFAULT_SERVER_HOST = ""
     DEFAULT_SERVER_PORT = ApplicationConfig.DEFAULT_PORT
     DEFAULT_HEARTBEAT_INTERVAL: int = 1
     DEFAULT_LOG_LEVEL: int = Logger.INFO
@@ -751,8 +751,8 @@ class ServerInfo:
 
     def __init__(
         self,
-        uid: str,
-        host: str = ClientConfig.DEFAULT_SERVER_HOST,
+        uid: str = "",
+        host: str = "",
         hostname: Optional[str] = None,
         port: int = ClientConfig.DEFAULT_SERVER_PORT,
         heartbeat_interval: int = ClientConfig.DEFAULT_HEARTBEAT_INTERVAL,

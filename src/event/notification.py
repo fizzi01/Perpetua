@@ -720,9 +720,7 @@ class NotificationManager:
                 print(f"Sending notification: {event.to_json()}")
             await self._callback(event)
         except Exception as e:
-            # Avoid circular errors - just log to stderr
             import sys
-
             print(f"Error sending notification: {e}", file=sys.stderr)
 
     async def notify_event(self, event: NotificationEvent) -> None:
@@ -784,15 +782,15 @@ class NotificationManager:
             ServiceErrorEvent(service_name=service_name, error=error, **kwargs)
         )
 
-    async def notify_connected(self, peer: str, **kwargs) -> None:
+    async def notify_connected(self, connection_data: Optional[Dict[str, Any]] = None) -> None:
         """Notify successful connection"""
-        await self.send(ConnectedEvent(peer=peer, **kwargs))
+        await self.send(ConnectedEvent(connection_data))
 
     async def notify_disconnected(
-        self, peer: str, reason: Optional[str] = None, **kwargs
+        self, peer: str, connection_data: Optional[Dict[str, Any]] = None
     ) -> None:
         """Notify disconnection"""
-        await self.send(DisconnectedEvent(peer=peer, reason=reason, **kwargs))
+        await self.send(DisconnectedEvent(connection_data))
 
     async def notify_otp_needed(self, needed: bool, **kwargs) -> None:
         """Notify that OTP is needed"""

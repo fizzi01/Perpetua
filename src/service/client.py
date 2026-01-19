@@ -37,7 +37,7 @@ from input.keyboard import ClientKeyboardController
 from input.clipboard import ClipboardListener, ClipboardController
 from service import ServiceDiscovery, Service
 from utils.crypto import CertificateManager
-from utils.crypto.sharing import CertificateReceiver
+from utils.crypto.sharing import CertificateReceiver, OTP_LENGTH, CertificateReceiveError, CertificateSharingError
 from utils.metrics import MetricsCollector, PerformanceMonitor
 from utils.screen import Screen
 from utils.logging import get_logger
@@ -337,6 +337,8 @@ class Client:
             True if OTP is needed, False otherwise
         """
         async with self._state_lock:
+            if self._otp_needed is None or not self._otp_needed.done() or self._otp_needed.cancelled():
+                return False
             return await self._otp_needed
 
     async def set_otp(self, otp: str) -> bool:
@@ -350,8 +352,8 @@ class Client:
             True if OTP is valid and set, False otherwise
         """
 
-        if not otp or len(otp) != 6 or not otp.isdigit():
-            self._logger.error("Invalid OTP format. Must be 6 digits")
+        if not otp or len(otp) != OTP_LENGTH or not otp.isdigit():
+            self._logger.error(f"Invalid OTP format. Must be {OTP_LENGTH} digits")
             return False
 
         if not self._otp_received.done():
@@ -391,8 +393,8 @@ class Client:
             if success:
                 print("Certificate received successfully!")
         """
-        if not otp or len(otp) != 6 or not otp.isdigit():
-            self._logger.error("Invalid OTP format. Must be 6 digits")
+        if not otp or len(otp) != OTP_LENGTH or not otp.isdigit():
+            self._logger.error(f"Invalid OTP format. Must be {OTP_LENGTH} digits")
             return False
 
         # Use connection host if not specified
@@ -414,7 +416,7 @@ class Client:
 
             if not success:
                 self._logger.error("Failed to receive certificate from server")
-                return False
+                raise CertificateSharingError("Failed to receive certificate")
 
             if not cert_data:
                 self._logger.error("Received empty certificate data")
@@ -439,11 +441,11 @@ class Client:
 
             self._logger.info("Certificate received and saved successfully")
             return True
-
+        except CertificateSharingError:
+            raise
         except Exception as e:
             self._logger.error(f"Error receiving certificate -> {e}")
             import traceback
-
             self._logger.error(traceback.format_exc())
             return False
 
@@ -508,6 +510,12 @@ class Client:
         if not self._running or not self._connected:
             await self.enable_stream(stream_type)
             return True
+
+        if self._running and self._connected:
+            self._logger.error(
+                "Cannot disable streams at runtime while connected to server"
+            )
+            return False
 
         # Se già abilitato, non fare nulla
         if self.is_stream_enabled(stream_type):
@@ -616,6 +624,8 @@ class Client:
             True if server choice is needed, False otherwise
         """
         async with self._state_lock:
+            if self._need_server_choice is None or not self._need_server_choice.done() or self._need_server_choice.cancelled():
+                return False
             return await self._need_server_choice
 
     def get_found_servers(self) -> list[Service]:
@@ -715,7 +725,7 @@ class Client:
             )
         except Exception as e:
             self._logger.error(f"Error during certificate check -> {e}")
-            return None
+            raise CertificateReceiveError(e)
         finally:
             if not self._otp_needed.done():
                 self._otp_needed.set_result(False)
@@ -726,12 +736,13 @@ class Client:
     async def _is_server_available(self) -> bool:
         """Check if server is configured in client config"""
         if (
-            self.config.get_server_uid() is not None
-            and (
-                self.config.get_server_host() is not None
+            self.config.get_server_uid() != ""
+            or ((
+                self.config.get_server_host() != ""
                 or self.config.get_server_hostname() is not None
+                or self.config.get_server_hostname() != ""
             )
-            and self.config.get_server_port() is not None
+            and self.config.get_server_port() != 0)
         ):
             # Try to establish a TCP connection to verify server is reachable
             host = self.config.get_server_host() or self.config.get_server_hostname()
@@ -774,6 +785,11 @@ class Client:
                     self._logger.warning("No servers found on the network.")
                     # Check anyway if config has server set
                     return await self._is_server_available()
+
+                # If we have a saved server, check if it's available
+                # if so we can use it directly, otherwise we proceed to choose
+                if await self._is_server_available():
+                    return True
 
                 if len(self._found_services) == 1:
                     # Auto choose the only available server
@@ -868,6 +884,9 @@ class Client:
                 f"Client started and connecting to {server_host}:{server_port}"
             )
             return True
+        except CertificateReceiveError:
+            await self.stop()
+            raise
         finally:
             self._is_starting.clear()
             await self._futures_cleanup()
@@ -928,9 +947,18 @@ class Client:
         async with self._state_lock:
             self._otp_needed = asyncio.Future()  # Reset for future use
 
+        if not self._otp_received.done():
+            self._otp_received.set_result("")
+        async with self._state_lock:
+            self._otp_received = asyncio.Future()  # Reset for future use
+
+        if not self._server.done():
+            self._server.cancel()
+        async with self._state_lock:
+            self._server = asyncio.Future()  # Reset for future use
+
         if not self._need_server_choice.done():
             self._need_server_choice.set_result(False)
-
         async with self._state_lock:
             self._need_server_choice = asyncio.Future()  # Reset for future use
 
@@ -1262,9 +1290,11 @@ class Client:
         """Get a specific component by name"""
         return self._components.get(component_name)
 
-    def get_enabled_streams(self) -> list[int]:
+    def get_enabled_streams(self, parse: bool = False) -> list[int]|dict[int, bool]:
         """Get list of enabled stream types"""
-        return [k for k, v in self.config.streams_enabled.items() if v]
+        if parse:
+            return [k for k, v in self.config.streams_enabled.items() if v]
+        return self.config.streams_enabled
 
     def get_active_streams(self) -> list[int]:
         """Get list of currently active stream types"""

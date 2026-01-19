@@ -1054,7 +1054,6 @@ class Daemon:
                 )
         except Exception as e:
             self._logger.error(f"{e}")
-            await self._notification_manager.notify_service_error("Client", str(e))
             await self._notification_manager.notify_command_error(
                 command, f"{str(e)}"
             )
@@ -1108,7 +1107,12 @@ class Daemon:
                 **self._client_config.to_dict(),
                 "running": self._client.is_running(),
                 "connected": self._client.is_connected(),
+                "otp_nededed": await self._client.otp_needed(),
+                "service_choice_needed": await self._client.server_choice_needed(),
             }
+
+            if await self._client.server_choice_needed():
+                status["client_info"]["available_servers"] = [s.as_dict() for s in self._client.get_found_servers()]
 
         await self._notification_manager.notify_command_success(
             command, "Status retrieved", result_data=status
@@ -1284,14 +1288,15 @@ class Daemon:
 
         try:
             # Update configuration
-            if "server_host" in params or "server_port" in params:
+            if "server_host" in params or "server_port" in params or "server_hostname" in params or "auto_reconnect" in params:
                 host = params.get("server_host", self._client_config.get_server_host())
+                hostname = params.get("server_hostname", self._client_config.get_server_hostname())
                 port = params.get("server_port", self._client_config.get_server_port())
                 auto_reconnect = params.get(
                     "auto_reconnect", self._client_config.do_auto_reconnect()
                 )
                 self._client_config.set_server_connection(
-                    host=host, port=port, auto_reconnect=auto_reconnect
+                    host=host, hostname=hostname, port=port, auto_reconnect=auto_reconnect
                 )
 
             if "heartbeat_interval" in params:
@@ -1300,10 +1305,6 @@ class Daemon:
                         "heartbeat_interval",
                         self._client_config.get_heartbeat_interval(),
                     )
-                )
-            if "auto_reconnect" in params and "server_host" not in params:
-                self._client_config.auto_reconnect = params.get(  # ty:ignore[invalid-assignment]
-                    "auto_reconnect", self._client_config.do_auto_reconnect()
                 )
             if "ssl_enabled" in params:
                 if params["ssl_enabled"]:
@@ -1314,8 +1315,8 @@ class Daemon:
                 self._client_config.set_logging(level=params["log_level"])
             if "streams_enabled" in params:
                 self._client_config.streams_enabled = params["streams_enabled"]
-            if "hostname" in params:
-                self._client_config.set_hostname(params["hostname"])
+            if "client_hostname" in params:
+                self._client_config.set_hostname(params["client_hostname"])
             if "uid" in params:
                 self._client_config.uid = params.get("uid")
 
@@ -1412,7 +1413,9 @@ class Daemon:
                 return
 
             # Enable stream
-            await service.enable_stream_runtime(stream_type)
+            res: bool = await service.enable_stream_runtime(stream_type)
+            if not res:
+                raise Exception("Stream could not be enabled")
 
             result_data = {
                 "service": service_name,
@@ -1915,7 +1918,7 @@ class Daemon:
             otp = params.get("otp")
             if not otp:
                 await self._notification_manager.notify_command_error(
-                    command, "Must provide 'otp' parameter"
+                    command, "Must provide a valid OTP"
                 )
                 return
 

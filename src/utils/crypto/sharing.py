@@ -16,6 +16,18 @@ from cryptography.hazmat.primitives.kdf.pbkdf2 import PBKDF2HMAC
 
 from utils.logging import Logger, get_logger
 
+OTP_LENGTH = 6
+
+# Error class
+class CertificateSharingError(Exception):
+    """Custom exception for certificate sharing errors"""
+
+    pass
+
+class CertificateReceiveError(Exception):
+    """Custom exception for certificate receiver errors"""
+
+    pass
 
 class CertificateSharing:
     """
@@ -56,8 +68,8 @@ class CertificateSharing:
 
     @staticmethod
     def _generate_otp() -> str:
-        """Generate a secure 6-digit OTP"""
-        return "".join([str(secrets.randbelow(10)) for _ in range(6)])
+        """Generate a secure OTP_LENGHT-digit OTP"""
+        return "".join([str(secrets.randbelow(10)) for _ in range(OTP_LENGTH)])
 
     @staticmethod
     def _derive_key_from_otp(otp: str, salt: bytes) -> bytes:
