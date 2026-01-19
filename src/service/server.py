@@ -423,7 +423,9 @@ class Server:
         """
         try:
             client = self.config.add_client(
-                ip_address=ip_address, hostname=hostname, screen_position=screen_position
+                ip_address=ip_address,
+                hostname=hostname,
+                screen_position=screen_position,
             )
 
             if auto_save:
@@ -699,9 +701,11 @@ class Server:
         )
 
         # Start mDNS service
-        service_task = asyncio.create_task(self._mdns_service.register_service(
+        service_task = asyncio.create_task(
+            self._mdns_service.register_service(
                 host=self.config.host, port=self.config.port, uid=self.config.uid
-            ))
+            )
+        )
 
         # Initialize and start enabled components
         try:

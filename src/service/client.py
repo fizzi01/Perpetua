@@ -37,7 +37,12 @@ from input.keyboard import ClientKeyboardController
 from input.clipboard import ClipboardListener, ClipboardController
 from service import ServiceDiscovery, Service
 from utils.crypto import CertificateManager
-from utils.crypto.sharing import CertificateReceiver, OTP_LENGTH, CertificateReceiveError, CertificateSharingError
+from utils.crypto.sharing import (
+    CertificateReceiver,
+    OTP_LENGTH,
+    CertificateReceiveError,
+    CertificateSharingError,
+)
 from utils.metrics import MetricsCollector, PerformanceMonitor
 from utils.screen import Screen
 from utils.logging import get_logger
@@ -337,7 +342,11 @@ class Client:
             True if OTP is needed, False otherwise
         """
         async with self._state_lock:
-            if self._otp_needed is None or not self._otp_needed.done() or self._otp_needed.cancelled():
+            if (
+                self._otp_needed is None
+                or not self._otp_needed.done()
+                or self._otp_needed.cancelled()
+            ):
                 return False
             return await self._otp_needed
 
@@ -446,6 +455,7 @@ class Client:
         except Exception as e:
             self._logger.error(f"Error receiving certificate -> {e}")
             import traceback
+
             self._logger.error(traceback.format_exc())
             return False
 
@@ -624,7 +634,11 @@ class Client:
             True if server choice is needed, False otherwise
         """
         async with self._state_lock:
-            if self._need_server_choice is None or not self._need_server_choice.done() or self._need_server_choice.cancelled():
+            if (
+                self._need_server_choice is None
+                or not self._need_server_choice.done()
+                or self._need_server_choice.cancelled()
+            ):
                 return False
             return await self._need_server_choice
 
@@ -735,18 +749,22 @@ class Client:
 
     async def _is_server_available(self) -> bool:
         """Check if server is configured in client config"""
-        if (
-            self.config.get_server_uid() != ""
-            and ((
+        if self.config.get_server_uid() != "" and (
+            (
                 self.config.get_server_host() != ""
-                or (self.config.get_server_hostname() is not None
-                and self.config.get_server_hostname() != "")
+                or (
+                    self.config.get_server_hostname() is not None
+                    and self.config.get_server_hostname() != ""
+                )
             )
-            and self.config.get_server_port() != 0)
+            and self.config.get_server_port() != 0
         ):
             # Try to establish a TCP connection to verify server is reachable
-            host = self.config.get_server_host() \
-                if self.config.get_server_host() != "" else self.config.get_server_hostname()
+            host = (
+                self.config.get_server_host()
+                if self.config.get_server_host() != ""
+                else self.config.get_server_hostname()
+            )
             port = self.config.get_server_port()
 
             try:
@@ -1291,7 +1309,7 @@ class Client:
         """Get a specific component by name"""
         return self._components.get(component_name)
 
-    def get_enabled_streams(self, parse: bool = False) -> list[int]|dict[int, bool]:
+    def get_enabled_streams(self, parse: bool = False) -> list[int] | dict[int, bool]:
         """Get list of enabled stream types"""
         if parse:
             return [k for k, v in self.config.streams_enabled.items() if v]

@@ -18,16 +18,19 @@ from utils.logging import Logger, get_logger
 
 OTP_LENGTH = 6
 
+
 # Error class
 class CertificateSharingError(Exception):
     """Custom exception for certificate sharing errors"""
 
     pass
 
+
 class CertificateReceiveError(Exception):
     """Custom exception for certificate receiver errors"""
 
     pass
+
 
 class CertificateSharing:
     """

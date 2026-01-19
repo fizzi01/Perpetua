@@ -272,14 +272,11 @@ class ConnectedEvent(ConnectionEvent):
 class DisconnectedEvent(ConnectionEvent):
     """Disconnected from peer"""
 
-    def __init__(
-        self,
-        connection_data: Optional[Dict[str, Any]] = None
-    ):
+    def __init__(self, connection_data: Optional[Dict[str, Any]] = None):
         super().__init__(
             event_type=NotificationEventType.DISCONNECTED,
             connection_data=connection_data,
-            message="Disconnected"
+            message="Disconnected",
         )
 
 
@@ -640,7 +637,11 @@ class CommandSuccessEvent(NotificationEvent):
     """Command executed successfully"""
 
     def __init__(
-        self, command: str, message: Optional[str] = None, result_data: Optional[Dict[str, Any]] = None, **kwargs
+        self,
+        command: str,
+        message: Optional[str] = None,
+        result_data: Optional[Dict[str, Any]] = None,
+        **kwargs,
     ):
         data = {"command": command}
         if result_data:
@@ -721,6 +722,7 @@ class NotificationManager:
             await self._callback(event)
         except Exception as e:
             import sys
+
             print(f"Error sending notification: {e}", file=sys.stderr)
 
     async def notify_event(self, event: NotificationEvent) -> None:
@@ -782,7 +784,9 @@ class NotificationManager:
             ServiceErrorEvent(service_name=service_name, error=error, **kwargs)
         )
 
-    async def notify_connected(self, connection_data: Optional[Dict[str, Any]] = None) -> None:
+    async def notify_connected(
+        self, connection_data: Optional[Dict[str, Any]] = None
+    ) -> None:
         """Notify successful connection"""
         await self.send(ConnectedEvent(connection_data))
 
@@ -879,11 +883,17 @@ class NotificationManager:
         await self.send(InfoEvent(info=info, **kwargs))
 
     async def notify_command_success(
-        self, command: str, message: Optional[str] = None, result_data: Optional[Dict[str, Any]] = None, **kwargs
+        self,
+        command: str,
+        message: Optional[str] = None,
+        result_data: Optional[Dict[str, Any]] = None,
+        **kwargs,
     ) -> None:
         """Notify that a command executed successfully"""
         await self.send(
-            CommandSuccessEvent(command=command, message=message, result_data=result_data, **kwargs)
+            CommandSuccessEvent(
+                command=command, message=message, result_data=result_data, **kwargs
+            )
         )
 
     async def notify_command_error(self, command: str, error: str, **kwargs) -> None:
@@ -898,4 +908,3 @@ class NotificationManager:
                 message="pong",
             )
         )
-

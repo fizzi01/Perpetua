@@ -25,7 +25,6 @@ import pytest
 from service.daemon import (
     Daemon,
     DaemonCommand,
-
     DaemonAlreadyRunningException,
     DaemonPortOccupiedException,
     IS_WINDOWS,
@@ -522,6 +521,7 @@ class TestArbitraryDataSending:
         # Cleanup
         writer.close()
         await writer.wait_closed()
+
 
 # ============================================================================
 # Test Command Handlers - Ping and Status

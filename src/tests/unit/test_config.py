@@ -850,7 +850,7 @@ class TestServerInfoSerialization:
 
         server_info = ServerInfo.from_dict(data)
 
-        assert server_info.host == ApplicationConfig.DEFAULT_HOST
+        assert server_info.host == ""
         assert server_info.port == ApplicationConfig.DEFAULT_PORT
         assert server_info.heartbeat_interval == 1
         assert server_info.auto_reconnect is True

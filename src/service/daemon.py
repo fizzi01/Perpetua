@@ -23,7 +23,13 @@ from service.client import Client
 from service.server import Server
 from utils import UIDGenerator
 from utils.logging import Logger, get_logger
-from event.notification import NotificationManager, NotificationEvent, OtpGeneratedEvent, InfoEvent, ErrorEvent
+from event.notification import (
+    NotificationManager,
+    NotificationEvent,
+    OtpGeneratedEvent,
+    InfoEvent,
+    ErrorEvent,
+)
 
 
 # Determine platform for socket type
@@ -103,7 +109,7 @@ class DaemonCommand(StrEnum):
     PING = "ping"
 
     def __init__(self, params: Optional[Dict[str, Any]] = None):
-        #super().__init__()
+        # super().__init__()
         self._params = params if params is not None else {}
 
     @property
@@ -158,8 +164,9 @@ class Daemon:
     if IS_WINDOWS:
         DEFAULT_SOCKET_PATH = f"127.0.0.1:{ApplicationConfig.DEFAULT_DAEMON_PORT}"
     else:
-        DEFAULT_SOCKET_PATH: str = path.join(ApplicationConfig.get_main_path(),
-                                             ApplicationConfig.DEFAULT_UNIX_SOCK_NAME)
+        DEFAULT_SOCKET_PATH: str = path.join(
+            ApplicationConfig.get_main_path(), ApplicationConfig.DEFAULT_UNIX_SOCK_NAME
+        )
 
     MAX_CONNECTIONS = 1  # Only accept one connection at a time
     BUFFER_SIZE = 16384  # 16KB for larger responses
@@ -504,8 +511,7 @@ class Daemon:
                 try:
                     # Send shutdown notification
                     shutdown_msg = InfoEvent(
-                        info="Daemon is shutting down",
-                        daemon_shutdown=True
+                        info="Daemon is shutting down", daemon_shutdown=True
                     )
                     self._connected_client_writer.write(
                         self.prepare_msg_bytes(shutdown_msg)
@@ -594,8 +600,7 @@ class Daemon:
         try:
             # Send welcome message
             welcome = InfoEvent(
-                info="Connected to daemon",
-                version=ApplicationConfig.version
+                info="Connected to daemon", version=ApplicationConfig.version
             )
             await self._send_to_client(welcome)
 
@@ -608,7 +613,7 @@ class Daemon:
                     )
 
                     if not data:
-                        #self._logger.info("Client disconnected (no data)")
+                        # self._logger.info("Client disconnected (no data)")
                         await asyncio.sleep(0.1)
                         continue
 
@@ -796,7 +801,9 @@ class Daemon:
         """Check if a client is currently connected"""
         return self._connected_client_writer is not None
 
-    def _get_active_service(self, service_type: str = "auto") -> tuple[Optional[Any], str, Optional[str]]:
+    def _get_active_service(
+        self, service_type: str = "auto"
+    ) -> tuple[Optional[Any], str, Optional[str]]:
         """
         Get the active service based on service_type parameter.
 
@@ -824,7 +831,9 @@ class Daemon:
         else:
             return None, "", f"Invalid service type: {service_type}"
 
-    def _get_service_and_config(self, service_type: str = "auto") -> tuple[Optional[Any], Optional[Any], str, Optional[str]]:
+    def _get_service_and_config(
+        self, service_type: str = "auto"
+    ) -> tuple[Optional[Any], Optional[Any], str, Optional[str]]:
         """
         Get the active service and its config.
 
@@ -852,9 +861,7 @@ class Daemon:
         else:
             return None, None, "", f"Invalid service type: {service_type}"
 
-    async def _execute_command(
-        self, command: str, params: Dict[str, Any]
-    ) -> None:
+    async def _execute_command(self, command: str, params: Dict[str, Any]) -> None:
         """
         Execute a daemon command.
 
@@ -866,8 +873,7 @@ class Daemon:
         handler = self._command_handlers.get(command)
         if not handler:
             await self._notification_manager.notify_error(
-                f"Unknown command: {command}",
-                data={"command": command}
+                f"Unknown command: {command}", data={"command": command}
             )
             return
 
@@ -878,7 +884,7 @@ class Daemon:
             self._logger.error(f"{command} -> {e}")
             await self._notification_manager.notify_error(
                 f"Command execution failed: {str(e)}",
-                data={"command": command, "error": str(e)}
+                data={"command": command, "error": str(e)},
             )
 
     # ==================== Command Handlers: Service Control ====================
@@ -908,9 +914,7 @@ class Daemon:
                 await self._client.stop()
                 self._client = None
 
-            await self._notification_manager.notify_command_success(
-                command, choice
-            )
+            await self._notification_manager.notify_command_success(command, choice)
 
         elif choice == "client":
             if not self._client:
@@ -932,9 +936,7 @@ class Daemon:
                 await self._server.stop()
                 self._server = None
 
-            await self._notification_manager.notify_command_success(
-                command, choice
-            )
+            await self._notification_manager.notify_command_success(command, choice)
         else:
             await self._notification_manager.notify_command_error(
                 command, "Invalid service choice"
@@ -987,9 +989,7 @@ class Daemon:
                 )
         except Exception as e:
             self._logger.error(f"{e}")
-            await self._notification_manager.notify_command_error(
-                command, f"{str(e)}"
-            )
+            await self._notification_manager.notify_command_error(command, f"{str(e)}")
 
     async def _handle_stop_server(self, params: Dict[str, Any]) -> None:
         """Stop the server service"""
@@ -1007,9 +1007,7 @@ class Daemon:
                 command, "Server stopped successfully"
             )
         except Exception as e:
-            await self._notification_manager.notify_command_error(
-                command, f"{str(e)}"
-            )
+            await self._notification_manager.notify_command_error(command, f"{str(e)}")
 
     async def _handle_start_client(self, params: Dict[str, Any]) -> None:
         """Start the client service"""
@@ -1054,9 +1052,7 @@ class Daemon:
                 )
         except Exception as e:
             self._logger.error(f"{e}")
-            await self._notification_manager.notify_command_error(
-                command, f"{str(e)}"
-            )
+            await self._notification_manager.notify_command_error(command, f"{str(e)}")
 
     async def _handle_stop_client(self, params: Dict[str, Any]) -> None:
         """Stop the client service"""
@@ -1080,9 +1076,7 @@ class Daemon:
                 command, "Client stopped successfully"
             )
         except Exception as e:
-            await self._notification_manager.notify_command_error(
-                command, f"{str(e)}"
-            )
+            await self._notification_manager.notify_command_error(command, f"{str(e)}")
 
     # ==================== Command Handlers: Status ====================
 
@@ -1099,7 +1093,7 @@ class Daemon:
         if self._server_config and self._server:
             status["server_info"] = {  # type: ignore
                 **self._server_config.to_dict(),
-                "running": self._server.is_running() ,
+                "running": self._server.is_running(),
             }
 
         if self._client_config and self._client:
@@ -1112,7 +1106,9 @@ class Daemon:
             }
 
             if await self._client.server_choice_needed():
-                status["client_info"]["available_servers"] = [s.as_dict() for s in self._client.get_found_servers()]
+                status["client_info"]["available_servers"] = [
+                    s.as_dict() for s in self._client.get_found_servers()
+                ]
 
         await self._notification_manager.notify_command_success(
             command, "Status retrieved", result_data=status
@@ -1247,9 +1243,7 @@ class Daemon:
                 command, "Server configuration updated"
             )
         except Exception as e:
-            await self._notification_manager.notify_command_error(
-                command, f"{str(e)}"
-            )
+            await self._notification_manager.notify_command_error(command, f"{str(e)}")
 
     async def _handle_get_client_config(self, params: Dict[str, Any]) -> None:
         """Get client configuration"""
@@ -1288,20 +1282,31 @@ class Daemon:
 
         try:
             # Update configuration
-            if "server_host" in params or "server_port" in params or "server_hostname" in params or "auto_reconnect" in params:
+            if (
+                "server_host" in params
+                or "server_port" in params
+                or "server_hostname" in params
+                or "auto_reconnect" in params
+            ):
                 host = params.get("server_host", self._client_config.get_server_host())
-                hostname = params.get("server_hostname", self._client_config.get_server_hostname())
+                hostname = params.get(
+                    "server_hostname", self._client_config.get_server_hostname()
+                )
                 port = params.get("server_port", self._client_config.get_server_port())
                 uid = params.get("server_uid", self._client_config.get_server_uid())
                 auto_reconnect = params.get(
                     "auto_reconnect", self._client_config.do_auto_reconnect()
                 )
 
-                if host == "" and hostname == "": # Clear server connection
+                if host == "" and hostname == "":  # Clear server connection
                     uid = ""
 
                 self._client_config.set_server_connection(
-                  uid=uid, host=host, hostname=hostname, port=port, auto_reconnect=auto_reconnect
+                    uid=uid,
+                    host=host,
+                    hostname=hostname,
+                    port=port,
+                    auto_reconnect=auto_reconnect,
                 )
 
             if "heartbeat_interval" in params:
@@ -1332,9 +1337,7 @@ class Daemon:
                 command, "Client configuration updated"
             )
         except Exception as e:
-            await self._notification_manager.notify_command_error(
-                command, f"{str(e)}"
-            )
+            await self._notification_manager.notify_command_error(command, f"{str(e)}")
 
     async def _handle_save_config(self, params: Dict[str, Any]) -> None:
         """Save configurations to disk"""
@@ -1357,9 +1360,7 @@ class Daemon:
                 command, f"Configuration saved ({config_type})"
             )
         except Exception as e:
-            await self._notification_manager.notify_command_error(
-                command, f"{str(e)}"
-            )
+            await self._notification_manager.notify_command_error(command, f"{str(e)}")
 
     async def _handle_reload_config(self, params: Dict[str, Any]) -> None:
         """Reload configurations from disk"""
@@ -1382,9 +1383,7 @@ class Daemon:
                 command, f"Configuration reloaded ({config_type})"
             )
         except Exception as e:
-            await self._notification_manager.notify_command_error(
-                command, f"{str(e)}"
-            )
+            await self._notification_manager.notify_command_error(command, f"{str(e)}")
 
     # ==================== Command Handlers: Stream Management ====================
 
@@ -1428,12 +1427,12 @@ class Daemon:
                 "active_streams": service.get_active_streams(),
             }
             await self._notification_manager.notify_command_success(
-                command, f"Stream {stream_type} enabled on {service_name}", result_data=result_data
+                command,
+                f"Stream {stream_type} enabled on {service_name}",
+                result_data=result_data,
             )
         except Exception as e:
-            await self._notification_manager.notify_command_error(
-                command, f"{str(e)}"
-            )
+            await self._notification_manager.notify_command_error(command, f"{str(e)}")
 
     async def _handle_disable_stream(self, params: Dict[str, Any]) -> None:
         """Disable a stream on running service"""
@@ -1473,12 +1472,12 @@ class Daemon:
                 "active_streams": service.get_active_streams(),
             }
             await self._notification_manager.notify_command_success(
-                command, f"Stream {stream_type} disabled on {service_name}", result_data=result_data
+                command,
+                f"Stream {stream_type} disabled on {service_name}",
+                result_data=result_data,
             )
         except Exception as e:
-            await self._notification_manager.notify_command_error(
-                command, f"{str(e)}"
-            )
+            await self._notification_manager.notify_command_error(command, f"{str(e)}")
 
     async def _handle_get_streams(self, params: Dict[str, Any]) -> None:
         """Get stream information"""
@@ -1536,13 +1535,16 @@ class Daemon:
             )
 
             await self._notification_manager.notify_command_success(
-                command, f"Client added at position {screen_position}",
-                result_data={"hostname": hostname, "ip_address": ip_address, "screen_position": screen_position}
+                command,
+                f"Client added at position {screen_position}",
+                result_data={
+                    "hostname": hostname,
+                    "ip_address": ip_address,
+                    "screen_position": screen_position,
+                },
             )
         except Exception as e:
-            await self._notification_manager.notify_command_error(
-                command, f"{str(e)}"
-            )
+            await self._notification_manager.notify_command_error(command, f"{str(e)}")
 
     async def _handle_remove_client(self, params: Dict[str, Any]) -> None:
         """Remove a client from server (server only)"""
@@ -1567,13 +1569,12 @@ class Daemon:
             await self._server.remove_client(hostname=hostname, ip_address=ip_address)
 
             await self._notification_manager.notify_command_success(
-                command, "Client removed",
-                result_data={"hostname": hostname, "ip_address": ip_address}
+                command,
+                "Client removed",
+                result_data={"hostname": hostname, "ip_address": ip_address},
             )
         except Exception as e:
-            await self._notification_manager.notify_command_error(
-                command, f"{str(e)}"
-            )
+            await self._notification_manager.notify_command_error(command, f"{str(e)}")
 
     async def _handle_edit_client(self, params: Dict[str, Any]) -> None:
         """Edit a client configuration (server only)"""
@@ -1609,13 +1610,16 @@ class Daemon:
             )
 
             await self._notification_manager.notify_command_success(
-                command, f"Client updated to position {new_screen_position}",
-                result_data={"hostname": hostname, "ip_address": ip_address, "new_screen_position": new_screen_position}
+                command,
+                f"Client updated to position {new_screen_position}",
+                result_data={
+                    "hostname": hostname,
+                    "ip_address": ip_address,
+                    "new_screen_position": new_screen_position,
+                },
             )
         except Exception as e:
-            await self._notification_manager.notify_command_error(
-                command, f"{str(e)}"
-            )
+            await self._notification_manager.notify_command_error(command, f"{str(e)}")
 
     async def _handle_list_clients(self, params: Dict[str, Any]) -> None:
         """List registered clients (server only)"""
@@ -1643,13 +1647,12 @@ class Daemon:
                 )
 
             await self._notification_manager.notify_command_success(
-                command, "Clients list retrieved",
-                result_data={"count": len(clients_data), "clients": clients_data}
+                command,
+                "Clients list retrieved",
+                result_data={"count": len(clients_data), "clients": clients_data},
             )
         except Exception as e:
-            await self._notification_manager.notify_command_error(
-                command, f"{str(e)}"
-            )
+            await self._notification_manager.notify_command_error(command, f"{str(e)}")
 
     # ==================== Command Handlers: SSL/Certificate ====================
 
@@ -1659,7 +1662,9 @@ class Daemon:
         service_type = params.get("service", "auto")
 
         # Determine which service
-        service, config, service_name, error = self._get_service_and_config(service_type)
+        service, config, service_name, error = self._get_service_and_config(
+            service_type
+        )
         if error:
             await self._notification_manager.notify_command_error(command, error)
             return
@@ -1688,9 +1693,7 @@ class Daemon:
                     command, f"SSL enabled in {service_name} config (restart required)"
                 )
         except Exception as e:
-            await self._notification_manager.notify_command_error(
-                command, f"{str(e)}"
-            )
+            await self._notification_manager.notify_command_error(command, f"{str(e)}")
 
     async def _handle_disable_ssl(self, params: Dict[str, Any]) -> None:
         """Disable SSL"""
@@ -1698,7 +1701,9 @@ class Daemon:
         service_type = params.get("service", "auto")
 
         # Determine which service
-        service, config, service_name, error = self._get_service_and_config(service_type)
+        service, config, service_name, error = self._get_service_and_config(
+            service_type
+        )
         if error:
             await self._notification_manager.notify_command_error(command, error)
             return
@@ -1717,9 +1722,7 @@ class Daemon:
                 command, f"SSL disabled on {service_name}"
             )
         except Exception as e:
-            await self._notification_manager.notify_command_error(
-                command, f"{str(e)}"
-            )
+            await self._notification_manager.notify_command_error(command, f"{str(e)}")
 
     async def _handle_share_certificate(self, params: Dict[str, Any]) -> None:
         """Share certificate (server only)"""
@@ -1741,21 +1744,20 @@ class Daemon:
                     OtpGeneratedEvent(otp=otp, timeout=timeout)
                 )
                 await self._notification_manager.notify_command_success(
-                    command, "Certificate sharing started",
+                    command,
+                    "Certificate sharing started",
                     result_data={
                         "otp": otp,
                         "timeout": timeout,
                         "instructions": "Provide this OTP to clients",
-                    }
+                    },
                 )
             else:
                 await self._notification_manager.notify_command_error(
                     command, "Failed to share certificate"
                 )
         except Exception as e:
-            await self._notification_manager.notify_command_error(
-                command, f"{str(e)}"
-            )
+            await self._notification_manager.notify_command_error(command, f"{str(e)}")
 
     async def _handle_receive_certificate(self, params: Dict[str, Any]) -> None:
         """Receive certificate (client only)"""
@@ -1779,17 +1781,19 @@ class Daemon:
 
             if success:
                 await self._notification_manager.notify_command_success(
-                    command, "Certificate received successfully",
-                    result_data={"certificate_path": self._client.get_certificate_path()}
+                    command,
+                    "Certificate received successfully",
+                    result_data={
+                        "certificate_path": self._client.get_certificate_path()
+                    },
                 )
             else:
                 await self._notification_manager.notify_command_error(
-                    command, "Failed to receive certificate (invalid OTP or network error)"
+                    command,
+                    "Failed to receive certificate (invalid OTP or network error)",
                 )
         except Exception as e:
-            await self._notification_manager.notify_command_error(
-                command, f"{str(e)}"
-            )
+            await self._notification_manager.notify_command_error(command, f"{str(e)}")
 
     # ==================== Command Handlers: Server Selection & OTP ====================
 
@@ -1808,18 +1812,17 @@ class Daemon:
             needed = await self._client.server_choice_needed()
 
             await self._notification_manager.notify_command_success(
-                command, "Server choice status checked",
+                command,
+                "Server choice status checked",
                 result_data={
                     "server_choice_needed": needed,
                     "message": "Please choose a server from the found servers"
                     if needed
                     else "No server choice needed",
-                }
+                },
             )
         except Exception as e:
-            await self._notification_manager.notify_command_error(
-                command, f"{str(e)}"
-            )
+            await self._notification_manager.notify_command_error(command, f"{str(e)}")
 
     async def _handle_get_found_servers(self, params: Dict[str, Any]) -> None:
         """Get list of found servers (client only)"""
@@ -1840,13 +1843,12 @@ class Daemon:
                 servers_data.append(s.as_dict())
 
             await self._notification_manager.notify_command_success(
-                command, "Found servers retrieved",
-                result_data={"servers": servers_data, "count": len(servers_data)}
+                command,
+                "Found servers retrieved",
+                result_data={"servers": servers_data, "count": len(servers_data)},
             )
         except Exception as e:
-            await self._notification_manager.notify_command_error(
-                command, f"{str(e)}"
-            )
+            await self._notification_manager.notify_command_error(command, f"{str(e)}")
 
     async def _handle_choose_server(self, params: Dict[str, Any]) -> None:
         """Choose a server from found servers (client only)"""
@@ -1870,16 +1872,15 @@ class Daemon:
             self._client.choose_server(uid)
 
             await self._notification_manager.notify_command_success(
-                command, f"Server {uid} selected",
+                command,
+                f"Server {uid} selected",
                 result_data={
                     "server_host": self._client.config.get_server_host(),
                     "server_port": self._client.config.get_server_port(),
-                }
+                },
             )
         except Exception as e:
-            await self._notification_manager.notify_command_error(
-                command, f"{str(e)}"
-            )
+            await self._notification_manager.notify_command_error(command, f"{str(e)}")
 
     async def _handle_check_otp_needed(self, params: Dict[str, Any]) -> None:
         """Check if OTP is needed for certificate (client only)"""
@@ -1896,18 +1897,17 @@ class Daemon:
             needed = await self._client.otp_needed()
 
             await self._notification_manager.notify_command_success(
-                command, "OTP status checked",
+                command,
+                "OTP status checked",
                 result_data={
                     "otp_needed": needed,
                     "message": "Please provide OTP from server"
                     if needed
                     else "No OTP needed",
-                }
+                },
             )
         except Exception as e:
-            await self._notification_manager.notify_command_error(
-                command, f"{str(e)}"
-            )
+            await self._notification_manager.notify_command_error(command, f"{str(e)}")
 
     async def _handle_set_otp(self, params: Dict[str, Any]) -> None:
         """Set OTP for certificate reception (client only)"""
@@ -1931,21 +1931,20 @@ class Daemon:
 
             if success:
                 await self._notification_manager.notify_command_success(
-                    command, "OTP set successfully",
+                    command,
+                    "OTP set successfully",
                     result_data={
                         "certificate_path": self._client.get_certificate_path()
                         if self._client.has_certificate()
                         else None,
-                    }
+                    },
                 )
             else:
                 await self._notification_manager.notify_command_error(
                     command, "Failed to set OTP (invalid format or already set)"
                 )
         except Exception as e:
-            await self._notification_manager.notify_command_error(
-                command, f"{str(e)}"
-            )
+            await self._notification_manager.notify_command_error(command, f"{str(e)}")
 
     # ==================== Command Handlers: Service Discovery ====================
 
@@ -1972,17 +1971,19 @@ class Daemon:
                     )
 
                 await self._notification_manager.notify_command_success(
-                    command, "Services discovered",
-                    result_data={"services": services_data, "count": len(services_data)}
+                    command,
+                    "Services discovered",
+                    result_data={
+                        "services": services_data,
+                        "count": len(services_data),
+                    },
                 )
             else:
                 await self._notification_manager.notify_command_error(
                     command, "Client not initialized; cannot perform service discovery"
                 )
         except Exception as e:
-            await self._notification_manager.notify_command_error(
-                command, f"{str(e)}"
-            )
+            await self._notification_manager.notify_command_error(command, f"{str(e)}")
 
     # ==================== Command Handlers: Daemon Control ====================
 
