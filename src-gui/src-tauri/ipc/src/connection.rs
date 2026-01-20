@@ -16,8 +16,8 @@ use tokio::net::TcpStream;
 #[cfg(windows)]
 const DEFAULT_DAEMON_PORT: u16 = 55652;
 
-#[cfg(unix)]
 pub const DEFAULT_APP_DIR: &str = "Perpetua";
+
 #[cfg(unix)]
 pub const DEFAULT_DAEMON_SOCKET: &str = "perpetua_daemon.sock";
 
