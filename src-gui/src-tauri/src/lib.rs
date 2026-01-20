@@ -159,7 +159,7 @@ pub fn run() {
             let quit_i = MenuItem::with_id(app, "quit", "Quit", true, None::<&str>)?;
             let menu = MenuBuilder::new(app);
 
-            #[cfg(debug_assertions)]
+            // #[cfg(debug_assertions)]
             let menu = menu
                 .item(
                     &MenuItem::with_id(app, "show_log", "Show Logs", true, None::<&str>)?
@@ -228,6 +228,7 @@ pub fn run() {
                 api.prevent_exit();
             }
         }
+        #[cfg(any(target_os = "macos", debug_assertions))]
         tauri::RunEvent::Exit => {
             let state = _app_handle.state::<Mutex<AppState>>();
             let state = state.lock().unwrap();

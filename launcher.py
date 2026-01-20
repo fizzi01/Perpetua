@@ -76,7 +76,7 @@ class Launcher:
         import signal
 
         # Reinitialize logger with daemon log file
-        self._log = get_logger("launcher.daemon", verbose=True, log_file=str(self.log_file))
+        self._log = get_logger("launcher", verbose=True, log_file=str(self.log_file))
 
         # Write PID file
         self.write_daemon_pid(os.getpid())

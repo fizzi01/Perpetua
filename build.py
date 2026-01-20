@@ -121,6 +121,7 @@ class Builder:
         if self.is_macos:
             nuitka_cmd.extend([
                 "--macos-create-app-bundle",
+                "--macos-prohibit-multiple-instances",
                 f"--macos-sign-identity={APP_NAME}",
                 "--macos-app-protected-resource=NSAppleEventsUsageDescription:Automation Control",
                 f"--macos-app-name={APP_NAME}",
