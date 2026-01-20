@@ -209,9 +209,13 @@ class Daemon:
         self.app_config = app_config or ApplicationConfig()
         self.auto_load_config = auto_load_config
 
-        # Initialize logging
+        # Initialize logging with file output
+        log_file = path.join(self.app_config.get_main_path(), "daemon.log")
         self._logger = get_logger(
-            self.__class__.__name__, level=Logger.INFO, is_root=True
+            self.__class__.__name__, 
+            level=Logger.INFO, 
+            is_root=True,
+            log_file=log_file
         )
 
         # Service instances

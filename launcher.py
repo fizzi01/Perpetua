@@ -10,12 +10,15 @@ from config import ApplicationConfig
 from utils.logging import get_logger
 from utils.permissions import PermissionChecker
 
-log = get_logger("launcher", verbose=True)
+log = get_logger("launcher", verbose=True, log_file=str(Path(os.path.join(ApplicationConfig.get_main_path(), "daemon.log"))))
 
 IS_WINDOWS = sys.platform in ("win32", "cygwin", "cli")
 
 # PID file to track daemon process
 PID_FILE = Path(os.path.join(ApplicationConfig.get_main_path(), "daemon.pid"))
+
+# Log file for daemon output
+LOG_FILE = Path(os.path.join(ApplicationConfig.get_main_path(), "daemon.log"))
 
 
 def get_daemon_pid() -> int | None:
@@ -134,7 +137,7 @@ def main():
     # Check if we're being called with --daemon argument
 
     # Normal launcher flow
-    permission_checker = PermissionChecker(log)
+    permission_checker = PermissionChecker(log) # type: ignore
     permissions = permission_checker.get_missing_permissions()
     if len(permissions) > 0:
         log.info("Requesting missing permissions", permissions=permissions)

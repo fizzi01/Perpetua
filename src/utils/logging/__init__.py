@@ -3,6 +3,7 @@ import sys
 import threading
 from abc import ABC, abstractmethod
 from datetime import datetime
+from pathlib import Path
 from typing import Any, Optional
 
 import structlog
@@ -119,7 +120,7 @@ class Logger(BaseLogger):
     _shared_handler = None
 
     def __init__(
-        self, name=None, verbose=True, level: Optional[int] = None, stdout=None
+        self, name=None, verbose=True, level: Optional[int] = None, stdout=None, log_file: Optional[str] = None
     ):
         """
         Inizializza un logger per un modulo specifico.
@@ -286,6 +287,8 @@ class StructLogger(BaseLogger):
 
     _lock = threading.Lock()
     _app_namespace = "main_app"
+    _log_file_path = None
+    _log_file_handle = None
     _configured = False
     _global_config: dict[str, bool | int] = {
         "verbose": True,
@@ -318,6 +321,7 @@ class StructLogger(BaseLogger):
         verbose: bool = True,
         level: Optional[int] = None,
         is_root: bool = False,
+        log_file: Optional[str] = None,
         **initial_context,
     ):
         """
@@ -343,6 +347,16 @@ class StructLogger(BaseLogger):
                 Initial key-value pairs to bind to the logger for structured logging.
         """
         self.logging_enabled = verbose
+
+        # Setup log file if specified (only once)
+        if StructLogger._log_file_path is None and log_file is not None:
+            StructLogger._log_file_path = log_file
+            # Open file for writing
+            log_path = Path(log_file)
+            log_path.parent.mkdir(parents=True, exist_ok=True)
+            
+            # Open the file handle directly for structlog
+            StructLogger._log_file_handle = open(log_file, 'a', encoding='utf-8', buffering=1)
 
         # Create the logger name within the application namespace
         if name is None or name == "__main__":
@@ -459,20 +473,25 @@ class StructLogger(BaseLogger):
         # All filtering is handled by filter_by_level processor
         wrapper_cls = structlog.BoundLogger
 
+        # Determine output file: use log file if opened, otherwise stdout
+        output_file = StructLogger._log_file_handle if StructLogger._log_file_handle is not None else sys.stdout
+        
         if verbose:
             # Verbose mode: colored output with all details
+            # Use colors only for stdout, not for file
+            use_colors = output_file == sys.stdout
             structlog.configure(
                 processors=shared_processors
                 + [
                     structlog.processors.format_exc_info,
                     structlog.dev.ConsoleRenderer(
-                        colors=True,
+                        colors=use_colors,
                         pad_event_to=40,
-                        level_styles=self.color_map,
+                        level_styles=self.color_map if use_colors else None,
                     ),
                 ],
                 wrapper_class=wrapper_cls,  # type: ignore
-                logger_factory=structlog.WriteLoggerFactory(),
+                logger_factory=structlog.WriteLoggerFactory(file=output_file),
                 cache_logger_on_first_use=False,
             )
         else:
@@ -487,7 +506,7 @@ class StructLogger(BaseLogger):
                     ),
                 ],
                 wrapper_class=wrapper_cls,  # type: ignore
-                logger_factory=structlog.WriteLoggerFactory(),
+                logger_factory=structlog.WriteLoggerFactory(file=output_file),
                 cache_logger_on_first_use=False,
             )
 
@@ -617,6 +636,7 @@ def get_logger(
     structured: bool = True,
     level: Optional[int] = None,
     is_root: bool = False,
+    log_file: Optional[str] = None,
     **initial_context: Any,
 ) -> BaseLogger:
     """
@@ -634,6 +654,7 @@ def get_logger(
         level (int): The initial logging level (Logger.DEBUG, Logger.INFO, etc.). Defaults to None.
         is_root (bool): If True, configures the logger as the root logger.
             Defaults to False.
+        log_file (str, optional): Path to the log file. If provided, logs will be written to this file.
         **initial_context (Any): Additional keyword arguments defining initial logging
             context.
 
@@ -649,12 +670,12 @@ def get_logger(
         logger = get_logger(__name__, structured=True)
         logger.info("Structured log message", user_id=123, action="login")
 
-        # Get a traditional logger
-        simple_logger = get_logger(__name__, structured=False)
+        # Get a traditional logger with file output
+        simple_logger = get_logger(__name__, structured=False, log_file="/var/log/app.log")
         simple_logger.info("Simple log message")
     """
     if structured:
         return StructLogger(
-            name=name, verbose=verbose, level=level, is_root=is_root, **initial_context
+            name=name, verbose=verbose, level=level, log_file=log_file, is_root=is_root, **initial_context
         )
-    return Logger(name=name, verbose=verbose, level=level)
+    return Logger(name=name, verbose=verbose, level=level, log_file=log_file)
