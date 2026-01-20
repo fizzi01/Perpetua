@@ -2,9 +2,7 @@
 use tauri::{PhysicalPosition, Position, TitleBarStyle};
 
 use tauri::{
-    menu::{MenuItem, MenuBuilder},
-    tray::TrayIconBuilder,
-    AppHandle, Manager, Runtime, WebviewUrl, WebviewWindowBuilder,
+    AppHandle, Emitter, Manager, Runtime, WebviewUrl, WebviewWindowBuilder, menu::{MenuBuilder, MenuItem}, tray::TrayIconBuilder
 };
 use tauri_plugin_dialog::{DialogExt, MessageDialogKind};
 
@@ -160,7 +158,13 @@ pub fn run() {
             let show_window = MenuItem::with_id(app, "show_window", "Show", true, None::<&str>)?;
             let quit_i = MenuItem::with_id(app, "quit", "Quit", true, None::<&str>)?;
             let menu = MenuBuilder::new(app);
-            
+
+            #[cfg(debug_assertions)]
+            let menu = menu
+                .item(
+                    &MenuItem::with_id(app, "show_log", "Show Logs", true, None::<&str>)?
+                )
+                .separator();
 
             let menu = menu
                 .item(&show_window)
@@ -175,6 +179,10 @@ pub fn run() {
                         let window = app.get_webview_window("main").unwrap();
                         window.show().unwrap();
                         window.set_focus().unwrap();
+                    }
+                    "show_log" => {
+                        let app_handle = app.clone();
+                        app_handle.emit("show_log", {}).unwrap();
                     }
                     "quit" => {
                         let handle = app.clone();
