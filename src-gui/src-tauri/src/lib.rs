@@ -159,7 +159,10 @@ pub fn run() {
 
             let show_window = MenuItem::with_id(app, "show_window", "Show", true, None::<&str>)?;
             let quit_i = MenuItem::with_id(app, "quit", "Quit", true, None::<&str>)?;
-            let menu = MenuBuilder::new(app)
+            let menu = MenuBuilder::new(app);
+            
+
+            let menu = menu
                 .item(&show_window)
                 .separator()
                 .item(&quit_i)
