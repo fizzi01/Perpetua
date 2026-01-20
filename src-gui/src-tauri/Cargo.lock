@@ -1696,11 +1696,13 @@ name = "ipc"
 version = "0.1.0"
 dependencies = [
  "bytes",
+ "dirs",
  "futures",
  "log",
  "serde",
  "serde_json",
  "serde_variant",
+ "tempfile",
  "thiserror 2.0.17",
  "tokio",
  "tokio-stream",

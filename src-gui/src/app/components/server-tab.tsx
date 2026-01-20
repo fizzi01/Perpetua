@@ -167,7 +167,7 @@ export function ServerTab({ onStatusChange, state }: ServerTabProps) {
   function handleClientEventListeners() {
 
       const setup = () => {
-        listenGeneralEvent(EventType.ClientConnected, (event) => {
+        listenGeneralEvent(EventType.ClientConnected,false, (event) => {
           // Handle client connected event here
           let client_data = event.data as ClientObj;
           handleClientConnected(client_data, true, true);
@@ -175,7 +175,7 @@ export function ServerTab({ onStatusChange, state }: ServerTabProps) {
           listeners.addListenerOnce('client-connected', unlisten);
         });
 
-        listenGeneralEvent(EventType.ClientDisconnected, (event) => {
+        listenGeneralEvent(EventType.ClientDisconnected, false, (event) => {
           // Handle client disconnected event here
           let client_data = event.data as ClientObj;
           handleClientConnected(client_data, false, true);

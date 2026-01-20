@@ -150,7 +150,7 @@ export function ClientTab({ onStatusChange, state }: ClientTabProps) {
   function handleConnectionListeners() {
 
     const setup = () => {
-      listenGeneralEvent(EventType.Connected, (event) => {
+      listenGeneralEvent(EventType.Connected, false, (event) => {
         let res = event.data as ClientConnectionInfo;
         setCurrentConnection(res);
         setHost(res.host);
@@ -162,7 +162,7 @@ export function ClientTab({ onStatusChange, state }: ClientTabProps) {
         listeners.addListenerOnce('client-connected', unlisten);
       });
 
-      listenGeneralEvent(EventType.Disconnected, () => {
+      listenGeneralEvent(EventType.Disconnected, false, () => {
         setIsConnected(false);
         setConnectionTime(0);
         // setDataUsage(0);
@@ -174,7 +174,7 @@ export function ClientTab({ onStatusChange, state }: ClientTabProps) {
         listeners.addListenerOnce('client-disconnected', unlisten);
       });
 
-      listenGeneralEvent(EventType.ServerChoiceNeeded, (event) => {
+      listenGeneralEvent(EventType.ServerChoiceNeeded, false, (event) => {
         console.log('Server choice needed event received', event);
         let res = event.data as ServerChoice;
         if (res && res.servers && res.servers.length > 0) {
@@ -186,7 +186,7 @@ export function ClientTab({ onStatusChange, state }: ClientTabProps) {
         listeners.addListenerOnce('server-choice-needed', unlisten);
       });
 
-      listenGeneralEvent(EventType.OtpNeeded, () => {
+      listenGeneralEvent(EventType.OtpNeeded, false, () => {
         setShowOtpInput(true);
         listeners.removeListener('otp-needed');
       }).then((unlisten) => {

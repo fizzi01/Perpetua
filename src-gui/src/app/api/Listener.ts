@@ -33,16 +33,19 @@ export function listenCommand(eventType: EventType, command: CommandType | Comma
 /**
  * Listen for a general event.
  * @param eventType The type of event to listen for.
+ * @param no_data If true, the callback will be executed even if there is no data or message in the payload.
  * @param callback The callback function to execute when the event is received.
  */
-export function listenGeneralEvent(eventType: EventType, callback: (data: GeneralEvent) => void): Promise<() => void> {
+export function listenGeneralEvent(eventType: EventType, no_data: boolean = false, callback: (data: GeneralEvent) => void): Promise<() => void> {
     let event = getType(EventType, eventType);
     return listen<GeneralEvent>(event, (event => {
         console.log('General event received', event);
         let payload = event.payload;
         let data = payload?.data;
         let message = payload?.message;
-        if (data || message) {
+        if (no_data) {
+            callback(payload);
+        } else if (data || message) {
             callback(payload);
         } else {
             console.warn('Invalid payload structure', payload);

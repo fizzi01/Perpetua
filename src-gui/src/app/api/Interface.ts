@@ -103,6 +103,9 @@ export enum EventType {
     CommandSuccess,
     CommandError,
 
+    // Internal event
+    ShowLog,
+
     Other,
 }
 

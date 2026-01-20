@@ -7,17 +7,19 @@ import { motion } from 'motion/react';
 import { EventType, CommandType, ServiceStatus, ServerStatus, ClientStatus } from './api/Interface';
 
 import { chooseService, getStatus } from './api/Sender';
-import { listenCommand } from './api/Listener';
+import { listenCommand, listenGeneralEvent } from './api/Listener';
 import { useEventListeners } from './hooks/useEventListeners';
 import { useAppSelector, useAppDispatch } from './hooks/redux';
 import { ActionType } from './store/actions';
 import { ScrollArea } from './components/ui/scrollbar';
-
+import { DaemonLogDialog } from './components/DaemonLogDialog';
 
 export default function App() {
   const [mode, setMode] = useState<'client' | 'server'>('client');
   const [disableModeSwitch, setDisableModeSwitch] = useState<boolean>(false);
   const [stateListenersAdded, setListenersAdded] = useState<boolean>(false);
+  const [showLogs, setShowLogs] = useState<boolean>(false);
+
   const listeners = useEventListeners();
 
   const serverState = useAppSelector(state => state.server);
@@ -39,6 +41,16 @@ export default function App() {
 
         getStatus().catch((err) => {
           console.error('Error fetching status:', err);
+        });
+
+        listenGeneralEvent(EventType.ShowLog, true, (event: any) => {
+          console.log('ShowLog event received', event);
+          setShowLogs(true);
+        }).then((unlisten) => {
+            listeners.addListenerOnce('show-log', () => {
+              console.log('Removing ShowLog listener');
+              unlisten();
+            });
         });
       }
   }
@@ -138,6 +150,7 @@ export default function App() {
           >
             {mode === 'client' ? <ClientTab onStatusChange={setDisableModeSwitch} state={clientState}/> : <ServerTab onStatusChange={setDisableModeSwitch} state={serverState}/>}
           </motion.div>
+          <DaemonLogDialog isOpen={showLogs} onClose={() => setShowLogs(false)} />
         </ScrollArea>
       </div>
     </div>

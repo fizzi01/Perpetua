@@ -18,6 +18,7 @@ use std::{sync::Mutex, time::Duration};
 
 pub mod commands;
 pub mod handler;
+pub mod log_reader;
 
 #[derive(Default)]
 struct AppState {
@@ -129,6 +130,9 @@ pub fn run() {
             // -- Stream Commands --
             commands::enable_stream,
             commands::disable_stream,
+            // -- Log Commands --
+            log_reader::read_daemon_logs,
+            log_reader::get_log_file_path_cmd,
         ])
         .setup(|app| {
             let app_handle = app.handle().clone();
