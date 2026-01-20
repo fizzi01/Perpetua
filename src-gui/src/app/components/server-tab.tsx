@@ -54,7 +54,14 @@ export function ServerTab({ onStatusChange, state }: ServerTabProps) {
   const [newClientIp, setNewClientIp] = useState('');
   const [firstInit, setFirstInit] = useState(true);
   const [newClientPosition, setNewClientPosition] = useState<'top' | 'bottom' | 'left' | 'right'>('top');
-  const [uptime, setUptime] = useState(0);
+  const [uptime, setUptime] = useState(() => {
+    if (state.start_time) {
+      let startDate = new Date(state.start_time);
+      let now = new Date();
+      return Math.floor((now.getTime() - startDate.getTime()) / 1000);
+    }
+    return 0;
+  });
   const [notifications, setNotifications] = useState<Notification[]>([]);
 
   const clientManager = useClientManagement();
@@ -135,6 +142,12 @@ export function ServerTab({ onStatusChange, state }: ServerTabProps) {
     if (state.running) { 
       clientEventHandler.cleanup();
       clientEventHandler.setup(); 
+
+      if (state.start_time) {
+        let startDate = new Date(state.start_time);
+        let now = new Date();
+        setUptime(Math.floor((now.getTime() - startDate.getTime()) / 1000));
+      }
     }
 
   }, [state]);
@@ -192,6 +205,15 @@ export function ServerTab({ onStatusChange, state }: ServerTabProps) {
           onStatusChange(true);
           setPort(res.port.toString());
           setRunningPending(false);
+
+          let start_time = res.start_time;
+          // Parse timestamp isoformat
+          if (start_time) {
+            let startDate = new Date(start_time);
+            let now = new Date();
+            let uptimeSeconds = Math.floor((now.getTime() - startDate.getTime()) / 1000);
+            setUptime(uptimeSeconds);
+          }
         }
         
         listeners.removeListener('start-server');

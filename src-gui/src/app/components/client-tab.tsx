@@ -36,7 +36,16 @@ export function ClientTab({ onStatusChange, state }: ClientTabProps) {
   const [host, setHost] = useState(state.server_info.host || state.server_info.hostname || '');
   const [port, setPort] = useState(state.server_info.port ? state.server_info.port.toString() : '8080');
   const [otpInput, setOtpInput] = useState('');
-  const [connectionTime, setConnectionTime] = useState(0);
+  const [connectionTime, setConnectionTime] = useState(() => {
+    if (state.start_time) {
+      let startDate = new Date(state.start_time);
+      let now = new Date();
+      return Math.floor((now.getTime() - startDate.getTime()) / 1000);
+    }
+    return 0;
+  }
+    
+  );
   // const [dataUsage, setDataUsage] = useState(0);
   const [controlStatus, setControlStatus] = useState<'none' | 'controlled' | 'idle'>('none');
   const [notifications, setNotifications] = useState<Notification[]>([]);
@@ -125,8 +134,17 @@ export function ClientTab({ onStatusChange, state }: ClientTabProps) {
     setEnableKeyboard(permissions.includes(StreamType.Keyboard));
     setEnableClipboard(permissions.includes(StreamType.Clipboard));
 
-    connectionListeners.cleanup();
-    connectionListeners.setup();
+    if (state.running) {
+      connectionListeners.cleanup();
+      connectionListeners.setup();
+
+      if (state.start_time) {
+        let startDate = new Date(state.start_time);
+        let now = new Date();
+        setConnectionTime(Math.floor((now.getTime() - startDate.getTime()) / 1000));
+      }
+    }
+  
   }, [state]);
 
   function handleConnectionListeners() {

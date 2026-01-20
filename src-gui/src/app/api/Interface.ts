@@ -185,6 +185,7 @@ export interface ClientEditObj {
 }
 
 export interface ServerStatus {
+  start_time?: string;
   running: boolean;
   uid: string;
   host: string;
@@ -208,6 +209,7 @@ export interface ClientStatus
 {
   running: boolean;
   connected: boolean;
+  start_time?: string;
   otp_needed: boolean;
   service_choice_needed: boolean;
   available_servers?: ServerFound[];

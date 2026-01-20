@@ -8,9 +8,11 @@ for receiving commands to control the application.
 """
 
 import asyncio
+import datetime
 import errno
 import json
 import os
+
 from os import path
 import signal
 import socket
@@ -126,7 +128,25 @@ class DaemonCommand(StrEnum):
         return {"command": self.value, "params": self._params}
 
 
-# DaemonResponse removed - all communication now uses NotificationEvent
+class RunningState:
+
+    def __init__(self, service: str, is_running: bool):
+        self.service = service
+        self.is_running = is_running
+        self.start_datetime = None  # Start timestamp
+
+    def start(self):
+        self.is_running = True
+        self.start_datetime = datetime.datetime.now()
+
+    def stop(self):
+        self.is_running = False
+        self.start_datetime = None
+
+    def get_timestamp(self) -> Optional[str]:
+        if self.start_datetime:
+            return self.start_datetime.isoformat()
+        return None
 
 
 class Daemon:
@@ -197,6 +217,10 @@ class Daemon:
         # Service instances
         self._server: Optional[Server] = None
         self._client: Optional[Client] = None
+        self._state: Dict[str, RunningState] = {
+            "server": RunningState("server", False),
+            "client": RunningState("client", False),
+        }
 
         # Configurations
         self._server_config: Optional[ServerConfig] = None
@@ -982,9 +1006,11 @@ class Daemon:
 
             success = await self._server.start()
             if success:
+                self._state["server"].start()
                 response_data = {
                     "host": self._server.config.host,
                     "port": self._server.config.port,
+                    "start_time": self._state["server"].get_timestamp(),
                     "enabled_streams": self._server.get_enabled_streams(),
                 }
                 self._logger.set_level(self._server.config.log_level)
@@ -1012,6 +1038,7 @@ class Daemon:
 
         try:
             await self._server.stop()
+            self._state["server"].stop()
             await self._notification_manager.notify_command_success(
                 command, "Server stopped successfully"
             )
@@ -1046,8 +1073,10 @@ class Daemon:
 
             success = await start_task
             if success:
+                self._state["client"].start()
                 response_data = {
                     **self._client.config.server_info.to_dict(),
+                    "start_time": self._state["client"].get_timestamp(),
                     "enabled_streams": self._client.get_enabled_streams(),
                 }
                 self._logger.set_level(self._client.config.log_level)
@@ -1103,6 +1132,7 @@ class Daemon:
             status["server_info"] = {  # type: ignore
                 **self._server_config.to_dict(),
                 "running": self._server.is_running(),
+                "start_time": self._state["server"].get_timestamp(),
             }
 
         if self._client_config and self._client:
@@ -1110,6 +1140,7 @@ class Daemon:
                 **self._client_config.to_dict(),
                 "running": self._client.is_running(),
                 "connected": self._client.is_connected(),
+                "start_time": self._state["client"].get_timestamp(),
                 "otp_nededed": await self._client.otp_needed(),
                 "service_choice_needed": await self._client.server_choice_needed(),
             }
