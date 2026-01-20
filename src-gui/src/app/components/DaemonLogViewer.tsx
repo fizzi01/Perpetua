@@ -50,24 +50,24 @@ export const DaemonLogViewer: React.FC<LogViewerProps> = ({
     }
   };
 
-  // Fetch all logs
-  const fetchAllLogs = async () => {
-    setLoading(true);
-    setError(null);
+  // // Fetch all logs
+  // const fetchAllLogs = async () => {
+  //   setLoading(true);
+  //   setError(null);
 
-    try {
-      const response = await invoke<LogResponse>('read_daemon_logs', {
-        numLines: 0,
-        all: true,
-      });
+  //   try {
+  //     const response = await invoke<LogResponse>('read_daemon_logs', {
+  //       numLines: 0,
+  //       all: true,
+  //     });
 
-      setLogs(response.logs);
-    } catch (err) {
-      setError(`Error reading logs: ${err}`);
-    } finally {
-      setLoading(false);
-    }
-  };
+  //     setLogs(response.logs);
+  //   } catch (err) {
+  //     setError(`Error reading logs: ${err}`);
+  //   } finally {
+  //     setLoading(false);
+  //   }
+  // };
 
   // Auto-scroll to bottom when new logs arrive
   const scrollToBottom = () => {
