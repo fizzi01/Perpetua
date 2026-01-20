@@ -22,7 +22,7 @@ GUI_EXECUTABLE = ApplicationConfig.app_name.lower()
 LOG_FILE = Path(os.path.join(ApplicationConfig.get_main_path(), "daemon.log"))
 TEMP_LOG_FILE = Path(os.path.join(ApplicationConfig.get_main_path(), "launcher_temp.log"))
 
-log = BaseLogger()
+log = get_logger("launcher")
 
 def clean_temp_log_file():
     """Remove temporary launcher log file if exists."""
@@ -166,6 +166,13 @@ def start_gui(executable_dir: str) -> bool:
 
 
 def main():
+    if '--daemon' in sys.argv:
+        # Reset arguments to avoid recursion
+        sys.argv = [arg for arg in sys.argv if arg != '--daemon']
+        run_daemon()
+        clean_temp_log_file()  # Clean up temporary log file only after daemon run
+        return 0
+
     global log
     log = get_logger("launcher", verbose=True, log_file=str(TEMP_LOG_FILE))
 
@@ -180,12 +187,6 @@ def main():
                 log.error("Permission not granted", permission=permission)
                 return 1
 
-    if '--daemon' in sys.argv:
-        # Reset arguments to avoid recursion
-        sys.argv = [arg for arg in sys.argv if arg != '--daemon']
-        run_daemon()
-        clean_temp_log_file()  # Clean up temporary log file only after daemon run
-        return 0
 
     # Start daemon if not already running
     if not start_daemon(os.path.dirname(sys.executable)):
