@@ -13,11 +13,7 @@ from packaging import version
 from typing import Optional
 
 from . import _base
-from ._base import (
-    PermissionType,
-    PermissionStatus,
-    PermissionResult
-)
+from ._base import PermissionType, PermissionStatus, PermissionResult
 
 # macOS IOKit constants for input monitoring
 kIOHIDAccessTypeDenied = 1
@@ -54,9 +50,9 @@ class PermissionChecker(_base.PermissionChecker):
 
         try:
             import objc
-            from Foundation import NSBundle # ty:ignore[unresolved-import]
+            from Foundation import NSBundle  # ty:ignore[unresolved-import]
 
-            IOKit = NSBundle.bundleWithIdentifier_('com.apple.framework.IOKit')
+            IOKit = NSBundle.bundleWithIdentifier_("com.apple.framework.IOKit")
 
             ioset = {}
             functions = [
@@ -95,7 +91,9 @@ class PermissionChecker(_base.PermissionChecker):
             import HIServices
 
             is_trusted = HIServices.AXIsProcessTrusted()  # ty:ignore[unresolved-attribute]
-            self._log(f"Accessibility permission status: {'granted' if is_trusted else 'denied'}")
+            self._log(
+                f"Accessibility permission status: {'granted' if is_trusted else 'denied'}"
+            )
 
             status = PermissionStatus.GRANTED if is_trusted else PermissionStatus.DENIED
 
@@ -103,7 +101,7 @@ class PermissionChecker(_base.PermissionChecker):
                 permission_type=PermissionType.ACCESSIBILITY,
                 status=status,
                 message="Accessibility permission allows controlling keyboard and mouse",
-                can_request=not is_trusted
+                can_request=not is_trusted,
             )
 
         except Exception as e:
@@ -112,7 +110,7 @@ class PermissionChecker(_base.PermissionChecker):
                 permission_type=PermissionType.ACCESSIBILITY,
                 status=PermissionStatus.UNKNOWN,
                 message=f"Failed to check permission: {e}",
-                can_request=False
+                can_request=False,
             )
 
     def _check_input_monitoring_permission(self) -> PermissionResult:
@@ -127,7 +125,7 @@ class PermissionChecker(_base.PermissionChecker):
             return PermissionResult(
                 permission_type=PermissionType.KEYBOARD_INPUT,
                 status=PermissionStatus.NOT_REQUIRED,
-                message="Input monitoring not required on this macOS version"
+                message="Input monitoring not required on this macOS version",
             )
 
         iokit = self._load_iokit_bundle()
@@ -136,11 +134,11 @@ class PermissionChecker(_base.PermissionChecker):
                 permission_type=PermissionType.KEYBOARD_INPUT,
                 status=PermissionStatus.UNKNOWN,
                 message="Failed to load IOKit bundle",
-                can_request=False
+                can_request=False,
             )
 
         try:
-            status = iokit['IOHIDCheckAccess'](kIOHIDRequestTypeListenEvent)
+            status = iokit["IOHIDCheckAccess"](kIOHIDRequestTypeListenEvent)
             self._log(f"Input monitoring permission status code: {status}")
 
             if status == kIOHIDAccessTypeGranted:
@@ -160,7 +158,7 @@ class PermissionChecker(_base.PermissionChecker):
                 permission_type=PermissionType.KEYBOARD_INPUT,
                 status=perm_status,
                 message=message,
-                can_request=can_request
+                can_request=can_request,
             )
 
         except Exception as e:
@@ -169,7 +167,7 @@ class PermissionChecker(_base.PermissionChecker):
                 permission_type=PermissionType.KEYBOARD_INPUT,
                 status=PermissionStatus.UNKNOWN,
                 message=f"Failed to check permission: {e}",
-                can_request=False
+                can_request=False,
             )
 
     def check_permission(self, permission_type: PermissionType) -> PermissionResult:
@@ -184,13 +182,16 @@ class PermissionChecker(_base.PermissionChecker):
         """
         if permission_type == PermissionType.ACCESSIBILITY:
             return self._check_accessibility_permission()
-        elif permission_type in (PermissionType.KEYBOARD_INPUT, PermissionType.MOUSE_INPUT):
+        elif permission_type in (
+            PermissionType.KEYBOARD_INPUT,
+            PermissionType.MOUSE_INPUT,
+        ):
             return self._check_input_monitoring_permission()
         else:
             return PermissionResult(
                 permission_type=permission_type,
                 status=PermissionStatus.NOT_REQUIRED,
-                message=f"{permission_type.value} permission not implemented for macOS"
+                message=f"{permission_type.value} permission not implemented for macOS",
             )
 
     def request_permission(self, permission_type: PermissionType) -> PermissionResult:
@@ -205,13 +206,16 @@ class PermissionChecker(_base.PermissionChecker):
         """
         if permission_type == PermissionType.ACCESSIBILITY:
             return self._request_accessibility_permission()
-        elif permission_type in (PermissionType.KEYBOARD_INPUT, PermissionType.MOUSE_INPUT):
+        elif permission_type in (
+            PermissionType.KEYBOARD_INPUT,
+            PermissionType.MOUSE_INPUT,
+        ):
             return self._request_input_monitoring_permission()
         else:
             return PermissionResult(
                 permission_type=permission_type,
                 status=PermissionStatus.NOT_REQUIRED,
-                message=f"{permission_type.value} permission not implemented for macOS"
+                message=f"{permission_type.value} permission not implemented for macOS",
             )
 
     def _request_accessibility_permission(self) -> PermissionResult:
@@ -227,9 +231,11 @@ class PermissionChecker(_base.PermissionChecker):
 
             self._log("Requesting accessibility permission")
 
-            HIServices.AXIsProcessTrustedWithOptions({  # ty:ignore[unresolved-attribute]
-                kAXTrustedCheckOptionPrompt: True
-            })
+            HIServices.AXIsProcessTrustedWithOptions(
+                {  # ty:ignore[unresolved-attribute]
+                    kAXTrustedCheckOptionPrompt: True
+                }
+            )
 
             # Give the system a moment to process
             time.sleep(1)
@@ -243,7 +249,7 @@ class PermissionChecker(_base.PermissionChecker):
                 permission_type=PermissionType.ACCESSIBILITY,
                 status=PermissionStatus.UNKNOWN,
                 message=f"Failed to request permission: {e}",
-                can_request=False
+                can_request=False,
             )
 
     def _request_input_monitoring_permission(self) -> PermissionResult:
@@ -257,7 +263,7 @@ class PermissionChecker(_base.PermissionChecker):
             return PermissionResult(
                 permission_type=PermissionType.KEYBOARD_INPUT,
                 status=PermissionStatus.NOT_REQUIRED,
-                message="Input monitoring not required on this macOS version"
+                message="Input monitoring not required on this macOS version",
             )
 
         iokit = self._load_iokit_bundle()
@@ -266,13 +272,13 @@ class PermissionChecker(_base.PermissionChecker):
                 permission_type=PermissionType.KEYBOARD_INPUT,
                 status=PermissionStatus.UNKNOWN,
                 message="Failed to load IOKit bundle",
-                can_request=False
+                can_request=False,
             )
 
         try:
             self._log("Requesting input monitoring permission")
 
-            result = iokit['IOHIDRequestAccess'](kIOHIDRequestTypeListenEvent)
+            result = iokit["IOHIDRequestAccess"](kIOHIDRequestTypeListenEvent)
             self._log(f"IOHIDRequestAccess result: {result}")
 
             # Open system preferences
@@ -285,12 +291,14 @@ class PermissionChecker(_base.PermissionChecker):
             return self._check_input_monitoring_permission()
 
         except Exception as e:
-            self._log(f"Error requesting input monitoring permission: {e}", level="error")
+            self._log(
+                f"Error requesting input monitoring permission: {e}", level="error"
+            )
             return PermissionResult(
                 permission_type=PermissionType.KEYBOARD_INPUT,
                 status=PermissionStatus.UNKNOWN,
                 message=f"Failed to request permission: {e}",
-                can_request=False
+                can_request=False,
             )
 
     def check_all_permissions(self) -> dict[PermissionType, PermissionResult]:
@@ -346,7 +354,10 @@ class PermissionChecker(_base.PermissionChecker):
         """
         if permission_type == PermissionType.ACCESSIBILITY:
             self._open_accessibility_settings()
-        elif permission_type in (PermissionType.KEYBOARD_INPUT, PermissionType.MOUSE_INPUT):
+        elif permission_type in (
+            PermissionType.KEYBOARD_INPUT,
+            PermissionType.MOUSE_INPUT,
+        ):
             self._open_input_monitoring_settings()
         else:
             # Default to accessibility settings

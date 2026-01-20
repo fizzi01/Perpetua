@@ -13,6 +13,7 @@ from typing import Optional
 
 class PermissionType(Enum):
     """Types of permissions that can be checked"""
+
     KEYBOARD_INPUT = "keyboard_input"
     MOUSE_INPUT = "mouse_input"
     ACCESSIBILITY = "accessibility"
@@ -23,6 +24,7 @@ class PermissionType(Enum):
 
 class PermissionStatus(Enum):
     """Status of a permission check"""
+
     GRANTED = "granted"
     DENIED = "denied"
     UNKNOWN = "unknown"
@@ -32,6 +34,7 @@ class PermissionStatus(Enum):
 @dataclass
 class PermissionResult:
     """Result of a permission check"""
+
     permission_type: PermissionType
     status: PermissionStatus
     message: Optional[str] = None
@@ -137,7 +140,8 @@ class PermissionChecker(ABC):
         """
         results = self.check_all_permissions()
         return [
-            result for result in results.values()
+            result
+            for result in results.values()
             if result.is_denied or result.status == PermissionStatus.UNKNOWN
         ]
 
@@ -150,5 +154,3 @@ class PermissionChecker(ABC):
             permission_type: Optional specific permission to open settings for
         """
         pass
-
-

@@ -1,18 +1,13 @@
 from typing import Optional
 
 from . import _base
-from ._base import (
-    PermissionType,
-    PermissionStatus,
-    PermissionResult
-)
+from ._base import PermissionType, PermissionStatus, PermissionResult
 
 
 class PermissionChecker(_base.PermissionChecker):
     def check_permission(self, permission_type: PermissionType) -> PermissionResult:
         return PermissionResult(
-            permission_type=permission_type,
-            status=PermissionStatus.GRANTED
+            permission_type=permission_type, status=PermissionStatus.GRANTED
         )
 
     def request_permission(self, permission_type: PermissionType) -> PermissionResult:

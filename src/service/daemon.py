@@ -129,7 +129,6 @@ class DaemonCommand(StrEnum):
 
 
 class RunningState:
-
     def __init__(self, service: str, is_running: bool):
         self.service = service
         self.is_running = is_running
@@ -212,10 +211,7 @@ class Daemon:
         # Initialize logging with file output
         log_file = path.join(self.app_config.get_main_path(), "daemon.log")
         self._logger = get_logger(
-            self.__class__.__name__, 
-            level=Logger.INFO, 
-            is_root=True,
-            log_file=log_file
+            self.__class__.__name__, level=Logger.INFO, is_root=True, log_file=log_file
         )
 
         # Service instances
@@ -307,7 +303,10 @@ class Daemon:
         """Pre-configuration steps before starting services"""
         # Check if server/client configs have missing important fields like hostname
         if self._client_config:
-            if not self._client_config.get_hostname() or self._client_config.get_hostname() == "":
+            if (
+                not self._client_config.get_hostname()
+                or self._client_config.get_hostname() == ""
+            ):
                 try:
                     key = self._client_config.get_hostname()
                     if not key or key == "":
@@ -325,7 +324,9 @@ class Daemon:
                     try:
                         new_uid = UIDGenerator.generate_uid(key)
                         self._client_config.set_uid(new_uid)
-                        self._logger.info("Generated new client UID", client_uid=new_uid)
+                        self._logger.info(
+                            "Generated new client UID", client_uid=new_uid
+                        )
                     except Exception as e:
                         self._logger.error(f"Preconfiguration error -> {e}")
 

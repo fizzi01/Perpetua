@@ -114,6 +114,7 @@ class Builder:
             f"--output-folder-name={APP_NAME}",
             "--include-package=utils",
             "--include-package=input",
+            "--python-flag=no_docstrings",
             f"--include-data-files={self.gui_exe}=_{self.gui_exe.name}"
         ]
 

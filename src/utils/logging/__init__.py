@@ -120,7 +120,12 @@ class Logger(BaseLogger):
     _shared_handler = None
 
     def __init__(
-        self, name=None, verbose=True, level: Optional[int] = None, stdout=None, log_file: Optional[str] = None
+        self,
+        name=None,
+        verbose=True,
+        level: Optional[int] = None,
+        stdout=None,
+        log_file: Optional[str] = None,
     ):
         """
         Inizializza un logger per un modulo specifico.
@@ -354,9 +359,11 @@ class StructLogger(BaseLogger):
             # Open file for writing
             log_path = Path(log_file)
             log_path.parent.mkdir(parents=True, exist_ok=True)
-            
+
             # Open the file handle directly for structlog
-            StructLogger._log_file_handle = open(log_file, 'a', encoding='utf-8', buffering=1)
+            StructLogger._log_file_handle = open(
+                log_file, "a", encoding="utf-8", buffering=1
+            )
 
         # Create the logger name within the application namespace
         if name is None or name == "__main__":
@@ -474,8 +481,12 @@ class StructLogger(BaseLogger):
         wrapper_cls = structlog.BoundLogger
 
         # Determine output file: use log file if opened, otherwise stdout
-        output_file = StructLogger._log_file_handle if StructLogger._log_file_handle is not None else sys.stdout
-        
+        output_file = (
+            StructLogger._log_file_handle
+            if StructLogger._log_file_handle is not None
+            else sys.stdout
+        )
+
         if verbose:
             # Verbose mode: colored output with all details
             # Use colors only for stdout, not for file
@@ -676,6 +687,11 @@ def get_logger(
     """
     if structured:
         return StructLogger(
-            name=name, verbose=verbose, level=level, log_file=log_file, is_root=is_root, **initial_context
+            name=name,
+            verbose=verbose,
+            level=level,
+            log_file=log_file,
+            is_root=is_root,
+            **initial_context,
         )
     return Logger(name=name, verbose=verbose, level=level, log_file=log_file)
