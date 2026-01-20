@@ -18,7 +18,6 @@ use std::{sync::Mutex, time::Duration};
 
 pub mod commands;
 pub mod handler;
-pub mod log_reader;
 
 #[derive(Default)]
 struct AppState {
@@ -131,8 +130,8 @@ pub fn run() {
             commands::enable_stream,
             commands::disable_stream,
             // -- Log Commands --
-            log_reader::read_daemon_logs,
-            log_reader::get_log_file_path_cmd,
+            commands::read_daemon_logs,
+            commands::get_log_file_path_cmd,
         ])
         .setup(|app| {
             let app_handle = app.handle().clone();
@@ -216,6 +215,20 @@ pub fn run() {
             if !state.hard_close {
                 // Prevent the app from closing
                 api.prevent_exit();
+            }
+        }
+        tauri::RunEvent::Exit => {
+                let app_handle = _app_handle.clone();
+                tauri::async_runtime::spawn(async move {
+                    let cur_state = app_handle.state::<AtomicAsyncWriter>();
+                    let _ = commands::shutdown(cur_state).await;
+                });
+        }
+        tauri::RunEvent::Reopen { has_visible_windows, .. } => {
+            if !has_visible_windows {
+                let window = _app_handle.get_webview_window("main").unwrap();
+                window.show().unwrap();
+                window.set_focus().unwrap();
             }
         }
         _ => {}

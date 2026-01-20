@@ -9,7 +9,7 @@ from utils.logging import get_logger
 from utils.permissions import PermissionChecker
 from config import ApplicationConfig
 
-log = get_logger("launcher", verbose=True, log_file=str(Path(os.path.join(ApplicationConfig.get_main_path(), "daemon.log"))))
+log = get_logger("launcher", verbose=True)
 
 IS_WINDOWS = sys.platform == "win32"
 
@@ -78,6 +78,7 @@ def run_daemon():
         PID_FILE.unlink(missing_ok=True)
         sys.exit(1)
     finally:
+        log.info("Daemon stopped", pid=os.getpid())
         PID_FILE.unlink(missing_ok=True)
 
 
