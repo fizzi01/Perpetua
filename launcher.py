@@ -21,6 +21,14 @@ GUI_EXECUTABLE = ApplicationConfig.app_name.lower()
 # Log file for daemon output
 LOG_FILE = Path(os.path.join(ApplicationConfig.get_main_path(), "daemon.log"))
 
+def clean_log_file():
+    """Clean up old log file if exists."""
+    if LOG_FILE.exists():
+        try:
+            LOG_FILE.unlink()
+            log.info("Old log file removed", path=str(LOG_FILE))
+        except Exception as e:
+            log.warning("Failed to remove old log file", path=str(LOG_FILE), error=str(e))
 
 def get_daemon_pid() -> int | None:
     """Get daemon PID from file if exists and process is running."""
@@ -88,6 +96,8 @@ def start_daemon(executable_dir: str) -> bool:
     if existing_pid:
         log.info("Daemon already running", pid=existing_pid)
         return True
+
+    clean_log_file()  # Clean up old log file before starting new daemon
 
     self_path = os.path.join(executable_dir, "Perpetua")
     if IS_WINDOWS:

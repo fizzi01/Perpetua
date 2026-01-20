@@ -11,6 +11,8 @@ from enum import Enum
 from typing import Any, Dict, Optional, Callable, Awaitable
 import json
 
+from utils.logging import get_logger
+
 
 class NotificationEventType(str, Enum):
     """Types of notification events sent from daemon to client"""
@@ -685,6 +687,7 @@ class NotificationManager:
         Args:
             callback: Async callback function to invoke when an event is generated
         """
+        self._logger = get_logger(self.__class__.__name__)
         self._callback = callback
         self._enabled = True
 
@@ -717,13 +720,11 @@ class NotificationManager:
             return
 
         try:
-            if event.event_type != NotificationEventType.PONG:
-                print(f"Sending notification: {event.to_json()}")
             await self._callback(event)
         except Exception as e:
-            import sys
-
-            print(f"Error sending notification: {e}", file=sys.stderr)
+            self._logger.error(
+                f"Failed to send notification event {event.event_type} ({e})"
+            )
 
     async def notify_event(self, event: NotificationEvent) -> None:
         """
