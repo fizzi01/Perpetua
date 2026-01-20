@@ -229,11 +229,16 @@ pub fn run() {
             }
         }
         tauri::RunEvent::Exit => {
+            let state = _app_handle.state::<Mutex<AppState>>();
+            let state = state.lock().unwrap();
+            if !state.hard_close {
+                // With hard_close, a shutdown command has already been sent
                 let app_handle = _app_handle.clone();
                 tauri::async_runtime::spawn(async move {
                     let cur_state = app_handle.state::<AtomicAsyncWriter>();
                     let _ = commands::shutdown(cur_state).await;
                 });
+            }
         }
         tauri::RunEvent::Reopen { has_visible_windows, .. } => {
             if !has_visible_windows {
