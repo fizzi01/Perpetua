@@ -2,19 +2,61 @@ import asyncio
 import os
 import subprocess
 import sys
-from multiprocessing import Process
 from pathlib import Path
 from time import sleep
 
 sys.path.insert(0, str(Path(__file__).parent / "src"))
+from config import ApplicationConfig
 from utils.logging import get_logger
 from utils.permissions import PermissionChecker
 
 log = get_logger("launcher", verbose=True)
 
+IS_WINDOWS = sys.platform in ("win32", "cygwin", "cli")
 
-def _run_daemon():
-    from service.daemon import main, IS_WINDOWS
+# PID file to track daemon process
+PID_FILE = Path(os.path.join(ApplicationConfig.get_main_path(), "daemon.pid"))
+
+
+def get_daemon_pid() -> int | None:
+    """Get daemon PID from file if exists and process is running."""
+    if not PID_FILE.exists():
+        return None
+
+    try:
+        pid = int(PID_FILE.read_text().strip())
+        # Check if process is still running
+        os.kill(pid, 0)
+        return pid
+    except (ValueError, ProcessLookupError, PermissionError):
+        # Invalid PID or process not running, clean up stale PID file
+        PID_FILE.unlink(missing_ok=True)
+        return None
+
+
+def write_daemon_pid(pid: int):
+    """Write daemon PID to file."""
+    PID_FILE.parent.mkdir(parents=True, exist_ok=True)
+    PID_FILE.write_text(str(pid))
+
+
+def run_daemon():
+    """Run daemon in this process (called with --daemon argument)."""
+    from service.daemon import main
+    import signal
+
+    # Write PID file
+    write_daemon_pid(os.getpid())
+    log.info("Daemon process started", pid=os.getpid())
+
+    # Signal handler for graceful shutdown
+    def signal_handler(signum, frame):
+        log.info("Daemon received shutdown signal", signal=signum)
+        PID_FILE.unlink(missing_ok=True)
+        sys.exit(0)
+
+    signal.signal(signal.SIGTERM, signal_handler)
+    signal.signal(signal.SIGINT, signal_handler)
 
     try:
         if IS_WINDOWS:
@@ -26,14 +68,46 @@ def _run_daemon():
         asyncio.run(main())
     except Exception:
         log.exception("Daemon failed")
+        PID_FILE.unlink(missing_ok=True)
         sys.exit(1)
+    finally:
+        PID_FILE.unlink(missing_ok=True)
 
 
-def start_daemon() -> Process:
-    process = Process(target=_run_daemon, daemon=False)
-    process.start()
-    log.info(f"Daemon started", pid=process.pid)
-    return process
+def start_daemon() -> bool:
+    """Start daemon as a separate process by spawning ourselves with --daemon."""
+    existing_pid = get_daemon_pid()
+    if existing_pid:
+        log.info("Daemon already running", pid=existing_pid)
+        return True
+
+    # Spawn ourselves with --daemon argument
+    try:
+        subprocess.Popen(
+            [os.path.join(os.path.dirname(sys.executable), "Perpetua"), '--daemon'],
+            stdout=subprocess.DEVNULL,
+            stderr=subprocess.DEVNULL,
+            stdin=subprocess.DEVNULL,
+            start_new_session=True,
+            close_fds=True
+        )
+
+        log.info("Daemon process spawned")
+
+        # Wait for daemon to write PID file (up to 3 seconds)
+        for _ in range(6):
+            sleep(0.5)
+            daemon_pid = get_daemon_pid()
+            if daemon_pid:
+                log.info("Daemon started successfully", pid=daemon_pid)
+                return True
+
+        log.warning("Daemon started but PID file not found yet")
+        return True
+
+    except Exception as e:
+        log.error("Failed to start daemon", error=str(e))
+        return False
 
 
 def start_gui(executable_dir: str) -> bool:
@@ -43,15 +117,26 @@ def start_gui(executable_dir: str) -> bool:
         log.error("GUI not found", path=gui_path)
         return False
     
-    subprocess.Popen([gui_path], close_fds=True)
+    g = subprocess.Popen(
+        [gui_path],
+        stdout=subprocess.DEVNULL,
+        stderr=subprocess.DEVNULL,
+        stdin=subprocess.DEVNULL,
+        start_new_session=True,
+        close_fds=True
+    )
     log.info("GUI started", path=gui_path)
+    g.wait()
     return True
 
 
 def main():
+    # Check if we're being called with --daemon argument
+
+    # Normal launcher flow
     permission_checker = PermissionChecker(log)
     permissions = permission_checker.get_missing_permissions()
-    if len(permissions)>0:
+    if len(permissions) > 0:
         log.info("Requesting missing permissions", permissions=permissions)
         for permission in permissions:
             result = permission_checker.request_permission(permission.permission_type)
@@ -59,13 +144,26 @@ def main():
                 log.error("Permission not granted", permission=permission)
                 return 1
 
-    daemon = start_daemon()
-    if not daemon.is_alive():
+    if '--daemon' in sys.argv:
+        # Reset arguments to avoid recursion
+        sys.argv = [arg for arg in sys.argv if arg != '--daemon']
+        run_daemon()
+        return 0
+
+    # Start daemon if not already running
+    if not start_daemon():
         log.error("Failed to start daemon")
         return 1
-    
+
+    # Give daemon time to initialize
     sleep(1)
-    start_gui(os.path.dirname(sys.executable))
+
+    # Start GUI
+    if not start_gui(os.path.dirname(sys.executable)):
+        log.error("Failed to start GUI")
+        return 1
+
+    log.info("Launcher completed successfully")
     return 0
 
 
