@@ -154,7 +154,7 @@ pub fn run() {
 
             win_builder.build().unwrap();
 
-            let show_window = MenuItem::with_id(app, "show_window", "Show Window", true, None::<&str>)?;
+            let show_window = MenuItem::with_id(app, "show_window", "Show", true, None::<&str>)?;
             let quit_i = MenuItem::with_id(app, "quit", "Quit", true, None::<&str>)?;
             let menu = MenuBuilder::new(app)
                 .item(&show_window)

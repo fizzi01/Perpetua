@@ -113,16 +113,16 @@ export function PowerButton({
           />
         </motion.button>
 
-        {/* Force Stop Button (only visible when connecting) */}
+        {/* Force Stop Button */}
         {(isPending || isConnecting) && onForceStop && (
           <>
             {/* Subtle pulse backdrop */}
             <motion.div
               initial={{ opacity: 0, scale: 0.8 }}
-              animate={{ 
-                opacity: [0.2, 0.35, 0.2],
-                scale: [1, 1.2, 1]
-              }}
+              // animate={{ 
+              //   opacity: [0.2, 0.35, 0.2],
+              //   scale: [1, 1.2, 1]
+              // }}
               exit={{ opacity: 0 }}
               transition={{
                 opacity: { duration: 2, repeat: Infinity, ease: "easeInOut" },
@@ -163,14 +163,15 @@ export function PowerButton({
               whileHover={{ 
                 scale: 1.1,
                 rotate: 90,
-                transition: { duration: 0.2 }
+                transition: { duration: 0.2 },
+                backgroundColor: 'var(--app-danger-hover)'
               }}
               whileTap={{ scale: 0.9 }}
               onClick={onForceStop}
-              className="absolute w-10 h-10 rounded-full flex items-center justify-center z-20 border-2"
+              className="absolute w-9 h-9 rounded-full flex items-center justify-center z-20 border-2"
               style={{
                 backgroundColor: 'var(--app-danger)',
-                borderColor: 'white',
+                // borderColor: 'white',
                 color: 'white',
                 top: '-5px',
                 right: '-5px',
