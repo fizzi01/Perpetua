@@ -1,15 +1,15 @@
+from src.utils.logging import BaseLogger
 import asyncio
 import os
 import subprocess
 import sys
 from pathlib import Path
 from time import sleep
+from psutil import pid_exists
 
 from utils.logging import get_logger
 from utils.permissions import PermissionChecker
 from config import ApplicationConfig
-
-log = get_logger("launcher", verbose=True)
 
 IS_WINDOWS = sys.platform == "win32"
 
@@ -20,6 +20,17 @@ GUI_EXECUTABLE = ApplicationConfig.app_name.lower()
 
 # Log file for daemon output
 LOG_FILE = Path(os.path.join(ApplicationConfig.get_main_path(), "daemon.log"))
+TEMP_LOG_FILE = Path(os.path.join(ApplicationConfig.get_main_path(), "launcher_temp.log"))
+
+log = BaseLogger()
+
+def clean_temp_log_file():
+    """Remove temporary launcher log file if exists."""
+    if TEMP_LOG_FILE.exists():
+        try:
+            TEMP_LOG_FILE.unlink()
+        except Exception as e:
+            print(f"Failed to remove temporary log file: {e}")
 
 def clean_log_file():
     """Clean up old log file if exists."""
@@ -30,6 +41,7 @@ def clean_log_file():
         except Exception as e:
             log.warning("Failed to remove old log file", path=str(LOG_FILE), error=str(e))
 
+
 def get_daemon_pid() -> int | None:
     """Get daemon PID from file if exists and process is running."""
     if not PID_FILE.exists():
@@ -38,11 +50,11 @@ def get_daemon_pid() -> int | None:
     try:
         pid = int(PID_FILE.read_text().strip())
         # Check if process is still running
-        if IS_WINDOWS:
-            subprocess.check_output(["tasklist", "/FI", f"PID eq {pid}"])
+        if pid_exists(pid):
+            return pid
         else:
-            os.kill(pid, 0)
-        return pid
+            PID_FILE.unlink(missing_ok=True)
+            return None
     except (ValueError, ProcessLookupError, PermissionError):
         # Invalid PID or process not running, clean up stale PID file
         PID_FILE.unlink(missing_ok=True)
@@ -154,10 +166,11 @@ def start_gui(executable_dir: str) -> bool:
 
 
 def main():
-    # Check if we're being called with --daemon argument
+    global log
+    log = get_logger("launcher", verbose=True, log_file=str(TEMP_LOG_FILE))
 
     # Normal launcher flow
-    permission_checker = PermissionChecker(log) # type: ignore
+    permission_checker = PermissionChecker(log)  # type: ignore
     permissions = permission_checker.get_missing_permissions()
     if len(permissions) > 0:
         log.info("Requesting missing permissions", permissions=permissions)
@@ -171,6 +184,7 @@ def main():
         # Reset arguments to avoid recursion
         sys.argv = [arg for arg in sys.argv if arg != '--daemon']
         run_daemon()
+        clean_temp_log_file()  # Clean up temporary log file only after daemon run
         return 0
 
     # Start daemon if not already running
@@ -198,6 +212,7 @@ if __name__ == "__main__":
         sys.exit(130)
     except Exception:
         import traceback
+
         log.exception("Fatal error")
         log.exception(traceback.format_exc())
         sys.exit(1)

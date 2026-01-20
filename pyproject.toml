@@ -28,7 +28,8 @@ dependencies = [
     "winloop (<1.0.0) ; sys_platform == 'win32'",
     "structlog (>=25.5.0,<26.0.0)",
     "ruff (>=0.14.10,<0.15.0)",
-    "pytest (>=9.0.2,<10.0.0)"
+    "pytest (>=9.0.2,<10.0.0)",
+    "psutil (>=7.2.1,<8.0.0)"
 ]
 
 [tool.poetry]
