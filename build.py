@@ -34,10 +34,10 @@ class Builder:
         self.src_dir = project_root / "src"
         self.build_dir = project_root / ".build"
 
-        self.system = platform.system()
-        self.is_macos = self.system == "Darwin"
-        self.is_windows = self.system == "Windows"
-        self.is_linux = self.system == "Linux"
+        self.system = sys.platform
+        self.is_macos = self.system == "darwin"
+        self.is_windows = self.system == "win32"
+        self.is_linux = self.system == "linux"
 
         # Add .exe extension for Windows
         if self.is_windows:
@@ -114,7 +114,7 @@ class Builder:
             f"--output-folder-name={APP_NAME}",
             "--include-package=utils",
             "--include-package=input",
-            f"--include-data-files={self.gui_exe}=_{GUI_EXECUTABLE}",
+            f"--include-data-files={self.gui_exe}=_{self.gui_exe.name}"
         ]
 
         if self.is_macos:

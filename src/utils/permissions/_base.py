@@ -18,6 +18,7 @@ class PermissionType(Enum):
     ACCESSIBILITY = "accessibility"
     SCREEN_RECORDING = "screen_recording"
     CLIPBOARD = "clipboard"
+    NONE = "none"
 
 
 class PermissionStatus(Enum):
