@@ -5,17 +5,18 @@ import sys
 from pathlib import Path
 from time import sleep
 
-sys.path.insert(0, str(Path(__file__).parent / "src"))
-from config import ApplicationConfig
 from utils.logging import get_logger
 from utils.permissions import PermissionChecker
+from config import ApplicationConfig
 
 log = get_logger("launcher", verbose=True, log_file=str(Path(os.path.join(ApplicationConfig.get_main_path(), "daemon.log"))))
 
-IS_WINDOWS = sys.platform in ("win32", "cygwin", "cli")
+IS_WINDOWS = sys.platform == "win32"
 
 # PID file to track daemon process
 PID_FILE = Path(os.path.join(ApplicationConfig.get_main_path(), "daemon.pid"))
+
+GUI_EXECUTABLE = ApplicationConfig.app_name.lower()
 
 # Log file for daemon output
 LOG_FILE = Path(os.path.join(ApplicationConfig.get_main_path(), "daemon.log"))
@@ -29,7 +30,10 @@ def get_daemon_pid() -> int | None:
     try:
         pid = int(PID_FILE.read_text().strip())
         # Check if process is still running
-        os.kill(pid, 0)
+        if IS_WINDOWS:
+            subprocess.check_output(["tasklist", "/FI", f"PID eq {pid}"])
+        else:
+            os.kill(pid, 0)
         return pid
     except (ValueError, ProcessLookupError, PermissionError):
         # Invalid PID or process not running, clean up stale PID file
@@ -63,9 +67,9 @@ def run_daemon():
 
     try:
         if IS_WINDOWS:
-            import winloop as asyncloop # type: ignore
+            import winloop as asyncloop  # type: ignore
         else:
-            import uvloop as asyncloop # type: ignore
+            import uvloop as asyncloop  # type: ignore
         asyncloop.run(main())
     except ImportError:
         asyncio.run(main())
@@ -77,17 +81,20 @@ def run_daemon():
         PID_FILE.unlink(missing_ok=True)
 
 
-def start_daemon() -> bool:
+def start_daemon(executable_dir: str) -> bool:
     """Start daemon as a separate process by spawning ourselves with --daemon."""
     existing_pid = get_daemon_pid()
     if existing_pid:
         log.info("Daemon already running", pid=existing_pid)
         return True
 
-    # Spawn ourselves with --daemon argument
+    self_path = os.path.join(executable_dir, "Perpetua")
+    if IS_WINDOWS:
+        self_path += ".exe"
+
     try:
         subprocess.Popen(
-            [os.path.join(os.path.dirname(sys.executable), "Perpetua"), '--daemon'],
+            [self_path, '--daemon'],
             stdout=subprocess.DEVNULL,
             stderr=subprocess.DEVNULL,
             stdin=subprocess.DEVNULL,
@@ -115,11 +122,13 @@ def start_daemon() -> bool:
 
 def start_gui(executable_dir: str) -> bool:
     gui_path = os.path.join(executable_dir, '_perpetua')
-    
+    if IS_WINDOWS:
+        gui_path += ".exe"
+
     if not (os.path.isfile(gui_path) and os.access(gui_path, os.X_OK)):
         log.error("GUI not found", path=gui_path)
         return False
-    
+
     g = subprocess.Popen(
         [gui_path],
         stdout=subprocess.DEVNULL,
@@ -154,7 +163,7 @@ def main():
         return 0
 
     # Start daemon if not already running
-    if not start_daemon():
+    if not start_daemon(os.path.dirname(sys.executable)):
         log.error("Failed to start daemon")
         return 1
 
