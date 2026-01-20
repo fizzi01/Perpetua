@@ -147,7 +147,10 @@ class Builder:
                     size_mb = item.stat().st_size / (1024 * 1024)
                     self.log.info(f"  {item.name} ({size_mb:.2f} MB)")
                 else:
-                    self.log.info(f"  {item.name}")
+                    # Directory size
+                    total_size = sum(f.stat().st_size for f in item.rglob('*') if f.is_file())
+                    size_mb = total_size / (1024 * 1024)
+                    self.log.info(f"  {item.name}/ ({size_mb:.2f} MB)")
 
     def build(self):
         try:
