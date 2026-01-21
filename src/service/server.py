@@ -9,12 +9,10 @@ import socket
 from typing import Optional, Dict, Tuple, Callable, Awaitable
 
 from config import ApplicationConfig, ServerConfig
-from model.client import ClientObj, ClientsManager, ScreenPosition
+from model.client import ClientObj, ClientsManager
 from event.bus import AsyncEventBus
 from event.notification import (
     NotificationEvent,
-    ServiceStartedEvent,
-    ServiceStoppedEvent,
     ClientConnectedEvent as ClientConnectedNotification,
     ClientDisconnectedEvent as ClientDisconnectedNotification,
     ConfigSavedEvent,
@@ -48,7 +46,7 @@ from utils.net import get_local_ip
 from utils.crypto import CertificateManager
 from utils.crypto.sharing import CertificateSharing
 
-from utils.logging import Logger, get_logger
+from utils.logging import get_logger
 
 from . import ServiceDiscovery
 

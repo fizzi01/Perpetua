@@ -17,7 +17,6 @@ from socket import gethostname
 from network.stream import StreamType
 from service.client import Client
 from config import ClientConfig, ApplicationConfig
-from utils.logging import Logger
 
 
 def helper():

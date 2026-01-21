@@ -485,7 +485,7 @@ class DaemonClient:
             print(f"   Make sure the daemon is running on: {self.socket_path}")
             return False
         except asyncio.TimeoutError:
-            print(f"✗ Connection Error: Timeout connecting to daemon")
+            print("✗ Connection Error: Timeout connecting to daemon")
             return False
         except Exception as e:
             print(f"✗ Error: {e}")

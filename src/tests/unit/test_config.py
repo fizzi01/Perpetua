@@ -9,7 +9,7 @@ import os
 import pytest
 
 from config import ApplicationConfig, ServerConfig, ClientConfig, ServerInfo
-from model.client import ClientObj, ScreenPosition
+from model.client import ClientObj
 from utils.logging import Logger
 
 

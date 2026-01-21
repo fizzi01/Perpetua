@@ -13,7 +13,6 @@ else:
 import asyncio
 from socket import gethostname
 
-from network.stream import StreamType
 from service.server import Server
 from config import ServerConfig, ApplicationConfig
 from utils.logging import Logger
