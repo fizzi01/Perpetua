@@ -100,7 +100,7 @@ class Builder:
 
         self._run(["npm", "install"], cwd=self.gui_dir)
 
-        build_cmd = ["cargo", "tauri", "build", "--no-bundle"]
+        build_cmd = ["cargo", "tauri", "build"]
         if not self.release:
             build_cmd.append("--debug")
 

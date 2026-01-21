@@ -1,5 +1,5 @@
 #[cfg(target_os = "macos")]
-use tauri::{PhysicalPosition, Position, TitleBarStyle, image::Image, include_image};
+use tauri::{PhysicalPosition, Position, TitleBarStyle};
 
 use tauri::{
     AppHandle, Emitter, Manager, Runtime, WebviewUrl, WebviewWindowBuilder, menu::{MenuBuilder, MenuItem}, tray::TrayIconBuilder
@@ -212,10 +212,6 @@ pub fn run() {
                     }
                 });
 
-            #[cfg(target_os = "macos")]
-            let tray = tray.icon(include_image!("icons/macos_32x32.png"));
-            
-            #[cfg(not(target_os = "macos"))]
             let tray = tray.icon(app.default_window_icon().unwrap().clone());
 
             tray.show_menu_on_left_click(true)
