@@ -287,14 +287,24 @@ class ConnectionHandler(BaseConnectionHandler):
                     f"Handshake failed for client {addr[0]}. Closing connection.",
                     Logger.WARNING,
                 )
-                writer.close()
-                await writer.wait_closed()
+                await self._clean_on_connection_lost(writer)
+                return
 
+        except (ConnectionResetError, ConnectionAbortedError) as e:
+            self._logger.log(f"Connection lost from {addr} -> {e}", Logger.WARNING)
+            await self._clean_on_connection_lost(writer)
         except Exception as e:
             self._logger.log(f"Error handling client {addr} -> {e}", Logger.ERROR)
             import traceback
 
             self._logger.log(traceback.format_exc(), Logger.ERROR)
+
+    @staticmethod
+    async def _clean_on_connection_lost(writer: asyncio.StreamWriter):
+        """Pulizia in caso di perdita di connessione"""
+        if not writer.is_closing():
+            writer.close()
+            await writer.wait_closed()
 
     @staticmethod
     def _check_client(client_obj: ClientObj, address: str) -> bool:
