@@ -180,6 +180,9 @@ pub fn run() {
                         let window = app.get_webview_window("main").unwrap();
                         window.show().unwrap();
                         window.set_focus().unwrap();
+
+                        #[cfg(target_os = "macos")]
+                        app.set_activation_policy(tauri::ActivationPolicy::Regular).unwrap_or(());
                     }
                     "show_log" => {
                         let app_handle = app.clone();
@@ -214,6 +217,9 @@ pub fn run() {
                     // Prevent the window from closing
                     api.prevent_close();
                     window.hide().unwrap();
+
+                    #[cfg(target_os = "macos")]
+                    app_handle.set_activation_policy(tauri::ActivationPolicy::Accessory).unwrap_or(());
                 }
             }
             _ => {}
@@ -227,6 +233,10 @@ pub fn run() {
             if !state.hard_close {
                 // Prevent the app from closing
                 api.prevent_exit();
+                let app_handle = _app_handle.clone();
+
+                #[cfg(target_os = "macos")]
+                app_handle.set_activation_policy(tauri::ActivationPolicy::Accessory).unwrap_or(());
             }
         }
         #[cfg(any(target_os = "macos", debug_assertions))]
