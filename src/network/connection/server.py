@@ -275,8 +275,7 @@ class ConnectionHandler(BaseConnectionHandler):
                     f"Client {addr[0]} is already connected. Closing new connection.",
                     Logger.WARNING,
                 )
-                writer.close()
-                await writer.wait_closed()
+                await self._clean_on_connection_lost(writer)
                 return
 
             # TODO: Move client allowlist verification here and let user allow/block before handshake
@@ -512,6 +511,9 @@ class ConnectionHandler(BaseConnectionHandler):
                 f"Handshake cancelled for client {client_addr}", Logger.WARNING
             )
             raise
+        except (ConnectionResetError, ConnectionAbortedError):
+            # already handled in _handle_client
+            return False
         except Exception as e:
             self._logger.log(
                 f"Handshake error with client {client_addr} -> {e}", Logger.ERROR
