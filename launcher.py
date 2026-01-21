@@ -75,8 +75,10 @@ class Launcher:
         from service.daemon import main
         import signal
 
+        self.clean_log_file()
+
         # Reinitialize logger with daemon log file
-        self._log = get_logger("launcher", verbose=True, log_file=str(self.log_file))
+        self._log = get_logger("launcher", is_root=True, verbose=True, log_file=str(self.log_file))
 
         # Write PID file
         self.write_daemon_pid(os.getpid())
@@ -206,7 +208,6 @@ if __name__ == "__main__":
         if '--daemon' in sys.argv:
             # Reset arguments to avoid recursion
             sys.argv = [arg for arg in sys.argv if arg != '--daemon']
-            launcher.clean_log_file()
             launcher.run_daemon()
             sys.exit(0)
 
@@ -217,7 +218,7 @@ if __name__ == "__main__":
         exit_code = launcher.run()
         sys.exit(exit_code)
     except KeyboardInterrupt:
-        if launcher and launcher._log:
+        if launcher and launcher.log:
             launcher.log.info("Interrupted")
         else:
             print("Interrupted")
@@ -225,7 +226,7 @@ if __name__ == "__main__":
     except Exception:
         import traceback
 
-        if launcher and launcher._log:
+        if launcher and launcher.log:
             launcher.log.exception("Fatal error")
             launcher.log.exception(traceback.format_exc())
         else:

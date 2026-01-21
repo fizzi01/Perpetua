@@ -364,6 +364,19 @@ class StructLogger(BaseLogger):
             StructLogger._log_file_handle = open(
                 log_file, "a", encoding="utf-8", buffering=1
             )
+        elif (
+            log_file is not None and StructLogger._log_file_path != log_file and is_root
+        ):
+            # Close previous file handle if different log file is specified for root
+            if StructLogger._log_file_handle is not None:
+                StructLogger._log_file_handle.close()
+            StructLogger._log_file_path = log_file
+            log_path = Path(log_file)
+            log_path.parent.mkdir(parents=True, exist_ok=True)
+
+            StructLogger._log_file_handle = open(
+                log_file, "a", encoding="utf-8", buffering=1
+            )
 
         # Create the logger name within the application namespace
         if name is None or name == "__main__":
