@@ -43,6 +43,20 @@ class Builder:
         if self.is_windows:
             self.gui_exe = self.gui_exe.with_suffix('.exe')
 
+        self._version = self._get_version()
+
+    @property
+    def version(self):
+        return self._version
+
+    @staticmethod
+    def _get_version():
+        import tomllib
+        pyproject_path = Path(__file__).parent / "pyproject.toml"
+        with open(pyproject_path, "rb") as f:
+            pyproject_data = tomllib.load(f)
+        return pyproject_data["project"]["version"]
+
     def _run(self, cmd: list[str], cwd: Optional[Path] = None) -> subprocess.CompletedProcess:
         cwd = cwd or self.project_root
         self.log.debug(f"$ {' '.join(cmd)}")
@@ -109,6 +123,9 @@ class Builder:
 
         nuitka_cmd = [
             sys.executable, "-m", "nuitka",
+            f"--product-name={APP_NAME}",
+            f"--file-version={self.version}",
+            f"--product-version={self.version}",
             f"--output-dir={self.build_dir}",
             f"--output-filename={APP_NAME}",
             f"--output-folder-name={APP_NAME}",
@@ -121,6 +138,7 @@ class Builder:
         if self.is_macos:
             nuitka_cmd.extend([
                 "--macos-create-app-bundle",
+                f"--macos-app-version={self.version}",
                 "--macos-prohibit-multiple-instances",
                 f"--macos-sign-identity={APP_NAME}",
                 "--macos-app-protected-resource=NSAppleEventsUsageDescription:Automation Control",
