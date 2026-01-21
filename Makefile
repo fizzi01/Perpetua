@@ -46,27 +46,27 @@ install-build: lock ## Install runtime and build dependencies
 ## Build targets
 build: install-build ## Build both GUI and daemon (release mode)
 	@echo "$(BLUE)Building $(PROJECT_NAME)...$(NC)"
-	$(POETRY) build.py
+	$(POETRY) run build
 	@echo "$(GREEN)Build completed$(NC)"
 
 build-gui: install-build ## Build GUI only
 	@echo "$(BLUE)Building GUI...$(NC)"
-	$(POETRY) build.py --skip-daemon
+	$(POETRY) run build --skip-daemon
 	@echo "$(GREEN)GUI build completed$(NC)"
 
 build-daemon: install-build ## Build daemon only
 	@echo "$(BLUE)Building daemon...$(NC)"
-	$(POETRY) build.py --skip-gui
+	$(POETRY) run build --skip-gui
 	@echo "$(GREEN)Daemon build completed$(NC)"
 
 build-release: install-build ## Build in release mode with clean
 	@echo "$(BLUE)Building $(PROJECT_NAME) (release mode)...$(NC)"
-	$(POETRY) build.py --clean
+	$(POETRY) run build --clean
 	@echo "$(GREEN)Release build completed$(NC)"
 
 build-debug: install-build ## Build in debug mode
 	@echo "$(BLUE)Building $(PROJECT_NAME) (debug mode)...$(NC)"
-	$(POETRY) build.py --debug
+	$(POETRY) run build --debug
 	@echo "$(GREEN)Debug build completed$(NC)"
 
 ## Clean targets
