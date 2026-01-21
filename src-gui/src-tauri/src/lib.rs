@@ -98,6 +98,18 @@ fn prevent_default_ctxmenu() -> tauri::plugin::TauriPlugin<tauri::Wry> {
         .build()
 }
 
+fn show_window<R>(app: &AppHandle<R>)
+where
+    R: Runtime,
+{
+    let window = app.get_webview_window("main").unwrap();
+    window.show().unwrap();
+    window.set_focus().unwrap();
+
+    #[cfg(target_os = "macos")]
+    app.set_activation_policy(tauri::ActivationPolicy::Regular).unwrap_or(());
+}
+
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
     let app = tauri::Builder::default()
@@ -155,11 +167,11 @@ pub fn run() {
 
             win_builder.build().unwrap();
 
-            let show_window = MenuItem::with_id(app, "show_window", "Show", true, None::<&str>)?;
+            let show = MenuItem::with_id(app, "show_window", "Show", true, None::<&str>)?;
             let quit_i = MenuItem::with_id(app, "quit", "Quit", true, None::<&str>)?;
             let menu = MenuBuilder::new(app);
 
-            let menu = menu.item(&show_window)
+            let menu = menu.item(&show)
                 .separator();
 
             // #[cfg(debug_assertions)]
@@ -177,16 +189,13 @@ pub fn run() {
                 .menu(&menu)
                 .on_menu_event(|app, event| match event.id.as_ref() {
                     "show_window" => {
-                        let window = app.get_webview_window("main").unwrap();
-                        window.show().unwrap();
-                        window.set_focus().unwrap();
-
-                        #[cfg(target_os = "macos")]
-                        app.set_activation_policy(tauri::ActivationPolicy::Regular).unwrap_or(());
+                        show_window(app);
                     }
                     "show_log" => {
                         let app_handle = app.clone();
                         app_handle.emit("show_log", {}).unwrap();
+
+                        show_window(app);
                     }
                     "quit" => {
                         let handle = app.clone();
