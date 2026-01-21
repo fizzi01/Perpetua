@@ -29,6 +29,7 @@ class Builder:
 
         self.gui_dir = project_root / "src-gui"
         build_type = "release" if release else "debug"
+        self.icons_dir = self.gui_dir / "src-tauri" / "icons"
         self.gui_exe = self.gui_dir / "src-tauri" / "target" / build_type / GUI_EXECUTABLE
         self.src_dir = project_root / "src"
         self.build_dir = project_root / ".build"
@@ -142,14 +143,14 @@ class Builder:
                 f"--macos-sign-identity={APP_NAME}",
                 "--macos-app-protected-resource=NSAppleEventsUsageDescription:Automation Control",
                 f"--macos-app-name={APP_NAME}",
-                f"--macos-app-icon={self.project_root / 'logo' / 'logo.icns'}",
+                f"--macos-app-icon={self.icons_dir / 'logo.icns'}",
             ])
 
         if self.is_windows:
             nuitka_cmd.extend([
                 "--standalone",
                 "--windows-console-mode=attach",
-                f"--windows-icon-from-ico={self.project_root / 'logo' / 'logo.ico'}",
+                f"--windows-icon-from-ico={self.icons_dir / 'logo.ico'}",
             ])
 
         nuitka_cmd.extend(self.nuitka_args)
