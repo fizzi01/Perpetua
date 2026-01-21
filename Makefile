@@ -100,7 +100,7 @@ lint: install-dev ## Run linter (ruff)
 	@echo "$(GREEN)Linting completed$(NC)"
 
 lint-fix: install-dev ## Run linter and fix issues
-	@echo "$(BLUE"Running linter and fixing issues...$(NC)"
+	@echo "$(BLUE)"Running linter and fixing issues..."$(NC)"
 	$(POETRY) run ruff check --fix $(SRC_DIR)
 	@echo "$(GREEN)Linting and fixing completed$(NC)"
 
