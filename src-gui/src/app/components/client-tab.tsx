@@ -1,8 +1,8 @@
 import { useState, useEffect, useRef } from 'react';
 import { Settings, Wifi, Clock, Lock, Key, Shield, Server, Info } from 'lucide-react';
 import { motion, AnimatePresence } from 'motion/react';
-import { InlineNotification, Notification } from './inline-notification';
-import { PowerButton } from './power-button';
+import { InlineNotification, Notification } from './ui/inline-notification';
+import { PowerButton } from './ui/power-button';
 import { ClientTabProps } from '../commons/Tab';
 import { ClientConnectionInfo, ClientStatus, CommandType, EventType, ServerChoice, ServerFound, StreamType } from '../api/Interface';
 import { listenCommand, listenGeneralEvent } from '../api/Listener';
@@ -10,9 +10,9 @@ import { setOtp, startClient, stopClient, chooseServer, saveClientConfig } from 
 import { useEventListeners } from '../hooks/useEventListeners';
 
 import { parseStreams, isValidIpAddress } from '../api/Utility'
-import { PermissionsPanel } from './permissions-panel';
-import { abbreviateText, CopyableBadge } from './copyable-badge';
-import { ServerSelectionPanel } from './server-selection-panel';
+import { PermissionsPanel } from './ui/permissions-panel';
+import { abbreviateText, CopyableBadge } from './ui/copyable-badge';
+import { ServerSelectionPanel } from './ui/server-selection-panel';
 
 export function ClientTab({ onStatusChange, state }: ClientTabProps) {
   let previousState = useRef<ClientStatus | null>(null);

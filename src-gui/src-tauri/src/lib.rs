@@ -1,5 +1,5 @@
 #[cfg(target_os = "macos")]
-use tauri::{PhysicalPosition, Position, TitleBarStyle};
+use tauri::{PhysicalPosition, Position, TitleBarStyle, image::Image, include_image};
 
 use tauri::{
     AppHandle, Emitter, Manager, Runtime, WebviewUrl, WebviewWindowBuilder, menu::{MenuBuilder, MenuItem}, tray::TrayIconBuilder
@@ -185,7 +185,7 @@ pub fn run() {
                 .item(&quit_i)
                 .build()?;
 
-            TrayIconBuilder::new()
+            let tray = TrayIconBuilder::new()
                 .menu(&menu)
                 .on_menu_event(|app, event| match event.id.as_ref() {
                     "show_window" => {
@@ -210,9 +210,15 @@ pub fn run() {
                     _ => {
                         println!("menu item {:?} not handled", event.id);
                     }
-                })
-                .icon(app.default_window_icon().unwrap().clone())
-                .show_menu_on_left_click(true)
+                });
+
+            #[cfg(target_os = "macos")]
+            let tray = tray.icon(include_image!("icons/macos_32x32.png"));
+            
+            #[cfg(not(target_os = "macos"))]
+            let tray = tray.icon(app.default_window_icon().unwrap().clone());
+
+            tray.show_menu_on_left_click(true)
                 .build(app)?;
 
             Ok(())

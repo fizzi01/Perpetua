@@ -1,10 +1,10 @@
 import { motion } from 'motion/react';
 import { MousePointer, Keyboard, Clipboard } from 'lucide-react';
-import { StreamType } from '../api/Interface';
-import { enableStream, disableStream } from '../api/Sender';
-import { listenCommand } from '../api/Listener';
-import { EventType, CommandType } from '../api/Interface';
-import { useEventListeners } from '../hooks/useEventListeners';
+import { StreamType } from '../../api/Interface';
+import { enableStream, disableStream } from '../../api/Sender';
+import { listenCommand } from '../../api/Listener';
+import { EventType, CommandType } from '../../api/Interface';
+import { useEventListeners } from '../../hooks/useEventListeners';
 
 interface PermissionsPanelProps {
   /** Mouse permission enabled state */

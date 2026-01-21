@@ -1,7 +1,7 @@
 import { motion, AnimatePresence } from 'motion/react';
 import { Server, Wifi, Globe, Hash, CheckCircle2, XCircle } from 'lucide-react';
 import { useState } from 'react';
-import { ServerFound } from '../api/Interface';
+import { ServerFound } from '../../api/Interface';
 import { CopyableBadge, abbreviateText } from './copyable-badge';
 
 interface ServerSelectionPanelProps {

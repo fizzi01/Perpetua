@@ -14,9 +14,9 @@ import { ScrollArea } from './ui/scrollbar';
 
 import { Settings, Users, Activity, Plus, Trash2, Key, Lock, Shield } from 'lucide-react';
 import { motion, AnimatePresence } from 'motion/react';
-import { InlineNotification, Notification } from './inline-notification';
-import { PowerButton } from './power-button';
-import { PermissionsPanel } from './permissions-panel';
+import { InlineNotification, Notification } from './ui/inline-notification';
+import { PowerButton } from './ui/power-button';
+import { PermissionsPanel } from './ui/permissions-panel';
 
 import { useEventListeners } from '../hooks/useEventListeners';
 import { useClientManagement } from '../hooks/useClientManagement';
@@ -30,7 +30,7 @@ import { EventType, CommandType, ClientObj, StreamType, ServerStatus, OtpInfo, C
 
 import { ServerTabProps } from '../commons/Tab'
 import { parseStreams, isValidIpAddress } from '../api/Utility'
-import { abbreviateText, CopyableBadge } from './copyable-badge';
+import { abbreviateText, CopyableBadge } from './ui/copyable-badge';
 import { SelectPortal, SelectViewport } from '@radix-ui/react-select';
 
 export function ServerTab({ onStatusChange, state }: ServerTabProps) {

@@ -12,7 +12,7 @@ import { useEventListeners } from './hooks/useEventListeners';
 import { useAppSelector, useAppDispatch } from './hooks/redux';
 import { ActionType } from './store/actions';
 import { ScrollArea } from './components/ui/scrollbar';
-import { DaemonLogDialog } from './components/DaemonLogDialog';
+import { DaemonLogDialog } from './components/ui/DaemonLogDialog';
 
 export default function App() {
   const [mode, setMode] = useState<'client' | 'server'>('client');
