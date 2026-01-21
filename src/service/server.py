@@ -748,7 +748,7 @@ class Server:
 
         # Stop connection handler
         if self.connection_handler:
-            tasks.append(asyncio.create_task(self.connection_handler.stop()))
+            await self.connection_handler.stop()
 
         # Stop all components
         for component_name, component in list(self._components.items()):
