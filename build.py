@@ -131,7 +131,7 @@ class Builder:
         if self.is_windows:
             nuitka_cmd.extend([
                 "--standalone",
-                "--windows-console-mode=disable",
+                "--windows-console-mode=attach",
                 f"--windows-icon-from-ico={self.project_root / 'logo' / 'logo.ico'}",
             ])
 
