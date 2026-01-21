@@ -149,7 +149,7 @@ class ServerConfig:
         self.streams_enabled: Dict[int, bool] = {}
 
         # SSL configuration (managed by CertificateManager)
-        self.ssl_enabled: bool = False
+        self.ssl_enabled: bool = True
 
         # Logging configuration
         self.log_level: int = self.DEFAULT_LOG_LEVEL
@@ -494,7 +494,7 @@ class ClientConfig:
         self.streams_enabled: Dict[int, bool] = {}
 
         # SSL configuration (managed by CertificateManager)
-        self.ssl_enabled: bool = False
+        self.ssl_enabled: bool = True
 
         # Logging configuration
         self.log_level: int = self.DEFAULT_LOG_LEVEL
@@ -757,7 +757,7 @@ class ServerInfo:
         port: int = ClientConfig.DEFAULT_SERVER_PORT,
         heartbeat_interval: int = ClientConfig.DEFAULT_HEARTBEAT_INTERVAL,
         auto_reconnect: bool = True,
-        ssl: bool = False,
+        ssl: bool = True,
         additional_params: Optional[Dict[str, Any]] = None,
     ):
         self.uid = uid
