@@ -143,14 +143,14 @@ class Builder:
                 f"--macos-sign-identity={APP_NAME}",
                 "--macos-app-protected-resource=NSAppleEventsUsageDescription:Automation Control",
                 f"--macos-app-name={APP_NAME}",
-                f"--macos-app-icon={self.icons_dir / 'logo.icns'}",
+                f"--macos-app-icon={self.icons_dir / 'icon.icns'}",
             ])
 
         if self.is_windows:
             nuitka_cmd.extend([
                 "--standalone",
                 "--windows-console-mode=attach",
-                f"--windows-icon-from-ico={self.icons_dir / 'logo.ico'}",
+                f"--windows-icon-from-ico={self.icons_dir / 'icon.ico'}",
             ])
 
         nuitka_cmd.extend(self.nuitka_args)
