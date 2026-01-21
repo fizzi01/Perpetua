@@ -242,10 +242,13 @@ pub fn run() {
             if !state.hard_close {
                 // Prevent the app from closing
                 api.prevent_exit();
-                let app_handle = _app_handle.clone();
 
                 #[cfg(target_os = "macos")]
-                app_handle.set_activation_policy(tauri::ActivationPolicy::Accessory).unwrap_or(());
+                {
+                    let app_handle = _app_handle.clone();
+                    app_handle.set_activation_policy(tauri::ActivationPolicy::Accessory).unwrap_or(());
+                }
+
             }
         }
         #[cfg(any(target_os = "macos", debug_assertions))]

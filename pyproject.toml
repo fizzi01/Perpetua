@@ -24,7 +24,7 @@ dependencies = [
     "aiofiles (>=25.1.0,<26.0.0)",
     "pylint (>=4.0.4,<5.0.0)",
     "uvloop (!=0.22.1) ; sys_platform == 'darwin'",
-    "winloop (<1.0.0) ; sys_platform == 'win32'",
+    "winloop (==0.4.1) ; sys_platform == 'win32'",
     "structlog (>=25.5.0,<26.0.0)",
     "ruff (>=0.14.10,<0.15.0)",
     "pytest (>=9.0.2,<10.0.0)",
@@ -44,7 +44,7 @@ clean-build = "scripts:clean_build"
 launcher = "launcher:main"
 
 [tool.poetry.group.dev.dependencies]
-ty = "^0.0.12"
+ty = "^0.0.13"
 ruff = "^0.14.10"
 anyio = "^4.12.0"
 nuitka = ">=2.8.9,<3.0.0"

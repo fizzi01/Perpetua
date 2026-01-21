@@ -16,15 +16,16 @@ RED := \033[0;31m
 NC := \033[0m # No Color
 
 
-lock:  ## Generate or update poetry.lock
-	$(POETRY) lock
-
 # Default target
 help: ## Show this help message
 	@echo "$(BLUE)$(PROJECT_NAME) - Makefile Commands$(NC)"
 	@echo ""
 	@grep -E '^[a-zA-Z_-]+:.*?## .*$$' $(MAKEFILE_LIST) | awk 'BEGIN {FS = ":.*?## "}; {printf "  $(GREEN)%-20s$(NC) %s\n", $$1, $$2}'
 	@echo ""
+
+
+lock:  ## Generate or update poetry.lock
+	$(POETRY) lock
 
 ## Installation targets
 install: lock ## Install runtime dependencies only
@@ -45,27 +46,27 @@ install-build: lock ## Install runtime and build dependencies
 ## Build targets
 build: install-build ## Build both GUI and daemon (release mode)
 	@echo "$(BLUE)Building $(PROJECT_NAME)...$(NC)"
-	$(PYTHON) build.py
+	$(POETRY) build.py
 	@echo "$(GREEN)Build completed$(NC)"
 
 build-gui: install-build ## Build GUI only
 	@echo "$(BLUE)Building GUI...$(NC)"
-	$(PYTHON) build.py --skip-daemon
+	$(POETRY) build.py --skip-daemon
 	@echo "$(GREEN)GUI build completed$(NC)"
 
 build-daemon: install-build ## Build daemon only
 	@echo "$(BLUE)Building daemon...$(NC)"
-	$(PYTHON) build.py --skip-gui
+	$(POETRY) build.py --skip-gui
 	@echo "$(GREEN)Daemon build completed$(NC)"
 
 build-release: install-build ## Build in release mode with clean
 	@echo "$(BLUE)Building $(PROJECT_NAME) (release mode)...$(NC)"
-	$(PYTHON) build.py --clean
+	$(POETRY) build.py --clean
 	@echo "$(GREEN)Release build completed$(NC)"
 
 build-debug: install-build ## Build in debug mode
 	@echo "$(BLUE)Building $(PROJECT_NAME) (debug mode)...$(NC)"
-	$(PYTHON) build.py --debug
+	$(POETRY) build.py --debug
 	@echo "$(GREEN)Debug build completed$(NC)"
 
 ## Clean targets
@@ -129,7 +130,7 @@ gui-dev: ## Run GUI in development mode
 info: ## Show project information
 	@echo "$(BLUE)Project Information:$(NC)"
 	@echo "  Name:    $(PROJECT_NAME)"
-	@echo "  Python:  $$($(PYTHON) --version)"
+	@echo "  Python:  $$($(POETRY) --version)"
 	@echo "  Poetry:  $$($(POETRY) --version)"
 	@echo "  Build:   $(BUILD_DIR)"
 	@echo ""
