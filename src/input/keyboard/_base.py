@@ -18,7 +18,7 @@ from pynput.keyboard import (
     Listener as KeyboardListener,
     Controller as KeyboardController,
 )
-import keyboard as hotkey_controller
+# import keyboard as hotkey_controller  # Unused anymore
 
 from network.stream.handler import StreamHandler
 
@@ -371,7 +371,7 @@ class ClientKeyboardController(object):
         self._is_active = False
 
         self._controller = KeyboardController()
-        self._hotkey_controller = hotkey_controller
+        # self._hotkey_controller = hotkey_controller
         self._pressed = False
         # Track pressed keys for hotkey combinations
         self.pressed_keys = set()

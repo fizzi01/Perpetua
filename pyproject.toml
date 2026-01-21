@@ -8,7 +8,7 @@ authors = [
 readme = "README.md"
 requires-python = ">=3.11,<3.13"
 dependencies = [
-    "keyboard (>=0.13.5,<0.14.0)",
+#    "keyboard (>=0.13.5,<0.14.0)",
     "packaging (>=24.2,<26.0.0)",
     "pynput (>=1.7.7,<2.0.0)",
     "pyobjc (>=10.2,<13.0) ; sys_platform == 'darwin'",
