@@ -7,6 +7,7 @@ PROJECT_NAME := Perpetua
 BUILD_DIR := .build
 GUI_DIR := src-gui
 SRC_DIR := src
+ARGS :=
 
 # Colors for output
 BLUE := \033[0;34m
@@ -44,29 +45,29 @@ install-build: lock ## Install runtime and build dependencies
 	@echo "$(GREEN)Build dependencies installed$(NC)"
 
 ## Build targets
-build: install-build ## Build both GUI and daemon (release mode)
+build: install-build ## Build both GUI and daemon (release mode). Use ARGS="..." for extra arguments
 	@echo "$(BLUE)Building $(PROJECT_NAME)...$(NC)"
-	$(POETRY) run build
+	$(POETRY) run build $(ARGS)
 	@echo "$(GREEN)Build completed$(NC)"
 
-build-gui: install-build ## Build GUI only
+build-gui: install-build ## Build GUI only. Use ARGS="..." for extra arguments
 	@echo "$(BLUE)Building GUI...$(NC)"
-	$(POETRY) run build --skip-daemon
+	$(POETRY) run build --skip-daemon $(ARGS)
 	@echo "$(GREEN)GUI build completed$(NC)"
 
-build-daemon: install-build ## Build daemon only
+build-daemon: install-build ## Build daemon only. Use ARGS="..." for extra arguments
 	@echo "$(BLUE)Building daemon...$(NC)"
-	$(POETRY) run build --skip-gui
+	$(POETRY) run build --skip-gui $(ARGS)
 	@echo "$(GREEN)Daemon build completed$(NC)"
 
-build-release: install-build ## Build in release mode with clean
+build-release: install-build ## Build in release mode with clean. Use ARGS="..." for extra arguments
 	@echo "$(BLUE)Building $(PROJECT_NAME) (release mode)...$(NC)"
-	$(POETRY) run build --clean
+	$(POETRY) run build --clean $(ARGS)
 	@echo "$(GREEN)Release build completed$(NC)"
 
-build-debug: install-build ## Build in debug mode
+build-debug: install-build ## Build in debug mode. Use ARGS="..." for extra arguments
 	@echo "$(BLUE)Building $(PROJECT_NAME) (debug mode)...$(NC)"
-	$(POETRY) run build --debug
+	$(POETRY) run build --debug $(ARGS)
 	@echo "$(GREEN)Debug build completed$(NC)"
 
 ## Clean targets
