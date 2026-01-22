@@ -23,23 +23,42 @@ export function InnerBar({ disabled, mode, justify_mode, onModeChange }: InnerBa
           initial={{ opacity: 0, scale: 0.95 }}
           animate={{ opacity: 1, scale: 1 }}
           transition={{ duration: 0.3 }}
-          className="titlebar-toggle w-[200px] rounded-md p-0.5 flex shadow-sm border h-full"
+          className="titlebar-toggle w-[200px] rounded-md p-0.5 flex relative shadow-sm border h-full overflow-hidden"
         >
+          {/* Liquid Glass Indicator */}
+          <motion.div
+            className="absolute top-0.5 bottom-0.5 left-0.5 rounded-sm backdrop-blur-xl shadow-md pointer-events-none"
+            style={{
+              width: '96px',
+              background: 'rgba(255, 255, 255, 0.15)',
+              boxShadow: '0 4px 16px rgba(0, 0, 0, 0.1), inset 0 1px 0 rgba(255, 255, 255, 0.3)',
+            }}
+            animate={{
+              left: mode === 'client' ? '2px' : '102px',
+            }}
+            transition={{
+              type: 'spring',
+              stiffness: 300,
+              damping: 25,
+              mass: 0.6,
+            }}
+          />
+          
           <button
             disabled={disabled}
             onClick={() => onModeChange('client')}
-            className={`titlebar-button py-1.5 px-4 rounded-sm font-medium text-xs tracking-wide h-full ${
-              mode === 'client' ? 'active' : ''
-            } ${disabled ? 'opacity-50' : ''}`}
+            className={`relative z-10 flex-1 py-1.5 px-4 rounded-sm font-medium text-xs tracking-wide h-full transition-colors duration-200 ${
+              mode === 'client' ? 'text-white' : 'text-gray-400'
+            } ${disabled ? 'opacity-50 cursor-not-allowed' : 'cursor-pointer'}`}
           >
             CLIENT
           </button>
           <button
             disabled={disabled}
             onClick={() => onModeChange('server')}
-            className={`titlebar-button py-1.5 px-4 rounded-sm font-medium text-xs tracking-wide h-full ${
-              mode === 'server' ? 'active' : ''
-            } ${disabled ? 'opacity-50' : ''}`}
+            className={`relative z-10 flex-1 py-1.5 px-4 rounded-sm font-medium text-xs tracking-wide h-full transition-colors duration-200 ${
+              mode === 'server' ? 'text-white' : 'text-gray-400'
+            } ${disabled ? 'opacity-50 cursor-not-allowed' : 'cursor-pointer'}`}
           >
             SERVER
           </button>
