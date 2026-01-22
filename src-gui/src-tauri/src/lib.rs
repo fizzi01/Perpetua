@@ -117,9 +117,9 @@ where
 pub fn run() {
     let mut app = tauri::Builder::default();
 
-    #[cfg(target_os = "windows")]
+    #[cfg(desktop)]
     {
-        app = app.plugin(tauri_plugin_single_instance::init(|app, args, cwd| {
+        app = app.plugin(tauri_plugin_single_instance::init(|app, _, _| {
              let _ = app.get_webview_window("main")
                        .expect("no main window")
                        .set_focus();
