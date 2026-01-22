@@ -1,6 +1,6 @@
 use ipc::event::{CommandEvent, CommandType, EventParser, Parser};
+use ipc::log_reader::{get_log_file_path, read_all_lines, read_last_n_lines, LogResponse};
 use ipc::AtomicAsyncWriter;
-use ipc::log_reader::{LogResponse, get_log_file_path, read_all_lines, read_last_n_lines};
 
 /**
  * Helper function to handle optional string parameters
@@ -289,29 +289,17 @@ pub async fn stop_client(s: tauri::State<'_, AtomicAsyncWriter>) -> Result<(), S
             e
         )
     })?;
-    s.send(command).await.map_err(|e| {
-        format!(
-            "Failed to send {} command ({})",
-            CommandType::StopClient,
-            e
-        )
-    })?;
+    s.send(command)
+        .await
+        .map_err(|e| format!("Failed to send {} command ({})", CommandType::StopClient, e))?;
     Ok(())
 }
 
 #[tauri::command]
 pub async fn set_otp(otp: String, s: tauri::State<'_, AtomicAsyncWriter>) -> Result<(), String> {
-    let command = CommandEvent::build(
-        CommandType::SetOtp,
-        &format!(r#"{{ "otp": "{}" }}"#, otp),
-    );
-    let command = EventParser::serialize(&command).map_err(|e| {
-        format!(
-            "Failed to serialize {} command: {}",
-            CommandType::SetOtp,
-            e
-        )
-    })?;
+    let command = CommandEvent::build(CommandType::SetOtp, &format!(r#"{{ "otp": "{}" }}"#, otp));
+    let command = EventParser::serialize(&command)
+        .map_err(|e| format!("Failed to serialize {} command: {}", CommandType::SetOtp, e))?;
     s.send(command)
         .await
         .map_err(|e| format!("Failed to send {} command ({})", CommandType::SetOtp, e))?;
@@ -334,9 +322,13 @@ pub async fn choose_server(
             e
         )
     })?;
-    s.send(command)
-        .await
-        .map_err(|e| format!("Failed to send {} command ({})", CommandType::ChooseServer, e))?;
+    s.send(command).await.map_err(|e| {
+        format!(
+            "Failed to send {} command ({})",
+            CommandType::ChooseServer,
+            e
+        )
+    })?;
     Ok(())
 }
 
@@ -351,8 +343,10 @@ pub async fn set_client_config(
 ) -> Result<(), String> {
     let command = CommandEvent::build(
         CommandType::SetClientConfig,
-        &format!(r#"{{ "server_host": "{}", "server_hostname": "{}", "server_port": {}, "ssl_enabled": {}, "auto_reconnect": {} }}"#,
-            server_host, server_hostname, server_port, ssl_enabled, auto_reconnect)
+        &format!(
+            r#"{{ "server_host": "{}", "server_hostname": "{}", "server_port": {}, "ssl_enabled": {}, "auto_reconnect": {} }}"#,
+            server_host, server_hostname, server_port, ssl_enabled, auto_reconnect
+        ),
     );
     let command = EventParser::serialize(&command).map_err(|e| {
         format!(
@@ -409,7 +403,7 @@ pub async fn read_daemon_logs(num_lines: usize, all: bool) -> Result<LogResponse
         read_last_n_lines(&log_file, lines_to_read)
             .map_err(|e| format!("Failed to read log file: {}", e))?
     };
-    
+
     Ok(LogResponse {
         total_lines: logs.len(),
         log_file: log_file.to_string_lossy().to_string(),

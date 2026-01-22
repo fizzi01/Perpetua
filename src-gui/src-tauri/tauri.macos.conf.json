@@ -3,7 +3,7 @@
     "active": true,
     "targets": "app",
     "icon": [
-      "icons/tray/16x16.png",
+      "icons/tray/32x32.png",
       "icons/128x128.png",
       "icons/128x128@2x.png",
       "icons/icon.icns",

@@ -2,7 +2,9 @@
 use tauri::{PhysicalPosition, Position, TitleBarStyle};
 
 use tauri::{
-    AppHandle, Emitter, Manager, Runtime, WebviewUrl, WebviewWindowBuilder, menu::{MenuBuilder, MenuItem}, tray::TrayIconBuilder
+    menu::{MenuBuilder, MenuItem},
+    tray::TrayIconBuilder,
+    AppHandle, Emitter, Manager, Runtime, WebviewUrl, WebviewWindowBuilder,
 };
 use tauri_plugin_dialog::{DialogExt, MessageDialogKind};
 
@@ -107,12 +109,24 @@ where
     window.set_focus().unwrap();
 
     #[cfg(target_os = "macos")]
-    app.set_activation_policy(tauri::ActivationPolicy::Regular).unwrap_or(());
+    app.set_activation_policy(tauri::ActivationPolicy::Regular)
+        .unwrap_or(());
 }
 
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
-    let app = tauri::Builder::default()
+    let mut app = tauri::Builder::default();
+
+    #[cfg(target_os = "windows")]
+    {
+        app = app.plugin(tauri_plugin_single_instance::init(|app, args, cwd| {
+             let _ = app.get_webview_window("main")
+                       .expect("no main window")
+                       .set_focus();
+        }))
+    }
+
+    app = app
         .plugin(tauri_plugin_os::init())
         .plugin(tauri_plugin_dialog::init())
         .plugin(tauri_plugin_opener::init())
@@ -148,42 +162,43 @@ pub fn run() {
             // Initialize connection to the daemon
             tauri::async_runtime::spawn(async move { setup_connection(app_handle).await });
 
-            let win_builder = WebviewWindowBuilder::new(app, "main", WebviewUrl::default())
+            let mut win_builder = WebviewWindowBuilder::new(app, "main", WebviewUrl::default())
                 .title("Perpetua")
                 .inner_size(435.0, 600.0)
                 .resizable(false);
 
             // Set macOS-specific window properties
             #[cfg(target_os = "macos")]
-            let win_builder = win_builder
-                .hidden_title(true)
-                .title_bar_style(TitleBarStyle::Overlay)
-                .traffic_light_position(Position::Physical(PhysicalPosition { x: 30, y: 50 }));
+            {
+                win_builder = win_builder
+                    .hidden_title(true)
+                    .title_bar_style(TitleBarStyle::Overlay)
+                    .traffic_light_position(Position::Physical(PhysicalPosition { x: 30, y: 50 }));
+            }
 
             #[cfg(target_os = "windows")]
-            let win_builder = win_builder
-                .decorations(false)
-                .transparent(true);
+            {
+                win_builder = win_builder.decorations(false).transparent(true);
+            }
 
             win_builder.build().unwrap();
 
             let show = MenuItem::with_id(app, "show_window", "Show", true, None::<&str>)?;
             let quit_i = MenuItem::with_id(app, "quit", "Quit", true, None::<&str>)?;
-            let menu = MenuBuilder::new(app);
+            let mut menu = MenuBuilder::new(app);
 
-            let menu = menu.item(&show)
-                .separator();
+            menu = menu.item(&show).separator();
 
             // #[cfg(debug_assertions)]
-            let menu = menu
-                .item(
-                    &MenuItem::with_id(app, "show_log", "Show Logs", true, None::<&str>)?
-                );
+            menu = menu.item(&MenuItem::with_id(
+                app,
+                "show_log",
+                "Show Logs",
+                true,
+                None::<&str>,
+            )?);
 
-            let menu = menu
-                .separator()
-                .item(&quit_i)
-                .build()?;
+            let menu = menu.separator().item(&quit_i).build()?;
 
             let tray = TrayIconBuilder::new()
                 .menu(&menu)
@@ -214,8 +229,7 @@ pub fn run() {
 
             let tray = tray.icon(app.default_window_icon().unwrap().clone());
 
-            tray.show_menu_on_left_click(true)
-                .build(app)?;
+            tray.show_menu_on_left_click(true).build(app)?;
 
             Ok(())
         })
@@ -230,13 +244,18 @@ pub fn run() {
                     window.hide().unwrap();
 
                     #[cfg(target_os = "macos")]
-                    app_handle.set_activation_policy(tauri::ActivationPolicy::Accessory).unwrap_or(());
+                    app_handle
+                        .set_activation_policy(tauri::ActivationPolicy::Accessory)
+                        .unwrap_or(());
                 }
             }
             _ => {}
-        })
+        });
+        
+    let app = app    
         .build(tauri::generate_context!())
         .expect("error while running tauri application");
+
     app.run(|_app_handle, _e| match _e {
         tauri::RunEvent::ExitRequested { api, .. } => {
             let state = _app_handle.state::<Mutex<AppState>>();
@@ -248,9 +267,10 @@ pub fn run() {
                 #[cfg(target_os = "macos")]
                 {
                     let app_handle = _app_handle.clone();
-                    app_handle.set_activation_policy(tauri::ActivationPolicy::Accessory).unwrap_or(());
+                    app_handle
+                        .set_activation_policy(tauri::ActivationPolicy::Accessory)
+                        .unwrap_or(());
                 }
-
             }
         }
         #[cfg(any(target_os = "macos", debug_assertions))]
@@ -267,7 +287,10 @@ pub fn run() {
             }
         }
         #[cfg(target_os = "macos")]
-        tauri::RunEvent::Reopen { has_visible_windows, .. } => {
+        tauri::RunEvent::Reopen {
+            has_visible_windows,
+            ..
+        } => {
             if !has_visible_windows {
                 let window = _app_handle.get_webview_window("main").unwrap();
                 window.show().unwrap();
