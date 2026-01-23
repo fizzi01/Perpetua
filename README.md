@@ -1,115 +1,275 @@
 <div align="center">
-    <img src="src-gui/src-tauri/icons/icon.png" alt="logo" width="128" height="128" style="vertical-align: middle;">
-    <h1 style="display: inline; vertical-align: middle; margin-left: 16px;">Perpetua</h1>
+    <img src="src-gui/src-tauri/icons/icon.png" alt="Perpetua Logo" width="128" height="128">
+    <h1>Perpetua</h1>
 </div>
-
-
-**Perpetua** is a cross-platform application designed to streamline control and resource sharing across multiple devices. 
-It allows users to manage their devices as a unified system, offering seamless screen transitions, clipboard synchronization, and file sharing. 
-Perpetua supports **macOS** and **Windows**, bridging gaps between platforms for an efficient workflow.
-
-
-
-## Key Features and Advantages
-
-### 🌍 **Unified Cross-Platform Control**
-- Control multiple devices using a single mouse and keyboard.
-- Compatible with **macOS** and **Windows** _(Android coming soon)_.
-- Reduces the need for switching peripherals, offering a more efficient workspace.
-
-### 🖥️ **Seamless Cursor Transition**
-- Emulates HDMI-like monitor transitions for the cursor.
-- Configure devices spatially (e.g., left, right, up, down) for smooth, intuitive movement between systems.
-
-### 📋 **Shared Clipboard**
-- Synchronize clipboard content (text, links, images, etc.) across all connected devices.
-- Enables quick copy-paste operations between systems without additional steps.
-
-### 📁 **File Sharing**
-- Transfer files between devices seamlessly:
-  - Copy a file on one device and paste it directly onto another.
-  - Eliminates reliance on external file-sharing tools for local network transfers.
-
-### 🔒 **Secure Communication**
-- Built-in **SSL/TLS encryption** ensures all communications between devices are secure, reliable, and private.
-- No data is stored.
-
-
-
-## Use Cases
-
-### 🚀 **Multi-Device Workflow**
-Manage multiple devices for programming, design, or content creation with a single mouse and keyboard.
-
-### 🖱️ **Cross-Device Input Control**
-For users managing both macOS and Windows systems, 
-Perpetua simplifies workflows by removing the need to physically switch peripherals or rely on additional software.
-
-### 📂 **Streamlined Productivity**
-Simplify file and clipboard sharing tasks:
-- Share files without relying on cloud services or USB drives.
-- Copy and paste content instantly between devices.
-
-
-
-## How It Works
-
-###### 1.	Setup and Configuration:
-
-*   Install Perpetua on each device you want to connect.
-*   Configure the devices through the interface.
-
-###### 2.	Screen Transition:
-
-*   Configure the spatial arrangement of your devices (e.g., left, right, up, down).
-*   Perpetua enables a seamless switch between devices.
-
-######   3.	Clipboard and File Sharing:
-
-*   Automatically sync clipboard content across all connected devices.
-*	Copy files directly from one device to another as though working in a unified environment.
-
-## System Requirements
-
-###### Supported Platforms
-- **macOS**: Version 10.15 or later.
-- **Windows**: Version 10 or later.
-
-###### Network
-- All devices must be connected to the same local network.
-
-###### Additional Requirements
-- **OpenSSL**: Required for SSL/TLS certificate generation.
-
-## Getting Started
-
-1. **Download Perpetua**:
-   - [Latest release](https://github.com/fizzi01/Perpetua/releases/latest)
-2. **Install**:
-   - Follow the instructions in the provided [installation guide](#build).
-3. **Configure**:
-   - Launch the application and [configure](#configuration-details) device layout and settings.
-   - Set up clipboard and file-sharing preferences.
-4. **Connect**:
-   - Start Perpetua on all devices and enjoy seamless integration.
 
 ---
 
-## Configuration Details
+## Overview
+
+Perpetua is an open-source, cross-platform KVM software solution inspired by Apple's Universal Control. It enables users to control multiple devices using a single keyboard and mouse, with seamless cursor transitions between devices, keyboard sharing, and clipboard synchronization across different operating systems.
+
+Unlike hardware KVM switches, Perpetua operates entirely over the local network, eliminating the need for physical peripherals or cables while maintaining secure, encrypted communication between devices.
+
+Built with Python, Perpetua prioritizes performance through the integration of high-performance event loops: uvloop on macOS, and winloop on Windows. This architectural choice delivers exceptional responsiveness and low-latency input handling, ensuring smooth performance.
+
+## Features
+
+**Unified Input Control**  
+Control multiple computers with a single keyboard and mouse. Move your cursor seamlessly across device boundaries as if they were multiple monitors connected to one system.
+
+**Spatial Configuration**  
+Define the physical arrangement of your devices (left, right, above, below) to enable intuitive cursor transitions that match your actual workspace layout.
+
+**Clipboard Synchronization**  
+Share clipboard content including text, images, and rich formats across all connected devices automatically.
+
+**Secure by Default**  
+All network communication is encrypted using TLS.
+
+---
 
 
-## Build
+## Supported Operating Systems
 
-Coming soon...
-___
+Actually only Windows and MacOS are supported.
 
-## Support
+### Known Issues
 
-If you encounter any issues or have feature requests, please open an issue.
+*This section is reserved for documenting platform-specific issues and workarounds as they are identified.*
+
+> [!Important]
+> - **Windows**: You can't control a Windows client if there is no real mouse connected to the machine.
+
+---
+
+## Building from Source
+
+### Prerequisites
+
+Perpetua requires several development tools and libraries to build successfully. The following sections provide platform-specific installation instructions.
+
+#### Common Requirements
+
+**Python Environment:**
+- Python 3.11 or 3.12 (Python 3.13+ not yet supported)
+- Poetry (Python dependency and package manager)
+
+**GUI Framework:**
+- Node.js 18+ and npm (JavaScript runtime and package manager)
+- Rust toolchain 1.70+ (Required for Tauri framework)
+- Cargo (Rust package manager, included with Rust)
+
+**Build Tool:**
+- Nuitka (Python compiler, automatically installed during build)
+
+
+### Build Instructions
+
+#### Automated Build
+
+The project includes both a build script and Makefile for convenient building. You can use either method:
+
+1. **Clone the repository:**
+   ```bash
+   git clone https://github.com/fizzi01/Perpetua.git
+   cd Perpetua
+   ```
+
+2. **Install Python dependencies:**
+   ```bash
+   poetry install
+   # or
+   make install-build
+   ```
+
+3. **Run the build:**
+   
+   **Full release build:**
+   ```bash
+   poetry run python build.py
+   # or
+   make build
+   ```
+   
+   **Available build options:**
+   
+   Using Poetry:
+   ```bash
+   # Debug build
+   poetry run python build.py --debug
+   
+   # Skip GUI build (build daemon only)
+   poetry run python build.py --skip-gui
+   
+   # Skip daemon build (build GUI only)
+   poetry run python build.py --skip-daemon
+   
+   # Clean build artifacts before building
+   poetry run python build.py --clean
+   ```
+   
+   Using Make:
+   ```bash
+   # Debug build
+   make build-debug
+   
+   # Build daemon only
+   make build-daemon
+   
+   # Build GUI only
+   make build-gui
+   
+   # Release build with clean
+   make build-release
+   
+   # Clean build artifacts
+   make clean
+   ```
+
+4. **Build outputs:**
+   
+   After successful build, outputs are located in the `.build` directory:
+   
+   **macOS:**
+   - Application bundle: `.build/Perpetua.app`
+   - Executable: `.build/Perpetua.app/Contents/MacOS/Perpetua`
+   - Bundled GUI: `.build/Perpetua.app/Contents/Resources/_perpetua`
+   
+   **Windows:**
+   - Standalone folder: `.build/Perpetua/`
+   - Executable: `.build/Perpetua/Perpetua.exe`
+   - Bundled GUI: `.build/Perpetua/_perpetua.exe`
+
+#### Manual Build Steps
+
+For manual builds or troubleshooting, follow these steps:
+
+**Build GUI:**
+```bash
+cd src-gui
+npm install
+cargo tauri build
+```
+
+**Build Daemon:**
+```bash
+# From project root
+```
+
+
+---
+
+## Configuration
+
+Perpetua uses JSON configuration files to define client and server settings. Configuration files are **automatically generated on first launch** with sensible defaults, requiring minimal manual intervention for most use cases.
+
+### Configuration File Locations
+
+**macOS:**
+ `$HOME/Library/Caches/Perpetua`
+
+**Windows:**
+ `%LOCALAPPDATA%\Perpetua`
+
+### Server Configuration
+
+The server configuration is managed automatically and typically does not require manual modification. Perpetua handles server setup, certificate generation, and network binding autonomously.
+
+Default behavior:
+- Generates self-signed TLS certificates
+- Manages client authentication and pairing
+
+### Client Configuration
+
+The client configuration allows two discovery modes:
+
+**Automatic Discovery (Default):**
+- Perpetua automatically discovers available servers on the local network
+- No manual configuration required
+- Ideal for single-server environments
+
+**Manual Server Specification:**
+- Explicitly define the server hostname or IP address in the configuration file
+- Useful for static network setups or when automatic discovery fails
+
+> [!TIP]
+> When multiple Perpetua servers are detected on the network,
+> the GUI presents a selection dialog allowing the user to 
+> choose the desired server.
+
+### First Connection and OTP Pairing
+
+On the first connection between a client and server, Perpetua implements a secure pairing process:
+
+1. **OTP Generation**: The server generates a one-time password (OTP)
+2. **OTP Entry**: The user must enter this OTP on the client side
+3. **Certificate Exchange**: Upon successful OTP verification, the server shares its TLS certificate with the client
+4. **Trusted Connection**: Subsequent connections are authenticated automatically using the exchanged certificates
+
+This mechanism ensures secure, autonomous certificate sharing without manual management.
+
+### Configuration Files Structure
+
+**Client Configuration (`client_config.json`):**
+```json
+{
+  "server_info": {
+    "uid": "",
+    "host": "",
+    "hostname": "",
+    "port": 55655,
+    "heartbeat_interval": 1,
+    "auto_reconnect": true,
+    "ssl": true,
+    "additional_params": {}
+  },
+  "uid": "client-unique-identifier",
+  "client_hostname": "your-hostname",
+  "streams_enabled": {
+    "0": true,
+    "1": true,
+    "4": true,
+    "12": true
+  },
+  "ssl_enabled": true,
+  "log_level": 0,
+  "log_to_file": false,
+  "log_file_path": null
+}
+```
+
+> [!TIP]
+> **For automatic server discovery**, leave the `server_info` 
+> connection fields empty (`host`, `hostname`, `uid`).
+> Perpetua will automatically detect available servers on the local network.
+
+**For manual server configuration**, populate the `host` field with the server's IP address or hostname.
+
+---
+
+## Roadmap
+
+**Current Development Priorities:**
+
+- **Enhanced Platform Support**
+  - Linux support
+
+- **Feature Enhancements**
+  - File transfers
+  - Advanced clipboard format support (including proprietary formats)
+---
+
+## Contributing
+
+Contributions are welcome! Please read the [contributing guidelines](CONTRIBUTING.md) before submitting pull requests.
+
+For bug reports and feature requests, please use the [issue tracker](https://github.com/fizzi01/Perpetua/issues).
+
+---
 
 ## License
 
-This project is licensed under License. See the [LICENSE](https://github.com/fizzi01/Perpetua/blob/master/LICENSE) file for details.
-___
+This project is licensed under the terms specified in the [LICENSE](LICENSE) file.
 
-### Simplify your multi-device management with Perpetua.
+---
