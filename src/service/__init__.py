@@ -271,9 +271,7 @@ class ServiceDiscovery:
         except BadTypeInNameException:
             raise ValueError("Invalid service type or name")
         except Exception as e:
-            import traceback
-
-            print(traceback.format_exc())
+            self._logger.exception(f"{e}")
             raise RuntimeError(f"Failed to register mDNS service ({e})")
 
     async def _unregister_service(self):

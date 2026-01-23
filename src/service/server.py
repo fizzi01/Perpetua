@@ -89,7 +89,6 @@ class Server:
                 Defaults to True.
 
         Attributes:
-            _logger (Logger): Internal logger for managing application logs.
             app_config (ApplicationConfig): Initialized or passed application
                 configuration object.
             config (ServerConfig): Holds all server settings including connection,
@@ -153,7 +152,9 @@ class Server:
         self._running = False
 
         # Metrics and performance monitoring
-        self._metrics_collector = MetricsCollector()
+        # self._metrics_collector = MetricsCollector()
+        # self._performance_monitor = PerformanceMonitor(self._metrics_collector)
+        self._metrics_collector =  None
         self._performance_monitor = PerformanceMonitor(self._metrics_collector)
 
         # mDNS
@@ -832,6 +833,7 @@ class Server:
             handler_id="ServerMouseStreamHandler",
             sender=True,
             metrics_collector=self._metrics_collector,
+            buffer_size=10000,
         )
 
         # Keyboard stream
@@ -842,7 +844,6 @@ class Server:
             handler_id="ServerKeyboardStreamHandler",
             sender=True,
             metrics_collector=self._metrics_collector,
-            buffer_size=10000,
         )
 
         # Clipboard stream

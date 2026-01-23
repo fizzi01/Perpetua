@@ -27,7 +27,7 @@ from event.bus import EventBus
 
 from network.stream.handler import StreamHandler
 
-from utils.logging import get_logger
+from utils.logging import get_logger, Logger
 
 
 # TODO : We need to check if a mouse is available
@@ -72,7 +72,7 @@ class CursorHandlerWindow(wx.Frame):
         # Start command processing thread
         self._running = True
         self.command_thread = threading.Thread(
-            target=self._process_commands, daemon=True
+            target=self._process_commands
         )
         self.command_thread.start()
 
@@ -92,8 +92,12 @@ class CursorHandlerWindow(wx.Frame):
         # Eventi
         self.Bind(wx.EVT_MOTION, self.on_mouse_move)
         self.Bind(wx.EVT_CHAR_HOOK, self.on_key_press)
-        self.Bind(wx.EVT_CLOSE, self.on_close)
+        self.Bind(wx.EVT_CLOSE, self._quit_app)
         self.Bind(wx.EVT_LEAVE_WINDOW, self.RestoreFocus)
+
+        self._logger = get_logger(
+            self.__class__.__name__, level=Logger.DEBUG, is_root=True
+        )
 
     def _create(self):
         """
@@ -127,12 +131,47 @@ class CursorHandlerWindow(wx.Frame):
                         )
                     elif cmd_type == "quit":
                         self._running = False
-                        self.Close()
+                        wx.CallAfter(self._quit_app)
                 except Empty:
                     # time.sleep(0)
                     continue
         except Exception as e:
             print(f"Error processing commands: {e}")
+
+    def _quit_app(self):
+        """Quit the wx application properly"""
+
+        # Unbind all events to prevent further processing
+        self._logger.debug("Quitting application")
+        self.Unbind(wx.EVT_MOTION)
+        self.Unbind(wx.EVT_CHAR_HOOK)
+        self.Unbind(wx.EVT_CLOSE)
+        self.Unbind(wx.EVT_LEAVE_WINDOW)
+
+        self._logger.debug("Disabling mouse capture...")
+        try:
+            self.disable_mouse_capture()
+        except Exception as e:
+            self._logger.debug(f"Error disabling mouse capture: {e}")
+            pass
+
+        self._logger.debug("Destroying window...")
+        try:
+            if not self.IsBeingDeleted():
+                self.Destroy()
+        except Exception as e:
+            self._logger.debug(f"Error destroying window ({e})")
+            pass
+
+        self._logger.debug("Exiting main loop...")
+        try:
+            app = wx.GetApp()
+            if app:
+                app.DeletePendingEvents()
+                app.ExitMainLoop()
+        except Exception as e:
+            self._logger.debug(f"Error exiting main loop ({e})")
+            pass
 
     def RestoreFocus(self, event):
         """
@@ -150,7 +189,7 @@ class CursorHandlerWindow(wx.Frame):
             self.SetSize(400, 400)
             self.Show(True)
         except Exception as e:
-            print(f"Error forcing overlay: {e}")
+            self._logger.debug(f"Error forcing overlay: {e}")
 
     def HideOverlay(self):
         """
@@ -163,7 +202,7 @@ class CursorHandlerWindow(wx.Frame):
             # Resize to 0x0 to avoid interaction
             self.SetSize(Size(0, 0))
         except Exception as e:
-            print(f"Error hiding overlay: {e}")
+            self._logger.debug(f"Error hiding overlay: {e}")
 
     def RestorePreviousApp(self):
         """
@@ -348,19 +387,82 @@ class _CursorHandlerProcess:
         self._debug = debug
 
     def run(self):
-        self.app = wx.App()
-        self.window = self.window_class(
-            command_queue=self.command_queue,
-            result_queue=self.result_queue,
-            mouse_conn=self.mouse_conn,
-            debug=self._debug,
+        """Run the cursor handler window process"""
+        _logger = get_logger(
+            self.__class__.__name__, level=Logger.DEBUG, is_root=True,
         )
 
-        # Notify that the window is ready
-        self.result_queue.put({"type": "window_ready"})
-        self.running = True
-        self.app.MainLoop()
-        self.result_queue.put({"type": "process_ended"})
+        _logger.debug("Starting...")
+        app = None
+        window = None
+        try:
+            app = wx.App()
+            window = self.window_class(
+                command_queue=self.command_queue,
+                result_queue=self.result_queue,
+                mouse_conn=self.mouse_conn,
+                debug=self._debug,
+            )
+
+            # Notify that the window is ready
+            self.result_queue.put({"type": "window_ready"})
+            self.running = True
+            _logger.debug("Entering main loop")
+            app.MainLoop()
+            self.result_queue.put({"type": "process_ended"})
+            _logger.debug("Main loop left")
+        except Exception as e:
+            _logger.error(f"{e}")
+        finally:
+            # Clean up wx resources first
+            try:
+                if window and not window.IsBeingDeleted():
+                    window.Destroy()
+            except Exception as e:
+                _logger.error(f"Error destroying window ({e})")
+                pass
+
+            try:
+                if app:
+                    app.ExitMainLoop()
+            except Exception as e:
+                _logger.error(f"Error exiting app main loop ({e})")
+                pass
+
+            # Then clean up IPC resources and force exit
+            self._cleanup(_logger)
+
+    def _cleanup(self, logger):
+        """Clean up queues and pipes in child process"""
+        try:
+            # Drain queues
+            while not self.command_queue.empty():
+                try:
+                    self.command_queue.get_nowait()
+                except Empty:
+                    break
+
+            while not self.result_queue.empty():
+                try:
+                    self.result_queue.get_nowait()
+                except Empty:
+                    break
+
+            # Cancel join threads
+            self.command_queue.cancel_join_thread()
+            self.result_queue.cancel_join_thread()
+
+            # Close resources
+            self.command_queue.close()
+            self.result_queue.close()
+            self.mouse_conn.close()
+        except Exception as e:
+            logger.error(f"Error during cleanup ({e})")
+            pass  # Ignore errors during cleanup
+        finally:
+            # Force exit the process to ensure it terminates
+            logger.debug("Process exiting")
+            sys.exit(0)
 
 
 class CursorHandlerWorker(object):
@@ -414,11 +516,11 @@ class CursorHandlerWorker(object):
         self.event_bus.subscribe(
             event_type=EventType.SCREEN_CHANGE_GUARD,
             callback=self._on_screen_change_guard,
-        )  # ty:ignore[invalid-argument-type]
+        )
         self.event_bus.subscribe(
             event_type=EventType.CLIENT_DISCONNECTED,
             callback=self._on_client_disconnected,
-        )  # ty:ignore[invalid-argument-type]
+        )
 
     async def _on_screen_change_guard(
         self, data: Optional[ActiveScreenChangedEvent]
@@ -507,6 +609,7 @@ class CursorHandlerWorker(object):
                 debug=self._debug,
             ).run
         )
+        # self.process.daemon = False
         self.process.start()
         self._is_running = True
 
@@ -524,10 +627,11 @@ class CursorHandlerWorker(object):
             start_time = time.time()
             while time.time() - start_time < timeout:
                 try:
-                    result = await loop.run_in_executor(  # type: ignore
+                    result = await loop.run_in_executor(
                         None,
                         self.result_queue.get,
-                        0.1,  # type: ignore
+                        True,
+                        0.1,
                     )
                     if result.get("type") == "window_ready":
                         self._logger.debug("Started")
@@ -548,6 +652,15 @@ class CursorHandlerWorker(object):
         if not self._is_running:
             return
 
+        try:
+            await self.send_command({"type": "quit"})
+            await asyncio.sleep(0.2)
+        except (RuntimeError, BrokenPipeError, EOFError):
+            # Process not running or already dead
+            pass
+
+        self._is_running = False  # Set this early to stop any listeners
+
         # Cancel async task if running
         if self._mouse_data_task:
             self._mouse_data_task.cancel()
@@ -556,34 +669,74 @@ class CursorHandlerWorker(object):
             except asyncio.CancelledError:
                 pass
             self._mouse_data_task = None
-
-        try:
-            await self.send_command({"type": "quit"})
-        except RuntimeError:
-            # Process not running
             pass
 
+        # Wait for child process to terminate completely
         if self.process:
-            # Run process join in executor to avoid blocking
             try:
                 loop = asyncio.get_running_loop()
-                await loop.run_in_executor(None, self.process.join, timeout)
+
+                # Try graceful shutdown first (short timeout)
                 if self.process.is_alive():
+                    self._logger.debug("Waiting for graceful shutdown...")
+                    await loop.run_in_executor(None, self.process.join, 1.0)
+
+                # If still alive, terminate
+                if self.process.is_alive():
+                    self._logger.warning("Process still alive after quit, terminating...")
                     self.process.terminate()
-                    await loop.run_in_executor(None, self.process.join, 1)
-            except RuntimeError as e:
+                    await loop.run_in_executor(None, self.process.join, 0.5)
+
+                # If STILL alive, kill
+                if self.process.is_alive():
+                    self._logger.warning("Process still alive after terminate, killing...")
+                    self.process.kill()
+                    await loop.run_in_executor(None, self.process.join, None)
+
+                # Final check
+                if self.process.is_alive():
+                    self._logger.error("Process STILL alive after kill!")
+                else:
+                    self._logger.debug(f"Process terminated with exitcode: {self.process.exitcode}")
+
+            except Exception as e:
                 self._logger.warning(f"Error stopping process -> {e}")
 
-        # Close queues
-        self.command_queue.close()
-        self.result_queue.close()
+        # Only after process is dead, clean up parent-side resources
+        # Drain any remaining items from parent side
+        try:
+            loop = asyncio.get_running_loop()
+            await loop.run_in_executor(None, self._drain_queue, self.command_queue)
+            await loop.run_in_executor(None, self._drain_queue, self.result_queue)
+        except Exception as e:
+            self._logger.warning(f"Error draining queues -> {e}")
 
-        self.mouse_conn_send.close()
-        self.mouse_conn_rec.close()
+        # Cancel join threads to prevent blocking
+        try:
+            self.command_queue.cancel_join_thread()
+            self.result_queue.cancel_join_thread()
+        except Exception as e:
+            self._logger.warning(f"Error canceling join threads -> {e}")
 
-        self._is_running = False
+        # Close parent-side handles
+        try:
+            self.command_queue.close()
+            self.result_queue.close()
+            self.mouse_conn_send.close()
+            self.mouse_conn_rec.close()
+        except Exception as e:
+            self._logger.warning(f"Error closing connections -> {e}")
 
         self._logger.debug("Stopped")
+
+    @staticmethod
+    def _drain_queue(queue: Queue):
+        """Drain all items from a queue to prevent semaphore leaks"""
+        try:
+            while True:
+                queue.get_nowait()
+        except Empty:
+            pass
 
     def is_alive(self) -> bool:
         """Controlla se il processo della window è in esecuzione"""
@@ -607,7 +760,7 @@ class CursorHandlerWorker(object):
                     # Leggi dal pipe in executor
                     delta_x, delta_y = await loop.run_in_executor(
                         None, self.mouse_conn_rec.recv
-                    )  # type: ignore
+                    ) # type: ignore # ty:ignore[unused-ignore-comment]
 
                     mouse_event = MouseEvent(action=MouseEvent.MOVE_ACTION)
                     mouse_event.dx = delta_x
@@ -631,17 +784,17 @@ class CursorHandlerWorker(object):
         if not self._is_running:
             raise RuntimeError("Window process not running")
         loop = asyncio.get_running_loop()
-        await loop.run_in_executor(None, self.command_queue.put, command)  # type: ignore
+        await loop.run_in_executor(None, self.command_queue.put, command)  # type: ignore  # ty:ignore[unused-ignore-comment]
         await asyncio.sleep(0)  # Yield control to event loop
 
     async def get_result(self, timeout: float = RESULT_POLL_TIMEOUT):
         """Riceve un risultato dalla window in modo asincrono"""
         loop = asyncio.get_running_loop()
         try:
-            return await loop.run_in_executor(  # type: ignore
+            return await loop.run_in_executor(  # type: ignore # ty:ignore[unused-ignore-comment]
                 None,
                 self.result_queue.get,
-                timeout,  # type: ignore
+                timeout,  # type: ignore # ty:ignore[unused-ignore-comment]
             )
         except Empty:
             return None

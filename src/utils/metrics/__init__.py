@@ -244,7 +244,7 @@ class PerformanceMonitor:
         interval (float): Time interval in seconds between metric collection cycles.
     """
 
-    def __init__(self, collector: MetricsCollector, interval: float = 10.0):
+    def __init__(self, collector: Optional[MetricsCollector] = None, interval: float = 10.0):
         self.collector = collector
         self.interval = interval
         self._task: Optional[asyncio.Task] = None
@@ -255,6 +255,9 @@ class PerformanceMonitor:
         """
         Start the monitoring loop.
         """
+        if not self.collector:
+            return
+
         if self._running:
             return
 
@@ -277,6 +280,10 @@ class PerformanceMonitor:
         while self._running:
             try:
                 await asyncio.sleep(self.interval)
+
+                if not self.collector:
+                    self._running = False
+                    break
 
                 metrics = await self.collector.get_all_metrics()
 
