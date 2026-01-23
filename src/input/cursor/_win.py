@@ -70,14 +70,14 @@ class CursorHandlerWindow(_base.CursorHandlerWindow):
 
     def __init__(
         self,
-        command_queue: Queue,
-        result_queue: Queue,
+        command_conn: PipeConnection,
+        result_conn: PipeConnection,
         mouse_conn: PipeConnection,
         debug: bool = False,
     ):
         super().__init__(
-            command_queue,
-            result_queue,
+            command_conn,
+            result_conn,
             mouse_conn,
             debug,
             size=self.WINDOW_SIZE,

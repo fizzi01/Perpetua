@@ -95,13 +95,13 @@ class DebugOverlayPanel(wx.Panel):
 class CursorHandlerWindow(_base.CursorHandlerWindow):
     def __init__(
         self,
-        command_queue: Queue,
-        result_queue: Queue,
+        command_conn: Connection,
+        result_conn: Connection,
         mouse_conn: Connection,
         debug: bool = False,
     ):
         super().__init__(
-            command_queue, result_queue, mouse_conn, debug, size=(400, 400)
+            command_conn, result_conn, mouse_conn, debug, size=(400, 400)
         )
         # Panel principale
         self.panel = wx.Panel(self)
@@ -115,10 +115,6 @@ class CursorHandlerWindow(_base.CursorHandlerWindow):
         self.previous_app_pid = self.previous_app.processIdentifier()
 
         self._create()
-
-    def _os_delay(self, specific: bool = False):
-        if not specific:  # On macOS we need only non-specific delay
-            super()._os_delay(specific)
 
     def RestoreFocus(self, event):
         """
