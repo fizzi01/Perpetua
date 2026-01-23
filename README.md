@@ -13,6 +13,11 @@ Unlike hardware KVM switches, Perpetua operates entirely over the local network,
 
 Built with Python, Perpetua prioritizes performance through the integration of high-performance event loops: uvloop on macOS, and winloop on Windows. This architectural choice delivers exceptional responsiveness and low-latency input handling, ensuring smooth performance.
 
+<picture>
+   <source srcset="docs/imgs/main.png">
+   <img alt="Perpetua Server View" srcset="docs/imgs/main.png">
+</picture>
+
 ## Features
 
 **Unified Input Control**  
