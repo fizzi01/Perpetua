@@ -286,11 +286,9 @@ class DisconnectedEvent(ConnectionEvent):
 class ConnectionErrorEvent(ConnectionEvent):
     """Connection error"""
 
-    def __init__(self, peer: str, error: str, **kwargs):
+    def __init__(self, error: str, **kwargs):
         super().__init__(
             event_type=NotificationEventType.CONNECTION_ERROR,
-            peer=peer,
-            message=f"Connection error with {peer}: {error}",
             error=error,
             **kwargs,
         )

@@ -246,3 +246,8 @@ export interface ServerFound {
 export interface ServerChoice {
   servers: ServerFound[];
 }
+
+export interface ServiceError {
+  error: string;
+  service_name: string;
+}

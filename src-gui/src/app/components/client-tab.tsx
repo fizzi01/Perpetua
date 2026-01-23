@@ -4,7 +4,7 @@ import { motion, AnimatePresence } from 'motion/react';
 import { InlineNotification, Notification } from './ui/inline-notification';
 import { PowerButton } from './ui/power-button';
 import { ClientTabProps } from '../commons/Tab';
-import { ClientConnectionInfo, ClientStatus, CommandType, EventType, ServerChoice, ServerFound, StreamType } from '../api/Interface';
+import { ClientConnectionInfo, ClientStatus, CommandType, EventType, ServerChoice, ServerFound, ServiceError, StreamType } from '../api/Interface';
 import { listenCommand, listenGeneralEvent } from '../api/Listener';
 import { setOtp, startClient, stopClient, chooseServer, saveClientConfig } from '../api/Sender';
 import { useEventListeners } from '../hooks/useEventListeners';
@@ -192,6 +192,15 @@ export function ClientTab({ onStatusChange, state }: ClientTabProps) {
       }).then((unlisten) => {
         listeners.addListenerOnce('otp-needed', unlisten);
       });
+
+      listenGeneralEvent(EventType.ServiceError, false, (event) => {
+        let res = event.data as ServiceError;
+        if (!res) return;
+        if (res.service_name.toLowerCase() !== 'client') return;
+        addNotification('error', 'Connection Error', res.error || 'An unknown error occurred during connection');
+      }).then((unlisten) => {
+        listeners.addListenerOnce('client-connection-error', unlisten);
+      });
     }
 
     const cleanup = () => {
@@ -199,6 +208,7 @@ export function ClientTab({ onStatusChange, state }: ClientTabProps) {
       listeners.forceRemoveListener('client-disconnected');
       listeners.forceRemoveListener('server-choice-needed');
       listeners.forceRemoveListener('otp-needed');
+      listeners.forceRemoveListener('client-connection-error');
     }
 
     return { setup, cleanup };

@@ -21,7 +21,7 @@ from event.notification import (
     ConfigSavedEvent,
     StreamEnabledEvent,
     StreamDisabledEvent,
-    ServerChoiceNeededEvent,
+    ServerChoiceNeededEvent, ConnectionErrorEvent, ServiceErrorEvent,
 )
 from event import EventType, ClientStreamReconnectedEvent
 from network.connection.client import ConnectionHandler
@@ -1231,7 +1231,17 @@ class Client:
         """Handle connection to server event"""
         self._connected = True
         # Initialize components
-        await self._initialize_components()
+        try:
+            await self._initialize_components()
+        except RuntimeError as e:
+            self._logger.error(f"Error initializing components ({e})")
+            await self._send_notification(
+                ServiceErrorEvent(
+                    service_name="client",
+                    error=str(e),
+                )
+            )
+            return await self.stop()
 
         # Start all enabled stream handlers
         for stream_type, handler in self._stream_handlers.items():

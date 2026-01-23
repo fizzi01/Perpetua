@@ -651,6 +651,10 @@ class ClientMouseController(object):
 
         self._logger = get_logger(self.__class__.__name__)
 
+        # Check for cursor validity
+        if not self.check_cursor_validity():
+            raise RuntimeError("No valid cursor found.")
+
         # Async queue instead of multiprocessing queue
         self._queue: asyncio.Queue = asyncio.Queue(maxsize=10000)
         self._worker_task: Optional[asyncio.Task] = None
@@ -668,6 +672,19 @@ class ClientMouseController(object):
         self.event_bus.subscribe(
             event_type=EventType.CLIENT_INACTIVE, callback=self._on_client_inactive
         )
+
+    def check_cursor_validity(self) -> bool:
+        """
+        We use this check to ensure a cursor is available (On windows may fail if no cursor)
+        """
+        try:
+            pos = self._controller.position
+            if pos is None or len(pos) != 2:
+                return False
+            return True
+        except Exception:
+            self._logger.log("Cursor not available.", Logger.ERROR)
+            return False
 
     async def start(self):
         """
