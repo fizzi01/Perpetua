@@ -610,14 +610,7 @@ export function ServerTab({ onStatusChange, state }: ServerTabProps) {
                   placeholder="IP Address or Hostname"
                   value={newClientIp}
                   onChange={(e) => setNewClientIp(e.target.value)}
-                  className="w-full p-3 rounded-lg focus:outline-none transition-colors"
-                  style={{
-                    backgroundColor: 'var(--app-input-bg)',
-                    border: '2px solid var(--app-input-border)',
-                    color: 'var(--app-text-primary)'
-                  }}
-                  onFocus={(e) => e.currentTarget.style.borderColor = 'var(--app-primary)'}
-                  onBlur={(e) => e.currentTarget.style.borderColor = 'var(--app-input-border)'}
+                  className="app-input"
                 />
                 {/* Position Selector */}
                 <Select value={firstInit ? '' : newClientPosition} onValueChange={(v) => {
@@ -859,14 +852,7 @@ export function ServerTab({ onStatusChange, state }: ServerTabProps) {
                     setHost(newHost);
                     scheduleOptionsSave(newHost, port, requireSSL);
                   }}
-                  className="w-full p-3 rounded-lg focus:outline-none transition-colors disabled:opacity-50 disabled:cursor-not-allowed"
-                  style={{
-                    backgroundColor: 'var(--app-input-bg)',
-                    border: '2px solid var(--app-input-border)',
-                    color: 'var(--app-text-primary)'
-                  }}
-                  onFocus={(e) => !isRunning && (e.currentTarget.style.borderColor = 'var(--app-primary)')}
-                  onBlur={(e) => e.currentTarget.style.borderColor = 'var(--app-input-border)'}
+                  className="app-input"
                   disabled={isRunning}
                 />
               </div>
@@ -883,14 +869,7 @@ export function ServerTab({ onStatusChange, state }: ServerTabProps) {
                     setPort(newPort);
                     scheduleOptionsSave(host, newPort, requireSSL);
                   }}
-                  className="w-full p-3 rounded-lg focus:outline-none transition-colors disabled:opacity-50 disabled:cursor-not-allowed"
-                  style={{
-                    backgroundColor: 'var(--app-input-bg)',
-                    border: '2px solid var(--app-input-border)',
-                    color: 'var(--app-text-primary)'
-                  }}
-                  onFocus={(e) => !isRunning && (e.currentTarget.style.borderColor = 'var(--app-primary)')}
-                  onBlur={(e) => e.currentTarget.style.borderColor = 'var(--app-input-border)'}
+                  className="app-input"
                   disabled={isRunning}
                 />
               </div>
@@ -905,14 +884,7 @@ export function ServerTab({ onStatusChange, state }: ServerTabProps) {
                   onChange={(e) => {
                     setOtpTimeout(parseInt(e.target.value));
                   }}
-                  className="w-full p-3 rounded-lg focus:outline-none transition-colors"
-                  style={{
-                    backgroundColor: 'var(--app-input-bg)',
-                    border: '2px solid var(--app-input-border)',
-                    color: 'var(--app-text-primary)'
-                  }}
-                  onFocus={(e) => e.currentTarget.style.borderColor = 'var(--app-primary)'}
-                  onBlur={(e) => e.currentTarget.style.borderColor = 'var(--app-input-border)'}
+                  className="app-input"
                 />
               </div>
             </div>

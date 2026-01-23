@@ -866,14 +866,7 @@ export function ClientTab({ onStatusChange, state }: ClientTabProps) {
                       scheduleOptionsSave(newHost, '', port, requireSSL, autoReconnect);
                     } 
                   }}
-                  className="w-full p-3 rounded-lg focus:outline-none transition-colors disabled:opacity-50 disabled:cursor-not-allowed"
-                  style={{
-                    backgroundColor: 'var(--app-input-bg)',
-                    border: '2px solid var(--app-input-border)',
-                    color: 'var(--app-text-primary)'
-                  }}
-                  onFocus={(e) => !isRunning && (e.currentTarget.style.borderColor = 'var(--app-primary)')}
-                  onBlur={(e) => e.currentTarget.style.borderColor = 'var(--app-input-border)'}
+                  className="app-input"
                   disabled={isRunning}
                 />
               </div>
@@ -897,14 +890,7 @@ export function ClientTab({ onStatusChange, state }: ClientTabProps) {
                     setPort(newPort);
                     scheduleOptionsSave(host, hostname, newPort, requireSSL, autoReconnect);
                   }}
-                  className="w-full p-3 rounded-lg focus:outline-none transition-colors disabled:opacity-50 disabled:cursor-not-allowed"
-                  style={{
-                    backgroundColor: 'var(--app-input-bg)',
-                    border: '2px solid var(--app-input-border)',
-                    color: 'var(--app-text-primary)'
-                  }}
-                  onFocus={(e) => !isRunning && (e.currentTarget.style.borderColor = 'var(--app-primary)')}
-                  onBlur={(e) => e.currentTarget.style.borderColor = 'var(--app-input-border)'}
+                  className="app-input"
                   disabled={isRunning}
                 />
               </div>

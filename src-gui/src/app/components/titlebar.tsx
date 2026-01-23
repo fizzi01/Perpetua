@@ -47,18 +47,18 @@ export function InnerBar({ disabled, mode, justify_mode, onModeChange }: InnerBa
           <button
             disabled={disabled}
             onClick={() => onModeChange('client')}
-            className={`relative z-10 flex-1 py-1.5 px-4 rounded-sm font-medium text-xs tracking-wide h-full transition-colors duration-200 ${
+            className={`relative z-10 flex-1 py-1.5 px-4 rounded-sm font-medium text-xs tracking-wide h-full transition-all duration-200 ${
               mode === 'client' ? 'text-white' : 'text-gray-400'
-            } ${disabled ? 'opacity-50 cursor-not-allowed' : 'cursor-pointer'}`}
+            } ${disabled ? 'opacity-50' : 'cursor-pointer hover:scale-105 hover:text-white active:scale-95'}`}
           >
             CLIENT
           </button>
           <button
             disabled={disabled}
             onClick={() => onModeChange('server')}
-            className={`relative z-10 flex-1 py-1.5 px-4 rounded-sm font-medium text-xs tracking-wide h-full transition-colors duration-200 ${
+            className={`relative z-10 flex-1 py-1.5 px-4 rounded-sm font-medium text-xs tracking-wide h-full transition-all duration-200 ${
               mode === 'server' ? 'text-white' : 'text-gray-400'
-            } ${disabled ? 'opacity-50 cursor-not-allowed' : 'cursor-pointer'}`}
+            } ${disabled ? 'opacity-50' : 'cursor-pointer hover:scale-105 hover:text-white active:scale-95'}`}
           >
             SERVER
           </button>

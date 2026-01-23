@@ -62,9 +62,9 @@
   --app-text-muted: #94a3b8;
   --app-border: #475569;
   --app-border-light: #64748b;
-  --app-primary: #6366f1;
-  --app-primary-hover: #4f46e5;
-  --app-primary-light: #818cf8;
+  --app-primary: #4F47E4;
+  --app-primary-hover: #281FD1;
+  --app-primary-light: #817BEC;
   --app-success: #22c55e;
   --app-success-dark: #16a34a;
   --app-success-bg: rgba(34, 197, 94, 0.1);
@@ -186,13 +186,13 @@
 }
 
 @layer base {
-  * {
+  /* * {
     @apply border-border outline-ring/50;
   }
 
   body {
     @apply bg-background text-foreground;
-  }
+  } */
 
   /**
   * Default typography styles for HTML elements (h1-h4, p, label, button, input).
@@ -244,6 +244,27 @@
     font-size: var(--text-base);
     font-weight: var(--font-weight-normal);
     line-height: 1.5;
+  }
+}
+
+@layer components {
+  .app-input {
+    @apply w-full p-3 rounded-lg outline-none transition-colors;
+    background-color: var(--app-input-bg);
+    border: 2px solid var(--app-input-border);
+    color: var(--app-text-primary);
+  }
+
+  .app-input:hover:not(:disabled, :focus) {
+    border-color: var(--app-border-light);
+  }
+
+  .app-input:focus {
+    border-color: var(--app-primary);
+  }
+
+  .app-input:disabled {
+    @apply opacity-50; /* cursor-not-allowed; */
   }
 }
 
