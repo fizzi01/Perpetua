@@ -43,6 +43,9 @@ class Builder:
         if self.is_windows:
             self.gui_exe = self.gui_exe.with_suffix('.exe')
 
+        if self.is_macos:
+            self.icons_dir = self.icons_dir / "macos"
+
         self._version = self._get_version()
 
     @property
@@ -105,6 +108,8 @@ class Builder:
             build_cmd.append("--debug")
 
         self._run(build_cmd, cwd=self.gui_dir)
+
+        # Clean up unnecessary files
 
     def _build_daemon(self):
         if self.skip_daemon:
