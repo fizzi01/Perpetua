@@ -166,12 +166,15 @@ export function PowerButton({
                 transition: { duration: 0.2 },
                 backgroundColor: 'var(--app-danger-hover)'
               }}
-              whileTap={{ scale: 0.9 }}
+              whileTap={{ 
+                scale: 0.9,
+                transition: { duration: 0.1 }
+              }}
               onClick={onForceStop}
               className="absolute w-9 h-9 rounded-full flex items-center justify-center z-20 border-2"
               style={{
                 backgroundColor: 'var(--app-danger)',
-                // borderColor: 'white',
+                borderWidth: '0px',
                 color: 'white',
                 top: '-5px',
                 right: '-5px',
