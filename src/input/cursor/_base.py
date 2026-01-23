@@ -370,6 +370,29 @@ class _CursorHandlerProcess:
     """
 
     @staticmethod
+    def _cleanup(
+        logger, 
+        command_conn: Connection, 
+        result_conn: Connection,
+        mouse_conn: Connection):
+        """Clean up pipes in child process"""
+        try:
+            # Drain connections
+            while command_conn.poll():
+                try:
+                    command_conn.recv()
+                except Exception:
+                    break
+
+            # Close resources
+            command_conn.close()
+            result_conn.close()
+            mouse_conn.close()
+        except Exception as e:
+            logger.error(f"Error during cleanup ({e})")
+            pass  # Ignore errors
+          
+    @staticmethod
     def run(
         command_conn: Connection,
         result_conn: Connection,
@@ -381,25 +404,6 @@ class _CursorHandlerProcess:
         _logger = get_logger(
             "_CursorHandlerProcess", level=Logger.DEBUG, is_root=True,
         )
-
-        def _cleanup(logger):
-            """Clean up pipes in child process"""
-            try:
-                # Drain connections
-                while command_conn.poll():
-                    try:
-                        command_conn.recv()
-                    except Exception:
-                        break
-
-                # Close resources
-                command_conn.close()
-                result_conn.close()
-                mouse_conn.close()
-            except Exception as e:
-                logger.error(f"Error during cleanup ({e})")
-                pass  # Ignore errors
-                
 
         _logger.debug("Starting...", pid=os.getpid())
         app = None
@@ -439,7 +443,7 @@ class _CursorHandlerProcess:
                 pass
 
             # Then clean up IPC resources
-            _cleanup(_logger)
+            _CursorHandlerProcess._cleanup(_logger, command_conn, result_conn, mouse_conn)
 
             _logger.debug("Process exiting")
 
