@@ -56,8 +56,6 @@ Actually only Windows and MacOS are supported.
 
 Perpetua requires several development tools and libraries to build successfully.
 
-### Common Requirements
-
 **Python Environment:**
 - Python 3.11 or 3.12 (Python 3.13+ not yet supported)
 - Poetry (Python dependency and package manager)
@@ -176,9 +174,9 @@ poetry run python build.py --skip-gui
 
 Perpetua uses JSON configuration files to define client and server settings. Configuration files are **automatically generated on first launch** with sensible defaults, requiring minimal manual intervention for most use cases.
 
-**Configuration File Locations:**
-- **macOS:** `$HOME/Library/Caches/Perpetua`
-- **Windows:** `%LOCALAPPDATA%\Perpetua`
+Configuration File Locations:
+- macOS: `$HOME/Library/Caches/Perpetua`
+- Windows: `%LOCALAPPDATA%\Perpetua`
 
 <details>
 <summary><b>Server Configuration</b></summary>
@@ -204,11 +202,6 @@ The client configuration allows two discovery modes:
 **Manual Server Specification:**
 - Explicitly define the server hostname or IP address in the configuration file
 - Useful for static network setups or when automatic discovery fails
-
-> [!TIP]
-> When multiple Perpetua servers are detected on the network,
-> the GUI presents a selection dialog allowing the user to 
-> choose the desired server.
 
 </details>
 
@@ -257,14 +250,18 @@ This mechanism ensures secure, autonomous certificate sharing without manual man
 }
 ```
 
-> [!TIP]
-> **For automatic server discovery**, leave the `server_info` 
+> For automatic server discovery, leave the `server_info` 
 > connection fields empty (`host`, `hostname`, `uid`).
 > Perpetua will automatically detect available servers on the local network.
 
-**For manual server configuration**, populate the `host` field with the server's IP address or hostname.
+For manual server configuration, populate the `host` field with the server's IP address or hostname.
 
 </details>
+
+> [!NOTE]
+> When multiple Perpetua servers are detected on the network,
+> the GUI presents a selection dialog allowing the user to 
+> choose the desired server.
 
 ---
 

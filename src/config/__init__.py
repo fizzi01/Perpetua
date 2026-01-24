@@ -153,8 +153,6 @@ class ServerConfig:
 
         # Logging configuration
         self.log_level: int = self.DEFAULT_LOG_LEVEL
-        self.log_to_file: bool = False
-        self.log_file_path: Optional[str] = None
 
         # Authorized clients managed by ClientsManager
         self.clients_manager: ClientsManager = ClientsManager()
@@ -208,16 +206,10 @@ class ServerConfig:
     def set_logging(
         self,
         level: Optional[int] = None,
-        log_to_file: Optional[bool] = None,
-        log_file_path: Optional[str] = None,
     ) -> None:
         """Configure logging settings"""
         if level is not None:
             self.log_level = level
-        if log_to_file is not None:
-            self.log_to_file = log_to_file
-        if log_file_path is not None:
-            self.log_file_path = log_file_path
 
     # Client Management through ClientsManager
     def add_client(
@@ -326,8 +318,6 @@ class ServerConfig:
             "streams_enabled": self.streams_enabled,
             "ssl_enabled": self.ssl_enabled,
             "log_level": self.log_level,
-            "log_to_file": self.log_to_file,
-            "log_file_path": self.log_file_path,
             "authorized_clients": self.authorized_clients,
         }
 
@@ -346,8 +336,6 @@ class ServerConfig:
 
         self.ssl_enabled = data.get("ssl_enabled", self.ssl_enabled)
         self.log_level = data.get("log_level", self.log_level)
-        self.log_to_file = data.get("log_to_file", self.log_to_file)
-        self.log_file_path = data.get("log_file_path", self.log_file_path)
 
         # Load authorized clients into ClientsManager
         self.authorized_clients = data.get("authorized_clients", [])
@@ -498,8 +486,6 @@ class ClientConfig:
 
         # Logging configuration
         self.log_level: int = self.DEFAULT_LOG_LEVEL
-        self.log_to_file: bool = False
-        self.log_file_path: Optional[str] = None
 
         self._write_lock = asyncio.Lock()
 
@@ -604,17 +590,11 @@ class ClientConfig:
     # Logging Configuration
     def set_logging(
         self,
-        level: Optional[int] = None,
-        log_to_file: Optional[bool] = None,
-        log_file_path: Optional[str] = None,
+        level: Optional[int] = None
     ) -> None:
         """Configure logging settings"""
         if level is not None:
             self.log_level = level
-        if log_to_file is not None:
-            self.log_to_file = log_to_file
-        if log_file_path is not None:
-            self.log_file_path = log_file_path
 
     # Serialization
     def to_dict(self) -> Dict[str, Any]:
@@ -626,8 +606,6 @@ class ClientConfig:
             "streams_enabled": self.streams_enabled,
             "ssl_enabled": self.ssl_enabled,
             "log_level": self.log_level,
-            "log_to_file": self.log_to_file,
-            "log_file_path": self.log_file_path,
         }
 
     def from_dict(self, data: Dict[str, Any]) -> None:
@@ -655,8 +633,6 @@ class ClientConfig:
 
         self.ssl_enabled = data.get("ssl_enabled", self.ssl_enabled)
         self.log_level = data.get("log_level", self.log_level)
-        self.log_to_file = data.get("log_to_file", self.log_to_file)
-        self.log_file_path = data.get("log_file_path", self.log_file_path)
 
     # Persistence
     async def save(self, file_path: Optional[str] = None) -> None:
