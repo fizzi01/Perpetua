@@ -45,16 +45,18 @@ Actually only Windows and MacOS are supported.
 
 > [!Important]
 > - **Windows**: You can't control a Windows client if there is no real mouse connected to the machine.
+> - **Input Capture Conflicts**: Perpetua cannot control the mouse when other applications have exclusive input capture (e.g., video games). This is an architectural limitation.
 
 ---
 
 ## Building from Source
 
-### Prerequisites
+<details>
+<summary><b>Prerequisites</b></summary>
 
-Perpetua requires several development tools and libraries to build successfully. The following sections provide platform-specific installation instructions.
+Perpetua requires several development tools and libraries to build successfully.
 
-#### Common Requirements
+### Common Requirements
 
 **Python Environment:**
 - Python 3.11 or 3.12 (Python 3.13+ not yet supported)
@@ -68,12 +70,11 @@ Perpetua requires several development tools and libraries to build successfully.
 **Build Tool:**
 - Nuitka (Python compiler, automatically installed during build)
 
+</details>
 
-### Build Instructions
+### Quick Start
 
-#### Automated Build
-
-The project includes both a build script and Makefile for convenient building. You can use either method:
+The project includes both a build script and Makefile for convenient building.
 
 1. **Clone the repository:**
    ```bash
@@ -89,64 +90,68 @@ The project includes both a build script and Makefile for convenient building. Y
    ```
 
 3. **Run the build:**
-   
-   **Full release build:**
    ```bash
    poetry run python build.py
    # or
    make build
    ```
-   
-   **Available build options:**
-   
-   Using Poetry:
-   ```bash
-   # Debug build
-   poetry run python build.py --debug
-   
-   # Skip GUI build (build daemon only)
-   poetry run python build.py --skip-gui
-   
-   # Skip daemon build (build GUI only)
-   poetry run python build.py --skip-daemon
-   
-   # Clean build artifacts before building
-   poetry run python build.py --clean
-   ```
-   
-   Using Make:
-   ```bash
-   # Debug build
-   make build-debug
-   
-   # Build daemon only
-   make build-daemon
-   
-   # Build GUI only
-   make build-gui
-   
-   # Release build with clean
-   make build-release
-   
-   # Clean build artifacts
-   make clean
-   ```
 
-4. **Build outputs:**
-   
-   After successful build, outputs are located in the `.build` directory:
-   
-   **macOS:**
-   - Application bundle: `.build/Perpetua.app`
-   - Executable: `.build/Perpetua.app/Contents/MacOS/Perpetua`
-   - Bundled GUI: `.build/Perpetua.app/Contents/Resources/_perpetua`
-   
-   **Windows:**
-   - Standalone folder: `.build/Perpetua/`
-   - Executable: `.build/Perpetua/Perpetua.exe`
-   - Bundled GUI: `.build/Perpetua/_perpetua.exe`
+### Build Outputs
 
-#### Manual Build Steps
+After successful build, outputs are located in the `.build` directory:
+
+**macOS:**
+- Application bundle: `.build/Perpetua.app`
+- Executable: `.build/Perpetua.app/Contents/MacOS/Perpetua`
+- Bundled GUI: `.build/Perpetua.app/Contents/Resources/_perpetua`
+
+**Windows:**
+- Standalone folder: `.build/Perpetua/`
+- Executable: `.build/Perpetua/Perpetua.exe`
+- Bundled GUI: `.build/Perpetua/_perpetua.exe`
+
+<details>
+<summary><b>Advanced Build Options</b></summary>
+
+### Using Poetry
+
+```bash
+# Debug build
+poetry run python build.py --debug
+
+# Skip GUI build (build daemon only)
+poetry run python build.py --skip-gui
+
+# Skip daemon build (build GUI only)
+poetry run python build.py --skip-daemon
+
+# Clean build artifacts before building
+poetry run python build.py --clean
+```
+
+### Using Make
+
+```bash
+# Debug build
+make build-debug
+
+# Build daemon only
+make build-daemon
+
+# Build GUI only
+make build-gui
+
+# Release build with clean
+make build-release
+
+# Clean build artifacts
+make clean
+```
+
+</details>
+
+<details>
+<summary><b>Manual Build Steps</b></summary>
 
 For manual builds or troubleshooting, follow these steps:
 
@@ -160,8 +165,10 @@ cargo tauri build
 **Build Daemon:**
 ```bash
 # From project root
+poetry run python build.py --skip-gui
 ```
 
+</details>
 
 ---
 
@@ -169,15 +176,12 @@ cargo tauri build
 
 Perpetua uses JSON configuration files to define client and server settings. Configuration files are **automatically generated on first launch** with sensible defaults, requiring minimal manual intervention for most use cases.
 
-### Configuration File Locations
+**Configuration File Locations:**
+- **macOS:** `$HOME/Library/Caches/Perpetua`
+- **Windows:** `%LOCALAPPDATA%\Perpetua`
 
-**macOS:**
- `$HOME/Library/Caches/Perpetua`
-
-**Windows:**
- `%LOCALAPPDATA%\Perpetua`
-
-### Server Configuration
+<details>
+<summary><b>Server Configuration</b></summary>
 
 The server configuration is managed automatically and typically does not require manual modification. Perpetua handles server setup, certificate generation, and network binding autonomously.
 
@@ -185,7 +189,10 @@ Default behavior:
 - Generates self-signed TLS certificates
 - Manages client authentication and pairing
 
-### Client Configuration
+</details>
+
+<details>
+<summary><b>Client Configuration</b></summary>
 
 The client configuration allows two discovery modes:
 
@@ -203,7 +210,10 @@ The client configuration allows two discovery modes:
 > the GUI presents a selection dialog allowing the user to 
 > choose the desired server.
 
-### First Connection and OTP Pairing
+</details>
+
+<details>
+<summary><b>First Connection and OTP Pairing</b></summary>
 
 On the first connection between a client and server, Perpetua implements a secure pairing process:
 
@@ -214,7 +224,10 @@ On the first connection between a client and server, Perpetua implements a secur
 
 This mechanism ensures secure, autonomous certificate sharing without manual management.
 
-### Configuration Files Structure
+</details>
+
+<details>
+<summary><b>Configuration Files Structure</b></summary>
 
 **Client Configuration (`client_config.json`):**
 ```json
@@ -251,6 +264,8 @@ This mechanism ensures secure, autonomous certificate sharing without manual man
 
 **For manual server configuration**, populate the `host` field with the server's IP address or hostname.
 
+</details>
+
 ---
 
 ## Roadmap
@@ -263,18 +278,4 @@ This mechanism ensures secure, autonomous certificate sharing without manual man
 - **Feature Enhancements**
   - File transfers
   - Advanced clipboard format support (including proprietary formats)
----
-
-## Contributing
-
-Contributions are welcome! Please read the [contributing guidelines](CONTRIBUTING.md) before submitting pull requests.
-
-For bug reports and feature requests, please use the [issue tracker](https://github.com/fizzi01/Perpetua/issues).
-
----
-
-## License
-
-This project is licensed under the terms specified in the [LICENSE](LICENSE) file.
-
 ---
