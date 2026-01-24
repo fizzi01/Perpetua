@@ -195,6 +195,7 @@ export function ServerTab({ onStatusChange, state }: ServerTabProps) {
   const handleToggleServer = () => {
     if (!isRunning) {
       setRunningPending(true);
+      onStatusChange(true);
 
       listenCommand(EventType.CommandSuccess, CommandType.StartServer, (event) => {
         console.log(`Server started successfully: ${event.message}`);
@@ -202,7 +203,6 @@ export function ServerTab({ onStatusChange, state }: ServerTabProps) {
         let res = event.data?.result;
         if (res) {
           addNotification('success', 'Server started', `Listening on ${res.host}:${res.port}`);
-          onStatusChange(true);
           setPort(res.port.toString());
           setRunningPending(false);
 
@@ -225,6 +225,7 @@ export function ServerTab({ onStatusChange, state }: ServerTabProps) {
       listenCommand(EventType.CommandError, CommandType.StartServer, (event) => {
         addNotification('error', 'Failed', event.data?.error || '');
         setRunningPending(false);
+        onStatusChange(false);
 
         listeners.removeListener('start-server');
         listeners.removeListener('start-server-error');
@@ -238,6 +239,7 @@ export function ServerTab({ onStatusChange, state }: ServerTabProps) {
         console.error('Error starting server:', err);
         addNotification('error', 'Failed to start server');
         setRunningPending(false);
+        onStatusChange(false);
 
         // Cleanup
         listeners.removeListener('start-server');

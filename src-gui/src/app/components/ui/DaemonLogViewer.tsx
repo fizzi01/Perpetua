@@ -208,7 +208,7 @@ export const DaemonLogViewer: React.FC<LogViewerProps> = ({
             {/* Auto-refresh toggle */}
             <button
               onClick={() => setAutoRefresh(!autoRefresh)}
-              className="flex items-center gap-2 px-2 py-1.5 rounded-md text-xs font-medium transition-all hover:scale-105 active:scale-95 focus:outline-none focus:ring-2 focus:ring-opacity-50 shadow-sm"
+              className="cursor-pointer flex items-center gap-2 px-2 py-1.5 rounded-md text-xs font-medium transition-all hover:scale-105 active:scale-95 focus:outline-none focus:ring-2 focus:ring-opacity-50 shadow-sm"
               style={{
                 backgroundColor: autoRefresh ? 'var(--primary)' : 'var(--muted)',
                 color: autoRefresh ? 'var(--primary-foreground)' : 'var(--muted-foreground)',
@@ -223,7 +223,7 @@ export const DaemonLogViewer: React.FC<LogViewerProps> = ({
             <button
               onClick={() => fetchLogs()}
               disabled={loading}
-              className="flex items-center gap-1 px-2 py-1.5 rounded-md text-xs font-medium transition-all hover:scale-105 hover:shadow-md active:scale-95 disabled:opacity-50 disabled:cursor-not-allowed disabled:hover:scale-100 focus:outline-none focus:ring-2 focus:ring-opacity-50 shadow-sm"
+              className="cursor-pointer flex items-center gap-1 px-2 py-1.5 rounded-md text-xs font-medium transition-all hover:scale-105 hover:shadow-md active:scale-95 disabled:opacity-50 disabled:cursor-not-allowed disabled:hover:scale-100 focus:outline-none focus:ring-2 focus:ring-opacity-50 shadow-sm"
               style={{
                 backgroundColor: 'var(--accent)',
                 color: 'var(--accent-foreground)',
@@ -236,7 +236,7 @@ export const DaemonLogViewer: React.FC<LogViewerProps> = ({
             {/* Word wrap toggle */}
             <button
               onClick={() => setWrapLines(!wrapLines)}
-              className="flex items-center gap-1 px-2 py-1.5 rounded-md text-xs font-medium transition-all hover:scale-105 active:scale-95 focus:outline-none focus:ring-2 focus:ring-opacity-50 shadow-sm"
+              className="cursor-pointer flex items-center gap-1 px-2 py-1.5 rounded-md text-xs font-medium transition-all hover:scale-105 active:scale-95 focus:outline-none focus:ring-2 focus:ring-opacity-50 shadow-sm"
               style={{
                 backgroundColor: wrapLines ? 'var(--primary)' : 'var(--muted)',
                 color: wrapLines ? 'var(--primary-foreground)' : 'var(--muted-foreground)',
@@ -289,7 +289,7 @@ export const DaemonLogViewer: React.FC<LogViewerProps> = ({
             {searchQuery && (
               <button
                 onClick={() => setSearchQuery('')}
-                className="absolute right-2 hover:opacity-70 transition-opacity"
+                className="cursor-pointer absolute right-2 hover:opacity-70 transition-opacity"
                 style={{ color: 'var(--muted-foreground)' }}
               >
                 <X size={12} />

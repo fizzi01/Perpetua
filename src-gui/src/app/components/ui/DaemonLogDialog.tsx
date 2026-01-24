@@ -57,7 +57,7 @@ export const DaemonLogDialog: React.FC<DaemonLogDialogProps> = ({ isOpen, onClos
               {/* Close button */}
               <button
                 onClick={onClose}
-                className="p-1.5 rounded-md hover:bg-black/10 dark:hover:bg-white/10 active:scale-95 transition-all focus:outline-none focus:ring-2 focus:ring-opacity-50"
+                className="cursor-pointer p-1.5 rounded-md hover:bg-black/10 dark:hover:bg-white/10 active:scale-95 transition-all focus:outline-none focus:ring-2 focus:ring-opacity-50"
                 style={{ 
                   color: 'var(--muted-foreground)',
                 }}

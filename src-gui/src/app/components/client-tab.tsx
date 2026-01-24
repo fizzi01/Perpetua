@@ -264,6 +264,7 @@ export function ClientTab({ onStatusChange, state }: ClientTabProps) {
   const handleToggleClient = () => {
     if (!isRunning) {
       setRunningPending(true);
+      onStatusChange(true);
       
       listenCommand(EventType.CommandSuccess, CommandType.StartClient, (event) => {
         console.log(`Client started successfully`, event);
@@ -291,6 +292,7 @@ export function ClientTab({ onStatusChange, state }: ClientTabProps) {
         setRunningPending(false);
         setIsRunning(false);
         setIsConnected(false);
+        onStatusChange(false);
 
         setShowOtpInput(false);
         setOtpInput('');
@@ -311,6 +313,7 @@ export function ClientTab({ onStatusChange, state }: ClientTabProps) {
         console.error('Error invoking startClient:', err);
         addNotification('error', 'Connection Failed', err.message || 'Unknown error');
         setRunningPending(false);
+        onStatusChange(false);
         listeners.forceRemoveListener('client-start-error');
         listeners.forceRemoveListener('client-start');
       });
