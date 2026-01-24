@@ -63,7 +63,7 @@ export function CopyableBadge({
       whileHover={{ scale: 1.05 }}
       whileTap={{ scale: 0.95 }}
       onClick={handleCopy}
-      className={`px-3 py-1 rounded-md flex items-center gap-2 transition-all ${className}`}
+      className={`cursor-pointer px-3 py-1 rounded-md flex items-center gap-2 transition-all ${className}`}
       style={{
         color: isCopied ? 'var(--app-success)' : 'var(--app-text-muted)',
         border: isCopied ? '1px solid var(--app-success)' : '1px solid var(--app-border)',

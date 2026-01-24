@@ -501,7 +501,7 @@ export function ClientTab({ onStatusChange, state }: ClientTabProps) {
                 whileHover={{ scale: 1.02 }}
                 whileTap={{ scale: 0.98 }}
                 onClick={handleOtpSubmit}
-                className="w-full p-3 rounded-lg transition-all"
+                className="cursor-pointer w-full p-3 rounded-lg transition-all"
                 style={{
                   backgroundColor: 'var(--app-primary)',
                   color: 'white'
@@ -723,7 +723,7 @@ export function ClientTab({ onStatusChange, state }: ClientTabProps) {
           whileHover={{ scale: 1.02 }}
           whileTap={{ scale: 0.98 }}
           onClick={handleToggleSecurity}
-          className="p-3 rounded-lg transition-all duration-300 flex flex-col items-center gap-1 border-2"
+          className="cursor-pointer p-3 rounded-lg transition-all duration-300 flex flex-col items-center gap-1 border-2"
           style={{
             backgroundColor: showSecurity ? 'var(--app-primary)' : 'var(--app-bg-tertiary)',
             borderColor: 'var(--app-primary)',
@@ -738,7 +738,7 @@ export function ClientTab({ onStatusChange, state }: ClientTabProps) {
           whileHover={{ scale: 1.02 }}
           whileTap={{ scale: 0.98 }}
           onClick={handleToggleOptions}
-          className="flex-1 p-3 rounded-lg transition-all duration-300 flex flex-col items-center gap-1 border-2"
+          className="cursor-pointer flex-1 p-3 rounded-lg transition-all duration-300 flex flex-col items-center gap-1 border-2"
           style={{
             backgroundColor: showOptions ? 'var(--app-primary)' : 'var(--app-bg-tertiary)',
             borderColor: 'var(--app-primary)',
