@@ -116,7 +116,7 @@ export function PermissionsPanel({
           whileHover={!disableAllStreams ? { scale: 1.05 } : {}}
           whileTap={!disableAllStreams ? { scale: 0.95 } : {}}
           onClick={() => handleStreamToggle(StreamType.Mouse, !enableMouse, setEnableMouse)}
-          className={`flex-1 flex items-center justify-center gap-2 px-3 py-2 rounded-lg transition-all ${disableAllStreams ? 'cursor-not-allowed' : 'cursor-pointer'}`}
+          className={`flex-1 flex items-center justify-center gap-2 px-3 py-2 rounded-lg transition-all`}
           style={{
             backgroundColor: enableMouse ? 'var(--app-success-bg)' : 'var(--app-danger-bg)',
             color: enableMouse ? 'var(--app-success)' : 'var(--app-danger)',
@@ -132,7 +132,7 @@ export function PermissionsPanel({
           whileHover={!disableAllStreams ? { scale: 1.05 } : {}}
           whileTap={!disableAllStreams ? { scale: 0.95 } : {}}
           onClick={() => handleStreamToggle(StreamType.Keyboard, !enableKeyboard, setEnableKeyboard)}
-          className={`flex-1 flex items-center justify-center gap-2 px-3 py-2 rounded-lg transition-all ${disableAllStreams ? 'cursor-not-allowed' : 'cursor-pointer'}`}
+          className={`flex-1 flex items-center justify-center gap-2 px-3 py-2 rounded-lg transition-all`}
           style={{
             backgroundColor: enableKeyboard ? 'var(--app-success-bg)' : 'var(--app-danger-bg)',
             color: enableKeyboard ? 'var(--app-success)' : 'var(--app-danger)',
@@ -148,7 +148,7 @@ export function PermissionsPanel({
           whileHover={!disableAllStreams ? { scale: 1.05 } : {}}
           whileTap={!disableAllStreams ? { scale: 0.95 } : {}}
           onClick={() => handleStreamToggle(StreamType.Clipboard, !enableClipboard, setEnableClipboard)}
-          className={`flex-1 flex items-center justify-center gap-2 px-3 py-2 rounded-lg transition-all ${disableAllStreams ? 'cursor-not-allowed' : 'cursor-pointer'}`}
+          className={`flex-1 flex items-center justify-center gap-2 px-3 py-2 rounded-lg transition-all`}
           style={{
             backgroundColor: enableClipboard ? 'var(--app-success-bg)' : 'var(--app-danger-bg)',
             color: enableClipboard ? 'var(--app-success)' : 'var(--app-danger)',
