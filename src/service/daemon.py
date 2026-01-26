@@ -209,9 +209,11 @@ class Daemon:
         self.auto_load_config = auto_load_config
 
         # Initialize logging with file output
-        log_file = path.join(self.app_config.get_main_path(), "daemon.log")
         self._logger = get_logger(
-            self.__class__.__name__, level=Logger.INFO, is_root=True, log_file=log_file
+            self.__class__.__name__,
+            level=Logger.INFO,
+            is_root=True,
+            log_file=self.app_config.get_default_log_file(),
         )
 
         # Service instances
@@ -2192,6 +2194,9 @@ async def main():
     )
     parser.add_argument("--config-dir", help="Configuration directory path")
     parser.add_argument("--debug", action="store_true", help="Enable debug directory")
+    parser.add_argument(
+        "--log-terminal", action="store_true", help="Log only to stdout"
+    )
 
     args = parser.parse_args()
 
@@ -2201,6 +2206,8 @@ async def main():
         app_config.set_save_path(args.config_dir)
     if args.debug:
         app_config.config_path = "_test_config/"
+    if args.log_terminal:
+        app_config.set_log_file(None)
 
     # Create and start daemon
     daemon = Daemon(

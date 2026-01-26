@@ -19,7 +19,7 @@ class Launcher:
     def __init__(self):
         self.main_path = ApplicationConfig.get_main_path()
         self.pid_file = Path(os.path.join(self.main_path, "daemon.pid"))
-        self.log_file = Path(os.path.join(self.main_path, "daemon.log"))
+        self.log_file = Path(os.path.join(self.main_path, ApplicationConfig.get_default_log_file() or "daemon.log"))
         self.temp_log_file = Path(os.path.join(self.main_path, "launcher_temp.log"))
         self._log = None
         self.project_root = self._get_project_root()
@@ -145,15 +145,27 @@ class Launcher:
             launcher_script = os.path.join(executable_dir, "launcher.py")
             daemon_cmd = [python_exe, launcher_script, '--daemon']
 
+        # If sys.args has other relevant args, pass them to daemon
+        for arg in sys.argv[1:]:
+            if arg not in ('--daemon',):
+                daemon_cmd.append(arg)
+
         try:
-            subprocess.Popen(
-                daemon_cmd,
-                stdout=subprocess.DEVNULL,
-                stderr=subprocess.DEVNULL,
-                stdin=subprocess.DEVNULL,
-                start_new_session=True,
-                close_fds=True
-            )
+            if COMPILED:
+                subprocess.Popen(
+                    daemon_cmd,
+                    stdout=subprocess.DEVNULL,
+                    stderr=subprocess.DEVNULL,
+                    stdin=subprocess.DEVNULL,
+                    start_new_session=True,
+                    close_fds=True,
+                )
+            else:
+                subprocess.Popen(
+                    daemon_cmd,
+                    start_new_session=True,
+                    close_fds=True,
+                )
 
             self.log.info("Daemon process spawned", mode="compiled" if COMPILED else "script")
 
@@ -218,7 +230,8 @@ class Launcher:
                 g = subprocess.Popen(
                     gui_cmd,
                     cwd=os.path.join(executable_dir, "src-gui"),
-                    start_new_session=True
+                    start_new_session=True,
+                    close_fds=True
                 )
                 self.log.info("GUI started in dev mode", mode="script", cwd=gui_cmd)
                 g.wait()
