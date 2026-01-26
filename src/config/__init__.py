@@ -54,6 +54,7 @@ class ApplicationConfig:
     DEFAULT_DAEMON_PORT: int = DEFAULT_PORT - 3
 
     DEFAULT_UNIX_SOCK_NAME: str = f"{service_name.lower()}_daemon.sock"
+    DEFAULT_LOG_FILE: str | None = f"daemon.log"
 
     config_files: dict = field(default_factory=dict)
 
@@ -109,6 +110,16 @@ class ApplicationConfig:
             os.makedirs(base_path, exist_ok=True)
 
         return base_path
+
+    @classmethod
+    def set_log_file(cls, log_file: str | None) -> None:
+        cls.DEFAULT_LOG_FILE = log_file
+
+    @classmethod
+    def get_default_log_file(cls) -> str | None:
+        if cls.DEFAULT_LOG_FILE is None:
+            return None
+        return path.join(cls.get_main_path(), cls.DEFAULT_LOG_FILE)
 
 
 class ServerConfig:

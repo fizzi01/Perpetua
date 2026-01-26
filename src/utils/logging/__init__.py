@@ -364,6 +364,9 @@ class StructLogger(BaseLogger):
             StructLogger._log_file_handle = open(
                 log_file, "a", encoding="utf-8", buffering=1
             )
+        elif log_file is None and StructLogger._log_file_path is not None and is_root:
+            StructLogger._log_file_path = None
+            StructLogger._log_file_handle = None
         elif (
             log_file is not None and StructLogger._log_file_path != log_file and is_root
         ):
