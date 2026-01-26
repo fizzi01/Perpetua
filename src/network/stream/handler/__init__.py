@@ -293,6 +293,11 @@ class _ServerStreamHandler(StreamHandler):
             callback=self._on_streams_reconnected,
         )
 
+        # self.event_bus.subscribe(
+        #     event_type=EventType.SCREEN_CHANGE_GUARD,
+        #     callback=self._on_active_screen_change_guard,
+        # )
+
     def register_receive_callback(self, receive_callback, message_type: str):
         """
         Register a callback function for receiving messages of a specific type.
@@ -311,6 +316,16 @@ class _ServerStreamHandler(StreamHandler):
             id=self.handler_id,
             metrics_collector=metrics_collector,
         )
+
+    async def _on_active_screen_change_guard(
+        self, data: Optional[ActiveScreenChangedEvent]
+    ):
+        """
+        Async event handler for the screen change guard.
+        """
+        # This can avoid sending data (to wrong target) during screen change transitions.
+        # By default, we invalidate the active client on screen change
+        self._active_client = None
 
     async def _on_active_screen_changed(self, data: Optional[ActiveScreenChangedEvent]):
         """
@@ -351,6 +366,14 @@ class _ServerStreamHandler(StreamHandler):
             self._active_client.get_screen_position()
         )  # Before the first await to avoid missing active client
         data = await self._send_queue.get()
+        # Retake screen in case active client changed during await
+        # Only a switch to None can occur here,
+        # because we have screen A -> None -> screen B,
+        screen = (
+            self._active_client.get_screen_position()
+            if self._active_client is not None
+            else screen
+        )
         if not isinstance(data, dict) and hasattr(data, "to_dict"):
             data = data.to_dict()
         await self.msg_exchange.send_stream_type_message(
