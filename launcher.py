@@ -11,7 +11,7 @@ from utils.permissions import PermissionChecker
 from config import ApplicationConfig
 
 IS_WINDOWS = sys.platform == "win32"
-
+COMPILED = "__compiled__" in globals()
 
 class Launcher:
     """Launcher class to manage daemon and GUI processes with centralized logging."""
@@ -22,6 +22,7 @@ class Launcher:
         self.log_file = Path(os.path.join(self.main_path, "daemon.log"))
         self.temp_log_file = Path(os.path.join(self.main_path, "launcher_temp.log"))
         self._log = None
+        self.project_root = self._get_project_root()
 
     @property
     def log(self):
@@ -29,6 +30,19 @@ class Launcher:
         if self._log is None:
             self._log = get_logger("launcher", verbose=True, log_file=str(self.temp_log_file))
         return self._log
+
+    def _get_project_root(self) -> Path:
+        """Get the project root directory based on execution mode."""
+        if COMPILED:
+            # When compiled, executable is in the build directory
+            return Path(sys.executable).parent
+        else:
+            # When running as script, launcher.py is in the project root
+            return Path(__file__).parent.resolve()
+
+    def _get_python_executable(self) -> str:
+        """Get the Python executable path for running scripts."""
+        return sys.executable
 
     def clean_temp_log_file(self):
         """Remove temporary launcher log file if exists."""
@@ -118,13 +132,22 @@ class Launcher:
 
         self.clean_log_file()  # Clean up old log file before starting new daemon
 
-        self_path = os.path.join(executable_dir, "Perpetua")
-        if IS_WINDOWS:
-            self_path += ".exe"
+        if COMPILED:
+            # Running as compiled executable
+            self_path = os.path.join(executable_dir, "Perpetua")
+            if IS_WINDOWS:
+                self_path += ".exe"
+            
+            daemon_cmd = [self_path, '--daemon']
+        else:
+            # Running as Python script
+            python_exe = self._get_python_executable()
+            launcher_script = os.path.join(executable_dir, "launcher.py")
+            daemon_cmd = [python_exe, launcher_script, '--daemon']
 
         try:
             subprocess.Popen(
-                [self_path, '--daemon'],
+                daemon_cmd,
                 stdout=subprocess.DEVNULL,
                 stderr=subprocess.DEVNULL,
                 stdin=subprocess.DEVNULL,
@@ -132,7 +155,7 @@ class Launcher:
                 close_fds=True
             )
 
-            self.log.info("Daemon process spawned")
+            self.log.info("Daemon process spawned", mode="compiled" if COMPILED else "script")
 
             # Wait for daemon to write PID file (up to 3 seconds)
             for _ in range(6):
@@ -151,25 +174,75 @@ class Launcher:
 
     def start_gui(self, executable_dir: str) -> bool:
         """Start GUI process."""
-        gui_path = os.path.join(executable_dir, '_perpetua')
-        if IS_WINDOWS:
-            gui_path += ".exe"
+        if COMPILED:
+            # Running as compiled executable
+            gui_path = os.path.join(executable_dir, '_perpetua')
+            if IS_WINDOWS:
+                gui_path += ".exe"
 
-        if not (os.path.isfile(gui_path) and os.access(gui_path, os.X_OK)):
-            self.log.error("GUI not found", path=gui_path)
+            if not (os.path.isfile(gui_path) and os.access(gui_path, os.X_OK)):
+                self.log.error("GUI executable not found", path=gui_path)
+                return False
+
+            gui_cmd = [gui_path]
+        else:
+            # Running as Python script - start Tauri dev server
+            gui_dir = os.path.join(executable_dir, "src-gui")
+            
+            if not os.path.isdir(gui_dir):
+                self.log.error("GUI directory not found", path=gui_dir)
+                return False
+
+            # Check if npm/pnpm/yarn is available
+            package_manager = self._get_package_manager()
+            if not package_manager:
+                self.log.error("No package manager found (npm/pnpm/yarn)")
+                return False
+
+            gui_cmd = [package_manager, "run", "tauri", "dev"]
+            
+        try:
+            if COMPILED:
+                g = subprocess.Popen(
+                    gui_cmd,
+                    stdout=subprocess.DEVNULL,
+                    stderr=subprocess.DEVNULL,
+                    stdin=subprocess.DEVNULL,
+                    start_new_session=True,
+                    close_fds=True
+                )
+                self.log.info("GUI started", mode="compiled")
+                g.wait()
+            else:
+                # For dev mode, run in current process to see logs
+                g = subprocess.Popen(
+                    gui_cmd,
+                    cwd=os.path.join(executable_dir, "src-gui"),
+                    start_new_session=True
+                )
+                self.log.info("GUI started in dev mode", mode="script", cwd=gui_cmd)
+                g.wait()
+            
+            return True
+        except Exception as e:
+            self.log.error("Failed to start GUI", error=str(e))
             return False
 
-        g = subprocess.Popen(
-            [gui_path],
-            stdout=subprocess.DEVNULL,
-            stderr=subprocess.DEVNULL,
-            stdin=subprocess.DEVNULL,
-            start_new_session=True,
-            close_fds=True
-        )
-        self.log.info("GUI started", path=gui_path)
-        g.wait()
-        return True
+    def _get_package_manager(self) -> str | None:
+        """Detect available package manager."""
+        for pm in ['pnpm', 'npm', 'yarn']:
+            try:
+                result = subprocess.run(
+                    [pm, '--version'],
+                    stdout=subprocess.DEVNULL,
+                    stderr=subprocess.DEVNULL,
+                    timeout=5
+                )
+                if result.returncode == 0:
+                    return pm
+            except (FileNotFoundError, subprocess.TimeoutExpired):
+                continue
+        return None
 
     def run(self) -> int:
         """Run the launcher: start daemon and GUI."""
@@ -184,8 +257,11 @@ class Launcher:
                     self.log.error("Permission not granted", permission=permission)
                     return 1
 
+        # Determine executable directory based on execution mode
+        executable_dir = str(self.project_root)
+        
         # Start daemon if not already running
-        if not self.start_daemon(os.path.dirname(sys.executable)):
+        if not self.start_daemon(executable_dir):
             self.log.error("Failed to start daemon")
             return 1
 
@@ -193,11 +269,11 @@ class Launcher:
         sleep(1)
 
         # Start GUI
-        if not self.start_gui(os.path.dirname(sys.executable)):
+        if not self.start_gui(executable_dir):
             self.log.error("Failed to start GUI")
             return 1
 
-        self.log.info("Launcher completed successfully")
+        self.log.info("Launcher completed successfully", mode="compiled" if COMPILED else "script")
         return 0
 
 
