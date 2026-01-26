@@ -60,9 +60,10 @@ class Builder:
             pyproject_data = tomllib.load(f)
         return pyproject_data["project"]["version"]
 
-    def _run(self, cmd: list[str], cwd: Optional[Path] = None) -> subprocess.CompletedProcess:
+    def _run(self, cmd: list[str], cwd: Optional[Path] = None, print_cmd: bool = True) -> subprocess.CompletedProcess:
         cwd = cwd or self.project_root
-        self.log.debug(f"$ {' '.join(cmd)}")
+        if print_cmd:
+            self.log.debug(f"$ {' '.join(cmd)}")
         return subprocess.run(cmd, cwd=cwd, check=True, capture_output=False, shell=self.is_windows, text=True)
 
     def _clean(self):
@@ -173,7 +174,7 @@ class Builder:
 
         nuitka_cmd.extend(self.nuitka_args)
         nuitka_cmd.append(str(launcher_py))
-        return self._run(nuitka_cmd, cwd=self.src_dir).returncode
+        return self._run(nuitka_cmd, cwd=self.src_dir, print_cmd=False).returncode
 
     def _sign_bundle(self):
         if self.is_macos:

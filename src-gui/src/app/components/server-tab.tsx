@@ -10,6 +10,8 @@ import {
   SelectValue,
 } from "./ui/select";
 
+import { Switch } from  "./ui/switch";
+
 import { ScrollArea } from './ui/scrollbar';
 
 import { Settings, Users, Activity, Plus, Trash2, Key, Lock, Shield } from 'lucide-react';
@@ -403,16 +405,19 @@ export function ServerTab({ onStatusChange, state }: ServerTabProps) {
     return `${hours}:${minutes.toString().padStart(2, '0')}:${secs.toString().padStart(2, '0')}`;
   };
 
-  const handleSaveOptions = (hostValue: string, portValue: string, sslEnabledValue: boolean) => {
+  const handleSaveOptions = (hostValue: string, portValue: string, sslEnabledValue: boolean, save_feedback: boolean = true) => {
     console.log('Saving options:', { host: hostValue, port: portValue, sslEnabled: sslEnabledValue});
     
-    listenCommand(EventType.CommandSuccess, CommandType.SetServerConfig, (event) => {
-      console.log(`Server config saved successfully: ${event.message}`);
-      addNotification('success', 'Options saved');
-      listeners.removeListener('set-server-config');
-    }).then(unlisten => {
-        listeners.addListenerOnce('set-server-config', unlisten);
-    });
+    if (save_feedback) {
+      listenCommand(EventType.CommandSuccess, CommandType.SetServerConfig, (event) => {
+        console.log(`Server config saved successfully: ${event.message}`);
+        addNotification('success', 'Options saved');
+        listeners.removeListener('set-server-config');
+      }).then(unlisten => {
+          listeners.addListenerOnce('set-server-config', unlisten);
+      });
+    }
+    
     listenCommand(EventType.CommandError, CommandType.SetServerConfig, (event) => {
       addNotification('error', 'Failed to save options', event.data?.error || '');
       listeners.removeListener('set-server-config-error');
@@ -660,60 +665,71 @@ export function ServerTab({ onStatusChange, state }: ServerTabProps) {
                     initial={{ opacity: 0, x: -20 }}
                     animate={{ opacity: 1, x: 0 }}
                     exit={{ opacity: 0, x: 20 }}
-                    className="p-3 rounded-lg border flex items-center justify-between"
+                    className="p-3 rounded-lg border grid grid-cols-[1fr_auto_auto] gap-3 items-center"
                     style={{
                       backgroundColor: client.status === 'online' ? 'var(--app-success-bg)' : 'var(--app-input-bg)',
                       borderColor: client.status === 'online' ? 'var(--app-success)' : 'var(--app-input-border)'
                     }}
                   >
-                  <div>
-                      <p className="font-semibold"
+                    {/* Client Info */}
+                    <div className="min-w-0">
+                      <p className="font-semibold truncate cursor-help"
                         style={{ color: 'var(--app-text-primary)' }}
+                        title={client.name}
                       >{client.name}</p>
-                      <p className="text-sm"
+                      <p className="text-sm truncate cursor-help"
                         style={{ color: 'var(--app-text-muted)' }}
+                        title={client.ip}
                       >{client.ip}</p>
                     </div>
-                    <div className="flex items-center gap-2">
-                      <div className="flex flex-col items-center gap-2">
-                        <div className="flex items-center gap-2">
-                          <span className="px-2 py-1 text-xs rounded"
-                            style={{ 
-                              backgroundColor: client.status === 'offline' ? 'var(--app-bg-tertiary)' : 'var(--app-input-bg)',
-                              color: 'var(--app-primary-light)' 
-                            }}
-                          >
-                            {client.position.charAt(0).toUpperCase() + client.position.slice(1)}
-                          </span>
-                          <span className="px-2 py-1 rounded text-xs"
-                            style={{
-                              backgroundColor: client.status === 'online' ? 'var(--app-success-bg)' : 'var(--app-bg-tertiary)',
-                              color: client.status === 'online' ? 'var(--app-success)' : 'var(--app-text-muted)'
-                            }}
-                          >
-                            {client.status}
-                          </span>
-                        </div>
-                        { client.uid && (
-                          <CopyableBadge
-                            key={client.uid}
-                            fullText={client.uid}
-                            displayText={abbreviateText(client.uid, 2, 2)}
-                            label=""
-                            titleText={`Click to copy Client UID: ${client.uid}`}
-                          />
-                        ) }
+
+                    {/* Badges Section */}
+                    <div className="flex flex-col items-end gap-2">
+                      <div className="flex items-center gap-2">
+                        <span className="px-2 py-1 text-xs rounded min-w-[64px] text-center"
+                          style={{ 
+                            backgroundColor: client.status === 'offline' ? 'var(--app-bg-tertiary)' : 'var(--app-input-bg)',
+                            color: 'var(--app-primary-light)' 
+                          }}
+                        >
+                          {client.position.charAt(0).toUpperCase() + client.position.slice(1)}
+                        </span>
+                        <span className="px-2 py-1 rounded text-xs min-w-[56px] text-center"
+                          style={{
+                            backgroundColor: client.status === 'online' ? 'var(--app-input-bg)' : 'var(--app-bg-tertiary)',
+                            color: client.status === 'online' ? 'var(--app-success)' : 'var(--app-text-muted)'
+                          }}
+                        >
+                          {client.status.charAt(0).toUpperCase() + client.status.slice(1)}
+                        </span>
                       </div>
-                      <motion.button
-                        whileHover={{ scale: 1.1 }}
-                        whileTap={{ scale: 0.9 }}
-                        onClick={() => removeClient(client.id)}
-                        className="cursor-pointer p-2 transition-colors"
-                        style={{ color: 'var(--app-danger)' }}
-                      >
-                        <Trash2 size={16} />
-                      </motion.button>
+                      { client.uid && (
+                        <CopyableBadge
+                          key={client.uid}
+                          fullText={client.uid}
+                          displayText={abbreviateText(client.uid, 4, 4)}
+                          label=""
+                          titleText={`Click to copy Client UID: ${client.uid}`}
+                          style={
+                            {
+                              width: "100%",
+                              justifyContent: "center"
+                            }
+                          }
+                        />
+                      ) }
                     </div>
+
+                    {/* Delete Button */}
+                    <motion.button
+                      whileHover={{ scale: 1.1 }}
+                      whileTap={{ scale: 0.9 }}
+                      onClick={() => removeClient(client.id)}
+                      className="cursor-pointer p-2 transition-colors"
+                      style={{ color: 'var(--app-danger)' }}
+                    >
+                      <Trash2 size={16} />
+                    </motion.button>
                   </motion.div>
                 ))}
               </ScrollArea>
@@ -747,24 +763,21 @@ export function ServerTab({ onStatusChange, state }: ServerTabProps) {
 
               <div className="space-y-3">                   
                 <div className="flex items-center justify-between">
-                  <label htmlFor="requireSSL" className="flex items-center gap-2 cursor-pointer"
+                  <label className="flex items-center gap-2"
                     style={{ color: 'var(--app-text-primary)' }}
                   >
                     <Lock size={18} />
                     <span>Require SSL</span>
                   </label>
-                  <input
-                    type="checkbox"
+                  <Switch 
                     id="requireSSL"
                     checked={requireSSL}
                     disabled={otp !== '' || otpRequested}
-                    onChange={(e) => {
+                    onCheckedChange={(checked) => {
                       if (otp !== '' || otpRequested) return;
-                      setRequireSSL(e.target.checked);
-                      handleSaveOptions(host, port, e.target.checked);
+                      setRequireSSL(checked);
+                      handleSaveOptions(host, port, checked, false);
                     }}
-                    className="w-5 h-5 cursor-pointer"
-                    style={{ accentColor: 'var(--app-primary)' }}
                   />
                 </div>
               </div>
@@ -783,7 +796,7 @@ export function ServerTab({ onStatusChange, state }: ServerTabProps) {
                       whileTap={{ scale: 0.95 }}
                       disabled={otp !== '' || otpRequested}
                       onClick={generateOtp}
-                      className="px-4 py-2 rounded-lg transition-all flex items-center gap-2"
+                      className="px-4 py-2 rounded-lg transition-all flex items-center gap-2 cursor-pointer"
                       style={{
                         backgroundColor: otp !== '' || otpRequested ? 'var(--app-bg-tertiary)' : 'var(--app-primary)',
                         color: 'white'

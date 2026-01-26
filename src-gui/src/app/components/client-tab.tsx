@@ -1,6 +1,9 @@
 import { useState, useEffect, useRef } from 'react';
 import { Settings, Wifi, Clock, Lock, Key, Shield, Server, Info } from 'lucide-react';
 import { motion, AnimatePresence } from 'motion/react';
+
+import { Switch } from  "./ui/switch";
+
 import { InlineNotification, Notification } from './ui/inline-notification';
 import { PowerButton } from './ui/power-button';
 import { ClientTabProps } from '../commons/Tab';
@@ -391,15 +394,17 @@ export function ClientTab({ onStatusChange, state }: ClientTabProps) {
     handleStopClient(); // Stop the client since server selection was cancelled
   };
 
-  const handleSaveOptions = (hostValue: string, hostnameValue: string, portValue: string, sslEnabledValue: boolean, autoReconnectValue: boolean) => {
+  const handleSaveOptions = (hostValue: string, hostnameValue: string, portValue: string, sslEnabledValue: boolean, autoReconnectValue: boolean, save_feedback: boolean = true) => {
 
-    listenCommand(EventType.CommandSuccess, CommandType.SetClientConfig, (event) => {
-      console.log(`Client config saved successfully`, event);
-      addNotification('success', 'Options Saved');
-      listeners.removeListener('save-client-config-success');
-    }).then(unlisten => {
-      listeners.addListenerOnce('save-client-config-success', unlisten);
-    });
+    if (save_feedback){
+      listenCommand(EventType.CommandSuccess, CommandType.SetClientConfig, (event) => {
+        console.log(`Client config saved successfully`, event);
+        addNotification('success', 'Options Saved');
+        listeners.removeListener('save-client-config-success');
+      }).then(unlisten => {
+        listeners.addListenerOnce('save-client-config-success', unlisten);
+      });
+    }
 
     listenCommand(EventType.CommandError, CommandType.SetClientConfig, (event) => {
       console.error(`Error saving client config: ${event.message}`);
@@ -778,24 +783,21 @@ export function ClientTab({ onStatusChange, state }: ClientTabProps) {
 
               <div className="space-y-3">                   
                 <div className="flex items-center justify-between">
-                  <label htmlFor="requireSSL" className="flex items-center gap-2 cursor-pointer"
+                  <label className="flex items-center gap-2"
                     style={{ color: 'var(--app-text-primary)' }}
                   >
                     <Lock size={18} />
                     <span>Require SSL</span>
                   </label>
-                  <input
-                    type="checkbox"
+                  <Switch
                     id="requireSSL"
                     checked={requireSSL}
                     disabled={isConnected}
-                    onChange={(e) => {
+                    onCheckedChange={(checked) => {
                       if (isConnected) return;
-                      setRequireSSL(e.target.checked);
-                      handleSaveOptions(host, hostname, port, e.target.checked, autoReconnect);
+                      setRequireSSL(checked);
+                      handleSaveOptions(host, hostname, port, checked, autoReconnect, false);
                     }}
-                    className="w-5 h-5 cursor-pointer"
-                    style={{ accentColor: 'var(--app-primary)' }}
                   />
                 </div>
               </div>
@@ -915,16 +917,12 @@ export function ClientTab({ onStatusChange, state }: ClientTabProps) {
                   >
                     <span>Start automatically</span>
                   </label>
-                  <input
-                    type="checkbox"
+                  <Switch
                     id="autoConnect"
                     checked={autoConnect}
-                    onChange={(e) => {
-                      setAutoConnect(e.target.checked);
-                      //TODO: Implement auto-connect (backend support needed)
+                    onCheckedChange={(checked) => {
+                      setAutoConnect(checked);
                     }}
-                    className="w-5 h-5 cursor-pointer"
-                    style={{ accentColor: 'var(--app-primary)' }}
                   />
                 </div>
               </div>
@@ -936,16 +934,13 @@ export function ClientTab({ onStatusChange, state }: ClientTabProps) {
                   >
                     <span>Auto-reconnect</span>
                   </label>
-                  <input
-                    type="checkbox"
+                  <Switch
                     id="autoReconnect"
                     checked={autoReconnect}
-                    onChange={(e) => {
-                      setAutoReconnect(e.target.checked);
-                      handleSaveOptions(host, hostname, port, requireSSL, e.target.checked);
+                    onCheckedChange={(checked) => {
+                      setAutoReconnect(checked);
+                      handleSaveOptions(host, hostname, port, requireSSL, checked, false);
                     }}
-                    className="w-5 h-5 cursor-pointer"
-                    style={{ accentColor: 'var(--app-primary)' }}
                   />
                 </div>
               </div>
