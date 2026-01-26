@@ -102,6 +102,10 @@ impl Decoder for EventLinesCodec {
                     let line = buf.split_to(newline_index + 1);
                     // Remove the newline character
                     let line = &line[..line.len() - 1];
+                    // Check if the line has at least 4 bytes for length prefix
+                    if line.len() < 4 {
+                        return Ok(None);
+                    }
                     // Validate the line by reading the last 4 bytes to extract the length prefix
                     let len_prefix = &line[line.len() - 4..];
 
@@ -111,6 +115,11 @@ impl Decoder for EventLinesCodec {
                     let expected_len = u32::from_be_bytes(len_prefix.try_into().unwrap()) as usize;
                     let actual_len = line.len(); // Exclude the length prefix
                     if expected_len != actual_len {
+                        // Before advance we need to check if buf has enough data
+                        if buf.len() < read_to {
+                            return Ok(None);
+                        }
+                        
                         // Discard the line if lengths do not match
                         buf.advance(read_to);
                         self.next_index = 0;
