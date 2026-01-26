@@ -1,14 +1,16 @@
 use crate::{AsyncReader, AsyncWriter};
 use std::{
-    env::{self, VarError},
+    env::{VarError},
     io,
-    path::{Path, PathBuf},
+    path::{PathBuf},
     time::Duration,
 };
 use thiserror::Error;
 
 #[cfg(unix)]
 use tokio::net::UnixStream;
+#[cfg(unix)]
+use std::{env, path::Path};
 
 #[cfg(windows)]
 use tokio::net::TcpStream;
