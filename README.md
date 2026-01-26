@@ -51,67 +51,66 @@ Actually only Windows and MacOS are supported.
 
 ## Building from Source
 
-<details>
-<summary><b>Prerequisites</b></summary>
+### Prerequisites
 
 Perpetua requires several development tools and libraries to build successfully.
 
 **Python Environment:**
-- Python 3.11 or 3.12 (Python 3.13+ not yet supported)
-- Poetry (Python dependency and package manager)
+- Python 3.11 or 3.12
+- Poetry
+
 
 **GUI Framework:**
-- Node.js 18+ and npm (JavaScript runtime and package manager)
-- Rust toolchain 1.70+ (Required for Tauri framework)
-- Cargo (Rust package manager, included with Rust)
+- Node.js 18+ and npm
+- Rust toolchain
+- Tauri-cli
 
-**Build Tool:**
-- Nuitka (Python compiler, automatically installed during build)
+**Platform-Specific Requirements:**
 
-</details>
+*macOS:*
+- Xcode Command Line Tools
+  ```bash
+  xcode-select --install
+  ```
+
+*Windows:*
+- Microsoft C++ Build Tools
+  - Install the "Desktop development with C++" workload from [Visual Studio Build Tools](https://visualstudio.microsoft.com/downloads/#build-tools-for-visual-studio-2022)
+
+> [!NOTE]
+> **Windows versions prior to Windows 10 (1803)** require [Microsoft Edge WebView2 Runtime](https://developer.microsoft.com/en-us/microsoft-edge/webview2/) to be installed manually.
+
+---
 
 ### Quick Start
 
 The project includes both a build script and Makefile for convenient building.
 
-1. **Clone the repository:**
+1. Clone the repository:
    ```bash
    git clone https://github.com/fizzi01/Perpetua.git
    cd Perpetua
    ```
 
-2. **Install Python dependencies:**
+2. Install Python dependencies:
    ```bash
    poetry install
    # or
    make install-build
    ```
 
-3. **Run the build:**
+3. Run the build:
    ```bash
    poetry run python build.py
    # or
    make build
    ```
 
-### Build Outputs
-
-After successful build, outputs are located in the `.build` directory:
-
-**macOS:**
-- Application bundle: `.build/Perpetua.app`
-- Executable: `.build/Perpetua.app/Contents/MacOS/Perpetua`
-- Bundled GUI: `.build/Perpetua.app/Contents/Resources/_perpetua`
-
-**Windows:**
-- Standalone folder: `.build/Perpetua/`
-- Executable: `.build/Perpetua/Perpetua.exe`
-- Bundled GUI: `.build/Perpetua/_perpetua.exe`
 
 <details>
 <summary><b>Advanced Build Options</b></summary>
 
-### Using Poetry
+##### Using Poetry
 
 ```bash
 # Debug build
@@ -127,7 +126,7 @@ poetry run python build.py --skip-daemon
 poetry run python build.py --clean
 ```
 
-### Using Make
+##### Using Make
 
 ```bash
 # Debug build
@@ -153,14 +152,14 @@ make clean
 
 For manual builds or troubleshooting, follow these steps:
 
-**Build GUI:**
+Build GUI:
 ```bash
 cd src-gui
 npm install
 cargo tauri build
 ```
 
-**Build Daemon:**
+Build Daemon:
 ```bash
 # From project root
 poetry run python build.py --skip-gui
