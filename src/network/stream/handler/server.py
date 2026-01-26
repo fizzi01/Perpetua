@@ -89,13 +89,13 @@ class UnidirectionalStreamHandler(_ServerStreamHandler):
             active_screen = data.active_screen
 
             # Find corresponding client
-            self._active_client = self.clients.get_client(screen_position=active_screen)
+            c = self.clients.get_client(screen_position=active_screen)
 
             # Set message exchange active client
-            if self._active_client is not None:
+            if c is not None:
                 self._clear_buffer()
                 if not await self._configure_stream_transport_for_client(
-                    client=self._active_client,
+                    client=c,
                     stream_type=self.stream_type,
                     msg_exchange=self.msg_exchange,
                     transport_id=None,
@@ -103,6 +103,9 @@ class UnidirectionalStreamHandler(_ServerStreamHandler):
                     # If send only, we disable the active client if no valid transport
                     if self._sender:
                         self._active_client = None
+                else:
+                    # Set active client only after successful transport configuration
+                    self._active_client = c
         finally:
             self._clear_buffer()
 
@@ -230,18 +233,21 @@ class BidirectionalStreamHandler(_ServerStreamHandler):
             active_screen = data.active_screen
 
             # Find corresponding client
-            self._active_client = self.clients.get_client(screen_position=active_screen)
+            c = self.clients.get_client(screen_position=active_screen)
 
             # Set message exchange active client
-            if self._active_client is not None:
+            if c is not None:
                 self._clear_buffer()
                 if not await self._configure_stream_transport_for_client(
-                    client=self._active_client,
+                    client=c,
                     stream_type=self.stream_type,
                     msg_exchange=self.msg_exchange,
                     transport_id=None,
                 ):
                     self._active_client = None
+                else:
+                    # Set active client only after successful transport configuration
+                    self._active_client = c
         finally:
             self._clear_buffer()
 
