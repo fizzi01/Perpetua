@@ -83,9 +83,9 @@ class Builder:
             if response.lower() == 'y':
                 shutil.rmtree(tauri_target)
 
-    def _build_gui(self):
+    def _build_gui(self) -> int:
         if self.skip_gui:
-            return
+            return 0
 
         self.log.info("Building GUI")
 
@@ -93,27 +93,37 @@ class Builder:
             subprocess.run(["npm", "--version"], shell=self.is_windows, check=True, capture_output=True)
         except (subprocess.CalledProcessError, FileNotFoundError):
             self.log.error("npm not found")
-            sys.exit(1)
+            return 1
 
         try:
             subprocess.run(["cargo", "--version"], shell=self.is_windows, check=True, capture_output=True)
         except (subprocess.CalledProcessError, FileNotFoundError):
             self.log.error("cargo not found")
-            sys.exit(1)
+            return 1
 
         self._run(["npm", "install"], cwd=self.gui_dir)
+
+        # Check if tauri is installed
+        try:
+            subprocess.run(["cargo", "tauri", "--version"], shell=self.is_windows, check=True, capture_output=True)
+        except (subprocess.CalledProcessError, FileNotFoundError):
+            self.log.info("Installing Tauri CLI")
+            res = self._run(["cargo", "install", "tauri-cli", "--version", "^2.0.0", "--locked"], cwd=self.gui_dir)
+            if res.returncode != 0:
+                self.log.error("Failed to install Tauri CLI")
+                return res.returncode
 
         build_cmd = ["cargo", "tauri", "build"]
         if not self.release:
             build_cmd.append("--debug")
 
-        self._run(build_cmd, cwd=self.gui_dir)
+        return self._run(build_cmd, cwd=self.gui_dir).returncode
 
         # Clean up unnecessary files
 
-    def _build_daemon(self):
+    def _build_daemon(self) -> int:
         if self.skip_daemon:
-            return
+            return 0
 
         self.log.info("Building daemon")
 
@@ -122,7 +132,10 @@ class Builder:
                          check=True, capture_output=True)
         except (subprocess.CalledProcessError, FileNotFoundError):
             self.log.info("Installing Nuitka")
-            subprocess.run([sys.executable, "-m", "pip", "install", "nuitka"], check=True)
+            res = subprocess.run([sys.executable, "-m", "pip", "install", "nuitka"], check=True)
+            if res.returncode != 0:
+                self.log.error("Failed to install Nuitka")
+                return res.returncode
 
         launcher_py = self.project_root / "launcher.py"
 
@@ -160,7 +173,22 @@ class Builder:
 
         nuitka_cmd.extend(self.nuitka_args)
         nuitka_cmd.append(str(launcher_py))
-        self._run(nuitka_cmd, cwd=self.src_dir)
+        return self._run(nuitka_cmd, cwd=self.src_dir).returncode
+
+    def _sign_bundle(self):
+        if self.is_macos:
+            self.log.info("Signing MacOS app bundle")
+            app_bundle = self.build_dir / f"{APP_NAME}.app"
+            sign_cmd = [
+                "codesign",
+                "--deep",
+                "--force",
+                "--verify",
+                "--verbose",
+                "--sign", APP_NAME,
+                str(app_bundle)
+            ]
+            self._run(sign_cmd)
 
     def _summary(self):
         build_type = 'Release' if self.release else 'Debug'
@@ -184,8 +212,11 @@ class Builder:
             if self.clean:
                 self._clean()
 
-            self._build_gui()
-            self._build_daemon()
+            if self._build_gui() != 0:
+                raise RuntimeError("GUI build failed")
+            if self._build_daemon() != 0:
+                raise RuntimeError("Daemon build failed")
+            self._sign_bundle()
             self._summary()
 
             self.log.info("Build completed")
