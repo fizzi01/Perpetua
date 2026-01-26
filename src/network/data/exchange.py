@@ -147,15 +147,15 @@ class MessageExchange:
 
         try:
             # Ricevi nuovi dati in modo non bloccante
-            async with self._lock:
-                try:
-                    new_data = await asyncio.wait_for(
-                        receive_callback(self.config.receive_buffer_size),
-                        timeout=0.1,
-                    )
-                except asyncio.TimeoutError:
-                    await asyncio.sleep(0)
-                    return
+            # async with self._lock:
+            try:
+                new_data = await asyncio.wait_for(
+                    receive_callback(self.config.receive_buffer_size),
+                    timeout=0.1,
+                )
+            except asyncio.TimeoutError:
+                await asyncio.sleep(0)
+                return
 
             if not new_data:
                 await asyncio.sleep(0)  # Breve pausa per evitare busy waiting
@@ -315,7 +315,8 @@ class MessageExchange:
 
         while self._running:
             await asyncio.sleep(0)
-            for tr_id, receive_callback in self._receive_callbacks.items():
+            callbacks_snapshot = list(self._receive_callbacks.items())
+            for tr_id, receive_callback in callbacks_snapshot:
                 # We need to execute one by one
                 # to avoid concurrency issues on the buffer
                 await asyncio.create_task(
@@ -535,7 +536,8 @@ class MessageExchange:
         Handles automatic chunking if enabled.
         """
         # Cycle through all send callbacks
-        for tr_id, send_callback in self._send_callbacks.items():  # Round-robin
+        callback_snapshot = list(self._send_callbacks.items())
+        for tr_id, send_callback in callback_snapshot:  # Round-robin
             if not send_callback:
                 raise MissingTransportError(
                     "Transport layer not configured. Call set_transport() first."
