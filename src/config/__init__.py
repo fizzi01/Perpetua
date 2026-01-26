@@ -588,10 +588,7 @@ class ClientConfig:
         self.server_info.ssl = False
 
     # Logging Configuration
-    def set_logging(
-        self,
-        level: Optional[int] = None
-    ) -> None:
+    def set_logging(self, level: Optional[int] = None) -> None:
         """Configure logging settings"""
         if level is not None:
             self.log_level = level
