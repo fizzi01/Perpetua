@@ -374,10 +374,17 @@ class ConnectionHandler(BaseConnectionHandler):
             ):
                 # Precheck client
                 tmp_host_name = response.source  # Client will provide its hostname
+                tmp_uid = response.payload.get("client_name", None)
 
                 if tmp_host_name is not None and client is None:
                     # Get client obj by hostname if not found by IP
                     client = self.clients.get_client(hostname=tmp_host_name)
+                    if client:
+                        client.ip_address = (
+                            client_addr  # Update IP address based on connection
+                        )
+                elif tmp_uid is not None and client is None: # Fallback to UID
+                    client = self.clients.get_client(uid=tmp_uid)
                     if client:
                         client.ip_address = (
                             client_addr  # Update IP address based on connection

@@ -303,6 +303,7 @@ class ClientsManager:
         ip_address: Optional[str] = None,
         hostname: Optional[str] = None,
         screen_position: Optional[str] = None,
+        uid: Optional[str] = None,
     ) -> Optional["ClientObj"]:
         """
         Returns a specific client from the list of available clients based on the given criteria.
@@ -338,6 +339,9 @@ class ClientsManager:
                     return client
             elif screen_position:
                 if client.screen_position == screen_position:
+                    return client
+            elif uid:
+                if client.uid == uid:
                     return client
             # else:
             #     raise ValueError("Either ip_address or screen_position must be provided to get a client.")
