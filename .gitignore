@@ -150,7 +150,8 @@ OLD/
 _test_config/
 
 # Poetry
-poetry.lock
+**/*.lock
+**/package-lock.json
 
 .DS_Store
 logo/**
