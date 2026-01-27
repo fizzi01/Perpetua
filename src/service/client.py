@@ -752,15 +752,12 @@ class Client:
     async def _is_server_available(self) -> bool:
         """Check if server is configured in client config"""
         if (
-            (
-                self.config.get_server_host() != ""
-                or (
-                    self.config.get_server_hostname() is not None
-                    and self.config.get_server_hostname() != ""
-                )
+            self.config.get_server_host() != ""
+            or (
+                self.config.get_server_hostname() is not None
+                and self.config.get_server_hostname() != ""
             )
-            and self.config.get_server_port() != 0
-        ):
+        ) and self.config.get_server_port() != 0:
             # Try to establish a TCP connection to verify server is reachable
             host = (
                 self.config.get_server_host()

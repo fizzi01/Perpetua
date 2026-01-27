@@ -24,12 +24,12 @@ class ServerMouseListener(_base.ServerMouseListener):
             # msg = 519/520 -> middle down/up
             # msg = 522/523 -> scroll
             if msg in (513, 514, 516, 517, 519, 520, 522, 523):
-                self._listener._suppress = True  #ty: ignore
+                self._listener._suppress = True  # ty: ignore
                 return False
             else:
-                self._listener._suppress = False  #ty: ignore
+                self._listener._suppress = False  # ty: ignore
         else:
-            self._listener._suppress = False  #ty: ignore
+            self._listener._suppress = False  # ty: ignore
 
         return True
 

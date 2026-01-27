@@ -154,7 +154,7 @@ class Server:
         # Metrics and performance monitoring
         # self._metrics_collector = MetricsCollector()
         # self._performance_monitor = PerformanceMonitor(self._metrics_collector)
-        self._metrics_collector =  None
+        self._metrics_collector = None
         self._performance_monitor = PerformanceMonitor(self._metrics_collector)
 
         # mDNS

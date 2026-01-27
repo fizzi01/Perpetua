@@ -244,7 +244,9 @@ class PerformanceMonitor:
         interval (float): Time interval in seconds between metric collection cycles.
     """
 
-    def __init__(self, collector: Optional[MetricsCollector] = None, interval: float = 10.0):
+    def __init__(
+        self, collector: Optional[MetricsCollector] = None, interval: float = 10.0
+    ):
         self.collector = collector
         self.interval = interval
         self._task: Optional[asyncio.Task] = None

@@ -394,7 +394,9 @@ class Daemon:
 
             self._running = True
             self._logger.info(f"Daemon started, listening on {self.socket_path}")
-            self._logger.info(f"Platform: {'Windows (TCP Socket)' if IS_WINDOWS else 'Unix (Socket)'}")
+            self._logger.info(
+                f"Platform: {'Windows (TCP Socket)' if IS_WINDOWS else 'Unix (Socket)'}"
+            )
             return True
 
         except (DaemonAlreadyRunningException, DaemonPortOccupiedException):

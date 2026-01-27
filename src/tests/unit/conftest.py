@@ -426,7 +426,7 @@ async def daemon_instance(app_config, daemon_unix_socket_path):
     import sys
 
     # Choose socket path based on platform
-    if sys.platform in ("win32", "cygwin", "cli"):
+    if sys.platform in ("win32", "cygwin"):
         socket_path = "127.0.0.1:55600"
     else:
         socket_path = daemon_unix_socket_path
@@ -499,7 +499,7 @@ async def daemon_client_connection(running_daemon):
     import sys
 
     # Connect based on platform
-    if sys.platform in ("win32", "cygwin", "cli"):
+    if sys.platform in ("win32", "cygwin"):
         host, port = running_daemon.socket_path.split(":")
         reader, writer = await asyncio.open_connection(host, int(port))
     else:

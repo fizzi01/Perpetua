@@ -929,7 +929,7 @@ class TestPlatformSpecific:
 
     def test_is_windows_constant(self):
         """Test IS_WINDOWS constant matches platform."""
-        expected = sys.platform in ("win32", "cygwin", "cli")
+        expected = sys.platform in ("win32", "cygwin")
         assert IS_WINDOWS == expected
 
     def test_default_socket_path_platform_specific(self):
