@@ -417,7 +417,7 @@ def daemon_tcp_address():
 
 
 @pytest.fixture
-async def daemon_instance(app_config, daemon_unix_socket_path):
+def daemon_instance(app_config, daemon_unix_socket_path):
     """
     Provide a Daemon instance for testing.
     Automatically uses Unix socket on Unix systems, TCP on Windows.
