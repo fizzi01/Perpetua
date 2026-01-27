@@ -1,5 +1,5 @@
 import { useState, useEffect, useRef } from 'react';
-import { Settings, Wifi, Clock, Lock, Key, Shield, Info, User } from 'lucide-react';
+import { Settings, Wifi, Clock, Lock, Shield, Info, User } from 'lucide-react';
 import { motion, AnimatePresence } from 'motion/react';
 
 import { Switch } from  "./ui/switch";
@@ -16,6 +16,7 @@ import { parseStreams, isValidIpAddress } from '../api/Utility'
 import { PermissionsPanel } from './ui/permissions-panel';
 import { abbreviateText, CopyableBadge } from './ui/copyable-badge';
 import { ServerSelectionPanel } from './ui/server-selection-panel';
+import { OtpInputPanel } from './ui/otp-input-panel';
 
 export function ClientTab({ onStatusChange, state }: ClientTabProps) {
   let previousState = useRef<ClientStatus | null>(null);
@@ -26,10 +27,15 @@ export function ClientTab({ onStatusChange, state }: ClientTabProps) {
   const [isConnected, setIsConnected] = useState(state.connected);
   const [showSecurity, setShowSecurity] = useState(false);
   const [showOptions, setShowOptions] = useState(false);
-  const [showOtpInput, setShowOtpInput] = useState(false);
-  const [showServerChoice, setShowServerChoice] = useState(false);
-  const [availableServers, setAvailableServers] = useState<ServerFound[] | null>(null);
-  const [currentConnection, setCurrentConnection] = useState<ClientConnectionInfo | null>(null);
+  const [showOtpInput, setShowOtpInput] = useState(state.otp_needed);
+  const [showServerChoice, setShowServerChoice] = useState(state.service_choice_needed);
+  const [availableServers, setAvailableServers] = useState<ServerFound[] | null>(() => {
+    if (state.service_choice_needed && state.available_servers) {
+      return state.available_servers;
+    }
+    return null;
+  });
+  const [currentConnection, setCurrentConnection] = useState<ClientConnectionInfo | null>(state.server_info);
   const [autoConnect, setAutoConnect] = useState(false);
   const [autoReconnect, setAutoReconnect] = useState(state.server_info.auto_reconnect);
   const [enableMouse, setEnableMouse] = useState(parseStreams(state.streams_enabled).includes(StreamType.Mouse));
@@ -39,7 +45,6 @@ export function ClientTab({ onStatusChange, state }: ClientTabProps) {
   const [hostname, setHostname] = useState(state.server_info.hostname || '');
   const [host, setHost] = useState(state.server_info.host || state.server_info.hostname || '');
   const [port, setPort] = useState(state.server_info.port ? state.server_info.port.toString() : '8080');
-  const [otpInput, setOtpInput] = useState('');
   const [connectionTime, setConnectionTime] = useState(() => {
     if (state.start_time) {
       let startDate = new Date(state.start_time);
@@ -121,7 +126,7 @@ export function ClientTab({ onStatusChange, state }: ClientTabProps) {
     onStatusChange(state.running);
     setIsRunning(state.running);
     setIsConnected(state.connected);
-    setShowOtpInput(state.otp_needed);
+  
     setCurrentConnection(state.server_info);
     setClientHostname(state.client_hostname || '');
 
@@ -131,6 +136,8 @@ export function ClientTab({ onStatusChange, state }: ClientTabProps) {
     setAutoReconnect(state.server_info.auto_reconnect);
     setRequireSSL(state.ssl_enabled);
     setShowServerChoice(state.service_choice_needed);
+    setShowOtpInput(state.otp_needed);
+    
     if (state.service_choice_needed && state.available_servers) {
       setAvailableServers(state.available_servers);
     }
@@ -173,7 +180,6 @@ export function ClientTab({ onStatusChange, state }: ClientTabProps) {
         // setDataUsage(0);
         setControlStatus('none'); //TODO: Implement in backend
         setShowOtpInput(false);
-        setOtpInput('');
         addNotification('warning', 'Disconnected');
       }).then((unlisten) => {
         listeners.addListenerOnce('client-disconnected', unlisten);
@@ -233,7 +239,6 @@ export function ClientTab({ onStatusChange, state }: ClientTabProps) {
       setConnectionTime(0);
       // setDataUsage(0);
       setShowOtpInput(false);
-      setOtpInput('');
       setAvailableServers(null);
       setShowServerChoice(false);
       setControlStatus('none');
@@ -300,7 +305,6 @@ export function ClientTab({ onStatusChange, state }: ClientTabProps) {
         onStatusChange(false);
 
         setShowOtpInput(false);
-        setOtpInput('');
         setShowServerChoice(false);
         setAvailableServers(null);
 
@@ -328,11 +332,10 @@ export function ClientTab({ onStatusChange, state }: ClientTabProps) {
     }
   };
 
-  const handleOtpSubmit = () => {
+  const handleOtpSubmit = (otp: string) => {
     listenCommand(EventType.CommandSuccess, CommandType.SetOtp, (event) => {
       console.log(`OTP accepted`, event);
       setShowOtpInput(false);
-      setOtpInput('');
       addNotification('success', 'OTP Accepted');
 
       listeners.removeListener('otp-success');
@@ -345,7 +348,6 @@ export function ClientTab({ onStatusChange, state }: ClientTabProps) {
       console.error(`OTP rejected`, event);
       addNotification('error', 'OTP Rejected', event.data?.error || 'Unknown error');
       setShowOtpInput(false);
-      setOtpInput('');
       listeners.removeListener('otp-error');
       listeners.removeListener('otp-success');
       handleStopClient(); // Stop the client since OTP failed
@@ -353,11 +355,17 @@ export function ClientTab({ onStatusChange, state }: ClientTabProps) {
       listeners.addListenerOnce('otp-error', unlisten);
     });
 
-    setOtp(otpInput)
+    setOtp(otp)
     .catch((err) => {
       console.error('Error sending OTP:', err);
       addNotification('error', 'OTP Submission Failed', err.message || 'Unknown error');
     });
+  };
+
+  const handleCancelOtp = () => {
+    setShowOtpInput(false);
+    addNotification('info', 'Authentication Cancelled', 'OTP input was cancelled');
+    handleStopClient(); // Stop the client since OTP was cancelled
   };
 
   const handleServerSelect = (serverUid: string) => {
@@ -471,58 +479,11 @@ export function ClientTab({ onStatusChange, state }: ClientTabProps) {
       <InlineNotification notifications={notifications} />
 
       {/* OTP Input */}
-      <AnimatePresence>
-        {showOtpInput && !isConnected && (
-          <motion.div
-            initial={{ opacity: 0, height: 0 }}
-            animate={{ opacity: 1, height: 'auto' }}
-            exit={{ opacity: 0, height: 0 }}
-            transition={{ duration: 0.3 }}
-            className="overflow-hidden"
-          >
-            <div className="space-y-3 p-4 rounded-lg border"
-              style={{ 
-                backgroundColor: 'var(--app-card-bg)',
-                borderColor: 'var(--app-card-border)'
-              }}
-            >
-              <h3 className="font-semibold flex items-center gap-2"
-                style={{ color: 'var(--app-text-primary)' }}
-              >
-                <Key size={18} />
-                Enter OTP Code
-              </h3>
-              <input
-                type="text"
-                placeholder="000000"
-                maxLength={6}
-                value={otpInput}
-                onChange={(e) => setOtpInput(e.target.value.replace(/\D/g, ''))}
-                className="w-full p-3 rounded-lg focus:outline-none text-center text-2xl font-bold tracking-widest"
-                style={{
-                  backgroundColor: 'var(--app-input-bg)',
-                  border: '2px solid var(--app-input-border)',
-                  color: 'var(--app-text-primary)'
-                }}
-                onFocus={(e) => e.currentTarget.style.borderColor = 'var(--app-primary)'}
-                onBlur={(e) => e.currentTarget.style.borderColor = 'var(--app-input-border)'}
-              />
-              <motion.button
-                whileHover={{ scale: 1.02 }}
-                whileTap={{ scale: 0.98 }}
-                onClick={handleOtpSubmit}
-                className="cursor-pointer w-full p-3 rounded-lg transition-all"
-                style={{
-                  backgroundColor: 'var(--app-primary)',
-                  color: 'white'
-                }}
-              >
-                Connect
-              </motion.button>
-            </div>
-          </motion.div>
-        )}
-      </AnimatePresence>
+      <OtpInputPanel
+        isVisible={showOtpInput}
+        onSubmit={handleOtpSubmit}
+        onCancel={handleCancelOtp}
+      />
 
       <ServerSelectionPanel
         serverChoice={availableServers}
