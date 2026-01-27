@@ -151,7 +151,7 @@ class Launcher:
                 daemon_cmd.append(arg)
 
         try:
-            if COMPILED:
+            if COMPILED and not "--log-terminal" in sys.argv:
                 subprocess.Popen(
                     daemon_cmd,
                     stdout=subprocess.DEVNULL,
