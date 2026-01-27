@@ -1167,7 +1167,7 @@ class Daemon:
                 "running": self._client.is_running(),
                 "connected": self._client.is_connected(),
                 "start_time": self._state["client"].get_timestamp(),
-                "otp_nededed": await self._client.otp_needed(),
+                "otp_needed": await self._client.otp_needed(),
                 "service_choice_needed": await self._client.server_choice_needed(),
             }
 
