@@ -53,9 +53,11 @@ export function ServerTab({ onStatusChange, state }: ServerTabProps) {
   const [otp, setOtp] = useState('');
   const [otpRequested, setOtpRequested] = useState(false);
   const [otpTimeout, setOtpTimeout] = useState(30);
-  const [newClientIp, setNewClientIp] = useState('');
   const [firstInit, setFirstInit] = useState(true);
+  const [newClientIp, setNewClientIp] = useState('');
   const [newClientPosition, setNewClientPosition] = useState<'top' | 'bottom' | 'left' | 'right'>('top');
+  const [isAddingClient, setIsAddingClient] = useState(false);
+
   const [uptime, setUptime] = useState(() => {
     if (state.start_time) {
       let startDate = new Date(state.start_time);
@@ -320,6 +322,15 @@ export function ServerTab({ onStatusChange, state }: ServerTabProps) {
   };
 
   const addClient = () => {
+    if (isAddingClient) {
+      return;
+    }
+
+    if (firstInit) {
+      addNotification('info', "Choose a position for the new client");
+      return;
+    }
+
     if (!newClientIp || !newClientPosition) {
       addNotification('error', 'Missing information');
       return;
@@ -335,6 +346,8 @@ export function ServerTab({ onStatusChange, state }: ServerTabProps) {
       return;
     }
 
+    setIsAddingClient(true)
+
     listenCommand(EventType.CommandSuccess, CommandType.AddClient, (event) => {
       console.log(`Client added successfully: ${event.message}`);
       let result = event.data?.result as ClientEditObj;
@@ -342,27 +355,32 @@ export function ServerTab({ onStatusChange, state }: ServerTabProps) {
         addNotification('info', 'Client added', `${hostname || ip} (${newClientPosition.toUpperCase()})`);
         setNewClientIp('');
         setNewClientPosition('top');
+        setFirstInit(true);
 
         clientManager.addClient(hostname, ip, newClientPosition);
 
         listeners.removeListener('add-client');
         listeners.removeListener('add-client-error');
       }
+      setIsAddingClient(false);
     }).then(unlisten => {
-        listeners.addListener('add-client', unlisten);
+        listeners.addListenerOnce('add-client', unlisten);
     });
 
     listenCommand(EventType.CommandError, CommandType.AddClient, (event) => {
       addNotification('error', 'Failed to add client', event.data?.error || '');
+      setIsAddingClient(false);
+      setFirstInit(true);
       listeners.removeListener('add-client-error');
       listeners.removeListener('add-client');
     }).then(unlisten => {
-        listeners.addListener('add-client-error', unlisten);
+        listeners.addListenerOnce('add-client-error', unlisten);
     });
     
     addClientCommand(hostname, ip, newClientPosition).catch((err) => {
       console.error('Error adding client:', err);
       addNotification('error', err.toString());
+      setIsAddingClient(false);
       listeners.forceRemoveListener('add-client');
       listeners.forceRemoveListener('add-client-error');
     });
@@ -647,10 +665,13 @@ export function ServerTab({ onStatusChange, state }: ServerTabProps) {
                   whileHover={{ scale: 1.02 }}
                   whileTap={{ scale: 0.98 }}
                   onClick={addClient}
+                  disabled={isAddingClient}
                   className="cursor-pointer w-full p-3 rounded-lg transition-all flex items-center justify-center gap-2"
                   style={{
-                    backgroundColor: 'var(--app-primary)',
-                    color: 'white'
+                    backgroundColor: isAddingClient ? 'var(--app-bg-tertiary)' : 'var(--app-primary)',
+                    color: 'white',
+                    opacity: isAddingClient ? 0.6 : 1,
+                    cursor: isAddingClient ? 'not-allowed' : 'pointer'
                   }}
                 >
                   <Plus size={20} />
