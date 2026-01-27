@@ -912,7 +912,7 @@ export function ClientTab({ onStatusChange, state }: ClientTabProps) {
 
               <div className="space-y-3">
                 <div className="flex items-center justify-between">
-                  <label className="flex items-center gap-2 cursor-pointer"
+                  <label className="flex items-center gap-2"
                     style={{ color: 'var(--app-text-primary)' }}
                   >
                     <span>Start automatically</span>
@@ -929,7 +929,7 @@ export function ClientTab({ onStatusChange, state }: ClientTabProps) {
 
               <div className="space-y-3">
                 <div className="flex items-center justify-between">
-                  <label className="flex items-center gap-2 cursor-pointer"
+                  <label className="flex items-center gap-2"
                     style={{ color: 'var(--app-text-primary)' }}
                   >
                     <span>Auto-reconnect</span>

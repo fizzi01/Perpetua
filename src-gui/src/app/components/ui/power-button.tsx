@@ -68,7 +68,7 @@ export function PowerButton({
             backgroundColor: isActive ? 'var(--app-success)' : 'var(--app-bg-tertiary)',
             color: 'white',
             opacity: isPending || isConnecting ? 0.7 : 1,
-            cursor: isPending || isConnecting ? 'not-allowed' : 'pointer',
+            cursor: isPending || isConnecting ? '' : 'pointer',
           }}
         >
           {/* Pending/Connecting Animation */}
@@ -171,7 +171,7 @@ export function PowerButton({
                 transition: { duration: 0.1 }
               }}
               onClick={onForceStop}
-              className="absolute w-9 h-9 rounded-full flex items-center justify-center z-20 border-2"
+              className="cursor-pointer absolute w-9 h-9 rounded-full flex items-center justify-center z-20 border-2"
               style={{
                 backgroundColor: 'var(--app-danger)',
                 borderWidth: '0px',
