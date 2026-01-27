@@ -105,6 +105,19 @@ export default function App() {
 
   }, [mode]);
 
+  // Periodically fetch status to avoid desync
+  useEffect(() => {
+    const interval = setInterval(() => {
+      console.log('Fetching status periodically');
+      setupStatusListener();
+      getStatus().catch((err) => {
+        console.error('Error fetching status:', err);
+      });
+    }, 2000); // 2 seconds
+
+    return () => clearInterval(interval);
+  }, []);
+
   function changeMode(newMode: 'client' | 'server', force: boolean = false) {
     console.log(`Changing mode to ${newMode} (force: ${force}, previous: ${mode})`);
     if (newMode === mode && !force) return;
