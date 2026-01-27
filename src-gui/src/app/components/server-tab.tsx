@@ -813,12 +813,13 @@ export function ServerTab({ onStatusChange, state }: ServerTabProps) {
                   <div className="flex items-center justify-between">
                     <span style={{ color: 'var(--app-text-primary)' }}>One-Time Password</span>
                     <motion.button
-                      whileHover={otp !== '' || otpRequested ? { scale: 1.05 } : undefined}
+                      whileHover={otp !== '' || otpRequested ? undefined : { scale: 1.05 }}
                       whileTap={{ scale: 0.95 }}
                       disabled={otp !== '' || otpRequested}
                       onClick={generateOtp}
-                      className="px-4 py-2 rounded-lg transition-all flex items-center gap-2 cursor-pointer"
+                      className="px-4 py-2 rounded-lg transition-all flex items-center gap-2"
                       style={{
+                        cursor: otp !== '' || otpRequested ? '' : 'pointer',
                         backgroundColor: otp !== '' || otpRequested ? 'var(--app-bg-tertiary)' : 'var(--app-primary)',
                         color: 'white'
                       }}
