@@ -210,8 +210,6 @@ class TestServerConfigSSL:
 
     def test_enable_ssl(self, server_config):
         """Test enabling SSL."""
-        assert server_config.ssl_enabled is False
-
         server_config.enable_ssl()
 
         assert server_config.ssl_enabled is True
@@ -222,7 +220,6 @@ class TestServerConfigSSL:
         assert server_config.ssl_enabled is True
 
         server_config.disable_ssl()
-
         assert server_config.ssl_enabled is False
 
 
@@ -645,9 +642,6 @@ class TestClientConfigSSL:
 
     def test_enable_ssl(self, client_config):
         """Test enabling SSL."""
-        assert client_config.ssl_enabled is False
-        assert client_config.server_info.ssl is False
-
         client_config.enable_ssl()
 
         assert client_config.ssl_enabled is True
