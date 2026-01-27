@@ -21,7 +21,9 @@ from event.notification import (
     ConfigSavedEvent,
     StreamEnabledEvent,
     StreamDisabledEvent,
-    ServerChoiceNeededEvent, ConnectionErrorEvent, ServiceErrorEvent,
+    ServerChoiceNeededEvent,
+    ConnectionErrorEvent,
+    ServiceErrorEvent,
 )
 from event import EventType, ClientStreamReconnectedEvent
 from network.connection.client import ConnectionHandler
@@ -749,7 +751,7 @@ class Client:
 
     async def _is_server_available(self) -> bool:
         """Check if server is configured in client config"""
-        if self.config.get_server_uid() != "" and (
+        if (
             (
                 self.config.get_server_host() != ""
                 or (
