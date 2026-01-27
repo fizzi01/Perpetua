@@ -62,7 +62,7 @@ class TestStructLoggerInitialization:
 
     def test_initialization_with_level(self):
         """Test logger initialization with specific level"""
-        logger = StructLogger(level=BaseLogger.ERROR, is_root=True)
+        StructLogger(level=BaseLogger.ERROR, is_root=True)
 
         assert StructLogger._global_config["level"] == logging.ERROR
         assert StructLogger._logger_levels.get("main_app") == logging.ERROR
@@ -76,10 +76,8 @@ class TestStructLoggerInitialization:
 
     def test_singleton_configuration(self):
         """Test that configuration is applied only once"""
-        logger1 = StructLogger(
-            name="logger1", verbose=True, level=BaseLogger.DEBUG, is_root=True
-        )
-        logger2 = StructLogger(
+        StructLogger(name="logger1", verbose=True, level=BaseLogger.DEBUG, is_root=True)
+        StructLogger(
             name="logger2", verbose=False, level=BaseLogger.ERROR, is_root=True
         )
 
@@ -91,8 +89,8 @@ class TestStructLoggerInitialization:
 
     def test_root_logger_reconfiguration(self):
         """Test that root logger can reconfigure"""
-        logger1 = StructLogger(name="logger1", verbose=True)
-        logger2 = StructLogger(name="logger2", verbose=False, is_root=True)
+        StructLogger(name="logger1", verbose=True)
+        StructLogger(name="logger2", verbose=False, is_root=True)
 
         # Root logger should update global config
         assert StructLogger._global_config["verbose"] is False
@@ -119,8 +117,8 @@ class TestStructLoggerLevels:
 
     def test_multiple_loggers_different_levels(self):
         """Test multiple loggers with different levels"""
-        logger1 = StructLogger(name="logger1", level=BaseLogger.DEBUG, is_root=True)
-        logger2 = StructLogger(name="logger2", level=BaseLogger.ERROR, is_root=True)
+        StructLogger(name="logger1", level=BaseLogger.DEBUG, is_root=True)
+        StructLogger(name="logger2", level=BaseLogger.ERROR, is_root=True)
 
         assert StructLogger._logger_levels["logger1"] == logging.DEBUG
         assert StructLogger._logger_levels["logger2"] == logging.ERROR
@@ -468,15 +466,11 @@ class TestStructLoggerPerLoggerLevels:
     def test_independent_logger_levels(self):
         """Test that different loggers can have independent levels"""
         # Create root logger with INFO level
-        root_logger = StructLogger(name="root", level=BaseLogger.INFO, is_root=True)
+        StructLogger(name="root", level=BaseLogger.INFO, is_root=True)
 
         # Create child loggers with different levels
-        debug_logger = StructLogger(
-            name="module.debug", level=BaseLogger.DEBUG, is_root=True
-        )
-        error_logger = StructLogger(
-            name="module.error", level=BaseLogger.ERROR, is_root=True
-        )
+        StructLogger(name="module.debug", level=BaseLogger.DEBUG, is_root=True)
+        StructLogger(name="module.error", level=BaseLogger.ERROR, is_root=True)
 
         # Verify each logger has its own level
         assert StructLogger._logger_levels["root"] == logging.INFO

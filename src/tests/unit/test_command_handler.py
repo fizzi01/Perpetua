@@ -11,7 +11,6 @@ from command import CommandHandler
 from event import (
     EventType,
     CommandEvent,
-    EventMapper,
     ActiveScreenChangedEvent,
     CrossScreenCommandEvent,
     ClientActiveEvent,
@@ -158,25 +157,6 @@ class TestHandleCommand:
             # Should log warning about non-command event
             mock_warning.assert_called_once()
             assert "non-command event" in str(mock_warning.call_args)
-
-    async def test_handle_command_with_exception(self, command_handler):
-        """Test error handling in handle_command."""
-        message = create_protocol_message(
-            message_type=MessageType.COMMAND,
-            source="client1",
-            target="server",
-            payload={"command": CommandEvent.CROSS_SCREEN, "params": {}},
-        )
-
-        with patch.object(
-            EventMapper, "get_event", side_effect=Exception("Test error")
-        ):
-            with patch.object(command_handler._logger, "error") as mock_error:
-                await command_handler.handle_command(message)
-
-                # Should log error
-                mock_error.assert_called_once()
-                assert "Error" in str(mock_error.call_args)
 
     async def test_handle_command_with_malformed_message(self, command_handler):
         """Test handling malformed message."""

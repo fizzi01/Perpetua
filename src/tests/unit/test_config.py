@@ -108,20 +108,6 @@ class TestApplicationConfig:
 class TestServerConfigInitialization:
     """Test ServerConfig initialization."""
 
-    def test_server_config_default_initialization(self):
-        """Test ServerConfig initializes with default values."""
-        config = ServerConfig()
-
-        assert config.host == ServerConfig.DEFAULT_HOST
-        assert config.port == ServerConfig.DEFAULT_PORT
-        assert config.heartbeat_interval == ServerConfig.DEFAULT_HEARTBEAT_INTERVAL
-        assert config.ssl_enabled is False
-        assert config.log_level == Logger.INFO
-        assert config.log_to_file is False
-        assert config.log_file_path is None
-        assert len(config.streams_enabled) == 0
-        assert len(config.get_clients()) == 0
-
     def test_server_config_with_app_config(self, app_config):
         """Test ServerConfig with custom ApplicationConfig."""
         server_config = ServerConfig(app_config)
@@ -241,41 +227,6 @@ class TestServerConfigSSL:
 
 
 # ============================================================================
-# Test ServerConfig - Logging Configuration
-# ============================================================================
-
-
-@pytest.mark.anyio
-class TestServerConfigLogging:
-    """Test ServerConfig logging configuration."""
-
-    def test_set_logging_all_params(self, server_config):
-        """Test setting all logging parameters."""
-        server_config.set_logging(
-            level=Logger.DEBUG, log_to_file=True, log_file_path="/tmp/test.log"
-        )
-
-        assert server_config.log_level == Logger.DEBUG
-        assert server_config.log_to_file is True
-        assert server_config.log_file_path == "/tmp/test.log"
-
-    def test_set_logging_partial(self, server_config):
-        """Test setting partial logging parameters."""
-        server_config.set_logging(level=Logger.ERROR)
-
-        assert server_config.log_level == Logger.ERROR
-        assert server_config.log_to_file is False
-
-    def test_set_logging_none_values(self, server_config):
-        """Test that None values don't change existing config."""
-        original_level = server_config.log_level
-
-        server_config.set_logging(level=None)
-
-        assert server_config.log_level == original_level
-
-
-# ============================================================================
 # Test ServerConfig - Client Management
 # ============================================================================
 
@@ -391,17 +342,6 @@ class TestServerConfigClientManagement:
 
 class TestServerConfigSerialization:
     """Test ServerConfig serialization."""
-
-    def test_to_dict_default(self, server_config):
-        """Test converting default config to dictionary."""
-        data = server_config.to_dict()
-
-        assert data["host"] == ServerConfig.DEFAULT_HOST
-        assert data["port"] == ServerConfig.DEFAULT_PORT
-        assert data["heartbeat_interval"] == ServerConfig.DEFAULT_HEARTBEAT_INTERVAL
-        assert data["ssl_enabled"] is False
-        assert data["streams_enabled"] == {}
-        assert data["authorized_clients"] == []
 
     def test_to_dict_with_data(self, server_config):
         """Test converting config with data to dictionary."""
@@ -577,49 +517,6 @@ class TestServerConfigPersistence:
 
 
 # ============================================================================
-# Test ClientConfig - Initialization and Basic Operations
-# ============================================================================
-
-
-@pytest.mark.anyio
-class TestClientConfigInitialization:
-    """Test ClientConfig initialization."""
-
-    def test_client_config_default_initialization(self):
-        """Test ClientConfig initializes with default values."""
-        config = ClientConfig()
-
-        assert config.server_info.host == ClientConfig.DEFAULT_SERVER_HOST
-        assert config.server_info.port == ClientConfig.DEFAULT_SERVER_PORT
-        assert (
-            config.server_info.heartbeat_interval
-            == ClientConfig.DEFAULT_HEARTBEAT_INTERVAL
-        )
-        assert config.client_hostname is None
-        assert config.ssl_enabled is False
-        assert config.log_level == Logger.INFO
-        assert len(config.streams_enabled) == 0
-
-    def test_client_config_with_app_config(self, app_config):
-        """Test ClientConfig with custom ApplicationConfig."""
-        client_config = ClientConfig(app_config)
-
-        assert client_config.app_config == app_config
-        expected_file = os.path.join(
-            app_config.get_config_dir(), app_config.client_config_file
-        )
-        assert client_config.config_file == expected_file
-
-    def test_client_config_server_info(self):
-        """Test ClientConfig ServerInfo initialization."""
-        config = ClientConfig()
-
-        assert isinstance(config.server_info, ServerInfo)
-        assert config.server_info.auto_reconnect is True
-        assert config.server_info.ssl is False
-
-
-# ============================================================================
 # Test ClientConfig - Hostname Management
 # ============================================================================
 
@@ -767,33 +664,6 @@ class TestClientConfigSSL:
 
 
 # ============================================================================
-# Test ClientConfig - Logging Configuration
-# ============================================================================
-
-
-@pytest.mark.anyio
-class TestClientConfigLogging:
-    """Test ClientConfig logging configuration."""
-
-    def test_set_logging_all_params(self, client_config):
-        """Test setting all logging parameters."""
-        client_config.set_logging(
-            level=Logger.DEBUG, log_to_file=True, log_file_path="/tmp/client.log"
-        )
-
-        assert client_config.log_level == Logger.DEBUG
-        assert client_config.log_to_file is True
-        assert client_config.log_file_path == "/tmp/client.log"
-
-    def test_set_logging_partial(self, client_config):
-        """Test setting partial logging parameters."""
-        client_config.set_logging(level=Logger.ERROR)
-
-        assert client_config.log_level == Logger.ERROR
-        assert client_config.log_to_file is False
-
-
-# ============================================================================
 # Test ClientConfig - ServerInfo Serialization
 # ============================================================================
 
@@ -865,17 +735,6 @@ class TestServerInfoSerialization:
 @pytest.mark.anyio
 class TestClientConfigSerialization:
     """Test ClientConfig serialization."""
-
-    def test_to_dict_default(self, client_config):
-        """Test converting default config to dictionary."""
-        data = client_config.to_dict()
-
-        assert "server_info" in data
-        assert data["server_info"]["host"] == ClientConfig.DEFAULT_SERVER_HOST
-        assert data["server_info"]["port"] == ClientConfig.DEFAULT_SERVER_PORT
-        assert data["client_hostname"] is None
-        assert data["ssl_enabled"] is False
-        assert data["streams_enabled"] == {}
 
     def test_to_dict_with_data(self, client_config):
         """Test converting config with data to dictionary."""

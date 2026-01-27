@@ -54,7 +54,7 @@ class ApplicationConfig:
     DEFAULT_DAEMON_PORT: int = DEFAULT_PORT - 3
 
     DEFAULT_UNIX_SOCK_NAME: str = f"{service_name.lower()}_daemon.sock"
-    DEFAULT_LOG_FILE: str | None = f"daemon.log"
+    DEFAULT_LOG_FILE: str | None = "daemon.log"
 
     config_files: dict = field(default_factory=dict)
 

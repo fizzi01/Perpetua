@@ -35,6 +35,7 @@ class CursorHandlerWindow(wx.Frame):
     Base class for cursor handling window.
     Derived classes must implement platform-specific methods.
     """
+
     WINDOW_SIZE: Size = Size(400, 400)
     BORDER_OFFSET: int = 1
 
@@ -186,10 +187,10 @@ class CursorHandlerWindow(wx.Frame):
         Handle the EVT_MOUSE_CAPTURE_LOST event.
         This is called by wxWidgets when the mouse capture is lost.
         """
-        #if self.mouse_captured_flag.is_set():
-            # self._logger.warning(
-            #     "EVT_MOUSE_CAPTURE_LOST received - capture was lost by system"
-            # )
+        # if self.mouse_captured_flag.is_set():
+        # self._logger.warning(
+        #     "EVT_MOUSE_CAPTURE_LOST received - capture was lost by system"
+        # )
         event.Skip()
 
     def on_kill_focus(self, event):
@@ -305,7 +306,7 @@ class CursorHandlerWindow(wx.Frame):
         raise NotImplementedError(
             "Derived classes must implement handle_cursor_visibility"
         )
-        
+
     def MoveWindow(self, x: int = -1, y: int = -1) -> None:
         if x == -1 or y == -1:
             return
@@ -349,7 +350,8 @@ class CursorHandlerWindow(wx.Frame):
         y: int = max(
             screen_rect.y + offset - self.WINDOW_SIZE[1] // 2,
             min(
-                y, screen_rect.y + screen_rect.height - offset - self.WINDOW_SIZE[1] // 2
+                y,
+                screen_rect.y + screen_rect.height - offset - self.WINDOW_SIZE[1] // 2,
             ),
         )
         return Point(x, y)
@@ -388,7 +390,7 @@ class CursorHandlerWindow(wx.Frame):
                 self.CaptureMouse()
             self.mouse_captured_flag.set()
             wx.Sleep(0)
-            
+
             self._force_recapture()
 
             self.reset_mouse_position()

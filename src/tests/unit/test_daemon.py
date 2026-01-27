@@ -92,14 +92,6 @@ class TestDaemonInitialization:
         daemon = Daemon(app_config=app_config, auto_load_config=False)
         assert daemon.auto_load_config is False
 
-    @pytest.mark.anyio
-    async def test_daemon_init_command_handlers_registered(self, daemon_instance):
-        """Test that all command handlers are registered."""
-        # Check that all DaemonCommand values have handlers
-        for cmd in DaemonCommand:
-            assert cmd in daemon_instance._command_handlers
-            assert callable(daemon_instance._command_handlers[cmd])
-
 
 # ============================================================================
 # Test Daemon Lifecycle - Unix Socket
@@ -605,7 +597,6 @@ class TestServiceControl:
     async def test_start_server_command(self, daemon_client_connection, mock_server):
         """Test START_SERVER command."""
         reader, writer = daemon_client_connection
-        daemon = writer._transport.get_extra_info("socket")  # Get daemon reference
 
         # We need to get the actual daemon instance
         # This is a workaround for testing

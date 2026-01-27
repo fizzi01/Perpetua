@@ -5,7 +5,6 @@ Logic to handle cursor visibility on Windows systems.
 from typing import Optional
 import wx
 
-from multiprocessing import Queue
 from multiprocessing.connection import PipeConnection
 
 from event.bus import EventBus

@@ -383,7 +383,7 @@ class ConnectionHandler(BaseConnectionHandler):
                         client.ip_address = (
                             client_addr  # Update IP address based on connection
                         )
-                elif tmp_uid is not None and client is None: # Fallback to UID
+                elif tmp_uid is not None and client is None:  # Fallback to UID
                     client = self.clients.get_client(uid=tmp_uid)
                     if client:
                         client.ip_address = (

@@ -160,7 +160,7 @@ async def __main():
         print("-" * 80)
 
         mock_stream.reset()
-        cycles = 2
+        cycles = 3
 
         for i in range(cycles):
             print(f"  Ciclo {i + 1}/{cycles}: Enable -> Wait -> Disable")
@@ -171,7 +171,7 @@ async def __main():
             await controller._on_screen_change_guard(
                 data=ActiveScreenChangedEvent(active_screen=None)
             )
-            await asyncio.sleep(0.5)
+            await asyncio.sleep(1)
 
         print(f"✓ Completati {cycles} cicli di enable/disable\n")
 

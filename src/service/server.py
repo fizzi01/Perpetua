@@ -41,7 +41,7 @@ from input.mouse import ServerMouseListener, ServerMouseController
 from input.keyboard import ServerKeyboardListener
 from input.clipboard import ClipboardListener, ClipboardController
 
-from utils.metrics import MetricsCollector, PerformanceMonitor
+from utils.metrics import PerformanceMonitor
 from utils.net import get_local_ip
 from utils.crypto import CertificateManager
 from utils.crypto.sharing import CertificateSharing

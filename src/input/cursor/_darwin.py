@@ -7,7 +7,6 @@ from typing import Optional
 import wx
 from wx import Size
 
-from multiprocessing import Queue
 from multiprocessing.connection import Connection
 
 # Object-c Library
@@ -104,7 +103,9 @@ class CursorHandlerWindow(_base.CursorHandlerWindow):
         mouse_conn: Connection,
         debug: bool = False,
     ):
-        super().__init__(command_conn, result_conn, mouse_conn, debug, size=self.WINDOW_SIZE)
+        super().__init__(
+            command_conn, result_conn, mouse_conn, debug, size=self.WINDOW_SIZE
+        )
         # Panel principale
         self.panel = wx.Panel(self)
 
@@ -126,7 +127,6 @@ class CursorHandlerWindow(_base.CursorHandlerWindow):
 
     def ForceOverlay(self):
         try:
-            
             p = self._get_centered_coords()
             super().ForceOverlay()
             self.Move(pt=p)
@@ -192,11 +192,11 @@ class CursorHandlerWindow(_base.CursorHandlerWindow):
             # Timer
             retry_count = 4
             retry_interval = 1  # ms
-            
+
             self._recapture_timer = wx.Timer(self)
             self._recapture_attempts = 0
             self._recapture_max_attempts = retry_count
-            
+
             def on_timer(event):
                 try:
                     if self._recapture_attempts < self._recapture_max_attempts:
@@ -206,10 +206,10 @@ class CursorHandlerWindow(_base.CursorHandlerWindow):
                         self._recapture_timer.Stop()
                 except Exception as e:
                     self._logger.error(f"Error during recapture attempt ({e})")
-            
+
             self.Bind(wx.EVT_TIMER, on_timer, self._recapture_timer)
             self._recapture_timer.Start(retry_interval)
-            
+
         except Exception as e:
             self._logger.error(f"Error during recapture attempt ({e})")
 

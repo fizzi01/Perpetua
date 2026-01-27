@@ -624,13 +624,13 @@ class Daemon:
         else:
             addr = writer.get_extra_info("peername") or "local"
 
-        self._logger.info(f"Instance connection attempt", address=addr)
+        self._logger.info("Instance connection attempt", address=addr)
 
         # Check if another instance is already connected
         async with self._client_connection_lock:
             if self._connected_client_writer is not None:
                 self._logger.warning(
-                    f"Rejecting connection: another instance already connected",
+                    "Rejecting connection: another instance already connected",
                     address=addr,
                 )
                 try:
@@ -648,7 +648,7 @@ class Daemon:
             # Accept the connection
             self._connected_client_writer = writer
             self._connected_client_reader = reader
-            self._logger.debug(f"Instance connected", address=addr)
+            self._logger.debug("Instance connected", address=addr)
 
         try:
             # Send welcome message

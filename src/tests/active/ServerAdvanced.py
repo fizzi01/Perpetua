@@ -183,7 +183,7 @@ async def interactive_server():
 
     # Esegui comando handler
     try:
-        result = await handle_commands()
+        await handle_commands()
     except KeyboardInterrupt:
         print("\nKeyboard interrupt received")
     finally:
