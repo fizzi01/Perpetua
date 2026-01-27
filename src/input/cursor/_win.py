@@ -96,61 +96,14 @@ class CursorHandlerWindow(_base.CursorHandlerWindow):
         self.SetTransparent(1)
         self._create()
 
-    def MoveWindow(self, x: int = -1, y: int = -1) -> None:
-        if x == -1 or y == -1:
-            return
-
-        # Denormalize coordinates
-        screen_width, screen_height = wx.GetDisplaySize()
-        x = int(x * screen_width)
-        y = int(y * screen_height)
-
-        try:
-            self.Move(x, y)
-        except Exception as e:
-            print(f"Error moving window: {e}")
-
     def ForceOverlay(self):
         try:
             self.Iconize(False)
             self.AcceptsFocusRecursively()
 
-            cursor_pos = wx.GetMousePosition()
-
-            # Imposta dimensioni della finestra
-            # width, height = 100, 100
-            # self.SetSize(width, height)
-
-            # Ottieni le dimensioni dello schermo dove si trova il cursore
-            display_index = wx.Display.GetFromPoint(cursor_pos)
-            if display_index == wx.NOT_FOUND:
-                display_index = 0
-            display = wx.Display(display_index)
-            screen_rect = display.GetClientArea()
-
-            # Offset minimo dai bordi (in pixel)
-            offset = self.BORDER_OFFSET
-
-            # Calcola la posizione per centrare la finestra sul cursore
-            x = cursor_pos.x - self.__size[0] // 2
-            y = cursor_pos.y - self.__size[1] // 2
-
-            # Applica i limiti considerando l'offset dai bordi
-            x = max(
-                screen_rect.x + offset - self.__size[0] // 2,
-                min(
-                    x, screen_rect.x + screen_rect.width - offset - self.__size[0] // 2
-                ),
-            )
-            y = max(
-                screen_rect.y + offset - self.__size[1] // 2,
-                min(
-                    y, screen_rect.y + screen_rect.height - offset - self.__size[1] // 2
-                ),
-            )
-
+            p = self._get_centered_coords()
             self.Show(True)
-            self.Move(x, y)
+            self.Move(pt=p)
             self.Raise()
         except Exception as e:
             print(f"Error forcing overlay: {e}")

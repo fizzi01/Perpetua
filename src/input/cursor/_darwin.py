@@ -5,6 +5,7 @@ Logic to handle cursor visibility on macOS systems.
 from typing import Optional
 
 import wx
+from wx import Size
 
 from multiprocessing import Queue
 from multiprocessing.connection import Connection
@@ -93,6 +94,9 @@ class DebugOverlayPanel(wx.Panel):
 
 
 class CursorHandlerWindow(_base.CursorHandlerWindow):
+    BORDER_OFFSET: int = 1
+    WINDOW_SIZE = Size(400, 400)
+
     def __init__(
         self,
         command_conn: Connection,
@@ -100,9 +104,7 @@ class CursorHandlerWindow(_base.CursorHandlerWindow):
         mouse_conn: Connection,
         debug: bool = False,
     ):
-        super().__init__(
-            command_conn, result_conn, mouse_conn, debug, size=(400, 400)
-        )
+        super().__init__(command_conn, result_conn, mouse_conn, debug, size=self.WINDOW_SIZE)
         # Panel principale
         self.panel = wx.Panel(self)
 
@@ -124,7 +126,10 @@ class CursorHandlerWindow(_base.CursorHandlerWindow):
 
     def ForceOverlay(self):
         try:
+            
+            p = self._get_centered_coords()
             super().ForceOverlay()
+            self.Move(pt=p)
 
             self.previous_app = NSWorkspace.sharedWorkspace().frontmostApplication()
             self.previous_app_pid = self.previous_app.processIdentifier()
@@ -178,6 +183,35 @@ class CursorHandlerWindow(_base.CursorHandlerWindow):
             self.previous_app_pid = None
         except Exception as e:
             print(f"Error restoring previous app: {e}")
+
+    def _force_recapture(self):
+        if not self.mouse_captured_flag.is_set():
+            return
+
+        try:
+            # Timer
+            retry_count = 4
+            retry_interval = 1  # ms
+            
+            self._recapture_timer = wx.Timer(self)
+            self._recapture_attempts = 0
+            self._recapture_max_attempts = retry_count
+            
+            def on_timer(event):
+                try:
+                    if self._recapture_attempts < self._recapture_max_attempts:
+                        self._recapture_attempts += 1
+                        self.ForceOverlay()
+                    else:
+                        self._recapture_timer.Stop()
+                except Exception as e:
+                    self._logger.error(f"Error during recapture attempt ({e})")
+            
+            self.Bind(wx.EVT_TIMER, on_timer, self._recapture_timer)
+            self._recapture_timer.Start(retry_interval)
+            
+        except Exception as e:
+            self._logger.error(f"Error during recapture attempt ({e})")
 
     def handle_cursor_visibility(self, visible: bool):
         """

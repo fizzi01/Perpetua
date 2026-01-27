@@ -35,6 +35,8 @@ class CursorHandlerWindow(wx.Frame):
     Base class for cursor handling window.
     Derived classes must implement platform-specific methods.
     """
+    WINDOW_SIZE: Size = Size(400, 400)
+    BORDER_OFFSET: int = 1
 
     def __init__(
         self,
@@ -70,9 +72,7 @@ class CursorHandlerWindow(wx.Frame):
 
         # Start command processing thread
         self._running = True
-        self.command_thread = threading.Thread(
-            target=self._process_commands
-        )
+        self.command_thread = threading.Thread(target=self._process_commands)
         self.command_thread.start()
 
         # Panel principale
@@ -84,15 +84,18 @@ class CursorHandlerWindow(wx.Frame):
             self.SetTransparent(0)
 
         self.last_mouse_send_time = 0
-        self.mouse_send_interval = 0.005  # 1000 Hz
+        self.mouse_send_interval = 0.005
         self.accumulated_delta_x = 0
         self.accumulated_delta_y = 0
 
-        # Eventi
+        # Events
         self.Bind(wx.EVT_MOTION, self.on_mouse_move)
         self.Bind(wx.EVT_CHAR_HOOK, self.on_key_press)
         self.Bind(wx.EVT_CLOSE, self._quit_app)
         self.Bind(wx.EVT_LEAVE_WINDOW, self.RestoreFocus)
+        self.Bind(wx.EVT_MOUSE_CAPTURE_LOST, self.on_mouse_capture_lost)
+        self.Bind(wx.EVT_KILL_FOCUS, self.on_kill_focus)
+        self.Bind(wx.EVT_ACTIVATE, self.on_activate)
 
         self._logger = get_logger(
             self.__class__.__name__, level=Logger.DEBUG, is_root=True
@@ -142,11 +145,16 @@ class CursorHandlerWindow(wx.Frame):
         """Quit the wx application properly"""
 
         # Unbind all events to prevent further processing
-        self._logger.debug("Quitting application")
+        self._logger.debug("Quitting")
+
         self.Unbind(wx.EVT_MOTION)
         self.Unbind(wx.EVT_CHAR_HOOK)
         self.Unbind(wx.EVT_CLOSE)
         self.Unbind(wx.EVT_LEAVE_WINDOW)
+        self.Unbind(wx.EVT_TIMER)
+        self.Unbind(wx.EVT_MOUSE_CAPTURE_LOST)
+        self.Unbind(wx.EVT_KILL_FOCUS)
+        self.Unbind(wx.EVT_ACTIVATE)
 
         self._logger.debug("Disabling mouse capture...")
         try:
@@ -173,20 +181,77 @@ class CursorHandlerWindow(wx.Frame):
             self._logger.debug(f"Error exiting main loop ({e})")
             pass
 
+    def on_mouse_capture_lost(self, event):
+        """
+        Handle the EVT_MOUSE_CAPTURE_LOST event.
+        This is called by wxWidgets when the mouse capture is lost.
+        """
+        #if self.mouse_captured_flag.is_set():
+            # self._logger.warning(
+            #     "EVT_MOUSE_CAPTURE_LOST received - capture was lost by system"
+            # )
+        event.Skip()
+
+    def on_kill_focus(self, event):
+        """
+        Handle the EVT_KILL_FOCUS event.
+        This is called when the window loses focus.
+        """
+        if self.mouse_captured_flag.is_set():
+            # self._logger.warning(
+            #     "EVT_KILL_FOCUS received - window lost focus while capture was active"
+            # )
+            # Schedule a re-focus and re-capture attempt
+            wx.CallAfter(self._attempt_recapture)
+        event.Skip()
+
+    def on_activate(self, event):
+        """
+        Handle the EVT_ACTIVATE event.
+        This is called when window activation state changes.
+        """
+        is_active = event.GetActive()
+        if self.mouse_captured_flag.is_set() and not is_active:
+            # self._logger.warning(
+            #     f"EVT_ACTIVATE received - window deactivated (active={is_active}) while capture was active"
+            # )
+            # Schedule a re-focus and re-capture attempt
+            wx.CallAfter(self._attempt_recapture)
+        event.Skip()
+
+    def _attempt_recapture(self):
+        """
+        Attempt to recapture the mouse and restore focus.
+        This is called when focus is lost while capture should be active.
+        """
+        if not self.mouse_captured_flag.is_set():
+            return
+
+        # self._logger.info("Attempting to recapture mouse and restore focus...")
+        try:
+            self.Raise()
+            self.SetFocus()
+            self.ForceOverlay()
+
+            # self._logger.info("Recapture attempt completed")
+        except Exception as e:
+            self._logger.error(f"Error during recapture attempt ({e})")
+
     def RestoreFocus(self, event):
         """
         Restore current window focus when mouse leaves the overlay.
         Derived classes can implement platform-specific focus restoration here
         (default: do nothing).
         """
-        event.Skip()
+        if event:
+            event.Skip()
 
     def ForceOverlay(self):
         """
         Force the overlay to be visible and interactive.
         """
         try:
-            self.SetSize(400, 400)
+            self.SetSize(self.WINDOW_SIZE)
             self.Show(True)
         except Exception as e:
             self._logger.debug(f"Error forcing overlay: {e}")
@@ -240,10 +305,62 @@ class CursorHandlerWindow(wx.Frame):
         raise NotImplementedError(
             "Derived classes must implement handle_cursor_visibility"
         )
+        
+    def MoveWindow(self, x: int = -1, y: int = -1) -> None:
+        if x == -1 or y == -1:
+            return
 
-    def MoveWindow(self, x: int, y: int) -> None:
+        # Denormalize coordinates
+        screen_width, screen_height = wx.GetDisplaySize()
+        x = int(x * screen_width)
+        y = int(y * screen_height)
+
+        try:
+            self.Move(x, y)
+        except Exception as e:
+            self._logger.error(f"Error moving window ({e})")
+
+    def _get_centered_coords(self) -> Point:
         """
-        Move the window to the specified screen coordinates.
+        Get the coordinates to center the window on the cursor position.
+        """
+        cursor_pos = wx.GetMousePosition()
+
+        display_index = wx.Display.GetFromPoint(cursor_pos)
+        if display_index == wx.NOT_FOUND:
+            display_index = 0
+        display = wx.Display(display_index)
+        screen_rect = display.GetClientArea()
+
+        # Offset minimo dai bordi (in pixel)
+        offset = self.BORDER_OFFSET
+
+        # Calcola la posizione per centrare la finestra sul cursore
+        x: int = cursor_pos.x - self.WINDOW_SIZE[0] // 2
+        y: int = cursor_pos.y - self.WINDOW_SIZE[1] // 2
+
+        # Applica i limiti considerando l'offset dai bordi
+        x: int = max(
+            screen_rect.x + offset - self.WINDOW_SIZE[0] // 2,
+            min(
+                x, screen_rect.x + screen_rect.width - offset - self.WINDOW_SIZE[0] // 2
+            ),
+        )
+        y: int = max(
+            screen_rect.y + offset - self.WINDOW_SIZE[1] // 2,
+            min(
+                y, screen_rect.y + screen_rect.height - offset - self.WINDOW_SIZE[1] // 2
+            ),
+        )
+        return Point(x, y)
+
+    def _force_recapture(self):
+        """
+        Attempt to recapture the mouse and restore focus.
+        This is called every time capture is enabled, to ensure the overlay is focused.
+        (On macOS in particular, focus may not be properly set on first attempt.)
+
+        Os-specific implementations may override this method.
         """
         pass
 
@@ -264,15 +381,15 @@ class CursorHandlerWindow(wx.Frame):
             # Calcola il centro della finestra
             size = self.GetSize()
             pos = self.GetPosition()
-            self.center_pos = Point(
-                pos.x + size.width // 2, pos.y + size.height // 2
-            )
+            self.center_pos = Point(pos.x + size.width // 2, pos.y + size.height // 2)
 
             # Cattura il mouse
-            if not self.HasCapture():
+            while not self.HasCapture():
                 self.CaptureMouse()
             self.mouse_captured_flag.set()
             wx.Sleep(0)
+            
+            self._force_recapture()
 
             self.reset_mouse_position()
             self.result_conn.send({"type": "capture_enabled", "success": True})
@@ -371,10 +488,11 @@ class _CursorHandlerProcess:
 
     @staticmethod
     def _cleanup(
-        logger, 
-        command_conn: Connection, 
+        logger,
+        command_conn: Connection,
         result_conn: Connection,
-        mouse_conn: Connection):
+        mouse_conn: Connection,
+    ):
         """Clean up pipes in child process"""
         try:
             # Drain connections
@@ -391,7 +509,7 @@ class _CursorHandlerProcess:
         except Exception as e:
             logger.error(f"Error during cleanup ({e})")
             pass  # Ignore errors
-          
+
     @staticmethod
     def run(
         command_conn: Connection,
@@ -402,7 +520,9 @@ class _CursorHandlerProcess:
     ):
         """Run the cursor handler window process"""
         _logger = get_logger(
-            "_CursorHandlerProcess", level=Logger.DEBUG, is_root=True,
+            "_CursorHandlerProcess",
+            level=Logger.DEBUG,
+            is_root=True,
         )
 
         _logger.debug("Starting...", pid=os.getpid())
@@ -443,7 +563,9 @@ class _CursorHandlerProcess:
                 pass
 
             # Then clean up IPC resources
-            _CursorHandlerProcess._cleanup(_logger, command_conn, result_conn, mouse_conn)
+            _CursorHandlerProcess._cleanup(
+                _logger, command_conn, result_conn, mouse_conn
+            )
 
             _logger.debug("Process exiting")
 
@@ -667,26 +789,39 @@ class CursorHandlerWorker(object):
 
                 # Try graceful shutdown first (short timeout)
                 if self.process.is_alive():
-                    self._logger.debug("Waiting for graceful shutdown...", pid=self.process.pid)
+                    self._logger.debug(
+                        "Waiting for graceful shutdown...", pid=self.process.pid
+                    )
                     await loop.run_in_executor(None, self.process.join, 1.0)
 
                 # If still alive, terminate
                 if self.process.is_alive():
-                    self._logger.warning("Process still alive after quit, terminating...", pid=self.process.pid)
+                    self._logger.warning(
+                        "Process still alive after quit, terminating...",
+                        pid=self.process.pid,
+                    )
                     self.process.terminate()
                     await loop.run_in_executor(None, self.process.join, 0.5)
 
                 # If STILL alive, kill
                 if self.process.is_alive():
-                    self._logger.warning("Process still alive after terminate, killing...", pid=self.process.pid)
+                    self._logger.warning(
+                        "Process still alive after terminate, killing...",
+                        pid=self.process.pid,
+                    )
                     self.process.kill()
                     await loop.run_in_executor(None, self.process.join, None)
 
                 # Final check
                 if self.process.is_alive():
-                    self._logger.critical("Process STILL alive after kill!", pid=self.process.pid)
+                    self._logger.critical(
+                        "Process STILL alive after kill!", pid=self.process.pid
+                    )
                 else:
-                    self._logger.debug(f"Process terminated with exitcode: {self.process.exitcode}", pid=self.process.pid)
+                    self._logger.debug(
+                        f"Process terminated with exitcode: {self.process.exitcode}",
+                        pid=self.process.pid,
+                    )
 
             except Exception as e:
                 self._logger.warning(f"Error stopping process -> {e}")
@@ -743,7 +878,7 @@ class CursorHandlerWorker(object):
                     # Leggi dal pipe in executor
                     delta_x, delta_y = await loop.run_in_executor(
                         None, self.mouse_conn_rec.recv
-                    ) # type: ignore # ty:ignore[unused-ignore-comment]
+                    )  # type: ignore # ty:ignore[unused-ignore-comment]
 
                     mouse_event = MouseEvent(action=MouseEvent.MOVE_ACTION)
                     mouse_event.dx = delta_x
@@ -807,7 +942,7 @@ class CursorHandlerWorker(object):
         """Disabilita la cattura del mouse in modo asincrono"""
         await self.send_command({"type": "disable_capture", **kwargs})
         return await self.get_result()
-    
+
     async def close_handler(self, **kwargs):
         await self.send_command({"type": "quit"})
         return await asyncio.sleep(0)
