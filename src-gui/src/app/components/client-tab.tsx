@@ -1,5 +1,5 @@
 import { useState, useEffect, useRef } from 'react';
-import { Settings, Wifi, Clock, Lock, Key, Shield, Server, Info } from 'lucide-react';
+import { Settings, Wifi, Clock, Lock, Key, Shield, Server, Info, User } from 'lucide-react';
 import { motion, AnimatePresence } from 'motion/react';
 
 import { Switch } from  "./ui/switch";
@@ -20,6 +20,7 @@ import { ServerSelectionPanel } from './ui/server-selection-panel';
 export function ClientTab({ onStatusChange, state }: ClientTabProps) {
   let previousState = useRef<ClientStatus | null>(null);
 
+  const [clientHostname, setClientHostname] = useState(state.client_hostname || '');
   const [runningPending, setRunningPending] = useState(false);
   const [isRunning, setIsRunning] = useState(state.running);
   const [isConnected, setIsConnected] = useState(state.connected);
@@ -537,7 +538,29 @@ export function ClientTab({ onStatusChange, state }: ClientTabProps) {
           transition={{ delay: 0.2 }}
           className="space-y-2"
         >
-          <motion.div 
+          {/* Client Hostname */}
+          {clientHostname && !showOtpInput && (
+            <motion.div 
+              whileHover={{ scale: 1.02 }}
+              className="flex items-center gap-3 p-4 rounded-lg border backdrop-blur-sm"
+              style={{ 
+                backgroundColor: 'var(--app-card-bg)',
+                borderColor: 'var(--app-card-border)'
+              }}
+            >
+              <div className="w-10 h-10 rounded-lg flex items-center justify-center" style={{ backgroundColor: 'var(--app-bg-tertiary)' }}>
+                <User size={20} style={{ color: 'var(--app-text-muted)' }} />
+              </div>
+              <div className="flex-1">
+                <div className="text-sm font-bold" style={{ color: 'var(--app-text-primary)' }}>
+                  {clientHostname}
+                </div>
+                <div className="text-xs" style={{ color: 'var(--app-text-muted)' }}>Your Hostname</div>
+              </div>
+            </motion.div>
+          )}
+
+          {/* <motion.div 
             whileHover={{ scale: 1.02 }}
             className="flex items-center gap-3 p-4 rounded-lg border backdrop-blur-sm"
             style={{ 
@@ -555,7 +578,6 @@ export function ClientTab({ onStatusChange, state }: ClientTabProps) {
                 </div>
                 <div className="text-xs" style={{ color: 'var(--app-text-muted)' }}>Server Address</div>
               </div>
-              {/* Server UID Badge */}
               {currentConnection?.uid && (
                 <div className="flex justify-center pt-1">
                   <CopyableBadge
@@ -568,7 +590,7 @@ export function ClientTab({ onStatusChange, state }: ClientTabProps) {
                 </div>
               )}
             </div>
-          </motion.div>
+          </motion.div> */}
 
           {/* <div className="flex gap-2">
 
@@ -602,7 +624,7 @@ export function ClientTab({ onStatusChange, state }: ClientTabProps) {
           transition={{ delay: 0.2 }}
           className="space-y-2"
         >
-          <div className="flex gap-2">
+          <div className="flex gap-1">
             <motion.div 
               whileHover={{ scale: 1.02 }}
               className="flex-1 flex flex-col gap-1 p-4 rounded-lg border backdrop-blur-sm"
@@ -655,6 +677,28 @@ export function ClientTab({ onStatusChange, state }: ClientTabProps) {
               </div>
             </motion.div>
           </div>
+
+          {/* Client Hostname - Full Width */}
+          {clientHostname && (
+            <motion.div 
+              whileHover={{ scale: 1.02 }}
+              className="flex items-center gap-3 p-4 rounded-lg border backdrop-blur-sm"
+              style={{ 
+                backgroundColor: 'var(--app-card-bg)',
+                borderColor: 'var(--app-card-border)'
+              }}
+            >
+              <div className="w-10 h-10 rounded-lg flex items-center justify-center" style={{ backgroundColor: 'var(--app-primary)' }}>
+                <User size={20} style={{ color: 'white' }} />
+              </div>
+              <div className="flex-1">
+                <div className="text-sm font-bold" style={{ color: 'var(--app-text-primary)' }}>
+                  {clientHostname}
+                </div>
+                <div className="text-xs" style={{ color: 'var(--app-text-muted)' }}>Your Hostname</div>
+              </div>
+            </motion.div>
+          )}
 
           {/* Data Usage - Full Width */}
           {/* <motion.div 
@@ -914,6 +958,7 @@ export function ClientTab({ onStatusChange, state }: ClientTabProps) {
                 <div className="flex items-center justify-between">
                   <label className="flex items-center gap-2"
                     style={{ color: 'var(--app-text-primary)' }}
+                    title="Automatically start the client when the application launches"
                   >
                     <span>Start automatically</span>
                   </label>
@@ -931,6 +976,7 @@ export function ClientTab({ onStatusChange, state }: ClientTabProps) {
                 <div className="flex items-center justify-between">
                   <label className="flex items-center gap-2"
                     style={{ color: 'var(--app-text-primary)' }}
+                    title="Automatically attempt to reconnect if the connection is lost"
                   >
                     <span>Auto-reconnect</span>
                   </label>
