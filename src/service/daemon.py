@@ -35,7 +35,7 @@ from event.notification import (
 
 
 # Determine platform for socket type
-IS_WINDOWS = sys.platform in ("win32", "cygwin", "cli")
+IS_WINDOWS = sys.platform in ("win32", "cygwin")
 
 
 class DaemonException(Exception):
@@ -394,6 +394,7 @@ class Daemon:
 
             self._running = True
             self._logger.info(f"Daemon started, listening on {self.socket_path}")
+            self._logger.info(f"Platform: {'Windows (TCP Socket)' if IS_WINDOWS else 'Unix (Socket)'}")
             return True
 
         except (DaemonAlreadyRunningException, DaemonPortOccupiedException):
@@ -618,20 +619,21 @@ class Daemon:
         """
         if IS_WINDOWS:
             addr = writer.get_extra_info("peername")
-            self._logger.info(f"New connection attempt from {addr}")
         else:
             addr = writer.get_extra_info("peername") or "local"
-            self._logger.info("New connection attempt")
 
-        # Check if another client is already connected
+        self._logger.info(f"Instance connection attempt", address=addr)
+
+        # Check if another instance is already connected
         async with self._client_connection_lock:
             if self._connected_client_writer is not None:
                 self._logger.warning(
-                    f"Rejecting connection from {addr}: another client already connected"
+                    f"Rejecting connection: another instance already connected",
+                    address=addr,
                 )
                 try:
                     error_response = ErrorEvent(
-                        error="Another client is already connected. Only one connection is allowed at a time."
+                        error="Another instance is already connected. Only one connection is allowed at a time."
                     )
                     writer.write(self.prepare_msg_bytes(error_response))
                     await writer.drain()
@@ -644,7 +646,7 @@ class Daemon:
             # Accept the connection
             self._connected_client_writer = writer
             self._connected_client_reader = reader
-            self._logger.debug(f"Client connected from {addr}")
+            self._logger.debug(f"Instance connected", address=addr)
 
         try:
             # Send welcome message
@@ -702,7 +704,7 @@ class Daemon:
                     ConnectionResetError,
                     ConnectionAbortedError,
                 ) as e:
-                    self._logger.error(f"Client disconnected ({e})")
+                    self._logger.error(f"Instance disconnected ({e})")
                     break
                 except Exception as e:
                     self._logger.error(f"{e}")
@@ -723,7 +725,7 @@ class Daemon:
                     self._connected_client_reader = None
                     self._connected_client_writer = None
 
-            self._logger.info(f"Client {addr} disconnected")
+            self._logger.info(f"Instance disconnected ({addr})")
             try:
                 writer.close()
                 await writer.wait_closed()
@@ -2191,11 +2193,7 @@ async def main():
     )
 
     if not await daemon.start():
-        print("Failed to start daemon")
         return 1
-
-    print(f"Daemon started successfully on {daemon.get_socket_path()}")
-    print(f"Platform: {'Windows (TCP Socket)' if IS_WINDOWS else 'Unix (Socket)'}")
 
     # Wait for shutdown
     try:

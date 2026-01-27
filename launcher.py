@@ -10,7 +10,7 @@ from utils.logging import get_logger
 from utils.permissions import PermissionChecker
 from config import ApplicationConfig
 
-IS_WINDOWS = sys.platform == "win32"
+IS_WINDOWS = sys.platform in ("win32", "cygwin")
 COMPILED = "__compiled__" in globals()
 
 class Launcher:
