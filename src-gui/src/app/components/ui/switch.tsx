@@ -18,10 +18,11 @@ const Switch = React.forwardRef<
   return (
     <SwitchPrimitives.Root
       className={cn(
-        "peer inline-flex h-5 w-9 shrink-0 cursor-pointer items-center rounded-full border-2 shadow-sm transition-all duration-200 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-offset-2 disabled:opacity-50",
+        "peer inline-flex h-5 w-9 shrink-0 items-center rounded-full border-2 shadow-sm transition-all duration-200 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-offset-2 disabled:opacity-50",
         className
       )}
       style={{
+        cursor: props.disabled ? '' : 'pointer',
         backgroundColor: isChecked ? 'var(--app-primary)' : 'var(--app-input-bg)',
         borderColor: isChecked ? 'var(--app-primary)' : 'var(--app-input-border)',
         outlineColor: 'var(--app-primary)',

@@ -121,6 +121,7 @@ export function PermissionsPanel({
             backgroundColor: enableMouse ? 'var(--app-success-bg)' : 'var(--app-danger-bg)',
             color: enableMouse ? 'var(--app-success)' : 'var(--app-danger)',
             opacity: disableAllStreams ? 0.5 : 1,
+            cursor: disableAllStreams ? '' : 'pointer',
           }}
         >
           <MousePointer size={16} />
@@ -137,6 +138,7 @@ export function PermissionsPanel({
             backgroundColor: enableKeyboard ? 'var(--app-success-bg)' : 'var(--app-danger-bg)',
             color: enableKeyboard ? 'var(--app-success)' : 'var(--app-danger)',
             opacity: disableAllStreams ? 0.5 : 1,
+            cursor: disableAllStreams ? '' : 'pointer',
           }}
         >
           <Keyboard size={16} />
@@ -148,11 +150,12 @@ export function PermissionsPanel({
           whileHover={!disableAllStreams ? { scale: 1.05 } : {}}
           whileTap={!disableAllStreams ? { scale: 0.95 } : {}}
           onClick={() => handleStreamToggle(StreamType.Clipboard, !enableClipboard, setEnableClipboard)}
-          className={`cursor-pointer flex-1 flex items-center justify-center gap-2 px-3 py-2 rounded-lg transition-all`}
+          className={`lex-1 flex items-center justify-center gap-2 px-3 py-2 rounded-lg transition-all`}
           style={{
             backgroundColor: enableClipboard ? 'var(--app-success-bg)' : 'var(--app-danger-bg)',
             color: enableClipboard ? 'var(--app-success)' : 'var(--app-danger)',
             opacity: disableAllStreams ? 0.5 : 1,
+            cursor: disableAllStreams ? '' : 'pointer',
           }}
         >
           <Clipboard size={16} />
