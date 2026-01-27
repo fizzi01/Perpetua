@@ -28,6 +28,18 @@ from event.bus import EventBus
 from network.stream.handler import StreamHandler
 
 from utils.logging import get_logger, Logger
+from utils.screen import Screen
+
+wxEVT_SCREEN_UNLOCKED = wx.NewEventType()
+EVT_SCREEN_UNLOCKED = wx.PyEventBinder(wxEVT_SCREEN_UNLOCKED, 1)
+
+
+class ScreenUnlockedEvent(wx.PyEvent):
+    """Event to signal that the screen has been unlocked."""
+
+    def __init__(self):
+        super().__init__()
+        self.SetEventType(wxEVT_SCREEN_UNLOCKED)
 
 
 class CursorHandlerWindow(wx.Frame):
@@ -89,6 +101,11 @@ class CursorHandlerWindow(wx.Frame):
         self.accumulated_delta_x = 0
         self.accumulated_delta_y = 0
 
+        # Screen lock monitoring
+        self._screen_monitor_thread: Optional[threading.Thread] = None
+        self._screen_monitor_running = False
+        self._last_screen_locked_state: Optional[bool] = None
+
         # Events
         self.Bind(wx.EVT_MOTION, self.on_mouse_move)
         self.Bind(wx.EVT_CHAR_HOOK, self.on_key_press)
@@ -97,6 +114,7 @@ class CursorHandlerWindow(wx.Frame):
         self.Bind(wx.EVT_MOUSE_CAPTURE_LOST, self.on_mouse_capture_lost)
         self.Bind(wx.EVT_KILL_FOCUS, self.on_kill_focus)
         self.Bind(wx.EVT_ACTIVATE, self.on_activate)
+        self.Bind(EVT_SCREEN_UNLOCKED, self.on_screen_unlock)
 
         self._logger = get_logger(
             self.__class__.__name__, level=Logger.DEBUG, is_root=True
@@ -156,6 +174,14 @@ class CursorHandlerWindow(wx.Frame):
         self.Unbind(wx.EVT_MOUSE_CAPTURE_LOST)
         self.Unbind(wx.EVT_KILL_FOCUS)
         self.Unbind(wx.EVT_ACTIVATE)
+        self.Unbind(EVT_SCREEN_UNLOCKED)
+
+        self._logger.debug("Stopping screen monitor...")
+        try:
+            self._stop_screen_monitor()
+        except Exception as e:
+            self._logger.debug(f"Error stopping screen monitor: {e}")
+            pass
 
         self._logger.debug("Disabling mouse capture...")
         try:
@@ -217,6 +243,16 @@ class CursorHandlerWindow(wx.Frame):
             #     f"EVT_ACTIVATE received - window deactivated (active={is_active}) while capture was active"
             # )
             # Schedule a re-focus and re-capture attempt
+            wx.CallAfter(self._attempt_recapture)
+        event.Skip()
+
+    def on_screen_unlock(self, event):
+        """
+        Handle screen unlock event.
+        This is called when the screen is unlocked after being locked.
+        """
+        if self.mouse_captured_flag.is_set():
+            self._logger.info("Screen unlocked - attempting to recapture mouse")
             wx.CallAfter(self._attempt_recapture)
         event.Skip()
 
@@ -396,6 +432,9 @@ class CursorHandlerWindow(wx.Frame):
             self.reset_mouse_position()
             self.result_conn.send({"type": "capture_enabled", "success": True})
 
+            # Start screen lock monitoring
+            wx.CallAfter(self._start_screen_monitor)
+
     def disable_mouse_capture(self, x: int = -1, y: int = -1):
         """
         Disable mouse capture.
@@ -423,6 +462,9 @@ class CursorHandlerWindow(wx.Frame):
             wx.Sleep(0)
 
             self.Bind(wx.EVT_MOTION, self.on_mouse_move)  # Rebind MOTION event
+
+            # Stop screen lock monitoring
+            wx.CallAfter(self._stop_screen_monitor)
 
     def reset_mouse_position(self):
         """
@@ -481,6 +523,60 @@ class CursorHandlerWindow(wx.Frame):
         self._running = False
         self.disable_mouse_capture()
         self.Destroy()
+
+    def _screen_monitor_loop(self):
+        """
+        Monitor loop that checks for screen lock/unlock transitions.
+        Runs in a separate thread and posts events to the main thread.
+        """
+        self._logger.debug("Screen monitor thread started")
+        self._last_screen_locked_state = Screen.is_screen_locked()
+
+        while self._screen_monitor_running:
+            try:
+                current_locked_state = Screen.is_screen_locked()
+
+                # Detect transition from locked to unlocked
+                if self._last_screen_locked_state and not current_locked_state:
+                    self._logger.info("Screen unlock detected")
+                    # Post event to main thread
+                    wx.PostEvent(self, ScreenUnlockedEvent())
+
+                self._last_screen_locked_state = current_locked_state
+
+                time.sleep(0.1)
+
+            except Exception as e:
+                self._logger.error(f"Error in screen monitor loop ({e})")
+                time.sleep(1)
+
+        self._logger.debug("Screen monitor thread stopped")
+
+    def _start_screen_monitor(self):
+        """Start the screen lock monitoring thread."""
+        if (
+            self._screen_monitor_thread is not None
+            and self._screen_monitor_thread.is_alive()
+        ):
+            return  # Already running
+
+        self._screen_monitor_running = True
+        self._screen_monitor_thread = threading.Thread(
+            target=self._screen_monitor_loop, daemon=True
+        )
+        self._screen_monitor_thread.start()
+        self._logger.debug("Screen monitor started")
+
+    def _stop_screen_monitor(self):
+        """Stop the screen lock monitoring thread."""
+        if self._screen_monitor_thread is None:
+            return
+
+        self._screen_monitor_running = False
+        if self._screen_monitor_thread.is_alive():
+            self._screen_monitor_thread.join(timeout=2.0)
+        self._screen_monitor_thread = None
+        self._logger.debug("Screen monitor stopped")
 
 
 class _CursorHandlerProcess:

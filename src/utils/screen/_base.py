@@ -13,3 +13,12 @@ class Screen:
         """
         width, height = cls.get_size()
         return f"{width:.0f}x{height:.0f}"
+
+    @classmethod
+    def is_screen_locked(cls) -> bool:
+        """
+        Checks if the screen is currently locked.
+        """
+        raise NotImplementedError(
+            "Screen lock status check not implemented for this OS."
+        )

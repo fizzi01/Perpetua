@@ -1,5 +1,4 @@
-from Quartz import CGDisplayBounds
-from Quartz import CGMainDisplayID
+from Quartz import CGDisplayBounds, CGMainDisplayID, CGSessionCopyCurrentDictionary
 
 from . import _base
 
@@ -12,3 +11,13 @@ class Screen(_base.Screen):
         """
         mainMonitor = CGDisplayBounds(CGMainDisplayID())
         return mainMonitor.size.width, mainMonitor.size.height
+
+    @classmethod
+    def is_screen_locked(cls) -> bool:
+        """
+        Checks if the screen is currently locked.
+        """
+        d = CGSessionCopyCurrentDictionary()
+        return (
+            d.get("CGSSessionScreenIsLocked") and d.get("CGSSessionScreenIsLocked") == 1
+        )

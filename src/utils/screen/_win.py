@@ -12,3 +12,10 @@ class Screen(_base.Screen):
         width = GetSystemMetrics(0)
         height = GetSystemMetrics(1)
         return width, height
+
+    @classmethod
+    def is_screen_locked(cls) -> bool:
+        """
+        Monitor display sleep/wake events on Windows.
+        """
+        return False  # Placeholder implementation
