@@ -565,7 +565,7 @@ class CursorHandlerWindow(wx.Frame):
             target=self._screen_monitor_loop, daemon=True
         )
         self._screen_monitor_thread.start()
-        self._logger.debug("Screen monitor started")
+        # self._logger.debug("Screen monitor started")
 
     def _stop_screen_monitor(self):
         """Stop the screen lock monitoring thread."""
@@ -576,7 +576,7 @@ class CursorHandlerWindow(wx.Frame):
         if self._screen_monitor_thread.is_alive():
             self._screen_monitor_thread.join(timeout=2.0)
         self._screen_monitor_thread = None
-        self._logger.debug("Screen monitor stopped")
+        # self._logger.debug("Screen monitor stopped")
 
 
 class _CursorHandlerProcess:
