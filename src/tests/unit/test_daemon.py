@@ -815,7 +815,7 @@ class TestDaemonShutdown:
 
         # Socket server should be closed
         # Trying to connect should fail
-        with pytest.raises((ConnectionRefusedError, FileNotFoundError)):  # type: ignore
+        with pytest.raises((ConnectionRefusedError, FileNotFoundError)):
             if IS_WINDOWS:
                 host, port = running_daemon.socket_path.split(":")
                 await asyncio.open_connection(host, int(port))

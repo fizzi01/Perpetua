@@ -231,10 +231,8 @@ class PermissionChecker(_base.PermissionChecker):
 
             self._log("Requesting accessibility permission")
 
-            HIServices.AXIsProcessTrustedWithOptions(
-                {  # ty:ignore[unresolved-attribute]
-                    kAXTrustedCheckOptionPrompt: True
-                }
+            HIServices.AXIsProcessTrustedWithOptions(  # ty:ignore[unresolved-attribute]
+                {kAXTrustedCheckOptionPrompt: True}
             )
 
             # Give the system a moment to process

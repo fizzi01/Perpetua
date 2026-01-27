@@ -74,7 +74,7 @@ async def __main():
 
     eb = EventBus()
     mock_stream = MockStreamHandler()
-    controller = CursorHandlerWorker(eb, stream=mock_stream, debug=False)
+    controller = CursorHandlerWorker(eb, stream=mock_stream, debug=False)  # ty: ignore[invalid-argument-type]
 
     try:
         # Avvia la window

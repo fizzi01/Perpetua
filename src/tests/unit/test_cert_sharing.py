@@ -341,6 +341,7 @@ class TestCertificateSharing(unittest.TestCase):
 
             success, otp = await sharing.start_sharing()
             self.assertTrue(success)
+            self.assertIsNotNone(otp)
 
             try:
                 # Wait for OTP to expire

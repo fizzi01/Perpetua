@@ -517,7 +517,7 @@ class StructLogger(BaseLogger):
                         level_styles=self.color_map if use_colors else None,
                     ),
                 ],
-                wrapper_class=wrapper_cls,  # type: ignore
+                wrapper_class=wrapper_cls,
                 logger_factory=structlog.WriteLoggerFactory(file=output_file),
                 cache_logger_on_first_use=False,
             )
@@ -532,7 +532,7 @@ class StructLogger(BaseLogger):
                         pad_event_to=40,
                     ),
                 ],
-                wrapper_class=wrapper_cls,  # type: ignore
+                wrapper_class=wrapper_cls,
                 logger_factory=structlog.WriteLoggerFactory(file=output_file),
                 cache_logger_on_first_use=False,
             )

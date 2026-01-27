@@ -299,7 +299,7 @@ class Daemon:
                 try:
                     asyncio.get_event_loop().add_signal_handler(
                         sig, lambda: asyncio.create_task(self._signal_shutdown())
-                    )  # type: ignore
+                    )
                 except NotImplementedError:
                     pass
 
@@ -1155,14 +1155,14 @@ class Daemon:
         }
 
         if self._server_config and self._server:
-            status["server_info"] = {  # type: ignore
+            status["server_info"] = {
                 **self._server_config.to_dict(),
                 "running": self._server.is_running(),
                 "start_time": self._state["server"].get_timestamp(),
             }
 
         if self._client_config and self._client:
-            status["client_info"] = {  # type: ignore
+            status["client_info"] = {
                 **self._client_config.to_dict(),
                 "running": self._client.is_running(),
                 "connected": self._client.is_connected(),
