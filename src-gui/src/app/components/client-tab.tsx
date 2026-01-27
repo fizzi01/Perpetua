@@ -1,5 +1,5 @@
 import { useState, useEffect, useRef } from 'react';
-import { Settings, Wifi, Clock, Lock, Key, Shield, Server, Info, User } from 'lucide-react';
+import { Settings, Wifi, Clock, Lock, Key, Shield, Info, User } from 'lucide-react';
 import { motion, AnimatePresence } from 'motion/react';
 
 import { Switch } from  "./ui/switch";
@@ -123,6 +123,7 @@ export function ClientTab({ onStatusChange, state }: ClientTabProps) {
     setIsConnected(state.connected);
     setShowOtpInput(state.otp_needed);
     setCurrentConnection(state.server_info);
+    setClientHostname(state.client_hostname || '');
 
     setHost(state.server_info.host || '');
     setHostname(state.server_info.hostname || '');
