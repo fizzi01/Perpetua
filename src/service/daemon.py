@@ -148,6 +148,50 @@ class RunningState:
         return None
 
 
+class CommandHandler:
+    """Decorator and registry for command handlers"""
+
+    _handlers: Dict[str, Callable] = {}
+
+    @classmethod
+    def register(cls, command: str):
+        """
+        Decorator to register a method as a command handler.
+        """
+
+        def decorator(func: Callable) -> Callable:
+            cls._handlers[command] = func
+            return func
+
+        return decorator
+
+    @classmethod
+    def get_handlers(cls, instance: Optional[Any] = None) -> Dict[str, Callable]:
+        """
+        Get all registered handlers, optionally bound to an instance.
+
+        Args:
+            instance: If provided, bind all handlers to this instance
+
+        Returns:
+            Dictionary mapping command strings to (bound) methods
+        """
+        if instance is None:
+            return cls._handlers.copy()
+
+        # Bind all handlers to the instance
+        bound_handlers = {}
+        for command, func in cls._handlers.items():
+            bound_handlers[command] = func.__get__(instance, instance.__class__)  # ty:ignore[unresolved-attribute]
+        cls.clear()  # Clear after binding to avoid duplicate registrations
+        return bound_handlers
+
+    @classmethod
+    def clear(cls):
+        """Clear all registered handlers (useful for testing)"""
+        cls._handlers.clear()
+
+
 class Daemon:
     """
     Main daemon class for managing lifecycle.
@@ -188,7 +232,7 @@ class Daemon:
         )
 
     MAX_CONNECTIONS = 1  # Only accept one connection at a time
-    BUFFER_SIZE = 16384  # 16KB for larger responses
+    BUFFER_SIZE = 16384  # 16KB
 
     def __init__(
         self,
@@ -243,42 +287,7 @@ class Daemon:
         self._connected_client_writer: Optional[asyncio.StreamWriter] = None
         self._client_connection_lock = asyncio.Lock()
 
-        # Command handlers registry
-        self._command_handlers: Dict[str, Callable] = {
-            DaemonCommand.SERVICE_CHOICE: self._handle_service_choice,
-            DaemonCommand.START_SERVER: self._handle_start_server,
-            DaemonCommand.STOP_SERVER: self._handle_stop_server,
-            DaemonCommand.START_CLIENT: self._handle_start_client,
-            DaemonCommand.STOP_CLIENT: self._handle_stop_client,
-            DaemonCommand.STATUS: self._handle_status,
-            DaemonCommand.SERVER_STATUS: self._handle_server_status,
-            DaemonCommand.CLIENT_STATUS: self._handle_client_status,
-            DaemonCommand.GET_SERVER_CONFIG: self._handle_get_server_config,
-            DaemonCommand.SET_SERVER_CONFIG: self._handle_set_server_config,
-            DaemonCommand.GET_CLIENT_CONFIG: self._handle_get_client_config,
-            DaemonCommand.SET_CLIENT_CONFIG: self._handle_set_client_config,
-            DaemonCommand.SAVE_CONFIG: self._handle_save_config,
-            DaemonCommand.RELOAD_CONFIG: self._handle_reload_config,
-            DaemonCommand.ENABLE_STREAM: self._handle_enable_stream,
-            DaemonCommand.DISABLE_STREAM: self._handle_disable_stream,
-            DaemonCommand.GET_STREAMS: self._handle_get_streams,
-            DaemonCommand.ADD_CLIENT: self._handle_add_client,
-            DaemonCommand.REMOVE_CLIENT: self._handle_remove_client,
-            DaemonCommand.EDIT_CLIENT: self._handle_edit_client,
-            DaemonCommand.LIST_CLIENTS: self._handle_list_clients,
-            DaemonCommand.ENABLE_SSL: self._handle_enable_ssl,
-            DaemonCommand.DISABLE_SSL: self._handle_disable_ssl,
-            DaemonCommand.SHARE_CERTIFICATE: self._handle_share_certificate,
-            DaemonCommand.RECEIVE_CERTIFICATE: self._handle_receive_certificate,
-            DaemonCommand.SET_OTP: self._handle_set_otp,
-            DaemonCommand.CHECK_SERVER_CHOICE_NEEDED: self._handle_check_server_choice_needed,
-            DaemonCommand.GET_FOUND_SERVERS: self._handle_get_found_servers,
-            DaemonCommand.CHOOSE_SERVER: self._handle_choose_server,
-            DaemonCommand.CHECK_OTP_NEEDED: self._handle_check_otp_needed,
-            DaemonCommand.DISCOVER_SERVICES: self._get_discovered_services,
-            DaemonCommand.SHUTDOWN: self._handle_shutdown,
-            DaemonCommand.PING: self._handle_ping,
-        }
+        self._command_handlers: Dict[str, Callable] = CommandHandler.get_handlers(self)
 
         # Setup signal handlers for graceful shutdown
         self._setup_signal_handlers()
@@ -635,7 +644,7 @@ class Daemon:
             # Accept the connection
             self._connected_client_writer = writer
             self._connected_client_reader = reader
-            self._logger.info(f"Client connected from {addr}")
+            self._logger.debug(f"Client connected from {addr}")
 
         try:
             # Send welcome message
@@ -653,7 +662,7 @@ class Daemon:
                     )
 
                     if not data:
-                        # self._logger.info("Client disconnected (no data)")
+                        # self._logger.debug("Client disconnected (no data)")
                         await asyncio.sleep(0.1)
                         continue
 
@@ -929,6 +938,7 @@ class Daemon:
 
     # ==================== Command Handlers: Service Control ====================
 
+    @CommandHandler.register(DaemonCommand.SERVICE_CHOICE)
     async def _handle_service_choice(self, params: Dict[str, Any]) -> None:
         """Handle service choice between client and server"""
         choice = params.get("service")
@@ -982,6 +992,7 @@ class Daemon:
                 command, "Invalid service choice"
             )
 
+    @CommandHandler.register(DaemonCommand.START_SERVER)
     async def _handle_start_server(self, params: Dict[str, Any]) -> None:
         """Start the server service"""
         command = DaemonCommand.START_SERVER.value
@@ -1033,6 +1044,7 @@ class Daemon:
             self._logger.error(f"{e}")
             await self._notification_manager.notify_command_error(command, f"{str(e)}")
 
+    @CommandHandler.register(DaemonCommand.STOP_SERVER)
     async def _handle_stop_server(self, params: Dict[str, Any]) -> None:
         """Stop the server service"""
         command = DaemonCommand.STOP_SERVER.value
@@ -1052,6 +1064,7 @@ class Daemon:
         except Exception as e:
             await self._notification_manager.notify_command_error(command, f"{str(e)}")
 
+    @CommandHandler.register(DaemonCommand.START_CLIENT)
     async def _handle_start_client(self, params: Dict[str, Any]) -> None:
         """Start the client service"""
         command = DaemonCommand.START_CLIENT.value
@@ -1099,6 +1112,7 @@ class Daemon:
             self._logger.error(f"{e}")
             await self._notification_manager.notify_command_error(command, f"{str(e)}")
 
+    @CommandHandler.register(DaemonCommand.STOP_CLIENT)
     async def _handle_stop_client(self, params: Dict[str, Any]) -> None:
         """Stop the client service"""
         command = DaemonCommand.STOP_CLIENT.value
@@ -1125,6 +1139,7 @@ class Daemon:
 
     # ==================== Command Handlers: Status ====================
 
+    @CommandHandler.register(DaemonCommand.STATUS)
     async def _handle_status(self, params: Dict[str, Any]) -> None:
         """Get overall daemon status"""
         command = DaemonCommand.STATUS.value
@@ -1161,72 +1176,9 @@ class Daemon:
             command, "Status retrieved", result_data=status
         )
 
-    async def _handle_server_status(self, params: Dict[str, Any]) -> None:
-        """Get server status"""
-        command = DaemonCommand.SERVER_STATUS.value
-
-        if not self._server:
-            await self._notification_manager.notify_command_success(
-                command, "Server status", result_data={"running": False}
-            )
-            return
-
-        running = self._server.is_running()
-        status = {"running": running}
-
-        if running:
-            connected_clients = self._server.clients_manager.get_clients()
-            registered_clients = self._server.get_clients()
-
-            status.update(
-                {  # type: ignore
-                    "host": self._server.config.host,
-                    "port": self._server.config.port,
-                    "connected_clients": len(connected_clients),
-                    "registered_clients": len(registered_clients),
-                    "enabled_streams": self._server.get_enabled_streams(),
-                    "active_streams": self._server.get_active_streams(),
-                    "ssl_enabled": self._server.config.ssl_enabled,
-                }
-            )
-
-        await self._notification_manager.notify_command_success(
-            command, "Server status retrieved", result_data=status
-        )
-
-    async def _handle_client_status(self, params: Dict[str, Any]) -> None:
-        """Get client status"""
-        command = DaemonCommand.CLIENT_STATUS.value
-
-        if not self._client:
-            await self._notification_manager.notify_command_success(
-                command, "Client status", result_data={"running": False}
-            )
-            return
-
-        running = self._client.is_running()
-        status = {"running": running}
-
-        if running:
-            status.update(
-                {
-                    "server_host": self._client.config.get_server_host(),
-                    "server_port": self._client.config.get_server_port(),
-                    "connected": self._client.is_connected(),
-                    "enabled_streams": self._client.get_enabled_streams(),
-                    "active_streams": self._client.get_active_streams(),
-                    "ssl_enabled": self._client.config.ssl_enabled,
-                    "has_certificate": self._client.has_certificate(),
-                    "auto_reconnect": self._client.config.do_auto_reconnect(),
-                }
-            )
-
-        await self._notification_manager.notify_command_success(
-            command, "Client status retrieved", result_data=status
-        )
-
     # ==================== Command Handlers: Configuration ====================
 
+    @CommandHandler.register(DaemonCommand.GET_SERVER_CONFIG)
     async def _handle_get_server_config(self, params: Dict[str, Any]) -> None:
         """Get server configuration"""
         command = DaemonCommand.GET_SERVER_CONFIG.value
@@ -1250,6 +1202,7 @@ class Daemon:
             command, "Server configuration retrieved", result_data=config_dict
         )
 
+    @CommandHandler.register(DaemonCommand.SET_SERVER_CONFIG)
     async def _handle_set_server_config(self, params: Dict[str, Any]) -> None:
         """Set server configuration"""
         command = DaemonCommand.SET_SERVER_CONFIG.value
@@ -1292,6 +1245,7 @@ class Daemon:
         except Exception as e:
             await self._notification_manager.notify_command_error(command, f"{str(e)}")
 
+    @CommandHandler.register(DaemonCommand.GET_CLIENT_CONFIG)
     async def _handle_get_client_config(self, params: Dict[str, Any]) -> None:
         """Get client configuration"""
         command = DaemonCommand.GET_CLIENT_CONFIG.value
@@ -1317,6 +1271,7 @@ class Daemon:
             command, "Client configuration retrieved", result_data=config_dict
         )
 
+    @CommandHandler.register(DaemonCommand.SET_CLIENT_CONFIG)
     async def _handle_set_client_config(self, params: Dict[str, Any]) -> None:
         """Set client configuration"""
         command = DaemonCommand.SET_CLIENT_CONFIG.value
@@ -1386,6 +1341,7 @@ class Daemon:
         except Exception as e:
             await self._notification_manager.notify_command_error(command, f"{str(e)}")
 
+    @CommandHandler.register(DaemonCommand.SAVE_CONFIG)
     async def _handle_save_config(self, params: Dict[str, Any]) -> None:
         """Save configurations to disk"""
         command = DaemonCommand.SAVE_CONFIG.value
@@ -1409,6 +1365,7 @@ class Daemon:
         except Exception as e:
             await self._notification_manager.notify_command_error(command, f"{str(e)}")
 
+    @CommandHandler.register(DaemonCommand.RELOAD_CONFIG)
     async def _handle_reload_config(self, params: Dict[str, Any]) -> None:
         """Reload configurations from disk"""
         command = DaemonCommand.RELOAD_CONFIG.value
@@ -1434,6 +1391,7 @@ class Daemon:
 
     # ==================== Command Handlers: Stream Management ====================
 
+    @CommandHandler.register(DaemonCommand.ENABLE_STREAM)
     async def _handle_enable_stream(self, params: Dict[str, Any]) -> None:
         """Enable a stream on running service"""
         command = DaemonCommand.ENABLE_STREAM.value
@@ -1481,6 +1439,7 @@ class Daemon:
         except Exception as e:
             await self._notification_manager.notify_command_error(command, f"{str(e)}")
 
+    @CommandHandler.register(DaemonCommand.DISABLE_STREAM)
     async def _handle_disable_stream(self, params: Dict[str, Any]) -> None:
         """Disable a stream on running service"""
         command = DaemonCommand.DISABLE_STREAM.value
@@ -1526,6 +1485,7 @@ class Daemon:
         except Exception as e:
             await self._notification_manager.notify_command_error(command, f"{str(e)}")
 
+    @CommandHandler.register(DaemonCommand.GET_STREAMS)
     async def _handle_get_streams(self, params: Dict[str, Any]) -> None:
         """Get stream information"""
         command = DaemonCommand.GET_STREAMS.value
@@ -1548,6 +1508,7 @@ class Daemon:
 
     # ==================== Command Handlers: Client Management (Server) ====================
 
+    @CommandHandler.register(DaemonCommand.ADD_CLIENT)
     async def _handle_add_client(self, params: Dict[str, Any]) -> None:
         """Add a client to server (server only)"""
         command = DaemonCommand.ADD_CLIENT.value
@@ -1593,6 +1554,7 @@ class Daemon:
         except Exception as e:
             await self._notification_manager.notify_command_error(command, f"{str(e)}")
 
+    @CommandHandler.register(DaemonCommand.REMOVE_CLIENT)
     async def _handle_remove_client(self, params: Dict[str, Any]) -> None:
         """Remove a client from server (server only)"""
         command = DaemonCommand.REMOVE_CLIENT.value
@@ -1623,6 +1585,7 @@ class Daemon:
         except Exception as e:
             await self._notification_manager.notify_command_error(command, f"{str(e)}")
 
+    @CommandHandler.register(DaemonCommand.EDIT_CLIENT)
     async def _handle_edit_client(self, params: Dict[str, Any]) -> None:
         """Edit a client configuration (server only)"""
         command = DaemonCommand.EDIT_CLIENT.value
@@ -1668,6 +1631,7 @@ class Daemon:
         except Exception as e:
             await self._notification_manager.notify_command_error(command, f"{str(e)}")
 
+    @CommandHandler.register(DaemonCommand.LIST_CLIENTS)
     async def _handle_list_clients(self, params: Dict[str, Any]) -> None:
         """List registered clients (server only)"""
         command = DaemonCommand.LIST_CLIENTS.value
@@ -1703,6 +1667,7 @@ class Daemon:
 
     # ==================== Command Handlers: SSL/Certificate ====================
 
+    @CommandHandler.register(DaemonCommand.ENABLE_SSL)
     async def _handle_enable_ssl(self, params: Dict[str, Any]) -> None:
         """Enable SSL"""
         command = DaemonCommand.ENABLE_SSL.value
@@ -1742,6 +1707,7 @@ class Daemon:
         except Exception as e:
             await self._notification_manager.notify_command_error(command, f"{str(e)}")
 
+    @CommandHandler.register(DaemonCommand.DISABLE_SSL)
     async def _handle_disable_ssl(self, params: Dict[str, Any]) -> None:
         """Disable SSL"""
         command = DaemonCommand.DISABLE_SSL.value
@@ -1771,6 +1737,7 @@ class Daemon:
         except Exception as e:
             await self._notification_manager.notify_command_error(command, f"{str(e)}")
 
+    @CommandHandler.register(DaemonCommand.SHARE_CERTIFICATE)
     async def _handle_share_certificate(self, params: Dict[str, Any]) -> None:
         """Share certificate (server only)"""
         command = DaemonCommand.SHARE_CERTIFICATE.value
@@ -1806,6 +1773,7 @@ class Daemon:
         except Exception as e:
             await self._notification_manager.notify_command_error(command, f"{str(e)}")
 
+    @CommandHandler.register(DaemonCommand.RECEIVE_CERTIFICATE)
     async def _handle_receive_certificate(self, params: Dict[str, Any]) -> None:
         """Receive certificate (client only)"""
         command = DaemonCommand.RECEIVE_CERTIFICATE.value
@@ -1844,6 +1812,7 @@ class Daemon:
 
     # ==================== Command Handlers: Server Selection & OTP ====================
 
+    @CommandHandler.register(DaemonCommand.CHECK_SERVER_CHOICE_NEEDED)
     async def _handle_check_server_choice_needed(self, params: Dict[str, Any]) -> None:
         """Check if server choice is needed (client only)"""
         command = DaemonCommand.CHECK_SERVER_CHOICE_NEEDED.value
@@ -1871,6 +1840,7 @@ class Daemon:
         except Exception as e:
             await self._notification_manager.notify_command_error(command, f"{str(e)}")
 
+    @CommandHandler.register(DaemonCommand.GET_FOUND_SERVERS)
     async def _handle_get_found_servers(self, params: Dict[str, Any]) -> None:
         """Get list of found servers (client only)"""
         command = DaemonCommand.GET_FOUND_SERVERS.value
@@ -1897,6 +1867,7 @@ class Daemon:
         except Exception as e:
             await self._notification_manager.notify_command_error(command, f"{str(e)}")
 
+    @CommandHandler.register(DaemonCommand.CHOOSE_SERVER)
     async def _handle_choose_server(self, params: Dict[str, Any]) -> None:
         """Choose a server from found servers (client only)"""
         command = DaemonCommand.CHOOSE_SERVER.value
@@ -1929,6 +1900,7 @@ class Daemon:
         except Exception as e:
             await self._notification_manager.notify_command_error(command, f"{str(e)}")
 
+    @CommandHandler.register(DaemonCommand.CHECK_OTP_NEEDED)
     async def _handle_check_otp_needed(self, params: Dict[str, Any]) -> None:
         """Check if OTP is needed for certificate (client only)"""
         command = DaemonCommand.CHECK_OTP_NEEDED.value
@@ -1956,6 +1928,7 @@ class Daemon:
         except Exception as e:
             await self._notification_manager.notify_command_error(command, f"{str(e)}")
 
+    @CommandHandler.register(DaemonCommand.SET_OTP)
     async def _handle_set_otp(self, params: Dict[str, Any]) -> None:
         """Set OTP for certificate reception (client only)"""
         command = DaemonCommand.SET_OTP.value
@@ -1995,6 +1968,7 @@ class Daemon:
 
     # ==================== Command Handlers: Service Discovery ====================
 
+    @CommandHandler.register(DaemonCommand.DISCOVER_SERVICES)
     async def _get_discovered_services(self, params: Dict[str, Any]) -> None:
         """Get available services on network"""
         command = DaemonCommand.DISCOVER_SERVICES.value
@@ -2034,6 +2008,7 @@ class Daemon:
 
     # ==================== Command Handlers: Daemon Control ====================
 
+    @CommandHandler.register(DaemonCommand.SHUTDOWN)
     async def _handle_shutdown(self, params: Dict[str, Any]) -> None:
         """Shutdown the daemon"""
         command = DaemonCommand.SHUTDOWN.value
@@ -2051,6 +2026,7 @@ class Daemon:
         await asyncio.sleep(0.5)
         await self.stop()
 
+    @CommandHandler.register(DaemonCommand.PING)
     async def _handle_ping(self, params: Dict[str, Any]) -> None:
         """Simple ping command to check daemon is alive"""
         await self._notification_manager.notify_pong()
