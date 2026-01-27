@@ -55,8 +55,8 @@ export function InlineNotification({ notifications, onDismiss }: InlineNotificat
       case 'info':
         return {
           bg: 'rgba(99, 102, 241, 0.15)',
-          border: 'var(--app-primary)',
-          text: 'var(--app-primary)',
+          border: 'var(--app-primary-light)',
+          text: 'var(--app-primary-light)',
         };
       default:
         return {

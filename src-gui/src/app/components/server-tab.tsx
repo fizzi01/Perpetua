@@ -459,10 +459,10 @@ export function ServerTab({ onStatusChange, state }: ServerTabProps) {
       clearTimeout(saveOptionsTimeoutRef.current);
     }
     
-    // Schedule new save after 2 seconds of inactivity
+    // Schedule new save after inactivity
     saveOptionsTimeoutRef.current = setTimeout(() => {
       handleSaveOptions(hostValue, portValue, sslEnabledValue);
-    }, 2000);
+    }, 500);
   };
 
   return (

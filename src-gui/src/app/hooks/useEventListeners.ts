@@ -23,9 +23,9 @@ export function useEventListeners(id: string = 'global') {
   const addListenerOnce = useCallback((key: string, unlistenFn: UnlistenFn) => {
     if (!listenersRef.current.has(key)) {
       addListener(key, unlistenFn);
-      console.log(`Listener "${key}" added once with ref count 1`);
+      // console.log(`Listener "${key}" added once with ref count 1`);
     } else {
-      console.log(`Listener "${key}" already exists`);
+      // console.log(`Listener "${key}" already exists`);
       // unlisten current one
       unlistenFn();
     }
@@ -36,13 +36,13 @@ export function useEventListeners(id: string = 'global') {
     
     if (existing) {
       existing.refCount++;
-      console.log(`Listener "${key}" ref count increased to ${existing.refCount}`);
+      // console.log(`Listener "${key}" ref count increased to ${existing.refCount}`);
     } else {
       listenersRef.current.set(key, {
         unlisten: unlistenFn,
         refCount: 1
       });
-      console.log(`Listener "${key}" added with ref count 1`);
+      // console.log(`Listener "${key}" added with ref count 1`);
     }
   }, []);
 
@@ -55,13 +55,13 @@ export function useEventListeners(id: string = 'global') {
     }
 
     entry.refCount--;
-    console.log(`Listener "${key}" ref count decreased to ${entry.refCount}`);
+    // console.log(`Listener "${key}" ref count decreased to ${entry.refCount}`);
 
     // Remove the listener only when the ref count reaches 0
     if (entry.refCount <= 0) {
       entry.unlisten();
       listenersRef.current.delete(key);
-      console.log(`Listener "${key}" removed`);
+      // console.log(`Listener "${key}" removed`);
     }
   }, []);
 
@@ -71,7 +71,7 @@ export function useEventListeners(id: string = 'global') {
     if (entry) {
       entry.unlisten();
       listenersRef.current.delete(key);
-      console.log(`Listener "${key}" forcefully removed`);
+      // console.log(`Listener "${key}" forcefully removed`);
     } else {
       console.warn(`Listener "${key}" not found for forceful removal`);
     }

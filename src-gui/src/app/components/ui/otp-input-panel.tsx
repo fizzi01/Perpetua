@@ -35,10 +35,10 @@ export function OtpInputPanel({
     onSubmit(otpInput);
     
     // Reset after animation
-    setTimeout(() => {
-      setIsProcessing(false);
-      setOtpInput('');
-    }, 1500);
+    // setTimeout(() => {
+    //   setIsProcessing(false);
+    //   setOtpInput('');
+    // }, 1500);
   };
 
   const handleCancel = () => {
@@ -49,9 +49,10 @@ export function OtpInputPanel({
 
   // Reset state when panel is closed
   useEffect(() => {
-    if (!isVisible && (otpInput || error)) {
+    if (!isVisible && (otpInput || error || isProcessing)) {
       setOtpInput('');
       setError(null);
+      setIsProcessing(false);
     }
   }, [isVisible]);
 
@@ -194,7 +195,7 @@ export function OtpInputPanel({
                 backgroundColor: isProcessing ? 'var(--app-success)' : 'var(--app-primary)',
                 color: 'white',
                 opacity: isProcessing ? 0.8 : 1,
-                cursor: isProcessing ? 'not-allowed' : 'pointer'
+                cursor: isProcessing ? '' : 'pointer'
               }}
             >
               {isProcessing ? (
@@ -228,7 +229,7 @@ export function OtpInputPanel({
                   borderColor: 'var(--app-border)',
                   color: 'var(--app-text-secondary)',
                   opacity: isProcessing ? 0.5 : 1,
-                  cursor: isProcessing ? 'not-allowed' : 'pointer'
+                  cursor: isProcessing ? '' : 'pointer'
                 }}
               >
                 <XCircle size={18} />

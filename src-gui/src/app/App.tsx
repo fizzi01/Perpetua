@@ -35,20 +35,20 @@ export default function App() {
         setupStatusListener();
         isStartupRef.current = false;
         chooseService(mode).catch((err) => {
-          console.error('Error changing service:', err);
+          console.error('[App] Error changing service:', err);
           listeners.forceRemoveListener('service-choice');
         });
 
         getStatus().catch((err) => {
-          console.error('Error fetching status:', err);
+          console.error('[App] Error fetching status:', err);
         });
 
         listenGeneralEvent(EventType.ShowLog, true, (event: any) => {
-          console.log('ShowLog event received', event);
+          console.log('[App] ShowLog event received', event);
           setShowLogs(true);
         }).then((unlisten) => {
             listeners.addListenerOnce('show-log', () => {
-              console.log('Removing ShowLog listener');
+              console.log('[App]Removing ShowLog listener');
               unlisten();
             });
         });
@@ -58,7 +58,7 @@ export default function App() {
   function setupStatusListener() {
       setListenersAdded(true);
       listenCommand(EventType.CommandSuccess, CommandType.Status, (event) => {
-            console.log(`Status received`, event);
+            // console.log(`Status received`, event);
             let result = event.data?.result as ServiceStatus;
             let server_status = result.server_info as ServerStatus;
             let client_status = result.client_info as ClientStatus;
@@ -80,7 +80,7 @@ export default function App() {
             listeners.removeListener('status');
           }).then((unlisten) => {
               listeners.addListenerOnce('status', () => {
-                console.log('Removing status listener');
+                // console.log('Removing status listener');
                 unlisten();
                 setListenersAdded(false);
               });
@@ -108,10 +108,10 @@ export default function App() {
   // Periodically fetch status to avoid desync
   useEffect(() => {
     const interval = setInterval(() => {
-      console.log('Fetching status periodically');
+      console.log('[App] Fetching status');
       setupStatusListener();
       getStatus().catch((err) => {
-        console.error('Error fetching status:', err);
+        console.error('[App] Error fetching status:', err);
       });
     }, 2000); // 2 seconds
 
