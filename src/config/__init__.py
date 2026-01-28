@@ -3,6 +3,24 @@ Unified configuration management system.
 Handles server and client configurations with persistent storage support.
 """
 
+
+#  Perpatua - open-source and cross-platform KVM software.
+#  Copyright (c) 2026 Federico Izzi.
+#
+#  This program is free software: you can redistribute it and/or modify
+#  it under the terms of the GNU General Public License as published by
+#  the Free Software Foundation, either version 3 of the License, or
+#  (at your option) any later version.
+#
+#  This program is distributed in the hope that it will be useful,
+#  but WITHOUT ANY WARRANTY; without even the implied warranty of
+#  MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
+#  GNU General Public License for more details.
+#
+#  You should have received a copy of the GNU General Public License
+#  along with this program.  If not, see <https://www.gnu.org/licenses/>.
+#
+
 import asyncio
 import sys
 from dataclasses import dataclass, field
@@ -23,7 +41,7 @@ async def _write(file, content: str) -> None:
             await f.write(line)
             await asyncio.sleep(0)
 
-
+# TODO: Unify under a single file management system
 @dataclass
 class ApplicationConfig:
     """Application-wide configuration settings"""
