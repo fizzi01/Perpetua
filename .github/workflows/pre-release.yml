@@ -1,0 +1,164 @@
+name: Dev Build
+
+on:
+  workflow_dispatch:
+    inputs:
+      tags:
+        description: 'Build name'
+      all_build:
+        description: 'Complete build'
+        required: true
+        default: false
+        type: boolean
+      run_windows_build:
+        description: 'Windows Build'
+        required: true
+        default: false
+        type: boolean
+      run_mac_build:
+        description: 'MacOS Build'
+        required: true
+        default: false
+        type: boolean
+  push:
+    branches:
+      - dev
+      - rework
+    paths-ignore:
+      - '.github/**'
+      - 'docs/**'
+      - 'README.md'
+      - 'LICENSE'
+
+run-name: ${{ github.event.inputs.tags }}
+
+jobs:
+  build-windows:
+    if: contains(github.event.head_commit.message, '#build') || contains(github.event.head_commit.message, '#win') || github.event.inputs.run_windows_build == true || github.event.inputs.all_build == true
+    name: Windows Build
+    runs-on: windows-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+
+      - name: Cache Rust
+        uses: actions/cache@v4
+        with:
+          path: |
+            src-gui/src-tauri/target/
+          key: ${{ runner.os }}-cargo-${{ hashFiles('**/Cargo.lock') }}
+          restore-keys: |
+            ${{ runner.os }}-cargo-${{ hashFiles('**/Cargo.lock') }}
+
+      - name: Install poetry
+        uses: abatilo/actions-poetry@v4
+      - name: Setup a local virtual environment (if no poetry.toml file)
+        run: |
+          poetry config virtualenvs.create true --local
+          poetry config virtualenvs.in-project true --local
+      - uses: actions/cache@v3
+        name: Define a cache for the virtual environment based on the dependencies lock file
+        with:
+          path: ./.venv
+          key: venv-${{ hashFiles('poetry.lock') }}
+
+      - name: Install Python dependencies
+        run: poetry install
+
+      - name: Build
+        run: poetry run python build.py
+
+      - name: Create zip of the app
+        run: |
+          cd .build/Perpetua
+          7z a -tzip ../../Perpetua_windows.zip *
+
+      - name: Upload artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: Perpetua_windows
+          path: Perpetua_windows.zip
+
+  build-mac:
+    if: contains(github.event.head_commit.message, '#build') || contains(github.event.head_commit.message, '#osx') || github.event.inputs.run_mac_build == 'true' || github.event.inputs.all_build == 'true'
+    name: MacOS Build
+    runs-on: macos-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+
+      # - name: Setup Node.js
+      #   uses: actions/setup-node@v4
+      #   with:
+      #     node-version: '20'
+
+      - name: Setup Rust
+        uses: dtolnay/rust-toolchain@stable
+
+      - name: Cache Rust
+        uses: actions/cache@v4
+        with:
+          path: |
+            src-gui/src-tauri/target/
+          key: ${{ runner.os }}-cargo-${{ hashFiles('**/Cargo.lock') }}
+          restore-keys: |
+            ${{ runner.os }}-cargo-${{ hashFiles('**/Cargo.lock') }}
+
+      - name: Install poetry
+        uses: abatilo/actions-poetry@v4
+      - name: Setup a local virtual environment (if no poetry.toml file)
+        run: |
+          poetry config virtualenvs.create true --local
+          poetry config virtualenvs.in-project true --local
+      - uses: actions/cache@v3
+        name: Define a cache for the virtual environment based on the dependencies lock file
+        with:
+          path: ./.venv
+          key: venv-${{ hashFiles('poetry.lock') }}
+
+      - name: Install Python dependencies
+        run: poetry install
+
+      - name: Decode and import certificate
+        env:
+          MAC_CERTIFICATE: ${{ secrets.CERTIFICATE }}
+          MAC_CERTIFICATE_PASSWORD: ${{ secrets.CERTIFICATE_PASSWORD }}
+        run: |
+          echo "$MAC_CERTIFICATE" | base64 --decode > certificate.p12
+          security create-keychain -p "action" build.keychain
+          security import certificate.p12 -k build.keychain -P "$MAC_CERTIFICATE_PASSWORD" -T /usr/bin/codesign
+          security list-keychains -s build.keychain
+          security unlock-keychain -p "action" build.keychain
+          security set-key-partition-list -S apple-tool:,apple:,codesign: -s -k "action" build.keychain
+
+      - name: Build
+        run: poetry run python build.py
+
+      - name: Verify app signature
+        run: codesign --verify --verbose .build/Perpetua.app
+
+      - name: Prepare app for upload
+        run: |
+          mkdir -p tempdir
+          cp -R .build/Perpetua.app tempdir/
+
+      - name: Upload artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: Perpetua_macos
+          path: ./tempdir
