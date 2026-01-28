@@ -23,7 +23,7 @@ Control multiple computers with a single keyboard and mouse. Move your cursor se
 Define the physical arrangement of your devices (left, right, above, below) to enable intuitive cursor transitions that match your actual workspace layout.
 
 **Clipboard Synchronization**  
-Share clipboard content including text, images, and rich formats across all connected devices automatically.
+Share clipboard content across all connected devices automatically.
 
 **Secure by Default**  
 All network communication is encrypted using TLS.
@@ -189,7 +189,7 @@ Default behavior:
 
 The client configuration allows two discovery modes:
 
-**Automatic Discovery (Default):**
+**Auto Discovery (Default):**
 - Perpetua automatically discovers available servers on the local network
 - No manual configuration required
 - Ideal for single-server environments
@@ -253,12 +253,12 @@ For manual server configuration, populate the `host` field with the server's IP 
 
 </details>
 
+---
 > [!NOTE]
-> When multiple Perpetua servers are detected on the network,
-> the GUI presents a selection dialog allowing the user to 
+> When multiple Perpetua servers are detected on the network (on auto-discovery mode),
+> the GUI will present a selection dialog allowing the user to 
 > choose the desired server.
 
----
 
 ## Roadmap
 
