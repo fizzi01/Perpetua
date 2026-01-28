@@ -1,164 +1,273 @@
-<img src="/logo/logo_256x256.png" alt="logo" width=128px height=128px>
+<div align="center">
+    <img src="src-gui/src-tauri/icons/icon.png" alt="Perpetua Logo" width="128" height="128">
+    <h1>Perpetua</h1>
+</div>
 
-# PyContinuity
+Perpetua is an open-source, cross-platform KVM software solution inspired by Apple's Universal Control. It enables users to control multiple devices using a single keyboard and mouse, with seamless cursor transitions between devices, keyboard sharing, and clipboard synchronization across different operating systems.
 
-**PyContinuity** is a cross-platform application designed to streamline control and resource sharing across multiple devices. 
-It allows users to manage their devices as a unified system, offering seamless screen transitions, clipboard synchronization, and file sharing. 
-PyContinuity supports **macOS** and **Windows**, bridging gaps between platforms for an efficient workflow.
+Unlike hardware KVM switches, Perpetua operates entirely over the local network, eliminating the need for physical peripherals or cables while maintaining secure, encrypted communication between devices.
 
+Built with Python, Perpetua prioritizes performance through the integration of high-performance event loops: uvloop on macOS, and winloop on Windows. This architectural choice delivers exceptional responsiveness and low-latency input handling, ensuring smooth performance.
 
+<picture>
+   <source srcset="docs/imgs/main.png">
+   <img alt="Perpetua Server View" srcset="docs/imgs/main.png">
+</picture>
 
-## Key Features and Advantages
+## Features
 
-### 🌍 **Unified Cross-Platform Control**
-- Control multiple devices using a single mouse and keyboard.
-- Compatible with **macOS** and **Windows** _(Android coming soon)_.
-- Reduces the need for switching peripherals, offering a more efficient workspace.
+**Unified Input Control**  
+Control multiple computers with a single keyboard and mouse. Move your cursor seamlessly across device boundaries as if they were multiple monitors connected to one system.
 
-### 🖥️ **Seamless Cursor Transition**
-- Emulates HDMI-like monitor transitions for the cursor.
-- Configure devices spatially (e.g., left, right, up, down) for smooth, intuitive movement between systems.
+**Spatial Configuration**  
+Define the physical arrangement of your devices (left, right, above, below) to enable intuitive cursor transitions that match your actual workspace layout.
 
-### 📋 **Shared Clipboard**
-- Synchronize clipboard content (text, links, images, etc.) across all connected devices.
-- Enables quick copy-paste operations between systems without additional steps.
+**Clipboard Synchronization**  
+Share clipboard content across all connected devices automatically.
 
-### 📁 **File Sharing**
-- Transfer files between devices seamlessly:
-  - Copy a file on one device and paste it directly onto another.
-  - Eliminates reliance on external file-sharing tools for local network transfers.
-
-### 🔒 **Secure Communication**
-- Built-in **SSL/TLS encryption** ensures all communications between devices are secure, reliable, and private.
-- No data is stored.
-
-
-
-## Use Cases
-
-### 🚀 **Multi-Device Workflow**
-Manage multiple devices for programming, design, or content creation with a single mouse and keyboard.
-
-### 🖱️ **Cross-Device Input Control**
-For users managing both macOS and Windows systems, 
-PyContinuity simplifies workflows by removing the need to physically switch peripherals or rely on additional software.
-
-### 📂 **Streamlined Productivity**
-Simplify file and clipboard sharing tasks:
-- Share files without relying on cloud services or USB drives.
-- Copy and paste content instantly between devices.
-
-
-
-## How It Works
-
-###### 1.	Setup and Configuration:
-
-*   Install PyContinuity on each device you want to connect.
-*   Configure the devices through the interface.
-
-###### 2.	Screen Transition:
-
-*   Configure the spatial arrangement of your devices (e.g., left, right, up, down).
-*   PyContinuity enables a seamless switch between devices.
-
-######   3.	Clipboard and File Sharing:
-
-*   Automatically sync clipboard content across all connected devices.
-*	Copy files directly from one device to another as though working in a unified environment.
-
-## System Requirements
-
-###### Supported Platforms
-- **macOS**: Version 10.15 or later.
-- **Windows**: Version 10 or later.
-
-###### Network
-- All devices must be connected to the same local network.
-
-###### Additional Requirements
-- **OpenSSL**: Required for SSL/TLS certificate generation.
-
-## Getting Started
-
-1. **Download PyContinuity**:
-   - [Latest release](https://github.com/fizzi01/PyContinuity/releases/latest)
-2. **Install**:
-   - Follow the instructions in the provided [installation guide](#installation-guide).
-3. **Configure**:
-   - Launch the application and [configure](#configuration-details) device layout and settings.
-   - Set up clipboard and file-sharing preferences.
-4. **Connect**:
-   - Start PyContinuity on all devices and enjoy seamless integration.
+**Secure by Default**  
+All network communication is encrypted using TLS.
 
 ---
 
-## Configuration Details
 
-### **Server Configuration**
-The server requires the following settings:
+## Supported Operating Systems
 
-| Setting                                  | Description                                                                    |
-|------------------------------------------|--------------------------------------------------------------------------------|
-| **Clients (clients):**                   | Configure connected client positions (`up`, `down`, `left`, `right`) with IPs. |
-| **Logging (logging):**                   | `True` – Enable intensive logging.                                             |
-| **Screen Threshold (screen_threshold):** | `10` – Internal constant.                                                      |
-| **Server IP (server_ip):**               | Leave empty, not required.                                                     |
-| **Server Port (server_port):**           | `2121` – Server's listening port.                                              |
-| **Use SSL (use_ssl):**                   | `True` – Use secure connections.                                               |
-| **Wait (wait):**                         | `5` – Internal constant.                                                       |
+Actually only Windows and MacOS are supported.
 
-#### **SSL Certificate**
-The server generates an SSL certificate on the first configuration. Share this certificate with the clients for secure communication.
+### Known Issues
 
+*This section is reserved for documenting platform-specific issues and workarounds as they are identified.*
 
-### **Client Configuration**
-Each client must be configured to connect securely to the server. Use the following settings:
-
-| Setting                                | Description                                                                      |
-|----------------------------------------|----------------------------------------------------------------------------------|
-| **Logging (logging):**                 | `True` – Enable intensive logging.                                               |
-| **Server Certfile (server_certfile):** | Path to the certificate generated by the server (e.g., `/Desktop/certfile.pem`). |
-| **Server IP (server_ip):**             | Not required, leave empty.                                                       |
-| **Server Port (server_port):**         | `2121` – Must match the server’s port.                                           |
-| **Use SSL (use_ssl):**                 | `True` – Must match the server’s setting.                                        |
-| **Wait (wait):**                       | `5` – Internal constant.                                                         | 
+> [!Important]
+> - **Windows**: You can't control a Windows client if there is no real mouse connected to the machine.
+> - **Input Capture Conflicts**: Perpetua cannot control the mouse when other applications have exclusive input capture (e.g., video games). This is an architectural limitation.
 
 ---
 
-## Terminal Interface Guide
+## Building from Source
 
-The current version of PyContinuity provides a **Terminal Interface** for setup and management.
+### Prerequisites
 
-### **Menu Options**
+Perpetua requires several development tools and libraries to build successfully.
 
-| Option | Description                                              |
-|--------|----------------------------------------------------------|
-| **1**  | Manually configure the server.                           |
-| **2**  | Display the current client layout (spatial arrangement). |
-| **3**  | Start the server.                                        |
-| **4**  | Stop the server.                                         |
-| **5**  | Start the client.                                        |
-| **6**  | Stop the client.                                         |
-| **7**  | Edit server configuration.                               |
-| **8**  | Edit client configuration.                               |
-| **9**  | Reload server or client SSL certificates.                |
-| **10** | Exit the application.                                    |
+**Python Environment:**
+- Python 3.11 or 3.12
+- Poetry
+
+
+**GUI Framework:**
+- Node.js 18+ and npm
+- Rust toolchain
+- Tauri-cli
+
+**Platform-Specific Requirements:**
+
+*macOS:*
+- Xcode Command Line Tools
+  ```bash
+  xcode-select --install
+  ```
+
+*Windows:*
+- Microsoft C++ Build Tools
+  - Install the "Desktop development with C++" workload from [Visual Studio Build Tools](https://visualstudio.microsoft.com/downloads/#build-tools-for-visual-studio-2022)
+
+> [!NOTE]
+> **Windows versions prior to Windows 10 (1803)** require [Microsoft Edge WebView2 Runtime](https://developer.microsoft.com/en-us/microsoft-edge/webview2/) to be installed manually.
 
 ---
 
-## Installation guide
+### Quick Start
 
-Coming soon...
-___
+The project includes both a build script and Makefile for convenient building.
 
-## Support
+1. Clone the repository:
+   ```bash
+   git clone https://github.com/fizzi01/Perpetua.git
+   cd Perpetua
+   ```
 
-If you encounter any issues or have feature requests, please open an issue.
+2. Install Python dependencies:
+   ```bash
+   poetry install
+   # or
+   make install-build
+   ```
 
-## License
+3. Run the build:
+   ```bash
+   poetry run python build.py
+   # or
+   make build
+   ```
 
-This project is licensed under License. See the [LICENSE](https://github.com/fizzi01/pyContinuity/blob/master/LICENSE) file for details.
-___
 
-### Simplify your multi-device management with PyContinuity.
+<details>
+<summary><b>Advanced Build Options</b></summary>
+
+##### Using Poetry
+
+```bash
+# Debug build
+poetry run python build.py --debug
+
+# Skip GUI build (build daemon only)
+poetry run python build.py --skip-gui
+
+# Skip daemon build (build GUI only)
+poetry run python build.py --skip-daemon
+
+# Clean build artifacts before building
+poetry run python build.py --clean
+```
+
+##### Using Make
+
+```bash
+# Debug build
+make build-debug
+
+# Build daemon only
+make build-daemon
+
+# Build GUI only
+make build-gui
+
+# Release build with clean
+make build-release
+
+# Clean build artifacts
+make clean
+```
+
+</details>
+
+<details>
+<summary><b>Manual Build Steps</b></summary>
+
+For manual builds or troubleshooting, follow these steps:
+
+Build GUI:
+```bash
+cd src-gui
+npm install
+cargo tauri build
+```
+
+Build Daemon:
+```bash
+# From project root
+poetry run python build.py --skip-gui
+```
+
+</details>
+
+---
+
+## Configuration
+
+Perpetua uses JSON configuration files to define client and server settings. Configuration files are **automatically generated on first launch** with sensible defaults, requiring minimal manual intervention for most use cases.
+
+Configuration File Locations:
+- macOS: `$HOME/Library/Caches/Perpetua`
+- Windows: `%LOCALAPPDATA%\Perpetua`
+
+<details>
+<summary><b>Server Configuration</b></summary>
+
+The server configuration is managed automatically and typically does not require manual modification. Perpetua handles server setup, certificate generation, and network binding autonomously.
+
+Default behavior:
+- Generates self-signed TLS certificates
+- Manages client authentication and pairing
+
+</details>
+
+<details>
+<summary><b>Client Configuration</b></summary>
+
+The client configuration allows two discovery modes:
+
+**Auto Discovery (Default):**
+- Perpetua automatically discovers available servers on the local network
+- No manual configuration required
+- Ideal for single-server environments
+
+**Manual Server Specification:**
+- Explicitly define the server hostname or IP address in the configuration file
+- Useful for static network setups or when automatic discovery fails
+
+</details>
+
+<details>
+<summary><b>First Connection and OTP Pairing</b></summary>
+
+On the first connection between a client and server, Perpetua implements a secure pairing process:
+
+1. **OTP Generation**: The server generates a one-time password (OTP)
+2. **OTP Entry**: The user must enter this OTP on the client side
+3. **Certificate Exchange**: Upon successful OTP verification, the server shares its TLS certificate with the client
+4. **Trusted Connection**: Subsequent connections are authenticated automatically using the exchanged certificates
+
+This mechanism ensures secure, autonomous certificate sharing without manual management.
+
+</details>
+
+<details>
+<summary><b>Configuration Files Structure</b></summary>
+
+**Client Configuration (`client_config.json`):**
+```json
+{
+  "server_info": {
+    "uid": "",
+    "host": "",
+    "hostname": "",
+    "port": 55655,
+    "heartbeat_interval": 1,
+    "auto_reconnect": true,
+    "ssl": true,
+    "additional_params": {}
+  },
+  "uid": "client-unique-identifier",
+  "client_hostname": "your-hostname",
+  "streams_enabled": {
+    "0": true,
+    "1": true,
+    "4": true,
+    "12": true
+  },
+  "ssl_enabled": true,
+  "log_level": 0,
+  "log_to_file": false,
+  "log_file_path": null
+}
+```
+
+> For automatic server discovery, leave the `server_info` 
+> connection fields empty (`host`, `hostname`, `uid`).
+> Perpetua will automatically detect available servers on the local network.
+
+For manual server configuration, populate the `host` field with the server's IP address or hostname.
+
+</details>
+
+---
+> [!NOTE]
+> When multiple Perpetua servers are detected on the network (on auto-discovery mode),
+> the GUI will present a selection dialog allowing the user to 
+> choose the desired server.
+
+
+## Roadmap
+
+**Current Development Priorities:**
+
+- **Enhanced Platform Support**
+  - Linux support
+
+- **Feature Enhancements**
+  - File transfers
+  - Advanced clipboard format support (including proprietary formats)
+---

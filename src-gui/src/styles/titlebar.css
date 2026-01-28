@@ -1,0 +1,72 @@
+/*
+ * Perpatua - open-source and cross-platform KVM software.
+ * Copyright (c) 2026 Federico Izzi.
+ *
+ * This program is free software: you can redistribute it and/or modify
+ * it under the terms of the GNU General Public License as published by
+ * the Free Software Foundation, either version 3 of the License, or
+ * (at your option) any later version.
+ *
+ * This program is distributed in the hope that it will be useful,
+ * but WITHOUT ANY WARRANTY; without even the implied warranty of
+ * MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
+ * GNU General Public License for more details.
+ *
+ * You should have received a copy of the GNU General Public License
+ * along with this program.  If not, see <https://www.gnu.org/licenses/>.
+ *
+ */
+
+.titlebar {
+  background-color: rgba(15, 23, 42, 0.8);
+  border-color: rgba(99, 102, 241, 0.2);
+  box-shadow: 0 1px 3px rgba(0, 0, 0, 0.3);
+}
+
+.titlebar-toggle {
+  background-color: rgba(30, 41, 59, 0.6);
+  border-color: rgba(71, 85, 105, 0.5);
+}
+
+.titlebar-button {
+  transition: all 0.3s ease;
+  flex: 1;
+}
+
+.titlebar-system-group {
+  max-height: 100%;
+  border-color: rgba(99, 102, 241, 0.2);
+  background-color: rgba(15, 23, 42, 0.8);
+}
+
+.titlebar-system-group > button {
+  max-height: 100%;
+  color: var(--app-primary);
+  background-color: rgba(15, 23, 42, 0.8);
+}
+
+
+.titlebar-system-group > button[class*="hover:bg-black"]:hover {
+  color: white !important;
+  background-color: var(--app-window-control-hover) !important;
+}
+
+.window-close:hover {
+  background-color: var(--app-window-close-hover) !important;
+  color: white !important;
+}
+
+.titlebar-button:not(.active) {
+  background-color: transparent;
+  color: var(--app-text-muted);
+}
+
+.titlebar-button.active {
+  background-color: var(--app-primary);
+  color: white;
+}
+
+.titlebar-button:hover:not(.active) {
+  background-color: rgba(71, 85, 105, 0.3);
+}
+

@@ -1,281 +1,341 @@
+
+#  Perpatua - open-source and cross-platform KVM software.
+#  Copyright (c) 2026 Federico Izzi.
+#
+#  This program is free software: you can redistribute it and/or modify
+#  it under the terms of the GNU General Public License as published by
+#  the Free Software Foundation, either version 3 of the License, or
+#  (at your option) any later version.
+#
+#  This program is distributed in the hope that it will be useful,
+#  but WITHOUT ANY WARRANTY; without even the implied warranty of
+#  MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
+#  GNU General Public License for more details.
+#
+#  You should have received a copy of the GNU General Public License
+#  along with this program.  If not, see <https://www.gnu.org/licenses/>.
+#
+
+import asyncio
 import os
-import signal
-from multiprocessing import Pipe, Process, Event, managers
-from queue import Queue
-from threading import Thread
-from typing import Optional
+import subprocess
+import sys
+from pathlib import Path
+from time import sleep
+from psutil import pid_exists
 
-from app.ProcessMonitor import ProcessMonitor
-from app.io.IOManager import IOManager
-from config.ServerConfig import ServerConfig, Clients
-from config.ClientConfig import ClientConfig
-from app.managers.ServerManager import ServerManager
-from app.managers.ClientManager import ClientManager
-from app.gui.GUIController import GUIControllerFactory, BaseGUIController
+from utils.logging import get_logger
+from utils.permissions import PermissionChecker
+from config import ApplicationConfig
 
-from app.io.common import ProcessMessage, QueueLogger
+IS_WINDOWS = sys.platform in ("win32", "cygwin")
+COMPILED = "__compiled__" in globals()
 
-from utils.net import NetUtils
-from utils.misc.OSXaccessibilty import check_osx_permissions
-
-
-def clear_terminal(msg=None):
-    if 'TERM' not in os.environ:
-        os.environ['TERM'] = 'xterm-256color'
-    os.system('cls' if os.name == 'nt' else 'clear')
-
-
-class ApplicationLauncher:
-    """
-    Classe principale di avvio dell'applicazione (server + client + GUI),
-    che coordina la configurazione, i processi e i thread.
-    """
+class Launcher:
+    """Launcher class to manage daemon and GUI processes with centralized logging."""
 
     def __init__(self):
-        # Eventi di controllo
-        self.exit_event = Event()
+        self.main_path = ApplicationConfig.get_main_path()
+        self.pid_file = Path(os.path.join(self.main_path, "daemon.pid"))
+        self.log_file = Path(os.path.join(self.main_path, ApplicationConfig.get_default_log_file() or "daemon.log"))
+        self.temp_log_file = Path(os.path.join(self.main_path, "launcher_temp.log"))
+        self._log = None
+        self.project_root = self._get_project_root()
 
-        # Eventi per il server
-        self.stop_server_event = Event()
-        self.start_server_event = Event()
-        self.is_server_running = Event()
+    @property
+    def log(self):
+        """Lazy initialization of logger."""
+        if self._log is None:
+            self._log = get_logger("launcher", verbose=True, log_file=str(self.temp_log_file))
+        return self._log
 
-        # Eventi per il client
-        self.stop_client_event = Event()
-        self.start_client_event = Event()
-        self.is_client_running = Event()
+    def _get_project_root(self) -> Path:
+        """Get the project root directory based on execution mode."""
+        if COMPILED:
+            # When compiled, executable is in the build directory
+            return Path(sys.executable).parent
+        else:
+            # When running as script, launcher.py is in the project root
+            return Path(__file__).parent.resolve()
 
-        # Logging
-        self.logger_queue = Queue()
-        self.logger = QueueLogger(self.logger_queue)
+    def _get_python_executable(self) -> str:
+        """Get the Python executable path for running scripts."""
+        return sys.executable
 
-        # Pipe per input/output (GUI)
-        self.p1_input_conn, self.p2_input_conn = Pipe(duplex=True)
-        self.p1_output_conn, self.p2_output_conn = Pipe(duplex=True)
+    def clean_temp_log_file(self):
+        """Remove temporary launcher log file if exists."""
+        if self.temp_log_file.exists():
+            try:
+                self.temp_log_file.unlink()
+            except Exception as e:
+                print(f"Failed to remove temporary log file: {e}")
 
-        self.gui_controller: Optional[BaseGUIController] = None
-        self.gui_process: Optional[Process] = None
+    def clean_log_file(self):
+        """Clean up old log file if exists."""
+        if self.log_file.exists():
+            try:
+                self.log_file.unlink()
+                self.log.info("Old log file removed", path=str(self.log_file))
+            except Exception as e:
+                self.log.warning("Failed to remove old log file", path=str(self.log_file), error=str(e))
 
-        # Manager (multiprocessing)
-        self.manager = managers.BaseManager()
+    def get_daemon_pid(self) -> int | None:
+        """Get daemon PID from file if exists and process is running."""
+        if not self.pid_file.exists():
+            return None
 
-        # Configurazioni
-        self.server_config = None
-        self.client_config = None
-
-        # Manager di server/client
-        self.server_manager = None
-        self.client_manager = None
-
-        # Oggetti IOManager
-        self.input_manager: Optional[IOManager] = None
-        self.output_manager: Optional[IOManager] = None
-        self.logger_manager: Optional[IOManager] = None
-
-        # Thread di monitor
-        self.process_monitor: Optional[ProcessMonitor] = None
-
-        self._thread_pool = []
-        self.server_reader_thread: Optional[Thread] = None
-
-    def _handle_sigterm(self, signum, frame):
-        self.exit_event.set()
-        self.stop_server_event.set()
-        self.stop_client_event.set()
-
-    @staticmethod
-    def check_osx_accessibility():
-        import platform
-        if platform.system() == 'Darwin':
-            if not check_osx_permissions():
-                print("macOS permissions not granted!")
-                return False
-        return True
-
-    def init_configs(self):
-        # Avvia manager
-        self.manager.register('ServerConfig', ServerConfig)
-        self.manager.register('ClientConfig', ClientConfig)
-        self.manager.register('ProcessMessage', ProcessMessage)
-        self.manager.start()
-
-        # Crea configurazioni
-        self.server_config = self.manager.ServerConfig(
-            server_ip=NetUtils.get_local_ip(),
-            server_port=5001,
-            clients=Clients(),
-            wait=5,
-            screen_threshold=10,
-            logging=True
-        )
-
-        self.client_config = self.manager.ClientConfig(
-            server_ip="",
-            server_port=5001,
-            use_ssl=True,
-            certfile=None,
-            logging=True
-        )
-
-    def init_controller(self):
-        # Crea l'oggetto ProcessMessage con la pipe
-        controller_messager = ProcessMessage(self.p2_input_conn, self.p2_output_conn)
-
-        # Crea GUI
-        self.gui_controller = GUIControllerFactory.get_controller(
-            "terminal",
-            server_config=self.server_config,
-            client_config=self.client_config,
-            start_server_event=self.start_server_event,
-            stop_server_event=self.stop_server_event,
-            exit_event=self.exit_event,
-            is_server_running=self.is_server_running,
-            messager=controller_messager,
-            stop_client_event=self.stop_client_event,
-            start_client_event=self.start_client_event,
-            is_client_running=self.is_client_running
-        )
-
-        # Process per eseguire la GUI
-        self.gui_process = Process(target=self.gui_controller.run, daemon=True)
-
-    def init_signal_handlers(self):
-        signal.signal(signal.SIGTERM, self._handle_sigterm)
-
-    def start_processes_and_threads(self):
-        # Avvia process della GUI
-        self.gui_process.start()
-
-        ############################
-        # IOManager
-        ############################
-
-        # -> OutputManager: legge dalla pipe p1_output_conn e stampa su console
-        self.output_manager = IOManager(
-            name="OutputManager",
-            pipe=self.p1_output_conn,
-            mode=IOManager.READER_MODE,
-            output_stream=print,
-            input_stream=input,
-            on_message_callback=clear_terminal
-        )
-        self._thread_pool.append(self.output_manager)
-
-        # -> InputManager: legge i prompt dalla pipe p1_input_conn e chiede input all'utente
-        self.input_manager = IOManager(
-            name="InputManager",
-            pipe=self.p1_input_conn,
-            mode=IOManager.INPUT_MODE,
-            input_stream=input,
-            output_stream=print,
-            auto_start=True
-        )
-        self._thread_pool.append(self.input_manager)
-
-        # -> LoggerManager: legge dalla coda logger_queue e stampa su console
-        self.logger_manager = IOManager(
-            name="LoggerManager",
-            queue=self.logger_queue,
-            mode=IOManager.READER_MODE,
-            output_stream=print,
-            input_stream=input,
-        )
-        self._thread_pool.append(self.logger_manager)
-
-        # Start threads
-        for t in self._thread_pool:
-            t.start()
-
-        # Avvia il monitor thread
-        self._start_process_monitor()
-
-    def _start_process_monitor(self):
-        pipes = [self.p2_input_conn, self.p2_output_conn]
-        self.process_monitor = ProcessMonitor(
-            exit_event=self.exit_event,
-            start_event=self.start_server_event,  # o un event generico
-            processes=self.gui_process,
-            threads=self._thread_pool,
-            pipes=pipes,
-            on_stop_callback=self._on_monitor_stopped
-        )
-        self.process_monitor.start()
-
-    def _on_monitor_stopped(self):
-        print("Monitor thread stopped. Doing final cleanup...")
         try:
-            self.manager.shutdown()
+            pid = int(self.pid_file.read_text().strip())
+            # Check if process is still running
+            if pid_exists(pid):
+                return pid
+            else:
+                self.pid_file.unlink(missing_ok=True)
+                return None
+        except (ValueError, ProcessLookupError, PermissionError):
+            # Invalid PID or process not running, clean up stale PID file
+            self.pid_file.unlink(missing_ok=True)
+            return None
+
+    def write_daemon_pid(self, pid: int):
+        """Write daemon PID to file."""
+        self.pid_file.parent.mkdir(parents=True, exist_ok=True)
+        self.pid_file.write_text(str(pid))
+
+    def run_daemon(self):
+        """Run daemon in this process (called with --daemon argument)."""
+        from service.daemon import main
+        import signal
+
+        self.clean_log_file()
+
+        # Reinitialize logger with daemon log file
+        self._log = get_logger("launcher", is_root=True, verbose=True, log_file=str(self.log_file))
+
+        # Write PID file
+        self.write_daemon_pid(os.getpid())
+        self.log.info("Daemon process started", pid=os.getpid())
+
+        # Signal handler for graceful shutdown
+        def signal_handler(signum, frame):
+            self.log.info("Daemon received shutdown signal", signal=signum)
+            self.pid_file.unlink(missing_ok=True)
+            sys.exit(0)
+
+        signal.signal(signal.SIGTERM, signal_handler)
+        signal.signal(signal.SIGINT, signal_handler)
+
+        try:
+            if IS_WINDOWS:
+                import winloop as asyncloop  # type: ignore
+            else:
+                import uvloop as asyncloop  # type: ignore
+            asyncloop.run(main())
+        except ImportError:
+            asyncio.run(main())
+        except Exception:
+            self.log.exception("Daemon failed")
+            self.pid_file.unlink(missing_ok=True)
+            sys.exit(1)
+        finally:
+            self.log.info("Daemon stopped", pid=os.getpid())
+            self.pid_file.unlink(missing_ok=True)
+
+    def start_daemon(self, executable_dir: str) -> bool:
+        """Start daemon as a separate process by spawning ourselves with --daemon."""
+        existing_pid = self.get_daemon_pid()
+        if existing_pid:
+            self.log.info("Daemon already running", pid=existing_pid)
+            return True
+
+        self.clean_log_file()  # Clean up old log file before starting new daemon
+
+        if COMPILED:
+            # Running as compiled executable
+            self_path = os.path.join(executable_dir, "Perpetua")
+            if IS_WINDOWS:
+                self_path += ".exe"
+            
+            daemon_cmd = [self_path, '--daemon']
+        else:
+            # Running as Python script
+            python_exe = self._get_python_executable()
+            launcher_script = os.path.join(executable_dir, "launcher.py")
+            daemon_cmd = [python_exe, launcher_script, '--daemon']
+
+        # If sys.args has other relevant args, pass them to daemon
+        for arg in sys.argv[1:]:
+            if arg not in ('--daemon',):
+                daemon_cmd.append(arg)
+
+        try:
+            if COMPILED and not "--log-terminal" in sys.argv:
+                subprocess.Popen(
+                    daemon_cmd,
+                    stdout=subprocess.DEVNULL,
+                    stderr=subprocess.DEVNULL,
+                    stdin=subprocess.DEVNULL,
+                    start_new_session=True,
+                    close_fds=True,
+                )
+            else:
+                subprocess.Popen(
+                    daemon_cmd,
+                    start_new_session=True,
+                    close_fds=True,
+                )
+
+            self.log.info("Daemon process spawned", mode="compiled" if COMPILED else "script")
+
+            # Wait for daemon to write PID file (up to 3 seconds)
+            for _ in range(6):
+                sleep(0.5)
+                daemon_pid = self.get_daemon_pid()
+                if daemon_pid:
+                    self.log.info("Daemon started successfully", pid=daemon_pid)
+                    return True
+
+            self.log.warning("Daemon started but PID file not found yet")
+            return True
+
         except Exception as e:
-            print(f"Error shutting down manager: {e}")
+            self.log.error("Failed to start daemon", error=str(e))
+            return False
 
-    def loop_run(self):
-        while not self.exit_event.is_set():
-            # Attende che l’utente scelga di avviare client o server
-            while not (self.start_client_event.is_set() or self.start_server_event.is_set()):
-                if self.exit_event.wait(timeout=0.1):
-                    break
-            if self.exit_event.is_set():
-                break
+    def start_gui(self, executable_dir: str) -> bool:
+        """Start GUI process."""
+        if COMPILED:
+            # Running as compiled executable
+            gui_path = os.path.join(executable_dir, '_perpetua')
+            if IS_WINDOWS:
+                gui_path += ".exe"
 
-            # Avvio server
-            if self.start_server_event.is_set():
-                self.start_server_event.clear()
-                if self.exit_event.is_set():
-                    break
+            if not (os.path.isfile(gui_path) and os.access(gui_path, os.X_OK)):
+                self.log.error("GUI executable not found", path=gui_path)
+                return False
 
-                self.server_manager = ServerManager(
-                    server_config=self.server_config,
-                    logger=self.logger,
-                    server_started_event=self.is_server_running,
-                    server_stop_event=self.stop_server_event
+            gui_cmd = [gui_path]
+        else:
+            # Running as Python script - start Tauri dev server
+            gui_dir = os.path.join(executable_dir, "src-gui")
+            
+            if not os.path.isdir(gui_dir):
+                self.log.error("GUI directory not found", path=gui_dir)
+                return False
+
+            # Check if npm/pnpm/yarn is available
+            package_manager = self._get_package_manager()
+            if not package_manager:
+                self.log.error("No package manager found (npm/pnpm/yarn)")
+                return False
+
+            gui_cmd = [package_manager, "run", "tauri", "dev"]
+            
+        try:
+            if COMPILED:
+                g = subprocess.Popen(
+                    gui_cmd,
+                    stdout=subprocess.DEVNULL,
+                    stderr=subprocess.DEVNULL,
+                    stdin=subprocess.DEVNULL,
+                    start_new_session=True,
+                    close_fds=True
                 )
-                server_monitor_thread = Thread(target=self.server_manager.monitor_server, daemon=True)
-                server_monitor_thread.start()
-
-                self.server_manager.start_server()
-                server_monitor_thread.join()
-
-            # Avvio client
-            if self.start_client_event.is_set():
-                self.start_client_event.clear()
-                if self.exit_event.is_set():
-                    break
-
-                self.client_manager = ClientManager(
-                    client_config=self.client_config,
-                    logger=self.logger,
-                    client_started_event=self.is_client_running,
-                    client_stop_event=self.stop_client_event
+                self.log.info("GUI started", mode="compiled")
+                g.wait()
+            else:
+                # For dev mode, run in current process to see logs
+                g = subprocess.Popen(
+                    gui_cmd,
+                    cwd=os.path.join(executable_dir, "src-gui"),
+                    start_new_session=True,
+                    close_fds=True
                 )
-                client_monitor_thread = Thread(target=self.client_manager.monitor_client, daemon=True)
-                client_monitor_thread.start()
+                self.log.info("GUI started in dev mode", mode="script", cwd=gui_cmd)
+                g.wait()
+            
+            return True
+        except Exception as e:
+            self.log.error("Failed to start GUI", error=str(e))
+            return False
 
-                self.client_manager.start_client()
-                client_monitor_thread.join()
+    def _get_package_manager(self) -> str | None:
+        """Detect available package manager."""
+        for pm in ['pnpm', 'npm', 'yarn']:
+            try:
+                result = subprocess.run(
+                    [pm, '--version'],
+                    stdout=subprocess.DEVNULL,
+                    stderr=subprocess.DEVNULL,
+                    timeout=5
+                )
+                if result.returncode == 0:
+                    return pm
+            except (FileNotFoundError, subprocess.TimeoutExpired):
+                continue
+        return None
 
     def run(self) -> int:
-        # 1) Check macOS perms (opzionale)
-        if not self.check_osx_accessibility():
+        """Run the launcher: start daemon and GUI."""
+        # Check permissions
+        permission_checker = PermissionChecker(self.log)  # type: ignore
+        permissions = permission_checker.get_missing_permissions()
+        if len(permissions) > 0:
+            self.log.info("Requesting missing permissions", permissions=permissions)
+            for permission in permissions:
+                result = permission_checker.request_permission(permission.permission_type)
+                if not result.is_granted:
+                    self.log.error("Permission not granted", permission=permission)
+                    return 1
+
+        # Determine executable directory based on execution mode
+        executable_dir = str(self.project_root)
+        
+        # Start daemon if not already running
+        if not self.start_daemon(executable_dir):
+            self.log.error("Failed to start daemon")
             return 1
 
-        # 2) Setup signal
-        self.init_signal_handlers()
+        # Give daemon time to initialize
+        sleep(1)
 
-        # 3) Inizializza manager e config
-        self.init_configs()
+        # Start GUI
+        if not self.start_gui(executable_dir):
+            self.log.error("Failed to start GUI")
+            return 1
 
-        # 4) Crea la GUI controller e process
-        self.init_controller()
-
-        # 5) Avvia i thread e processi di I/O
-        self.start_processes_and_threads()
-
-        # 6) Loop principale
-        self.loop_run()
-
-        # 7) Attendiamo la fine del process monitor
-        if self.process_monitor:
-            self.process_monitor.join()
-
+        self.log.info("Launcher completed successfully", mode="compiled" if COMPILED else "script")
         return 0
 
+
+if __name__ == "__main__":
+    launcher = None
+    try:
+        launcher = Launcher()
+        if '--daemon' in sys.argv:
+            # Reset arguments to avoid recursion
+            sys.argv = [arg for arg in sys.argv if arg != '--daemon']
+            launcher.run_daemon()
+            sys.exit(0)
+
+        # Clean temp log file before initializing logger
+        launcher.clean_temp_log_file()
+
+        # Normal launcher flow
+        exit_code = launcher.run()
+        sys.exit(exit_code)
+    except KeyboardInterrupt:
+        if launcher and launcher.log:
+            launcher.log.info("Interrupted")
+        else:
+            print("Interrupted")
+        sys.exit(130)
+    except Exception:
+        import traceback
+
+        if launcher and launcher.log:
+            launcher.log.exception("Fatal error")
+            launcher.log.exception(traceback.format_exc())
+        else:
+            print(f"Fatal error: {traceback.format_exc()}")
+        sys.exit(1)

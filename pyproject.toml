@@ -1,0 +1,62 @@
+[project]
+name = "Perpetua"
+version = "1.0.0"
+description = ""
+authors = [
+    {name = "fizzi01"}
+]
+readme = "README.md"
+requires-python = ">=3.11,<3.13"
+dependencies = [
+#    "keyboard (>=0.13.5,<0.14.0)",
+    "packaging (>=24.2,<26.0.0)",
+    "pynput (>=1.7.7,<2.0.0)",
+    "pyobjc (>=10.2,<13.0) ; sys_platform == 'darwin'",
+    "pywin32 (>=308,<400.0.0) ; sys_platform == 'win32'",
+    "comtypes (>=1.4.8,<2.0.0) ; sys_platform == 'win32'",
+    "zeroconf (>=0.136.2,<1.0.0)",
+    "wxpython (>=4.2.2,<5.0.0)",
+    "netifaces (>=0.11.0,<1.0.0) ; sys_platform == 'darwin'",
+    "attrs (>=25.4.0,<26.0.0)",
+    "copykitten (>=2.0.0,<3.0.0)",
+    "cryptography (>=46.0.3,<47.0.0)",
+    "pyjwt (>=2.10.1,<3.0.0)",
+    "aiofiles (>=25.1.0,<26.0.0)",
+    "pylint (>=4.0.4,<5.0.0)",
+    "uvloop (!=0.22.1) ; sys_platform == 'darwin'",
+    "winloop (==0.4.1) ; sys_platform == 'win32'",
+    "structlog (>=25.5.0,<26.0.0)",
+    "ruff (>=0.14.10,<0.15.0)",
+    "pytest (>=9.0.2,<10.0.0)",
+    "psutil (>=7.2.1,<8.0.0)"
+]
+
+[tool.poetry]
+packages = [
+    { include = "*", from = "src" }
+]
+
+[tool.poetry.scripts]
+build = "build:main"
+build-gui = "scripts:build_gui"
+build-daemon = "scripts:build_daemon"
+clean-build = "scripts:clean_build"
+launcher = "launcher:main"
+
+[tool.poetry.group.dev.dependencies]
+ty = "^0.0.13"
+ruff = "^0.14.10"
+anyio = "^4.12.0"
+nuitka = ">=2.8.9,<3.0.0"
+pytest-timeout = "^2.4.0"
+
+[build-system]
+requires = ["poetry-core>=2.0.0,<3.0.0"]
+build-backend = "poetry.core.masonry.api"
+
+[tool.pytest]
+addopts = ["-ra", "-q"]
+testpaths = [
+    "tests/unit",
+]
+anyio_mode = "auto"

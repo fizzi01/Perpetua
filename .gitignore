@@ -135,6 +135,24 @@ README.md
 entitlements.plist
 
 dist/*
-Test/*
-Test
 .gitignore
+
+OLD_ignore/
+OLD/
+
+.build/
+.DS_Store/
+.vscode/
+
+*.crt
+*.key
+
+_test_config/
+
+# Poetry
+**/*.lock
+**/package-lock.json
+
+.DS_Store
+logo/**
+**/nuitka-crash-report.xml
