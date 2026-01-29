@@ -84,8 +84,8 @@ export function PowerButton({
           disabled={isPending || isConnecting}
           className="w-24 h-24 rounded-full flex items-center justify-center transition-all duration-300 shadow-lg relative overflow-hidden"
           style={{
-            backgroundColor: isActive ? 'var(--app-success)' : 'var(--app-bg-tertiary)',
-            color: 'white',
+            backgroundColor: isActive ? 'var(--app-success)' : 'var(--power-button-bg)',
+            color: isActive ? 'var(--white)' : 'var(--power-button-text)',
             opacity: isPending || isConnecting ? 0.7 : 1,
             cursor: isPending || isConnecting ? '' : 'pointer',
           }}
@@ -97,7 +97,7 @@ export function PowerButton({
               <motion.div
                 className="absolute inset-0 z-10"
                 style={{
-                  background: 'conic-gradient(from 0deg, transparent, rgba(255,255,255,0.4), transparent)',
+                  background: 'conic-gradient(from 0deg, transparent, var(--power-button-spinner), transparent)',
                 }}
                 animate={{ rotate: 360 }}
                 transition={{ duration: 1, repeat: Infinity, ease: 'linear' }}

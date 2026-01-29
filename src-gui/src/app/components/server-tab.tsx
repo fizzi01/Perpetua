@@ -53,6 +53,7 @@ import { ServerTabProps } from '../commons/Tab'
 import { parseStreams, isValidIpAddress } from '../api/Utility'
 import { abbreviateText, CopyableBadge } from './ui/copyable-badge';
 import { SelectPortal, SelectViewport } from '@radix-ui/react-select';
+import { ActionButton } from './ui/action-button';
 
 export function ServerTab({ onStatusChange, state }: ServerTabProps) {
   let previousState = useRef<ServerStatus | null>(null);
@@ -480,8 +481,8 @@ export function ServerTab({ onStatusChange, state }: ServerTabProps) {
     
     // Schedule new save after inactivity
     saveOptionsTimeoutRef.current = setTimeout(() => {
-      handleSaveOptions(hostValue, portValue, sslEnabledValue);
-    }, 500);
+      handleSaveOptions(hostValue, portValue, sslEnabledValue, false);
+    }, 100);
   };
 
   return (
@@ -565,50 +566,20 @@ export function ServerTab({ onStatusChange, state }: ServerTabProps) {
 
       {/* Action Buttons */}
       <div className="grid grid-cols-3 gap-2">
-        <motion.button
-          whileHover={{ scale: 1.02 }}
-          whileTap={{ scale: 0.98 }}
-          onClick={handleToggleClients}
-          className="cursor-pointer p-3 rounded-lg transition-all duration-300 flex flex-col items-center gap-1 border-2"
-          style={{
-            backgroundColor: showClients ? 'var(--app-primary)' : 'var(--app-bg-tertiary)',
-            borderColor: 'var(--app-primary)',
-            color: showClients ? 'white' : 'var(--app-text-primary)'
-          }}
-        >
+        <ActionButton onClick={handleToggleClients} clicked={showClients}>
           <Users size={20} />
           <span className="text-xs">Clients</span>
-        </motion.button>
+        </ActionButton>
 
-        <motion.button
-          whileHover={{ scale: 1.02 }}
-          whileTap={{ scale: 0.98 }}
-          onClick={handleToggleSecurity}
-          className="cursor-pointer p-3 rounded-lg transition-all duration-300 flex flex-col items-center gap-1 border-2"
-          style={{
-            backgroundColor: showSecurity ? 'var(--app-primary)' : 'var(--app-bg-tertiary)',
-            borderColor: 'var(--app-primary)',
-            color: showSecurity ? 'white' : 'var(--app-text-primary)'
-          }}
-        >
-          <Shield size={20} />
+        <ActionButton onClick={handleToggleSecurity} clicked={showSecurity}>
+          <Lock size={20} />
           <span className="text-xs">Security</span>
-        </motion.button>
+        </ActionButton>
 
-        <motion.button
-          whileHover={{ scale: 1.02 }}
-          whileTap={{ scale: 0.98 }}
-          onClick={handleToggleOptions}
-          className="cursor-pointer p-3 rounded-lg transition-all duration-300 flex flex-col items-center gap-1 border-2"
-          style={{
-            backgroundColor: showOptions ? 'var(--app-primary)' : 'var(--app-bg-tertiary)',
-            borderColor: 'var(--app-primary)',
-            color: showOptions ? 'white' : 'var(--app-text-primary)'
-          }}
-        >
+        <ActionButton onClick={handleToggleOptions} clicked={showOptions}>
           <Settings size={20} />
           <span className="text-xs">Options</span>
-        </motion.button>
+        </ActionButton>
       </div>
 
       {/* Clients Section */}
@@ -698,7 +669,10 @@ export function ServerTab({ onStatusChange, state }: ServerTabProps) {
                 </motion.button>
               </div>
 
-              <ScrollArea extraPadding='pl-2.5' className="space-y-2 max-h-60 overflow-y-auto custom-scrollbar w-full">
+              <ScrollArea 
+                extraPadding='pl-2.5' 
+                className="space-y-2 max-h-60 overflow-y-auto custom-scrollbar w-full"
+              >
                 {clientManager.clients.map(client => (
                   <motion.div
                     key={client.id}
@@ -708,7 +682,7 @@ export function ServerTab({ onStatusChange, state }: ServerTabProps) {
                     className="p-3 rounded-lg border grid grid-cols-[1fr_auto_auto] gap-3 items-center"
                     style={{
                       backgroundColor: client.status === 'online' ? 'var(--app-success-bg)' : 'var(--app-input-bg)',
-                      borderColor: client.status === 'online' ? 'var(--app-success)' : 'var(--app-input-border)'
+                      borderColor: client.status === 'online' ? 'var(--app-success)' : 'var(--app-input-bg)'
                     }}
                   >
                     {/* Client Info */}

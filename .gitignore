@@ -149,10 +149,6 @@ OLD/
 
 _test_config/
 
-# Poetry
-**/*.lock
-**/package-lock.json
-
 .DS_Store
 logo/**
 **/nuitka-crash-report.xml

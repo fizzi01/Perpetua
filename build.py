@@ -135,9 +135,36 @@ class Builder:
         if not self.release:
             build_cmd.append("--debug")
 
-        return self._run(build_cmd, cwd=self.gui_dir).returncode
+        ret = self._run(build_cmd, cwd=self.gui_dir).returncode
+        if ret == 0:
+            self.log.info("Copying data files")
+            res = self._clean_data_files()
+            if res != 0:
+                return res
+            return self._copy_data_files()
+        else:
+            return ret
 
-        # Clean up unnecessary files
+    def _clean_data_files(self):
+        try:
+            output_exe = self.build_dir / self.gui_exe.name
+            if output_exe.exists():
+                output_exe.unlink()
+        except Exception as e:
+            self.log.error(f"Failed to clean data files: {e}")
+            return 1
+        return 0
+
+    def _copy_data_files(self):
+        try:
+            output_exe = self.build_dir / self.gui_exe.name
+            output_exe.parent.mkdir(parents=True, exist_ok=True)
+            shutil.copy2(self.gui_exe, output_exe)
+            shutil.copystat(self.gui_exe, output_exe)
+        except Exception as e:
+            self.log.error(f"Failed to copy data files: {e}")
+            return 1
+        return 0
 
     def _build_daemon(self) -> int:
         if self.skip_daemon:
@@ -156,6 +183,15 @@ class Builder:
                 return res.returncode
 
         launcher_py = self.project_root / "launcher.py"
+        output_exe = self.build_dir / self.gui_exe.name
+
+        # Check that the GUI executable exists
+        if not output_exe.exists():
+            # Try to copy data files again
+            self.log.warning("GUI executable not found, attempting to copy data files again")
+            if self._copy_data_files() != 0:
+                self.log.error("GUI executable not found and failed to copy data files")
+                return 1
 
         nuitka_cmd = [
             sys.executable, "-m", "nuitka",
@@ -168,7 +204,7 @@ class Builder:
             "--include-package=utils",
             "--include-package=input",
             "--python-flag=no_docstrings",
-            f"--include-data-files={self.gui_exe}=_{self.gui_exe.name}"
+            f"--include-data-files={output_exe}=_{self.gui_exe.name}"
         ]
 
         if self.is_macos:
@@ -234,7 +270,8 @@ class Builder:
                 raise RuntimeError("GUI build failed")
             if self._build_daemon() != 0:
                 raise RuntimeError("Daemon build failed")
-            self._sign_bundle()
+            elif not self.skip_daemon:
+                self._sign_bundle()
             self._summary()
 
             self.log.info("Build completed")

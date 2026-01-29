@@ -179,9 +179,8 @@ export function ServerSelectionPanel({
                 onClick={onCancel}
                 className="cursor-pointer w-full p-3 rounded-lg transition-all flex items-center justify-center gap-2 border"
                 style={{
-                  backgroundColor: 'var(--app-bg-tertiary)',
-                  borderColor: 'var(--app-border)',
-                  color: 'var(--app-text-secondary)'
+                  backgroundColor: 'var(--app-danger)',
+                  color: 'var(--white)'
                 }}
               >
                 <XCircle size={18} />
@@ -223,11 +222,11 @@ function ServerCard({ server, index, isSelected, isProcessing, onSelect }: Serve
           : 'var(--app-bg-tertiary)',
         borderColor: isSelected ? 'var(--app-primary)' : 'var(--app-card-border)',
         borderWidth: isSelected ? '2px' : '1px',
-        boxShadow: isSelected 
-          ? '0 4px 12px rgba(0, 0, 0, 0.15)' 
-          : isHovered 
-          ? '0 2px 8px rgba(0, 0, 0, 0.08)' 
-          : 'none',
+        // boxShadow: isSelected 
+        //   ? '0 4px 12px rgba(0, 0, 0, 0.15)' 
+        //   : isHovered 
+        //   ? '0 2px 8px rgba(0, 0, 0, 0.08)' 
+        //   : 'none',
       }}
     >
       {/* Selection Indicator */}

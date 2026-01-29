@@ -1,4 +1,4 @@
-name: Dev Build
+name: Pre release build
 
 on:
   workflow_dispatch:
@@ -33,7 +33,7 @@ on:
 run-name: ${{ github.event.inputs.tags }}
 
 jobs:
-  build-windows:
+  windows-build:
     if: contains(github.event.head_commit.message, '#build') || contains(github.event.head_commit.message, '#win') || github.event.inputs.run_windows_build == true || github.event.inputs.all_build == true
     name: Windows Build
     runs-on: windows-latest
@@ -41,47 +41,123 @@ jobs:
       - name: Checkout
         uses: actions/checkout@v4
 
+      - name: Install Poetry
+        run: |
+          pipx install poetry
+
       - name: Setup Python
         uses: actions/setup-python@v5
         with:
           python-version: '3.11'
+          cache: poetry
+          cache-dependency-path: poetry.lock
 
-      - name: Setup Node.js
-        uses: actions/setup-node@v4
-        with:
-          node-version: '20'
-
-      - name: Cache Rust
-        uses: actions/cache@v4
-        with:
-          path: |
-            src-gui/src-tauri/target/
-          key: ${{ runner.os }}-cargo-${{ hashFiles('**/Cargo.lock') }}
-          restore-keys: |
-            ${{ runner.os }}-cargo-${{ hashFiles('**/Cargo.lock') }}
-
-      - name: Install poetry
-        uses: abatilo/actions-poetry@v4
-      - name: Setup a local virtual environment (if no poetry.toml file)
+      - name: Set Poetry environment
         run: |
-          poetry config virtualenvs.create true --local
-          poetry config virtualenvs.in-project true --local
-      - uses: actions/cache@v3
-        name: Define a cache for the virtual environment based on the dependencies lock file
-        with:
-          path: ./.venv
-          key: venv-${{ hashFiles('poetry.lock') }}
+          poetry env use 3.11
 
       - name: Install Python dependencies
-        run: poetry install
+        run: |
+          poetry install --no-interaction --no-root
 
-      - name: Build
-        run: poetry run python build.py
+      - name: Dependencies cache restore
+        uses: actions/cache/restore@v4
+        with:
+          path: C:\ProgramData\chocolatey\lib
+          key: ${{ runner.os }}-choco-deps
+
+      - name: Install Tauri dependencies
+        id: install-tauri-deps
+        run: |
+          choco install visualstudio2022-workload-nativedesktop --yes
+
+      - name: Save Dependencies cache
+        if: steps.install-tauri-deps.outcome == 'success'
+        uses: actions/cache/save@v4
+        with:
+          key: ${{ runner.os }}-choco-deps
+          path: C:\ProgramData\chocolatey\lib
+
+      - name: Setup Rust
+        uses: dtolnay/rust-toolchain@stable
+
+      - name: Restore Cache Cargo
+        id: cargo-cache
+        uses: actions/cache/restore@v4
+        with:
+          path: |
+            ~/.cargo/bin/
+            ~/.cargo/registry/index/
+            ~/.cargo/registry/cache/
+            ~/.cargo/git/db/
+            src-gui/src-tauri/target/
+          key: ${{ runner.os }}-cargo-${{ hashFiles('**/Cargo.lock') }}
+
+      - name: Restore Cache npm
+        id: npm-cache
+        uses: actions/cache/restore@v4
+        with:
+          path: ~\AppData\Local\npm-cache
+          key: ${{ runner.os }}-node-${{ hashFiles('**/package-lock.json') }}
+
+      - name: Build GUI
+        run: poetry run python build.py --skip-daemon
+
+      - name: Save Cache Cargo
+        id: cargo-cache-save
+        if: steps.cargo-cache.outputs.cache-hit != 'true'
+        uses: actions/cache/save@v4
+        with:
+          key: ${{ steps.cargo-cache.outputs.cache-primary-key }}
+          path: |
+            ~/.cargo/bin/
+            ~/.cargo/registry/index/
+            ~/.cargo/registry/cache/
+            ~/.cargo/git/db/
+            src-gui/src-tauri/target/
+
+      - name: Save Cache npm
+        id: npm-cache-save
+        if: steps.npm-cache.outputs.cache-hit != 'true'
+        uses: actions/cache/save@v4
+        with:
+          key: ${{ steps.npm-cache.outputs.cache-primary-key }}
+          path: ~\AppData\Roaming\npm-cache
+
+      - name: Set PYTHONPATH for Nuitka
+        run: echo "PYTHONPATH=./src;%PYTHONPATH%" >> %GITHUB_ENV%
+
+      - name: Build Daemon
+        uses: Nuitka/Nuitka-Action@main
+        with:
+          script-name: launcher.py
+          python-flag: "no_docstrings"
+          output-file: Perpetua.exe
+          output-dir: ".build"
+          include-data-files: |
+            src-gui/src-tauri/target/release/perpetua=_perpetua
+          include-package: |
+            utils
+            input
+          mode: app-dist
+          windows-console-mode: attach
+          windows-icon-from-ico: src-gui/src-tauri/icons/icon.ico
+          product-name: Perpetua
+          file-version: '1.0.0'
+          product-version: '1.0.0'
+
+      - name: Rename folder
+        run: |
+          ren .build\launcher.dist Perpetua
+
+      - name: Prepare app folder for upload
+        run: |
+          mkdir tempdir
+          copy .build\Perpetua tempdir\Perpetua
 
       - name: Create zip of the app
         run: |
-          cd .build/Perpetua
-          7z a -tzip ../../Perpetua_windows.zip *
+          powershell Compress-Archive -Path tempdir\Perpetua -DestinationPath Perpetua_windows.zip
 
       - name: Upload artifact
         uses: actions/upload-artifact@v4
@@ -89,50 +165,53 @@ jobs:
           name: Perpetua_windows
           path: Perpetua_windows.zip
 
-  build-mac:
+  macos-aarch64-build:
     if: contains(github.event.head_commit.message, '#build') || contains(github.event.head_commit.message, '#osx') || github.event.inputs.run_mac_build == 'true' || github.event.inputs.all_build == 'true'
-    name: MacOS Build
+    name: macOS aarch64 Build
     runs-on: macos-latest
     steps:
       - name: Checkout
         uses: actions/checkout@v4
 
+      - name: Install macos dependencies
+        run: |
+          brew install automake
+          brew install autoconf
+          brew install libtool
+          brew install ccache
+
       - name: Setup Python
         uses: actions/setup-python@v5
         with:
           python-version: '3.12'
+          cache: pip
+          cache-dependency-path: poetry.lock
 
-      # - name: Setup Node.js
-      #   uses: actions/setup-node@v4
-      #   with:
-      #     node-version: '20'
+      - name: Install Python dependencies
+        run: |
+          pip install .
 
       - name: Setup Rust
         uses: dtolnay/rust-toolchain@stable
 
-      - name: Cache Rust
-        uses: actions/cache@v4
+      - name: Restore Cache Cargo
+        id: cargo-cache
+        uses: actions/cache/restore@v4
         with:
           path: |
+            ~/.cargo/bin/
+            ~/.cargo/registry/index/
+            ~/.cargo/registry/cache/
+            ~/.cargo/git/db/
             src-gui/src-tauri/target/
           key: ${{ runner.os }}-cargo-${{ hashFiles('**/Cargo.lock') }}
-          restore-keys: |
-            ${{ runner.os }}-cargo-${{ hashFiles('**/Cargo.lock') }}
 
-      - name: Install poetry
-        uses: abatilo/actions-poetry@v4
-      - name: Setup a local virtual environment (if no poetry.toml file)
-        run: |
-          poetry config virtualenvs.create true --local
-          poetry config virtualenvs.in-project true --local
-      - uses: actions/cache@v3
-        name: Define a cache for the virtual environment based on the dependencies lock file
+      - name: Restore Cache npm
+        id: npm-cache
+        uses: actions/cache/restore@v4
         with:
-          path: ./.venv
-          key: venv-${{ hashFiles('poetry.lock') }}
-
-      - name: Install Python dependencies
-        run: poetry install
+          path: ~/.npm
+          key: ${{ runner.os }}-node-${{ hashFiles('**/package-lock.json') }}
 
       - name: Decode and import certificate
         env:
@@ -146,19 +225,92 @@ jobs:
           security unlock-keychain -p "action" build.keychain
           security set-key-partition-list -S apple-tool:,apple:,codesign: -s -k "action" build.keychain
 
-      - name: Build
-        run: poetry run python build.py
+      - name: Build GUI
+        run: python build.py --skip-daemon
+
+      - name: Save Cache Cargo
+        id: cargo-cache-save
+        if: steps.cargo-cache.outputs.cache-hit != 'true'
+        uses: actions/cache/save@v4
+        with:
+          key: ${{ steps.cargo-cache.outputs.cache-primary-key }}
+          path: |
+            ~/.cargo/bin/
+            ~/.cargo/registry/index/
+            ~/.cargo/registry/cache/
+            ~/.cargo/git/db/
+            src-gui/src-tauri/target/
+
+      - name: Save Cache npm
+        id: npm-cache-save
+        if: steps.npm-cache.outputs.cache-hit != 'true'
+        uses: actions/cache/save@v4
+        with:
+          key: ${{ steps.npm-cache.outputs.cache-primary-key }}
+          path: ~/.npm
+
+      - name: Set Nuitka environment variables
+        run: |
+          echo "NUITKA_CACHE_DIR=~/.nuitka-cache" >> $GITHUB_ENV
+          echo "PYTHONPATH=./src:$PYTHONPATH" >> $GITHUB_ENV
+
+      - name: Restore Nuitka ccache
+        id: nuitka-ccache
+        uses: actions/cache/restore@v4
+        with:
+          path: ${{ env.NUITKA_CACHE_DIR }}
+          key: ${{ runner.os }}-nuitka-ccache-${{ hashFiles('src/**/*.py') }}
+
+      - name: Prepare data file
+        run: |
+          mkdir -p tmp
+          cp -R src-gui/src-tauri/target/release/perpetua tmp/perpetua
+
+      - name: Build Daemon
+        uses: Nuitka/Nuitka-Action@main
+        with:
+          script-name: launcher.py
+          python-flag: "no_docstrings"
+          output-file: Perpetua
+          output-dir: "build_macos_aarch64"
+          include-data-files: |
+            tmp/perpetua=_perpetua
+          include-package: |
+            utils
+            input
+          mode: app-dist
+          macos-app-version: '1.0.0'
+          macos-app-name: "Perpetua"
+          macos-prohibit-multiple-instances: true
+          macos-sign-identity: "Perpetua"
+          macos-app-icon: src-gui/src-tauri/icons/macos/icon.icns
+          macos-app-protected-resource: |
+            NSAppleEventsUsageDescription:Automation Control
+          product-name: Perpetua
+          file-version: '1.0.0'
+          product-version: '1.0.0'
+
+      - name: Save Nuitka cache
+        if: steps.nuitka-ccache.outputs.cache-hit != 'true'
+        uses: actions/cache/save@v4
+        with:
+          key: ${{ steps.nuitka-ccache.outputs.cache-primary-key }}
+          path: ${{ env.NUITKA_CACHE_DIR }}
+
+      - name: Sign the app
+        run: |
+          codesign --deep --force --verify --verbose --sign "Perpetua" build_macos_aarch64/Perpetua.app
 
       - name: Verify app signature
-        run: codesign --verify --verbose .build/Perpetua.app
+        run: codesign --verify --verbose build_macos_aarch64/Perpetua.app
 
       - name: Prepare app for upload
         run: |
-          mkdir -p tempdir
-          cp -R .build/Perpetua.app tempdir/
+          mkdir tmp
+          cp -R build_macos_aarch64/Perpetua.app tmp/Perpetua.app
 
       - name: Upload artifact
         uses: actions/upload-artifact@v4
         with:
-          name: Perpetua_macos
-          path: ./tempdir
+          name: Perpetua_macos_aarch64
+          path: ./tmp

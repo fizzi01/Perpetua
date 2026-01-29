@@ -244,9 +244,8 @@ export function OtpInputPanel({
                 disabled={isProcessing}
                 className="cursor-pointer w-full p-3 rounded-lg transition-all flex items-center justify-center gap-2 border"
                 style={{
-                  backgroundColor: 'var(--app-bg-tertiary)',
-                  borderColor: 'var(--app-border)',
-                  color: 'var(--app-text-secondary)',
+                  backgroundColor: 'var(--app-danger)',
+                  color: 'var(--white)',
                   opacity: isProcessing ? 0.5 : 1,
                   cursor: isProcessing ? '' : 'pointer'
                 }}

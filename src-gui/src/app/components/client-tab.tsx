@@ -36,6 +36,7 @@ import { PermissionsPanel } from './ui/permissions-panel';
 import { abbreviateText, CopyableBadge } from './ui/copyable-badge';
 import { ServerSelectionPanel } from './ui/server-selection-panel';
 import { OtpInputPanel } from './ui/otp-input-panel';
+import { ActionButton } from './ui/action-button';
 
 export function ClientTab({ onStatusChange, state }: ClientTabProps) {
   let previousState = useRef<ClientStatus | null>(null);
@@ -459,7 +460,7 @@ export function ClientTab({ onStatusChange, state }: ClientTabProps) {
     // Schedule new save after inactivity
     saveOptionsTimeoutRef.current = setTimeout(() => {
       handleSaveOptions(hostValue, hostnameValue, portValue, sslEnabledValue, autoReconnectValue);
-    }, 500);
+    }, 100);
   };
 
   const formatTime = (seconds: number) => {
@@ -530,7 +531,7 @@ export function ClientTab({ onStatusChange, state }: ClientTabProps) {
               }}
             >
               <div className="w-10 h-10 rounded-lg flex items-center justify-center" style={{ backgroundColor: 'var(--app-bg-tertiary)' }}>
-                <User size={20} style={{ color: 'var(--app-text-muted)' }} />
+                <User size={20} style={{ color: 'var(--app-primary)' }} />
               </div>
               <div className="flex-1">
                 <div className="text-sm font-bold" style={{ color: 'var(--app-text-primary)' }}>
@@ -752,35 +753,15 @@ export function ClientTab({ onStatusChange, state }: ClientTabProps) {
 
       {/* Action Buttons */}
       <div className="grid grid-cols-2 gap-2">
-        <motion.button
-          whileHover={{ scale: 1.02 }}
-          whileTap={{ scale: 0.98 }}
-          onClick={handleToggleSecurity}
-          className="cursor-pointer p-3 rounded-lg transition-all duration-300 flex flex-col items-center gap-1 border-2"
-          style={{
-            backgroundColor: showSecurity ? 'var(--app-primary)' : 'var(--app-bg-tertiary)',
-            borderColor: 'var(--app-primary)',
-            color: showSecurity ? 'white' : 'var(--app-text-primary)'
-          }}
-        >
+        <ActionButton onClick={handleToggleSecurity} clicked={showSecurity}>
           <Shield size={20} />
           <span className="text-xs">Security</span>
-        </motion.button>
+        </ActionButton>
 
-        <motion.button
-          whileHover={{ scale: 1.02 }}
-          whileTap={{ scale: 0.98 }}
-          onClick={handleToggleOptions}
-          className="cursor-pointer flex-1 p-3 rounded-lg transition-all duration-300 flex flex-col items-center gap-1 border-2"
-          style={{
-            backgroundColor: showOptions ? 'var(--app-primary)' : 'var(--app-bg-tertiary)',
-            borderColor: 'var(--app-primary)',
-            color: showOptions ? 'white' : 'var(--app-text-primary)'
-          }}
-        >
+        <ActionButton onClick={handleToggleOptions} clicked={showOptions}>
           <Settings size={20} />
           <span className="text-xs">Options</span>
-        </motion.button>
+        </ActionButton>
       </div>
 
       {/* Security Section */}

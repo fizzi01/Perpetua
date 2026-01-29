@@ -33,6 +33,8 @@
 }
 
 :root {
+  color-scheme: light dark;
+
   --font-size: 16px;
   --background: #ffffff;
   --foreground: oklch(0.145 0 0);
@@ -71,33 +73,93 @@
   --sidebar-accent-foreground: oklch(0.205 0 0);
   --sidebar-border: oklch(0.922 0 0);
   --sidebar-ring: oklch(0.708 0 0);
-  
+
+  --black: #000000ff;
+  --majorelle-blue: #5047eeff;
+  --periwinkle: #b0acf7ff;
+  --bright-indigo: #3e3ed9ff;
+  --white: #ffffffff;
+
+  --color-woodsmoke-50: #F2F2F2;
+  --color-woodsmoke-100: #E6E6E6;
+  --color-woodsmoke-200: #CCCCCC;
+  --color-woodsmoke-300: #B3B3B3;
+  --color-woodsmoke-400: #999999;
+  --color-woodsmoke-500: #808080;
+  --color-woodsmoke-600: #666666;
+  --color-woodsmoke-700: #4D4D4D;
+  --color-woodsmoke-800: #333333;
+  --color-woodsmoke-900: #1A1A1A;
+  --color-woodsmoke-950: #171717;
+  --color-shark-950: #262626;
+
+  --color-blue-violet-50: #eef2ff;
+  --color-blue-violet-100: #e0e7ff;
+  --color-blue-violet-200: #c7d2fe;
+  --color-blue-violet-300: #a6b4fb;
+  --color-blue-violet-400: #828ef7;
+  --color-blue-violet-500: #6468f0;
+  --color-blue-violet-600: #4f47e4;
+  --color-blue-violet-700: #4339c9;
+  --color-blue-violet-800: #3731a2;
+  --color-blue-violet-900: #312f80;
+  --color-blue-violet-950: #1e1b4b;
+
+  --color-majorelle-blue-50: #eae9fc;
+  --color-majorelle-blue-100: #d5d3f8;
+  --color-majorelle-blue-200: #aaa6f2;
+  --color-majorelle-blue-300: #807aeb;
+  --color-majorelle-blue-400: #554ee4;
+  --color-majorelle-blue-500: #2b21de;
+  --color-majorelle-blue-600: #221bb1;
+  --color-majorelle-blue-700: #1a1485;
+  --color-majorelle-blue-800: #110d59;
+  --color-majorelle-blue-900: #09072c;
+  --color-majorelle-blue-950: #06051f;
+
+  --color-jade-green-50: #d2ffdb;
+  --color-jade-green-100: #a8febb;
+  --color-jade-green-200: #2cf376;
+  --color-jade-green-300: #27dd6a;
+  --color-jade-green-400: #22c55e;
+  --color-jade-green-500: #1aa34d;
+  --color-jade-green-600: #12813b;
+  --color-jade-green-700: #0b5f2a;
+  --color-jade-green-800: #05401a;
+  --color-jade-green-900: #02260c;
+  --color-jade-green-950: #011806;
+
   /* App Colors */
-  --app-bg: rgb(15, 23, 42);
-  --app-bg-secondary: #1e293b;
-  --app-bg-tertiary: #334155;
-  --app-text-primary: #f1f5f9;
-  --app-text-secondary: #cbd5e1;
-  --app-text-muted: #94a3b8;
-  --app-border: #475569;
-  --app-border-light: #64748b;
-  --app-primary: #4F47E4;
-  --app-primary-hover: #281FD1;
-  --app-primary-light: #817BEC;
-  --app-success: #22c55e;
+  --app-bg: var(--black);
+  --app-bg-secondary: light-dark(var(--color-woodsmoke-100),var(--color-woodsmoke-950));
+  --app-bg-tertiary:  light-dark(var(--white),var(--color-shark-950));
+  --app-text-primary: light-dark(var(--black), #ffffff);
+  --app-text-secondary:light-dark(var(--color-woodsmoke-600) , var(--color-woodsmoke-100));
+  --app-text-muted: light-dark(var(--color-woodsmoke-700) , var(--color-woodsmoke-200));
+  --app-border: light-dark(var(--color-woodsmoke-400) , var(--color-woodsmoke-300));
+  --app-border-light: light-dark(var(--color-blue-violet-300),var(--color-blue-violet-500));
+  --app-primary: var(--color-blue-violet-600);
+  --app-primary-hover: var(--color-blue-violet-700);
+  --app-primary-light: light-dark(var(--color-majorelle-blue-700),var(--color-majorelle-blue-300));
+  --app-secondary: var(--color-blue-violet-900);
+  --app-secondary-light: var(--color-majorelle-blue-100);
+  --app-success: light-dark(var(--color-jade-green-600),var(--color-jade-green-400));
   --app-success-dark: #16a34a;
-  --app-success-bg: rgba(34, 197, 94, 0.1);
+  --app-success-bg: light-dark( rgba(39, 221, 106, 0.15), rgba(34, 197, 94, 0.1));
   --app-danger: #ef4444;
   --app-danger-hover: #dc2626;
   --app-danger-bg: rgba(239, 68, 68, 0.1);
   --app-warning: #f59e0b;
-  --app-card-bg: rgba(51, 65, 85, 0.5);
-  --app-card-border: #475569;
-  --app-input-bg: #1e293b;
-  --app-input-border: #475569;
-  --app-window-control: #475569;
-  --app-window-control-hover: #64748b;
+  --app-card-bg: var(--app-bg-tertiary);
+  --app-card-border: var(--app-bg-tertiary);
+  --app-input-bg: light-dark(var(--color-woodsmoke-100),var(--color-woodsmoke-950));
+  --app-input-border: light-dark(var(--color-blue-violet-200),var(--color-blue-violet-900));
+  --app-window-control: var(--color-woodsmoke-950);
+  --app-window-control-hover: var(--color-blue-violet-500);
   --app-window-close-hover: #c42b1c;
+  --power-button-spinner: light-dark( rgba(176, 172, 247, 0.7), rgba(255, 255, 255, 0.4));
+  --power-button-bg:  light-dark(var(--app-primary),var(--app-bg-tertiary));
+  --power-button-text: light-dark(var(--white),var(--app-text-primary));
 }
 
 .dark {

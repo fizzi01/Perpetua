@@ -18,14 +18,14 @@
  */
 
 .titlebar {
-  background-color: rgba(15, 23, 42, 0.8);
-  border-color: rgba(99, 102, 241, 0.2);
+  background-color: light-dark(var(--color-woodsmoke-200),var(--color-woodsmoke-800));
+  border-color: light-dark(var(--color-woodsmoke-200),var(--color-woodsmoke-800));
   box-shadow: 0 1px 3px rgba(0, 0, 0, 0.3);
 }
 
 .titlebar-toggle {
-  background-color: rgba(30, 41, 59, 0.6);
-  border-color: rgba(71, 85, 105, 0.5);
+  background-color: light-dark(var(--color-woodsmoke-300),var(--color-woodsmoke-700));
+  border-color: var(--color-woodsmoke-400);
 }
 
 .titlebar-button {
@@ -35,24 +35,27 @@
 
 .titlebar-system-group {
   max-height: 100%;
-  border-color: rgba(99, 102, 241, 0.2);
-  background-color: rgba(15, 23, 42, 0.8);
+  border-color: light-dark(var(--color-woodsmoke-200),var(--color-woodsmoke-800));
+  background-color: light-dark(var(--color-woodsmoke-200),var(--color-woodsmoke-800));
+
 }
 
 .titlebar-system-group > button {
   max-height: 100%;
-  color: var(--app-primary);
-  background-color: rgba(15, 23, 42, 0.8);
+  color: var(--app-text-primary);
+  background-color: light-dark(var(--color-woodsmoke-200),var(--color-woodsmoke-800));
 }
 
 
 .titlebar-system-group > button[class*="hover:bg-black"]:hover {
   color: white !important;
   background-color: var(--app-window-control-hover) !important;
+  border-color: var(--app-window-control-hover) !important;
 }
 
 .window-close:hover {
   background-color: var(--app-window-close-hover) !important;
+  border-color: var(--app-window-close-hover) !important;
   color: white !important;
 }
 
@@ -67,6 +70,6 @@
 }
 
 .titlebar-button:hover:not(.active) {
-  background-color: rgba(71, 85, 105, 0.3);
+  background-color: var(--color-woodsmoke-400);
 }
 

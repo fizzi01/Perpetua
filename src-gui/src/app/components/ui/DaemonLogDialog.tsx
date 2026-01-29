@@ -46,7 +46,7 @@ export const DaemonLogDialog: React.FC<DaemonLogDialogProps> = ({ isOpen, onClos
           onClick={onClose}
         >
           {/* Backdrop */}
-          <div className="absolute inset-0 backdrop-blur-md" style={{ backgroundColor: 'rgba(0, 0, 0, 0.7)' }} />
+          <div data-tauri-drag-region className="absolute inset-0 backdrop-blur-md" style={{ backgroundColor: 'rgba(0, 0, 0, 0.7)' }} />
           
           {/* Dialog Content */}
           <motion.div 
@@ -62,7 +62,8 @@ export const DaemonLogDialog: React.FC<DaemonLogDialogProps> = ({ isOpen, onClos
             onClick={(e) => e.stopPropagation()}
           >
             {/* Dialog Header */}
-            <div className="flex items-center justify-between rounded-lg px-4 py-1 border-b backdrop-blur-sm" style={{ 
+            <div data-tauri-drag-region
+            className="flex items-center justify-between rounded-lg px-4 py-1 border-b backdrop-blur-sm" style={{ 
               borderColor: 'var(--border)',
               backgroundColor: 'var(--muted)',
             }}>
