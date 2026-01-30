@@ -26,5 +26,6 @@ if TYPE_CHECKING:
 else:
     _backend_module = backend_module(__name__)
     CommonNetInfo = _backend_module.CommonNetInfo
+    MissingIpError = _backend_module.MissingIpError
     get_local_ip = CommonNetInfo.get_local_ip
     del _backend_module

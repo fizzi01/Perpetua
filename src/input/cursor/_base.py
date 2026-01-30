@@ -15,6 +15,7 @@
 #  You should have received a copy of the GNU General Public License
 #  along with this program.  If not, see <https://www.gnu.org/licenses/>.
 #
+from attr import s
 
 import sys
 import os
@@ -68,6 +69,8 @@ class CursorHandlerWindow(wx.Frame):
 
     WINDOW_SIZE: Size = Size(400, 400)
     BORDER_OFFSET: int = 1
+    DATA_SEND_INTERVAL: float = 0.005  # seconds
+    LOCK_STATUS_CHECK_INTERVAL: int = 500  # ms
 
     def __init__(
         self,
@@ -106,7 +109,7 @@ class CursorHandlerWindow(wx.Frame):
         self.command_thread = threading.Thread(target=self._process_commands)
         self.command_thread.start()
 
-        # Panel principale
+        # Main panel
         self.panel: Optional[wx.Panel] = (
             None  # Placeholder for derived classes to customize
         )
@@ -115,14 +118,14 @@ class CursorHandlerWindow(wx.Frame):
             self.SetTransparent(0)
 
         self.last_mouse_send_time = 0
-        self.mouse_send_interval = 0.005
+        self.mouse_send_interval = self.DATA_SEND_INTERVAL
         self.accumulated_delta_x = 0
         self.accumulated_delta_y = 0
 
         # Screen lock monitoring
-        self._screen_monitor_thread: Optional[threading.Thread] = None
-        self._screen_monitor_running = False
+        self._screen_monitor_timer = wx.Timer(self)
         self._last_screen_locked_state: Optional[bool] = None
+        self.Bind(wx.EVT_TIMER, self._on_screen_monitor_timer, self._screen_monitor_timer)
 
         # Events
         self.Bind(wx.EVT_MOTION, self.on_mouse_move)
@@ -387,14 +390,14 @@ class CursorHandlerWindow(wx.Frame):
         display = wx.Display(display_index)
         screen_rect = display.GetClientArea()
 
-        # Offset minimo dai bordi (in pixel)
+        # Offset from border (in pixels)
         offset = self.BORDER_OFFSET
 
-        # Calcola la posizione per centrare la finestra sul cursore
+        # Calculate the position to center the window on the cursor
         x: int = cursor_pos.x - self.WINDOW_SIZE[0] // 2
         y: int = cursor_pos.y - self.WINDOW_SIZE[1] // 2
 
-        # Applica i limiti considerando l'offset dai bordi
+        # Apply limits considering the offset from the borders
         x: int = max(
             screen_rect.x + offset - self.WINDOW_SIZE[0] // 2,
             min(
@@ -425,21 +428,21 @@ class CursorHandlerWindow(wx.Frame):
         Enable mouse capture.
         """
         if not self.mouse_captured_flag.is_set():
-            # Forza il focus prima di catturare
+            # Force focus before capturing
             self.Raise()
             self.SetFocus()
             self.ForceOverlay()
             wx.Sleep(0)
 
-            # Nascondi il cursore
+            # Hide the cursor
             self.handle_cursor_visibility(False)
 
-            # Calcola il centro della finestra
+            # Calculate the center of the window
             size = self.GetSize()
             pos = self.GetPosition()
             self.center_pos = Point(pos.x + size.width // 2, pos.y + size.height // 2)
 
-            # Cattura il mouse
+            # Capture the mouse
             while not self.HasCapture():
                 self.CaptureMouse()
             self.mouse_captured_flag.set()
@@ -466,7 +469,7 @@ class CursorHandlerWindow(wx.Frame):
             wx.Sleep(0)
             time.sleep(0)
 
-            # Rilascia il mouse
+            # Release the mouse
             while self.HasCapture():
                 self.ReleaseMouse()
             wx.Sleep(0)
@@ -474,7 +477,7 @@ class CursorHandlerWindow(wx.Frame):
 
             self.result_conn.send({"type": "capture_disabled", "success": True})
 
-            # Ripristina il cursore
+            # Restore the cursor
             self.HideOverlay()
             self.handle_cursor_visibility(True)
             wx.Sleep(0)
@@ -489,7 +492,7 @@ class CursorHandlerWindow(wx.Frame):
         Reset mouse position to center.
         """
         if self.mouse_captured_flag.is_set() and self.center_pos is not None:
-            # Sposta il cursore al centro della finestra
+            # Move the cursor to the center of the window
             client_center = self.ScreenToClient(self.center_pos)
             self.WarpPointer(client_center.x, client_center.y)
 
@@ -502,14 +505,14 @@ class CursorHandlerWindow(wx.Frame):
             event.Skip()
             return
 
-        # Ottieni posizione corrente
+        # Get current position
         mouse_pos = wx.GetMousePosition()
 
-        # Calcola delta rispetto al centro
+        # Calculate delta from the center
         delta_x = mouse_pos.x - self.center_pos.x
         delta_y = mouse_pos.y - self.center_pos.y
 
-        # Processa solo se c'è movimento
+        # Process only if there is movement
         if delta_x != 0 or delta_y != 0:
             self.accumulated_delta_x += delta_x
             self.accumulated_delta_y += delta_y
@@ -526,7 +529,7 @@ class CursorHandlerWindow(wx.Frame):
                 except Exception:
                     pass
 
-            # Resetta posizione
+            # Reset position
             time.sleep(0)
             self.reset_mouse_position()
             time.sleep(0)
@@ -542,58 +545,44 @@ class CursorHandlerWindow(wx.Frame):
         self.disable_mouse_capture()
         self.Destroy()
 
-    def _screen_monitor_loop(self):
+    def _on_screen_monitor_timer(self, event):
         """
-        Monitor loop that checks for screen lock/unlock transitions.
-        Runs in a separate thread and posts events to the main thread.
+        Timer event handler for screen lock monitoring.
+        Checks for screen lock/unlock transitions.
         """
-        self._logger.debug("Screen monitor thread started")
-        self._last_screen_locked_state = Screen.is_screen_locked()
+        try:
+            current_locked_state = Screen.is_screen_locked()
 
-        while self._screen_monitor_running:
-            try:
-                current_locked_state = Screen.is_screen_locked()
+            # Detect transition from locked to unlocked
+            if (
+                self._last_screen_locked_state is not None
+                and self._last_screen_locked_state
+                and not current_locked_state
+            ):
+                self._logger.info("Screen unlock detected")
+                # Post event to main thread
+                wx.PostEvent(self, ScreenUnlockedEvent())
 
-                # Detect transition from locked to unlocked
-                if self._last_screen_locked_state and not current_locked_state:
-                    self._logger.info("Screen unlock detected")
-                    # Post event to main thread
-                    wx.PostEvent(self, ScreenUnlockedEvent())
+            self._last_screen_locked_state = current_locked_state
 
-                self._last_screen_locked_state = current_locked_state
-
-                time.sleep(0.1)
-
-            except Exception as e:
-                self._logger.error(f"Error in screen monitor loop ({e})")
-                time.sleep(1)
-
-        self._logger.debug("Screen monitor thread stopped")
+        except Exception as e:
+            self._logger.error(f"Error in screen monitor timer ({e})")
 
     def _start_screen_monitor(self):
         """Start the screen lock monitoring thread."""
-        if (
-            self._screen_monitor_thread is not None
-            and self._screen_monitor_thread.is_alive()
-        ):
-            return  # Already running
+        if self._screen_monitor_timer.IsRunning():
+            return
 
-        self._screen_monitor_running = True
-        self._screen_monitor_thread = threading.Thread(
-            target=self._screen_monitor_loop, daemon=True
-        )
-        self._screen_monitor_thread.start()
+        self._last_screen_locked_state = Screen.is_screen_locked()
+        self._screen_monitor_timer.Start(self.LOCK_STATUS_CHECK_INTERVAL)  # Check every 500 ms
         # self._logger.debug("Screen monitor started")
 
     def _stop_screen_monitor(self):
         """Stop the screen lock monitoring thread."""
-        if self._screen_monitor_thread is None:
+        if not self._screen_monitor_timer.IsRunning():
             return
 
-        self._screen_monitor_running = False
-        if self._screen_monitor_thread.is_alive():
-            self._screen_monitor_thread.join(timeout=2.0)
-        self._screen_monitor_thread = None
+        self._screen_monitor_timer.Stop()
         # self._logger.debug("Screen monitor stopped")
 
 
@@ -846,7 +835,7 @@ class CursorHandlerWorker(object):
                 return False
 
         if wait_ready:
-            # Aspetta che la window sia pronta
+            # Wait for the window to be ready
             start_time = time.time()
             while time.time() - start_time < timeout:
                 try:
@@ -875,7 +864,7 @@ class CursorHandlerWorker(object):
         return True
 
     async def stop(self, timeout=2):
-        """Ferma il processo della window e cleanup async task"""
+        """Stops the window process and cleans up async task"""
         if not self._is_running:
             return
 
@@ -973,25 +962,25 @@ class CursorHandlerWorker(object):
             pass
 
     def is_alive(self) -> bool:
-        """Controlla se il processo della window è in esecuzione"""
+        """Checks if the window process is running"""
         return self._is_running and self.process is not None and self.process.is_alive()
 
     async def _mouse_data_listener(self):
         """
-        Async coroutine per ascoltare i dati del mouse dal processo di cattura.
-        Legge dal pipe in modo non-bloccante usando executor.
+        Async coroutine to listen for mouse data from the capture process.
+        Reads from the pipe in a non-blocking way using executor.
         """
         loop = asyncio.get_running_loop()
 
         while self._is_running and self.stream is not None:
             try:
-                # Poll non-bloccante
+                # Non-blocking poll
                 has_data = await loop.run_in_executor(
                     None, self.mouse_conn_rec.poll, self.DATA_POLL_TIMEOUT
                 )
 
                 if has_data:
-                    # Leggi dal pipe in executor
+                    # Read from the pipe in executor
                     delta_x, delta_y = await loop.run_in_executor(
                         None, self.mouse_conn_rec.recv
                     )  # type: ignore # ty:ignore[unused-ignore-comment]
@@ -1000,10 +989,10 @@ class CursorHandlerWorker(object):
                     mouse_event.dx = delta_x
                     mouse_event.dy = delta_y
 
-                    # Invio async via stream
+                    # Async send via stream
                     await self.stream.send(mouse_event)
                 else:
-                    # Piccolo sleep per evitare busy waiting
+                    # Small sleep to avoid busy waiting
                     await asyncio.sleep(0.0001)
 
             except EOFError:
@@ -1014,7 +1003,7 @@ class CursorHandlerWorker(object):
                 await asyncio.sleep(0.01)
 
     async def send_command(self, command):
-        """Invia un comando alla window in modo asincrono"""
+        """Sends a command to the window asynchronously"""
         if not self._is_running:
             raise RuntimeError("Window process not running")
         loop = asyncio.get_running_loop()
@@ -1022,7 +1011,7 @@ class CursorHandlerWorker(object):
         await asyncio.sleep(0)  # Yield control to event loop
 
     async def get_result(self, timeout: float = RESULT_POLL_TIMEOUT):
-        """Riceve un risultato dalla window in modo asincrono"""
+        """Receives a result from the window asynchronously"""
         loop = asyncio.get_running_loop()
         try:
             has_data = await loop.run_in_executor(
@@ -1040,7 +1029,7 @@ class CursorHandlerWorker(object):
             return None
 
     async def get_all_results(self, timeout=RESULT_POLL_TIMEOUT):
-        """Riceve tutti i risultati disponibili"""
+        """Receives all available results"""
         results = []
         while True:
             result = await self.get_result(timeout=timeout)
@@ -1050,12 +1039,12 @@ class CursorHandlerWorker(object):
         return results
 
     async def enable_capture(self):
-        """Abilita la cattura del mouse in modo asincrono"""
+        """Enables mouse capture asynchronously"""
         await self.send_command({"type": "enable_capture"})
         return await self.get_result()
 
     async def disable_capture(self, **kwargs):
-        """Disabilita la cattura del mouse in modo asincrono"""
+        """Disables mouse capture asynchronously"""
         await self.send_command({"type": "disable_capture", **kwargs})
         return await self.get_result()
 
@@ -1064,6 +1053,6 @@ class CursorHandlerWorker(object):
         return await asyncio.sleep(0)
 
     async def set_message(self, message):
-        """Imposta un messaggio nella window in modo asincrono"""
+        """Sets a message in the window asynchronously"""
         await self.send_command({"type": "set_message", "message": message})
         return await self.get_result()
