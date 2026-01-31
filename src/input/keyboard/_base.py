@@ -393,6 +393,7 @@ class ClientKeyboardController(object):
         self._pressed = False
         # Track pressed keys for hotkey combinations
         self.pressed_keys = set()
+        self._pressed_general_keys = set()
         self.is_caps_locked = False
 
         self._logger = get_logger(self.__class__.__name__)
@@ -537,7 +538,15 @@ class ClientKeyboardController(object):
             except Exception:
                 pass
             await asyncio.sleep(0)
+
+        for key in list(self._pressed_general_keys):
+            try:
+                self._controller.release(key)
+            except Exception:
+                pass
+            await asyncio.sleep(0)
         self.pressed_keys.clear()
+        self._pressed_general_keys.clear()
 
     def _key_event_action(self, event: KeyboardEvent):
         """
@@ -565,6 +574,7 @@ class ClientKeyboardController(object):
                     self._controller.press(key)
             else:
                 self._controller.press(key)
+                self._pressed_general_keys.add(key)
         elif event.action == KeyboardEvent.RELEASE_ACTION:
             if key == Key.caps_lock:
                 if self.is_caps_locked:
@@ -580,3 +590,4 @@ class ClientKeyboardController(object):
                     self._controller.release(key)
             else:
                 self._controller.release(key)
+                self._pressed_general_keys.discard(key)
