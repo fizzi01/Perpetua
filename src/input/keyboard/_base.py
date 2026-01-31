@@ -509,6 +509,7 @@ class ClientKeyboardController(object):
         Async event handler for when a client becomes inactive.
         """
         self._is_active = False
+        await self._clear_pressed_keys()
         await asyncio.sleep(0)
 
     async def _key_event_callback(self, message):

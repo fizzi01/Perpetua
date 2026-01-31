@@ -30,6 +30,7 @@ import datetime
 import errno
 import json
 import os
+import argparse
 
 from os import path
 import signal
@@ -2179,12 +2180,14 @@ async def _send_tcp_command(
 
 # ==================== Main Entry Point ====================
 
+def arguments(parent: argparse.ArgumentParser | None = None) -> argparse.ArgumentParser | argparse._ArgumentGroup:
+    """Parse command-line arguments"""
 
-async def main():
-    """Main entry point for daemon"""
-    import argparse
+    if parent:
+        parser = parent.add_argument_group("Daemon Options")
+    else:
+        parser = argparse.ArgumentParser(description="Daemon")
 
-    parser = argparse.ArgumentParser(description="Daemon")
     parser.add_argument(
         "--socket",
         default=Daemon.DEFAULT_SOCKET_PATH,
@@ -2195,8 +2198,13 @@ async def main():
     parser.add_argument(
         "--log-terminal", action="store_true", help="Log only to stdout"
     )
+    return parser
 
-    args = parser.parse_args()
+
+async def main():
+    """Main entry point for daemon"""
+    parser = arguments()
+    args = parser.parse_args(None)  # ty:ignore[possibly-missing-attribute]
 
     # Setup application config
     app_config = ApplicationConfig()
