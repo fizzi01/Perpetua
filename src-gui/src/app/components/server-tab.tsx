@@ -781,7 +781,7 @@ export function ServerTab({ onStatusChange, state }: ServerTabProps) {
                     style={{ color: 'var(--app-text-primary)' }}
                   >
                     <Lock size={18} />
-                    <span>Require SSL</span>
+                    <span>Secure connection</span>
                   </label>
                   <Switch 
                     id="requireSSL"
@@ -810,11 +810,11 @@ export function ServerTab({ onStatusChange, state }: ServerTabProps) {
                       whileTap={{ scale: 0.95 }}
                       disabled={otp !== '' || otpRequested}
                       onClick={generateOtp}
-                      className="px-4 py-2 rounded-lg transition-all flex items-center gap-2"
+                      className="px-4 py-2 rounded-lg transition-all flex items-center gap-2 disabled:opacity-50"
                       style={{
                         cursor: otp !== '' || otpRequested ? '' : 'pointer',
-                        backgroundColor: otp !== '' || otpRequested ? 'var(--app-bg-tertiary)' : 'var(--app-primary)',
-                        color: 'white'
+                        backgroundColor: otp !== '' || otpRequested ? 'var(--app-bg-secondary)' : 'var(--app-primary)',
+                        color: otp !== '' || otpRequested ? 'var(--app-text-muted)' : 'white'
                       }}
                     >
                       <Key size={16} />

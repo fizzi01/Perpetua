@@ -451,7 +451,7 @@ export function ClientTab({ onStatusChange, state }: ClientTabProps) {
     });
   };
 
-  const scheduleOptionsSave = (hostValue: string, hostnameValue: string, portValue: string, sslEnabledValue: boolean, autoReconnectValue: boolean) => {
+  const scheduleOptionsSave = (hostValue: string, hostnameValue: string, portValue: string, sslEnabledValue: boolean, autoReconnectValue: boolean, save_feedback: boolean = true) => {
     // Clear existing timeout
     if (saveOptionsTimeoutRef.current) {
       clearTimeout(saveOptionsTimeoutRef.current);
@@ -459,7 +459,7 @@ export function ClientTab({ onStatusChange, state }: ClientTabProps) {
     
     // Schedule new save after inactivity
     saveOptionsTimeoutRef.current = setTimeout(() => {
-      handleSaveOptions(hostValue, hostnameValue, portValue, sslEnabledValue, autoReconnectValue);
+      handleSaveOptions(hostValue, hostnameValue, portValue, sslEnabledValue, autoReconnectValue, save_feedback);
     }, 100);
   };
 
@@ -513,7 +513,8 @@ export function ClientTab({ onStatusChange, state }: ClientTabProps) {
       />
 
       {/* Disconnected Status Info */}
-      {!isConnected && !showOtpInput && host && port && (
+      {/* {!isConnected && !showOtpInput && host && port && ( */}
+      {!isConnected && !showOtpInput && (
         <motion.div
           initial={{ opacity: 0 }}
           animate={{ opacity: 1 }}
@@ -793,7 +794,7 @@ export function ClientTab({ onStatusChange, state }: ClientTabProps) {
                     style={{ color: 'var(--app-text-primary)' }}
                   >
                     <Lock size={18} />
-                    <span>Require SSL</span>
+                    <span>Secure connection</span>
                   </label>
                   <Switch
                     id="requireSSL"
@@ -880,11 +881,11 @@ export function ClientTab({ onStatusChange, state }: ClientTabProps) {
                     if (!is_ip && newHost !== hostname) {
                       setHostname(newHost);
                       setHost('');
-                      scheduleOptionsSave('', newHost, port, requireSSL, autoReconnect);
+                      scheduleOptionsSave('', newHost, port, requireSSL, autoReconnect, false);
                     } else if (newHost !== host) {
                       setHostname('');
                       setHost(newHost);
-                      scheduleOptionsSave(newHost, '', port, requireSSL, autoReconnect);
+                      scheduleOptionsSave(newHost, '', port, requireSSL, autoReconnect, false);
                     } 
                   }}
                   className="app-input"
@@ -909,7 +910,7 @@ export function ClientTab({ onStatusChange, state }: ClientTabProps) {
                       return; // Only allow numeric input
                     }
                     setPort(newPort);
-                    scheduleOptionsSave(host, hostname, newPort, requireSSL, autoReconnect);
+                    scheduleOptionsSave(host, hostname, newPort, requireSSL, autoReconnect, false);
                   }}
                   className="app-input"
                   disabled={isRunning}
@@ -930,6 +931,7 @@ export function ClientTab({ onStatusChange, state }: ClientTabProps) {
                     onCheckedChange={(checked) => {
                       setAutoConnect(checked);
                     }}
+                    disabled={true} // Feature not implemented yet
                   />
                 </div>
               </div>
