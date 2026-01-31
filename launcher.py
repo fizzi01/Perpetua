@@ -20,10 +20,12 @@ import asyncio
 import os
 import subprocess
 import sys
+import argparse
 from pathlib import Path
 from time import sleep
 from psutil import pid_exists
 
+from service.daemon import arguments
 from utils.logging import get_logger
 from utils.permissions import PermissionChecker
 from config import ApplicationConfig
@@ -310,9 +312,14 @@ class Launcher:
 
 if __name__ == "__main__":
     launcher = None
+    launcher_parser = argparse.ArgumentParser(description="Perpetua Launcher")
+    launcher_parser.add_argument('--daemon', action='store_true', help='Run only the daemon process')
+    daemon_parser = arguments(parent=launcher_parser)
+    
+    args = launcher_parser.parse_args()
     try:
         launcher = Launcher()
-        if '--daemon' in sys.argv:
+        if args.daemon:
             # Reset arguments to avoid recursion
             sys.argv = [arg for arg in sys.argv if arg != '--daemon']
             launcher.run_daemon()
