@@ -227,7 +227,11 @@ class Builder:
 
         nuitka_cmd.extend(self.nuitka_args)
         nuitka_cmd.append(str(launcher_py))
-        return self._run(nuitka_cmd, cwd=self.src_dir, print_cmd=False).returncode
+        res = self._run(nuitka_cmd, cwd=self.src_dir, print_cmd=False).returncode
+        if res == 0:
+            # Clean up
+            self._clean_data_files()
+        return res
 
     def _sign_bundle(self):
         if self.is_macos:
