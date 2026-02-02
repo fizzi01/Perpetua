@@ -71,7 +71,8 @@ For a full list of available commands and options:
 
 ## Building from Source
 
-### Prerequisites
+<details>
+<summary><b>Prerequisites</b></summary>
 
 Perpetua requires several development tools and libraries to build successfully.
 
@@ -85,7 +86,9 @@ Perpetua requires several development tools and libraries to build successfully.
 - Rust toolchain
 - Tauri-cli
 
-### Platform-Specific Requirements:
+</details>
+<details>
+<summary><b>Platform-Specific Requirements</b></summary>
 
 *macOS:*
 - Xcode Command Line Tools
@@ -96,9 +99,11 @@ Perpetua requires several development tools and libraries to build successfully.
 *Windows:*
 - Microsoft C++ Build Tools
   - Install the "Desktop development with C++" workload from [Visual Studio Build Tools](https://visualstudio.microsoft.com/downloads/#build-tools-for-visual-studio-2022)
+</details>
 
 > [!NOTE]
 > **Windows versions prior to Windows 10 (1803)** require [Microsoft Edge WebView2 Runtime](https://developer.microsoft.com/en-us/microsoft-edge/webview2/) to be installed manually.
+
 
 ### Quick Start
 
