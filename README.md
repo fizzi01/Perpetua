@@ -14,6 +14,7 @@ Built with Python, Perpetua prioritizes performance through the integration of h
     <img alt="Perpetua Server View" srcset="docs/imgs/main_dark.png" width="450">
   </picture>
 </div>
+
 ## Features
 
 **Unified Input Control**  
