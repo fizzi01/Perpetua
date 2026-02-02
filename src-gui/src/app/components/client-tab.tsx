@@ -56,7 +56,7 @@ export function ClientTab({ onStatusChange, state }: ClientTabProps) {
     return null;
   });
   const [currentConnection, setCurrentConnection] = useState<ClientConnectionInfo | null>(state.server_info);
-  const [autoConnect, setAutoConnect] = useState(false);
+  // const [autoConnect, setAutoConnect] = useState(false);
   const [autoReconnect, setAutoReconnect] = useState(state.server_info.auto_reconnect);
   const [enableMouse, setEnableMouse] = useState(parseStreams(state.streams_enabled).includes(StreamType.Mouse));
   const [enableKeyboard, setEnableKeyboard] = useState(parseStreams(state.streams_enabled).includes(StreamType.Keyboard));
@@ -917,7 +917,7 @@ export function ClientTab({ onStatusChange, state }: ClientTabProps) {
                 />
               </div>
 
-              <div className="space-y-3">
+              {/* <div className="space-y-3">
                 <div className="flex items-center justify-between">
                   <label className="flex items-center gap-2"
                     style={{ color: 'var(--app-text-primary)' }}
@@ -934,7 +934,7 @@ export function ClientTab({ onStatusChange, state }: ClientTabProps) {
                     disabled={true} // Feature not implemented yet
                   />
                 </div>
-              </div>
+              </div> */}
 
               <div className="space-y-3">
                 <div className="flex items-center justify-between">
