@@ -177,7 +177,7 @@ export function ServerSelectionPanel({
                 whileHover={{ scale: 1.02 }}
                 whileTap={{ scale: 0.98 }}
                 onClick={onCancel}
-                className="cursor-pointer w-full p-3 rounded-lg transition-all flex items-center justify-center gap-2 border"
+                className="cursor-pointer w-full p-3 rounded-lg transition-all flex items-center justify-center gap-2"
                 style={{
                   backgroundColor: 'var(--app-danger)',
                   color: 'var(--white)'

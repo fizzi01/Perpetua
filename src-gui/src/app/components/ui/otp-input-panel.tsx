@@ -242,7 +242,7 @@ export function OtpInputPanel({
                 whileTap={{ scale: 0.98 }}
                 onClick={handleCancel}
                 disabled={isProcessing}
-                className="cursor-pointer w-full p-3 rounded-lg transition-all flex items-center justify-center gap-2 border"
+                className="cursor-pointer w-full p-3 rounded-lg transition-all flex items-center justify-center gap-2"
                 style={{
                   backgroundColor: 'var(--app-danger)',
                   color: 'var(--white)',

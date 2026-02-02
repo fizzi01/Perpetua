@@ -326,7 +326,7 @@ class Client:
     def has_certificate(self) -> bool:
         """Check if certificate exists for the server"""
         return self._cert_manager.certificate_exist(
-            source_id=self.config.get_server_host()
+            source_id=self.config.get_server_uid()
         )
 
     def _load_certificate(self) -> Optional[str]:
