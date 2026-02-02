@@ -5,13 +5,12 @@
 
 Perpetua is an open-source, cross-platform KVM software solution inspired by Apple's Universal Control. It enables users to control multiple devices using a single keyboard and mouse, with seamless cursor transitions between devices, keyboard sharing, and clipboard synchronization across different operating systems.
 
-Unlike hardware KVM switches, Perpetua operates entirely over the local network, eliminating the need for physical peripherals or cables while maintaining secure, encrypted communication between devices.
-
 Built with Python, Perpetua prioritizes performance through the integration of high-performance event loops: uvloop on macOS, and winloop on Windows. This architectural choice delivers exceptional responsiveness and low-latency input handling, ensuring smooth performance.
 
 <picture>
-   <source srcset="docs/imgs/main.png">
-   <img alt="Perpetua Server View" srcset="docs/imgs/main.png">
+    <source media="(prefers-color-scheme: dark)" srcset="docs/imgs/main_dark.png?raw=true">
+    <source media="(prefers-color-scheme: light)" srcset="docs/imgs/main_light.png?raw=true">
+   <img alt="Perpetua Server View" srcset="docs/imgs/main_dark.png">
 </picture>
 
 ## Features
@@ -28,8 +27,6 @@ Share clipboard content across all connected devices automatically.
 **Secure by Default**  
 All network communication is encrypted using TLS.
 
----
-
 
 ## Supported Operating Systems
 
@@ -43,7 +40,34 @@ Actually only Windows and MacOS are supported.
 > - **Windows**: You can't control a Windows client if there is no real mouse connected to the machine.
 > - **Input Capture Conflicts**: Perpetua cannot control the mouse when other applications have exclusive input capture (e.g., video games). This is an architectural limitation.
 
----
+
+## Usage
+
+Launch `Perpetua` and choose whether to run as a server or client. The GUI will guide you through the necessary configuration steps.
+
+#### Background Mode:
+
+You can run Perpetua as a background service using the daemon mode:
+
+```bash
+# Run in daemon mode (you'll choose server or client later)
+./Perpetua --daemon
+
+# Automatically start as server
+./Perpetua --daemon -s
+
+# Automatically start as client
+./Perpetua --daemon -c
+```
+
+For a full list of available commands and options:
+```bash
+./Perpetua --help
+# or
+./Perpetua -h
+```
+
+
 
 ## Building from Source
 
@@ -51,17 +75,17 @@ Actually only Windows and MacOS are supported.
 
 Perpetua requires several development tools and libraries to build successfully.
 
-**Python Environment:**
+#### Python Environment:
 - Python 3.11 or 3.12
 - Poetry
 
 
-**GUI Framework:**
+#### GUI Framework:
 - Node.js 18+ and npm
 - Rust toolchain
 - Tauri-cli
 
-**Platform-Specific Requirements:**
+### Platform-Specific Requirements:
 
 *macOS:*
 - Xcode Command Line Tools
@@ -75,8 +99,6 @@ Perpetua requires several development tools and libraries to build successfully.
 
 > [!NOTE]
 > **Windows versions prior to Windows 10 (1803)** require [Microsoft Edge WebView2 Runtime](https://developer.microsoft.com/en-us/microsoft-edge/webview2/) to be installed manually.
-
----
 
 ### Quick Start
 
@@ -92,6 +114,8 @@ The project includes both a build script and Makefile for convenient building.
    ```bash
    poetry install
    # or
+   pip install .
+   # or
    make install-build
    ```
 
@@ -106,7 +130,7 @@ The project includes both a build script and Makefile for convenient building.
 <details>
 <summary><b>Advanced Build Options</b></summary>
 
-##### Using Poetry
+#### Using Poetry
 
 ```bash
 # Debug build
@@ -122,7 +146,7 @@ poetry run python build.py --skip-daemon
 poetry run python build.py --clean
 ```
 
-##### Using Make
+#### Using Make
 
 ```bash
 # Debug build
@@ -163,11 +187,10 @@ poetry run python build.py --skip-gui
 
 </details>
 
----
 
 ## Configuration
 
-Perpetua uses JSON configuration files to define client and server settings. Configuration files are **automatically generated on first launch** with sensible defaults, requiring minimal manual intervention for most use cases.
+Perpetua uses JSON to define client and server settings. Configuration file is automatically generated on first launch with sensible defaults, requiring minimal manual intervention for most use cases.
 
 Configuration File Locations:
 - macOS: `$HOME/Library/Caches/Perpetua`
@@ -176,84 +199,137 @@ Configuration File Locations:
 <details>
 <summary><b>Server Configuration</b></summary>
 
-The server configuration is managed automatically and typically does not require manual modification. Perpetua handles server setup, certificate generation, and network binding autonomously.
+The server configuration is managed automatically for basic setup (certificate generation, network binding). However, to accept client connections, you must manually add each client to the server configuration, specifying:
 
-Default behavior:
-- Generates self-signed TLS certificates
-- Manages client authentication and pairing
+- Client IP or Hostname
+- Screen Position: The spatial arrangement relative to the server (left, right, top, bottom)
+
+This configuration defines how devices are arranged in your workspace for a seamless cursor transition between them.
 
 </details>
 
 <details>
 <summary><b>Client Configuration</b></summary>
 
-The client configuration allows two discovery modes:
+Clients can find servers in two ways:
 
-**Auto Discovery (Default):**
-- Perpetua automatically discovers available servers on the local network
-- No manual configuration required
-- Ideal for single-server environments
+Auto Discovery (Default):
+- Scans the local network for available servers
+- Works out of the box, no configuration needed
 
-**Manual Server Specification:**
-- Explicitly define the server hostname or IP address in the configuration file
-- Useful for static network setups or when automatic discovery fails
+Manual Configuration:
+- Set the server's hostname or IP address directly in the config file
+- Use this when auto-discovery doesn't work or you have a static network setup
 
 </details>
 
 <details>
 <summary><b>First Connection and OTP Pairing</b></summary>
 
-On the first connection between a client and server, Perpetua implements a secure pairing process:
+When a client connects to a new server for the first time, it needs to get the server's TLS certificate to establish a secure connection. Here's how it works:
 
-1. **OTP Generation**: The server generates a one-time password (OTP)
-2. **OTP Entry**: The user must enter this OTP on the client side
-3. **Certificate Exchange**: Upon successful OTP verification, the server shares its TLS certificate with the client
-4. **Trusted Connection**: Subsequent connections are authenticated automatically using the exchanged certificates
+1. The client starts the connection process
+2. On the server (which must be running and listening), generate an OTP through the GUI in the Security section
+3. Enter the OTP in the client when prompted (the GUI walks you through this)
+4. If the certificate exchange succeeds and the client is in the server's allowlist, the connection is established
+5. Done!
 
-This mechanism ensures secure, autonomous certificate sharing without manual management.
+The OTP is just for the initial certificate exchange. After that, connections authenticate automatically using the saved certificates.
 
 </details>
 
 <details>
-<summary><b>Configuration Files Structure</b></summary>
+<summary><b>Configuration File Structure</b></summary>
 
-**Client Configuration (`client_config.json`):**
+The configuration json file is split into three sections: `server`, `client`, and `general`.
+
+#### Server Section:
+
+`streams_enabled` controls what the server will manage on each connected client:
+- `1`: Mouse
+- `4`: Keyboard  
+- `12`: Clipboard
+
+`log_level` sets the logging verbosity:
+- `0`: Debug (detailed logs)
+- `1`: Info (standard logs)
+
+`authorized_clients` lists the clients that can connect. To add a new client, you only need to specify:
+- `uid`: Unique identifier
+- `host_name` or `ip_address`: Client's network address
+- `screen_position`: Where the client is positioned relative to the server (`left`, `right`, `top`, `bottom`)
+
+Other fields are automatically populated by the system.
+
+#### Client Section:
+
+The same field names have the same meaning as in the server section. The `server_info` block tells the client which server to connect to (leave it empty for auto-discovery or fill in the `host` field for manual configuration).
+
+#### General Section:
+
+These parameters affect the application's internal behavior. Only modify them if you know what you're doing.
+
+#### File Structure
 ```json
 {
-  "server_info": {
-    "uid": "",
-    "host": "",
-    "hostname": "",
-    "port": 55655,
-    "heartbeat_interval": 1,
-    "auto_reconnect": true,
-    "ssl": true,
-    "additional_params": {}
-  },
-  "uid": "client-unique-identifier",
-  "client_hostname": "your-hostname",
-  "streams_enabled": {
-    "0": true,
-    "1": true,
-    "4": true,
-    "12": true
-  },
-  "ssl_enabled": true,
-  "log_level": 0,
-  "log_to_file": false,
-  "log_file_path": null
+    "server": {
+        "uid": "...",
+        "host": "0.0.0.0",
+        "port": 55655,
+        "heartbeat_interval": 1,
+        "streams_enabled": {
+            "1": true,
+            "4": true,
+            "12": true
+        },
+        "ssl_enabled": true,
+        "log_level": 1,
+        "authorized_clients": [
+            {
+                "uid": "...",
+                "host_name": "MYCLIENT",
+                "ip_address": "192.168.1.66",
+                "first_connection_date": "2026-02-02 19:09:00",
+                "last_connection_date": "2026-02-02 19:16:12",
+                "screen_position": "top",
+                "screen_resolution": "1920x1080",
+                "ssl": true,
+                "is_connected": true,
+                "additional_params": {}
+            }
+        ]
+    },
+    "client": {
+        "server_info": {
+            "uid": "",
+            "host": "",
+            "hostname": null,
+            "port": 55655,
+            "heartbeat_interval": 1,
+            "auto_reconnect": true,
+            "ssl": true,
+            "additional_params": {}
+        },
+        "uid": "...",
+        "client_hostname": "MYSERVER",
+        "streams_enabled": {
+            "1": true,
+            "4": true,
+            "12": true
+        },
+        "ssl_enabled": true,
+        "log_level": 1
+    },
+    "general": {
+        "default_host": "0.0.0.0",
+        "default_port": 55655,
+        "default_daemon_port": 55652
+    }
 }
 ```
 
-> For automatic server discovery, leave the `server_info` 
-> connection fields empty (`host`, `hostname`, `uid`).
-> Perpetua will automatically detect available servers on the local network.
-
-For manual server configuration, populate the `host` field with the server's IP address or hostname.
-
 </details>
 
----
 > [!NOTE]
 > When multiple Perpetua servers are detected on the network (on auto-discovery mode),
 > the GUI will present a selection dialog allowing the user to 
