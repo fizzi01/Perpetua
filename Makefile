@@ -76,6 +76,7 @@ clean: ## Clean build artifacts
 	rm -rf $(BUILD_DIR)
 	rm -rf $(GUI_DIR)/dist
 	rm -rf $(SRC_DIR)/__pycache__
+	rm -rf $(SRC_DIR)/.ruff_cache
 	@echo "$(GREEN)Build artifacts cleaned$(NC)"
 
 clean-all: clean ## Clean all artifacts including Poetry cache and node_modules

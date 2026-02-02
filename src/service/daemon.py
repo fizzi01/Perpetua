@@ -30,7 +30,6 @@ import datetime
 import errno
 import json
 import os
-import argparse
 
 from os import path
 import signal
@@ -44,6 +43,7 @@ from service.client import Client
 from service.server import Server
 from utils import UIDGenerator
 from utils.logging import Logger, get_logger
+from utils.cli import DaemonArguments
 from event.notification import (
     NotificationManager,
     NotificationEvent,
@@ -2180,30 +2180,9 @@ async def _send_tcp_command(
 
 # ==================== Main Entry Point ====================
 
-def arguments(parent: argparse.ArgumentParser | None = None) -> argparse.ArgumentParser | argparse._ArgumentGroup:
-    """Parse command-line arguments"""
-
-    if parent:
-        parser = parent.add_argument_group("Daemon Options")
-    else:
-        parser = argparse.ArgumentParser(description="Daemon")
-
-    parser.add_argument(
-        "--socket",
-        default=Daemon.DEFAULT_SOCKET_PATH,
-        help="Socket path (Unix socket) or host:port (TCP on Windows)",
-    )
-    parser.add_argument("--config-dir", help="Configuration directory path")
-    parser.add_argument("--debug", action="store_true", help="Enable debug directory")
-    parser.add_argument(
-        "--log-terminal", action="store_true", help="Log only to stdout"
-    )
-    return parser
-
-
 async def main():
     """Main entry point for daemon"""
-    parser = arguments()
+    parser = DaemonArguments(socket_default=Daemon.DEFAULT_SOCKET_PATH)
     args = parser.parse_args(None)  # ty:ignore[possibly-missing-attribute]
 
     # Setup application config

@@ -8,7 +8,6 @@ authors = [
 readme = "README.md"
 requires-python = ">=3.11,<3.13"
 dependencies = [
-#    "keyboard (>=0.13.5,<0.14.0)",
     "packaging (>=24.2,<26.0.0)",
     "pynput (>=1.7.7,<2.0.0)",
     "pyobjc (>=10.2,<13.0) ; sys_platform == 'darwin'",
@@ -26,8 +25,6 @@ dependencies = [
     "uvloop @ git+https://github.com/fizzi01/uvloop.git@fix ; sys_platform == 'darwin'",
     "winloop (==0.4.1) ; sys_platform == 'win32'",
     "structlog (>=25.5.0,<26.0.0)",
-    "ruff (>=0.14.10,<0.15.0)",
-    "pytest (>=9.0.2,<10.0.0)",
     "psutil (>=7.2.1,<8.0.0)"
 ]
 
@@ -44,11 +41,14 @@ clean-build = "scripts:clean_build"
 launcher = "launcher:main"
 
 [tool.poetry.group.dev.dependencies]
-ty = "^0.0.13"
+ty = "<0.1.0"
 ruff = "^0.14.10"
 anyio = "^4.12.0"
-nuitka = ">=2.8.9,<3.0.0"
+nuitka = "<3.0.0"
 pytest-timeout = "^2.4.0"
+pytest = "<10.0.0"
+structlog = ">=25.5.0,<26.0.0"
+aiofiles = ">=25.1.0,<26.0.0"
 
 [build-system]
 requires = ["poetry-core>=2.0.0,<3.0.0"]

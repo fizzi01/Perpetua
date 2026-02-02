@@ -15,19 +15,20 @@
 #  You should have received a copy of the GNU General Public License
 #  along with this program.  If not, see <https://www.gnu.org/licenses/>.
 #
+from typing import Optional
 
 import asyncio
 import os
 import subprocess
 import sys
-import argparse
+from argparse import ArgumentParser, Namespace
 from pathlib import Path
 from time import sleep
 from psutil import pid_exists
 
-from service.daemon import arguments
 from utils.logging import get_logger
 from utils.permissions import PermissionChecker
+from utils.cli import DaemonArguments
 from config import ApplicationConfig
 
 IS_WINDOWS = sys.platform in ("win32", "cygwin")
@@ -36,11 +37,12 @@ COMPILED = "__compiled__" in globals()
 class Launcher:
     """Launcher class to manage daemon and GUI processes with centralized logging."""
 
-    def __init__(self):
+    def __init__(self, args: Optional[Namespace] = None):
         self.main_path = ApplicationConfig.get_main_path()
         self.pid_file = Path(os.path.join(self.main_path, "daemon.pid"))
         self.log_file = Path(os.path.join(self.main_path, ApplicationConfig.get_default_log_file() or "daemon.log"))
         self.temp_log_file = Path(os.path.join(self.main_path, "launcher_temp.log"))
+        self._args = args
         self._log = None
         self.project_root = self._get_project_root()
 
@@ -48,7 +50,7 @@ class Launcher:
     def log(self):
         """Lazy initialization of logger."""
         if self._log is None:
-            self._log = get_logger("launcher", verbose=True, log_file=str(self.temp_log_file))
+            self._log = get_logger("launcher", verbose=True, log_file=self.temp_log_file)
         return self._log
 
     def _get_project_root(self) -> Path:
@@ -66,7 +68,7 @@ class Launcher:
 
     def clean_temp_log_file(self):
         """Remove temporary launcher log file if exists."""
-        if self.temp_log_file.exists():
+        if self.temp_log_file and self.temp_log_file.exists():
             try:
                 self.temp_log_file.unlink()
             except Exception as e:
@@ -74,7 +76,7 @@ class Launcher:
 
     def clean_log_file(self):
         """Clean up old log file if exists."""
-        if self.log_file.exists():
+        if self.log_file and self.log_file.exists():
             try:
                 self.log_file.unlink()
                 self.log.info("Old log file removed", path=str(self.log_file))
@@ -111,8 +113,11 @@ class Launcher:
 
         self.clean_log_file()
 
+        if self._args and self._args.log_terminal:
+            self.log_file = None
+
         # Reinitialize logger with daemon log file
-        self._log = get_logger("launcher", is_root=True, verbose=True, log_file=str(self.log_file))
+        self._log = get_logger("launcher", is_root=True, verbose=True, log_file=self.log_file)
 
         # Write PID file
         self.write_daemon_pid(os.getpid())
@@ -312,13 +317,13 @@ class Launcher:
 
 if __name__ == "__main__":
     launcher = None
-    launcher_parser = argparse.ArgumentParser(description="Perpetua Launcher")
+    launcher_parser = ArgumentParser(description="Perpetua Launcher")
     launcher_parser.add_argument('--daemon', action='store_true', help='Run only the daemon process')
-    daemon_parser = arguments(parent=launcher_parser)
-    
+    daemon_parser = DaemonArguments(parent=launcher_parser)
+
     args = launcher_parser.parse_args()
     try:
-        launcher = Launcher()
+        launcher = Launcher(args=args)
         if args.daemon:
             # Reset arguments to avoid recursion
             sys.argv = [arg for arg in sys.argv if arg != '--daemon']
@@ -327,6 +332,9 @@ if __name__ == "__main__":
 
         # Clean temp log file before initializing logger
         launcher.clean_temp_log_file()
+
+        if args.log_terminal:
+            launcher.temp_log_file = None
 
         # Normal launcher flow
         exit_code = launcher.run()

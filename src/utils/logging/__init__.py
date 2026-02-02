@@ -143,7 +143,7 @@ class Logger(BaseLogger):
         verbose=True,
         level: Optional[int] = None,
         stdout=None,
-        log_file: Optional[str] = None,
+        log_file: Optional[str | Path] = None,
     ):
         """
         Inizializza un logger per un modulo specifico.
@@ -344,7 +344,7 @@ class StructLogger(BaseLogger):
         verbose: bool = True,
         level: Optional[int] = None,
         is_root: bool = False,
-        log_file: Optional[str] = None,
+        log_file: Optional[str | Path] = None,
         **initial_context,
     ):
         """
@@ -681,7 +681,7 @@ def get_logger(
     structured: bool = True,
     level: Optional[int] = None,
     is_root: bool = False,
-    log_file: Optional[str] = None,
+    log_file: Optional[str | Path] = None,
     **initial_context: Any,
 ) -> BaseLogger:
     """
@@ -699,7 +699,7 @@ def get_logger(
         level (int): The initial logging level (Logger.DEBUG, Logger.INFO, etc.). Defaults to None.
         is_root (bool): If True, configures the logger as the root logger.
             Defaults to False.
-        log_file (str, optional): Path to the log file. If provided, logs will be written to this file.
+        log_file (str | Path, optional): Path to the log file. If provided, logs will be written to this file.
         **initial_context (Any): Additional keyword arguments defining initial logging
             context.
 

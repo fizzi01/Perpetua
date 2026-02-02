@@ -1,4 +1,3 @@
-
 #  Perpatua - open-source and cross-platform KVM software.
 #  Copyright (c) 2026 Federico Izzi.
 #
@@ -20,6 +19,7 @@ import argparse
 import shutil
 import subprocess
 import sys
+import platform
 from pathlib import Path
 from typing import Optional
 
@@ -32,33 +32,50 @@ APP_NAME = ApplicationConfig.app_name
 
 
 class Builder:
-
-    def __init__(self, project_root: Path, skip_gui: bool = False,
-                 skip_daemon: bool = False, clean: bool = False,
-                 release: bool = True, nuitka_args: Optional[list[str]] = None):
+    def __init__(
+        self,
+        project_root: Path,
+        skip_gui: bool = False,
+        skip_daemon: bool = False,
+        clean: bool = False,
+        release: bool = True,
+        target: Optional[str] = None,
+        nuitka_args: Optional[list[str]] = None,
+    ):
         self.project_root = project_root
         self.skip_gui = skip_gui
         self.skip_daemon = skip_daemon
         self.clean = clean
         self.release = release
-        self.nuitka_args = nuitka_args or []
-        self.log = get_logger("build", verbose=True)
-
-        self.gui_dir = project_root / "src-gui"
-        build_type = "release" if release else "debug"
-        self.icons_dir = self.gui_dir / "src-tauri" / "icons"
-        self.gui_exe = self.gui_dir / "src-tauri" / "target" / build_type / GUI_EXECUTABLE
-        self.src_dir = project_root / "src"
-        self.build_dir = project_root / ".build"
+        self.target = target
+        if not self.target:
+            self.target= self.architecture
 
         self.system = sys.platform
         self.is_macos = self.system == "darwin"
         self.is_windows = self.system == "win32"
         self.is_linux = self.system == "linux"
 
-        # Add .exe extension for Windows
+        self.nuitka_args = nuitka_args or []
+        self.log = get_logger("build", verbose=True)
+
+        self.gui_dir = project_root / "src-gui"
+        build_type = "release" if release else "debug"
+        self.icons_dir = self.gui_dir / "src-tauri" / "icons"
+
+        parsed_target = self.parse_target(gui=True)
+        if parsed_target:
+            build_type = Path(parsed_target) / build_type
+
+        self.gui_exe = (
+            self.gui_dir / "src-tauri" / "target" / build_type / GUI_EXECUTABLE
+        )
+        self.src_dir = project_root / "src"
+        self.build_dir = project_root / ".build" / build_type
+
+        # OS-specific adjustments
         if self.is_windows:
-            self.gui_exe = self.gui_exe.with_suffix('.exe')
+            self.gui_exe = self.gui_exe.with_suffix(".exe")
 
         if self.is_macos:
             self.icons_dir = self.icons_dir / "macos"
@@ -69,19 +86,56 @@ class Builder:
     def version(self):
         return self._version
 
+    @property
+    def architecture(self) -> str:
+        return platform.machine()
+
+    def parse_target(self, gui: bool) -> Optional[str]:
+        """
+        Maps the user-specified target architecture to the appropriate target.
+        Returns None if no target is specified.
+        """
+        target_map = {
+            "darwin": {
+                "x86_64": "x86_64-apple-darwin",
+                "aarch64": "aarch64-apple-darwin",
+                "arm64": "aarch64-apple-darwin",
+                "i686": "i686-apple-darwin",
+            },
+            "win32": {
+                "x86_64": "x86_64-pc-windows-msvc",
+                "aarch64": "aarch64-pc-windows-msvc",
+                "arm64": "aarch64-pc-windows-msvc",
+                "i686": "i686-pc-windows-msvc",
+            }
+        }
+
+        platform_map = target_map.get(self.system, {})
+        return platform_map.get(self.target)
+
     @staticmethod
     def _get_version():
         import tomllib
+
         pyproject_path = Path(__file__).parent / "pyproject.toml"
         with open(pyproject_path, "rb") as f:
             pyproject_data = tomllib.load(f)
         return pyproject_data["project"]["version"]
 
-    def _run(self, cmd: list[str], cwd: Optional[Path] = None, print_cmd: bool = True) -> subprocess.CompletedProcess:
+    def _run(
+        self, cmd: list[str], cwd: Optional[Path] = None, print_cmd: bool = True
+    ) -> subprocess.CompletedProcess:
         cwd = cwd or self.project_root
         if print_cmd:
             self.log.debug(f"$ {' '.join(cmd)}")
-        return subprocess.run(cmd, cwd=cwd, check=True, capture_output=False, shell=self.is_windows, text=True)
+        return subprocess.run(
+            cmd,
+            cwd=cwd,
+            check=True,
+            capture_output=False,
+            shell=self.is_windows,
+            text=True,
+        )
 
     def _clean(self):
         self.log.info("Cleaning build artifacts")
@@ -98,7 +152,7 @@ class Builder:
         tauri_target = self.gui_dir / "src-tauri" / "target"
         if tauri_target.exists():
             response = input("Remove Tauri target? [y/N]: ")
-            if response.lower() == 'y':
+            if response.lower() == "y":
                 shutil.rmtree(tauri_target)
 
     def _build_gui(self) -> int:
@@ -108,13 +162,23 @@ class Builder:
         self.log.info("Building GUI")
 
         try:
-            subprocess.run(["npm", "--version"], shell=self.is_windows, check=True, capture_output=True)
+            subprocess.run(
+                ["npm", "--version"],
+                shell=self.is_windows,
+                check=True,
+                capture_output=True,
+            )
         except (subprocess.CalledProcessError, FileNotFoundError):
             self.log.error("npm not found")
             return 1
 
         try:
-            subprocess.run(["cargo", "--version"], shell=self.is_windows, check=True, capture_output=True)
+            subprocess.run(
+                ["cargo", "--version"],
+                shell=self.is_windows,
+                check=True,
+                capture_output=True,
+            )
         except (subprocess.CalledProcessError, FileNotFoundError):
             self.log.error("cargo not found")
             return 1
@@ -123,10 +187,18 @@ class Builder:
 
         # Check if tauri is installed
         try:
-            subprocess.run(["cargo", "tauri", "--version"], shell=self.is_windows, check=True, capture_output=True)
+            subprocess.run(
+                ["cargo", "tauri", "--version"],
+                shell=self.is_windows,
+                check=True,
+                capture_output=True,
+            )
         except (subprocess.CalledProcessError, FileNotFoundError):
             self.log.info("Installing Tauri CLI")
-            res = self._run(["cargo", "install", "tauri-cli", "--version", "^2.0.0", "--locked"], cwd=self.gui_dir)
+            res = self._run(
+                ["cargo", "install", "tauri-cli", "--version", "^2.0.0", "--locked"],
+                cwd=self.gui_dir,
+            )
             if res.returncode != 0:
                 self.log.error("Failed to install Tauri CLI")
                 return res.returncode
@@ -134,6 +206,10 @@ class Builder:
         build_cmd = ["cargo", "tauri", "build"]
         if not self.release:
             build_cmd.append("--debug")
+
+        target = self.parse_target(gui=True)
+        if target:
+            build_cmd.extend(["--target", target])
 
         ret = self._run(build_cmd, cwd=self.gui_dir).returncode
         if ret == 0:
@@ -173,11 +249,16 @@ class Builder:
         self.log.info("Building daemon")
 
         try:
-            subprocess.run([sys.executable, "-m", "nuitka", "--version"],
-                         check=True, capture_output=True)
+            subprocess.run(
+                [sys.executable, "-m", "nuitka", "--version"],
+                check=True,
+                capture_output=True,
+            )
         except (subprocess.CalledProcessError, FileNotFoundError):
             self.log.info("Installing Nuitka")
-            res = subprocess.run([sys.executable, "-m", "pip", "install", "nuitka"], check=True)
+            res = subprocess.run(
+                [sys.executable, "-m", "pip", "install", "nuitka"], check=True
+            )
             if res.returncode != 0:
                 self.log.error("Failed to install Nuitka")
                 return res.returncode
@@ -187,14 +268,18 @@ class Builder:
 
         # Check that the GUI executable exists
         if not output_exe.exists():
-            # Try to copy data files again
-            self.log.warning("GUI executable not found, attempting to copy data files again")
+            # Try to copy data files
+            self.log.warning(
+                "GUI executable not found, attempting to copy data files"
+            )
             if self._copy_data_files() != 0:
                 self.log.error("GUI executable not found and failed to copy data files")
                 return 1
 
         nuitka_cmd = [
-            sys.executable, "-m", "nuitka",
+            sys.executable,
+            "-m",
+            "nuitka",
             f"--product-name={APP_NAME}",
             f"--file-version={self.version}",
             f"--product-version={self.version}",
@@ -204,26 +289,30 @@ class Builder:
             "--include-package=utils",
             "--include-package=input",
             "--python-flag=no_docstrings",
-            f"--include-data-files={output_exe}=_{self.gui_exe.name}"
+            f"--include-data-files={output_exe}=_{self.gui_exe.name}",
         ]
 
         if self.is_macos:
-            nuitka_cmd.extend([
-                "--macos-create-app-bundle",
-                f"--macos-app-version={self.version}",
-                "--macos-prohibit-multiple-instances",
-                f"--macos-sign-identity={APP_NAME}",
-                "--macos-app-protected-resource=NSAppleEventsUsageDescription:Automation Control",
-                f"--macos-app-name={APP_NAME}",
-                f"--macos-app-icon={self.icons_dir / 'icon.icns'}",
-            ])
+            nuitka_cmd.extend(
+                [
+                    "--macos-create-app-bundle",
+                    f"--macos-app-version={self.version}",
+                    "--macos-prohibit-multiple-instances",
+                    f"--macos-sign-identity={APP_NAME}",
+                    "--macos-app-protected-resource=NSAppleEventsUsageDescription:Automation Control",
+                    f"--macos-app-name={APP_NAME}",
+                    f"--macos-app-icon={self.icons_dir / 'icon.icns'}",
+                ]
+            )
 
         if self.is_windows:
-            nuitka_cmd.extend([
-                "--standalone",
-                "--windows-console-mode=attach",
-                f"--windows-icon-from-ico={self.icons_dir / 'icon.ico'}",
-            ])
+            nuitka_cmd.extend(
+                [
+                    "--standalone",
+                    "--windows-console-mode=attach",
+                    f"--windows-icon-from-ico={self.icons_dir / 'icon.ico'}",
+                ]
+            )
 
         nuitka_cmd.extend(self.nuitka_args)
         nuitka_cmd.append(str(launcher_py))
@@ -243,14 +332,17 @@ class Builder:
                 "--force",
                 "--verify",
                 "--verbose",
-                "--sign", APP_NAME,
-                str(app_bundle)
+                "--sign",
+                APP_NAME,
+                str(app_bundle),
             ]
             self._run(sign_cmd)
 
     def _summary(self):
-        build_type = 'Release' if self.release else 'Debug'
-        self.log.info(f"Platform: {self.system}, Build: {build_type}, Output: {self.build_dir}")
+        build_type = "Release" if self.release else "Debug"
+        self.log.info(
+            f"Platform: {self.system} {self.architecture}, Build: {build_type}, Output: {self.build_dir}"
+        )
 
         if self.build_dir.exists():
             for item in sorted(self.build_dir.iterdir()):
@@ -259,13 +351,17 @@ class Builder:
                     self.log.info(f"  {item.name} ({size_mb:.2f} MB)")
                 else:
                     # Directory size
-                    total_size = sum(f.stat().st_size for f in item.rglob('*') if f.is_file())
+                    total_size = sum(
+                        f.stat().st_size for f in item.rglob("*") if f.is_file()
+                    )
                     size_mb = total_size / (1024 * 1024)
                     self.log.info(f"  {item.name}/ ({size_mb:.2f} MB)")
 
     def build(self):
         try:
-            self.log.info(f"Build started ({self.system})")
+            self.log.info(
+                f"Build started ({self.system} {self.architecture}) - Version {self.version}"
+            )
 
             if self.clean:
                 self._clean()
@@ -287,11 +383,22 @@ class Builder:
 
 def main():
     parser = argparse.ArgumentParser(description="Build script")
-    parser.add_argument("--skip-gui", action="store_true", help="Skip GUI build")
-    parser.add_argument("--skip-daemon", action="store_true", help="Skip daemon build")
-    parser.add_argument("--clean", action="store_true", help="Clean before build")
+    parser.add_argument("--skip-gui", "-d", action="store_true", help="Skip GUI build (Daemon only)")
+    parser.add_argument("--skip-daemon", "-g", action="store_true", help="Skip daemon build (GUI only)")
+    parser.add_argument("--clean", "-c", action="store_true", help="Clean before build")
     parser.add_argument("--debug", action="store_true", help="Debug build")
-    parser.add_argument("--nuitka-args", nargs=argparse.REMAINDER, default=[], help="Extra arguments for Nuitka")
+    parser.add_argument(
+        "--target",
+        type=str,
+        help="Target architecture",
+        choices=["x86_64", "aarch64", "arm64", "i686"],
+    )
+    parser.add_argument(
+        "--nuitka-args", "-n",
+        nargs=argparse.REMAINDER,
+        default=[],
+        help="Extra arguments for Nuitka",
+    )
     args = parser.parse_args()
 
     builder = Builder(
@@ -300,7 +407,8 @@ def main():
         skip_daemon=args.skip_daemon,
         clean=args.clean,
         release=not args.debug,
-        nuitka_args=args.nuitka_args
+        nuitka_args=args.nuitka_args,
+        target=args.target,
     )
     builder.build()
 
