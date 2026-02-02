@@ -49,7 +49,7 @@ class Builder:
         self.release = release
         self.target = target
         if not self.target:
-            self.target= self.architecture
+            self.target= self.architecture.lower()
 
         self.system = sys.platform
         self.is_macos = self.system == "darwin"
@@ -103,6 +103,7 @@ class Builder:
                 "i686": "i686-apple-darwin",
             },
             "win32": {
+                "amd64": "x86_64-pc-windows-msvc",
                 "x86_64": "x86_64-pc-windows-msvc",
                 "aarch64": "aarch64-pc-windows-msvc",
                 "arm64": "aarch64-pc-windows-msvc",
@@ -391,7 +392,7 @@ def main():
         "--target",
         type=str,
         help="Target architecture",
-        choices=["x86_64", "aarch64", "arm64", "i686"],
+        choices=["x86_64", "amd64", "aarch64", "arm64", "i686"],
     )
     parser.add_argument(
         "--nuitka-args", "-n",
