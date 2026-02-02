@@ -1,4 +1,4 @@
-#  Perpatua - open-source and cross-platform KVM software.
+#  Perpetua - open-source and cross-platform KVM software.
 #  Copyright (c) 2026 Federico Izzi.
 #
 #  This program is free software: you can redistribute it and/or modify
@@ -19,8 +19,9 @@ import argparse
 from typing import Any
 
 
-def DaemonArguments(parent: argparse.ArgumentParser | None = None, socket_default: str | None = None
-                    ) -> argparse.ArgumentParser | argparse._ArgumentGroup:
+def DaemonArguments(
+    parent: argparse.ArgumentParser | None = None, socket_default: str | None = None
+) -> argparse.ArgumentParser | argparse._ArgumentGroup:
     """Parse command-line arguments"""
 
     if parent:
@@ -35,6 +36,13 @@ def DaemonArguments(parent: argparse.ArgumentParser | None = None, socket_defaul
     )
     parser.add_argument("--config-dir", help="Configuration directory path")
     parser.add_argument("--debug", action="store_true", help="Enable debug directory")
+    group = parser.add_mutually_exclusive_group()
+    group.add_argument(
+        "--server", "-s", action="store_true", help="Start server service"
+    )
+    group.add_argument(
+        "--client", "-c", action="store_true", help="Start client service"
+    )
     parser.add_argument(
         "--log-terminal", action="store_true", help="Log only to stdout"
     )

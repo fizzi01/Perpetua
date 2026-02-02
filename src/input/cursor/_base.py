@@ -1,5 +1,4 @@
-
-#  Perpatua - open-source and cross-platform KVM software.
+#  Perpetua - open-source and cross-platform KVM software.
 #  Copyright (c) 2026 Federico Izzi.
 #
 #  This program is free software: you can redistribute it and/or modify
@@ -78,6 +77,7 @@ class CursorHandlerWindow(wx.Frame):
         result_conn: Connection,
         mouse_conn: Connection,
         debug: bool = False,
+        log_level: int = Logger.DEBUG,
         **frame_kwargs,
     ):
         """
@@ -125,7 +125,9 @@ class CursorHandlerWindow(wx.Frame):
         # Screen lock monitoring
         self._screen_monitor_timer = wx.Timer(self)
         self._last_screen_locked_state: Optional[bool] = None
-        self.Bind(wx.EVT_TIMER, self._on_screen_monitor_timer, self._screen_monitor_timer)
+        self.Bind(
+            wx.EVT_TIMER, self._on_screen_monitor_timer, self._screen_monitor_timer
+        )
 
         # Events
         self.Bind(wx.EVT_MOTION, self.on_mouse_move)
@@ -138,7 +140,7 @@ class CursorHandlerWindow(wx.Frame):
         self.Bind(EVT_SCREEN_UNLOCKED, self.on_screen_unlock)
 
         self._logger = get_logger(
-            self.__class__.__name__, level=Logger.DEBUG, is_root=True
+            self.__class__.__name__, level=log_level, is_root=True
         )
 
     def _create(self):
@@ -574,7 +576,9 @@ class CursorHandlerWindow(wx.Frame):
             return
 
         self._last_screen_locked_state = Screen.is_screen_locked()
-        self._screen_monitor_timer.Start(self.LOCK_STATUS_CHECK_INTERVAL)  # Check every 500 ms
+        self._screen_monitor_timer.Start(
+            self.LOCK_STATUS_CHECK_INTERVAL
+        )  # Check every 500 ms
         # self._logger.debug("Screen monitor started")
 
     def _stop_screen_monitor(self):
@@ -622,11 +626,12 @@ class _CursorHandlerProcess:
         mouse_conn: Connection,
         debug: bool = False,
         window_class=CursorHandlerWindow,
+        log_level: int = Logger.INFO,
     ):
         """Run the cursor handler window process"""
         _logger = get_logger(
             "_CursorHandlerProcess",
-            level=Logger.DEBUG,
+            level=log_level,
             is_root=True,
         )
 
@@ -640,6 +645,7 @@ class _CursorHandlerProcess:
                 result_conn=result_conn,
                 mouse_conn=mouse_conn,
                 debug=debug,
+                log_level=log_level,
             )
 
             # Notify that the window is ready
@@ -819,6 +825,7 @@ class CursorHandlerWorker(object):
                 self.mouse_conn_send,
                 self._debug,
                 self.window_class,
+                self._logger.level,
             ),
             daemon=True,
         )

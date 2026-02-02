@@ -1,5 +1,4 @@
-
-#  Perpatua - open-source and cross-platform KVM software.
+#  Perpetua - open-source and cross-platform KVM software.
 #  Copyright (c) 2026 Federico Izzi.
 #
 #  This program is free software: you can redistribute it and/or modify
@@ -26,6 +25,7 @@ class CommonNetInfo(_base.CommonNetInfo):
     HOST: str = "8.8.8.8"
     PORT: int = 53
     TIMEOUT: int = 3
+
     @staticmethod
     def get_local_ip():
         """

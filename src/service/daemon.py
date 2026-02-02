@@ -8,7 +8,7 @@ for receiving commands to control the application.
 """
 
 
-#  Perpatua - open-source and cross-platform KVM software.
+#  Perpetua - open-source and cross-platform KVM software.
 #  Copyright (c) 2026 Federico Izzi.
 #
 #  This program is free software: you can redistribute it and/or modify
@@ -372,7 +372,7 @@ class Daemon:
                 except Exception as e:
                     self._logger.error(f"Preconfiguration error -> {e}")
 
-    async def start(self) -> bool:
+    async def start(self, service: Optional[str] = None) -> bool:
         """
         Start the daemon and command socket server.
 
@@ -416,6 +416,16 @@ class Daemon:
             self._logger.info(
                 f"Platform: {'Windows (TCP Socket)' if IS_WINDOWS else 'Unix (Socket)'}"
             )
+
+            if service is not None and service in ("server", "client"):
+                self._logger.info("Auto-starting service", service=service)
+                if service == "server":
+                    await self._handle_service_choice({"service": "server"})
+                    asyncio.create_task(self._handle_start_server({}))
+                elif service == "client":
+                    await self._handle_service_choice({"service": "client"})
+                    asyncio.create_task(self._handle_start_client({}))
+
             return True
 
         except (DaemonAlreadyRunningException, DaemonPortOccupiedException):
@@ -968,7 +978,13 @@ class Daemon:
         command = DaemonCommand.SERVICE_CHOICE.value
 
         if choice == "server":
+            if not self._server_config:
+                await self._notification_manager.notify_command_error(
+                    command, "Server configuration not initialized"
+                )
+                return
             if not self._server:
+                self._logger.set_level(self._server_config.log_level)
                 self._server = Server(
                     app_config=self.app_config,
                     server_config=self._server_config,
@@ -990,7 +1006,13 @@ class Daemon:
             await self._notification_manager.notify_command_success(command, choice)
 
         elif choice == "client":
+            if not self._client_config:
+                await self._notification_manager.notify_command_error(
+                    command, "Client configuration not initialized"
+                )
+                return
             if not self._client:
+                self._logger.set_level(self._client_config.log_level)
                 self._client = Client(
                     app_config=self.app_config,
                     client_config=self._client_config,
@@ -1054,7 +1076,6 @@ class Daemon:
                     "start_time": self._state["server"].get_timestamp(),
                     "enabled_streams": self._server.get_enabled_streams(),
                 }
-                self._logger.set_level(self._server.config.log_level)
 
                 await self._notification_manager.notify_command_success(
                     command, "Server started successfully", result_data=response_data
@@ -1122,7 +1143,6 @@ class Daemon:
                     "start_time": self._state["client"].get_timestamp(),
                     "enabled_streams": self._client.get_enabled_streams(),
                 }
-                self._logger.set_level(self._client.config.log_level)
 
                 await self._notification_manager.notify_command_success(
                     command, "Client started successfully", result_data=response_data
@@ -2180,6 +2200,7 @@ async def _send_tcp_command(
 
 # ==================== Main Entry Point ====================
 
+
 async def main():
     """Main entry point for daemon"""
     parser = DaemonArguments(socket_default=Daemon.DEFAULT_SOCKET_PATH)
@@ -2199,7 +2220,10 @@ async def main():
         socket_path=args.socket, app_config=app_config, auto_load_config=True
     )
 
-    if not await daemon.start():
+    # Determine service to start on daemon start
+    service = "server" if args.server else "client" if args.client else None
+
+    if not await daemon.start(service=service):
         return 1
 
     # Wait for shutdown

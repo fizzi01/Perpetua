@@ -4,7 +4,7 @@ Handles SSL and NON-SSL connections, heartbeats, and client management.
 """
 
 
-#  Perpatua - open-source and cross-platform KVM software.
+#  Perpetua - open-source and cross-platform KVM software.
 #  Copyright (c) 2026 Federico Izzi.
 #
 #  This program is free software: you can redistribute it and/or modify

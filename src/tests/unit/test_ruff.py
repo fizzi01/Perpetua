@@ -3,7 +3,7 @@ Runs Ruff linter on project files to ensure code quality and adherence to style 
 """
 
 
-#  Perpatua - open-source and cross-platform KVM software.
+#  Perpetua - open-source and cross-platform KVM software.
 #  Copyright (c) 2026 Federico Izzi.
 #
 #  This program is free software: you can redistribute it and/or modify

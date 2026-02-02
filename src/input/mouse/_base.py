@@ -1,5 +1,4 @@
-
-#  Perpatua - open-source and cross-platform KVM software.
+#  Perpetua - open-source and cross-platform KVM software.
 #  Copyright (c) 2026 Federico Izzi.
 #
 #  This program is free software: you can redistribute it and/or modify
@@ -190,8 +189,6 @@ class EdgeDetector:
             return -1, -1
 
 
-# TODO : We need to check if a mouse is available
-# TODO: Improve crossing edge detection to avoid false positives during crossing
 class ServerMouseListener(object):
     """
     Base class for server-side mouse listeners.

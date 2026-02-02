@@ -4,7 +4,7 @@ Provides a clean interface to configure and manage client components.
 """
 
 
-#  Perpatua - open-source and cross-platform KVM software.
+#  Perpetua - open-source and cross-platform KVM software.
 #  Copyright (c) 2026 Federico Izzi.
 #
 #  This program is free software: you can redistribute it and/or modify
@@ -829,8 +829,14 @@ class Client:
 
                 if len(self._found_services) == 1:
                     # Auto choose the only available server
-                    self.choose_server(self._found_services[0].uid)
-                    self._need_server_choice.set_result(False)
+                    if self._found_services[0].uid is not None:
+                        self.choose_server(self._found_services[0].uid)
+                        self._need_server_choice.set_result(False)
+                    else:
+                        self._logger.warning(
+                            "Discovered server has no UID, cannot choose it."
+                        )
+                        return False
                 else:
                     servers = [s.as_dict() for s in self._found_services]
                     self._logger.info(
@@ -848,7 +854,7 @@ class Client:
                 res = await self._server
 
                 self._logger.info(
-                    "Server chosed",
+                    "Server chosen",
                     uid=res.uid,
                     host=res.address,
                     hostname=res.hostname,

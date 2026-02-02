@@ -4,7 +4,7 @@ Handles server and client configurations with persistent storage support.
 """
 
 
-#  Perpatua - open-source and cross-platform KVM software.
+#  Perpetua - open-source and cross-platform KVM software.
 #  Copyright (c) 2026 Federico Izzi.
 #
 #  This program is free software: you can redistribute it and/or modify
@@ -41,7 +41,7 @@ async def _write(file, content: str) -> None:
             await f.write(line)
             await asyncio.sleep(0)
 
-# TODO: Unify under a single file management system
+
 @dataclass
 class ApplicationConfig:
     """Application-wide configuration settings"""
@@ -54,17 +54,16 @@ class ApplicationConfig:
     ssl_certfile: str = "certfile.pem"
     ssl_keyfile: str = "keyfile.key"
 
-    server_config_file: str = "server_config.json"
+    config_file: str = "config.json"
     config_path: str = "config/"
-    client_config_file: str = "client_config.json"
 
     server_key: str = "server"
     client_key: str = "client"
+    app_key: str = "general"
 
     # Data exchange params
     max_chunk_size: int = 1024  # 1 KB
     max_delay_tolerance: float = 0.1
-    parallel_processors: int = 1
     auto_chunk: bool = True
 
     DEFAULT_HOST: str = "0.0.0.0"
@@ -74,21 +73,21 @@ class ApplicationConfig:
     DEFAULT_UNIX_SOCK_NAME: str = f"{service_name.lower()}_daemon.sock"
     DEFAULT_LOG_FILE: str | None = "daemon.log"
 
-    config_files: dict = field(default_factory=dict)
-
     version: str = "1.0.0"
+
+    # Auto-initialization control
+    auto_init: bool = field(default=True, repr=False)
+
+    def __post_init__(self):
+        """Initialize config file if it doesn't exist and auto_init is True"""
+        if self.auto_init:
+            self.init_config_file()
 
     @property
     def main_path(self) -> str:
         if len(self.mainpath) > 0:
             return self.mainpath
         return self.get_main_path()
-
-    def __post_init__(self):
-        self.config_files = {
-            "server": self.server_config_file,
-            "client": self.client_config_file,
-        }
 
     def set_save_path(self, path: str) -> None:
         """
@@ -139,6 +138,111 @@ class ApplicationConfig:
             return None
         return path.join(cls.get_main_path(), cls.DEFAULT_LOG_FILE)
 
+    def init_config_file(self) -> bool:
+        """
+        Initialize config.json file with default values if it doesn't exist.
+        Creates the file with default application, server, and client sections.
+
+        Returns:
+            True if file was created, False if it already existed
+        """
+        config_file = os.path.join(self.get_config_dir(), self.config_file)
+
+        if os.path.exists(config_file):
+            return False
+
+        # Create default configuration structure
+        default_config = {
+            self.server_key: ServerConfig(self).to_dict(),
+            self.client_key: ClientConfig(self).to_dict(),
+            self.app_key: self.to_dict(),
+        }
+
+        # Ensure directory exists
+        os.makedirs(os.path.dirname(config_file), exist_ok=True)
+
+        # Write default config
+        try:
+            with open(config_file, "w") as f:
+                json.dump(default_config, f, indent=4)
+            return True
+        except Exception as e:
+            print(f"Error creating config file {config_file}: {e}")
+            return False
+
+    def to_dict(self) -> Dict[str, Any]:
+        """Convert application configuration to dictionary for serialization"""
+        return {
+            "default_host": self.DEFAULT_HOST,
+            "default_port": self.DEFAULT_PORT,
+            "default_daemon_port": self.DEFAULT_DAEMON_PORT,
+        }
+
+    def from_dict(self, data: Dict[str, Any]) -> None:
+        """Load application configuration from dictionary"""
+        self.DEFAULT_HOST = data.get("default_host", self.DEFAULT_HOST)
+        self.DEFAULT_PORT = data.get("default_port", self.DEFAULT_PORT)
+        self.DEFAULT_DAEMON_PORT = data.get(
+            "default_daemon_port", self.DEFAULT_DAEMON_PORT
+        )
+
+    def sync_load(self, file_path: Optional[str] = None) -> bool:
+        """
+        Load application configuration from JSON file (synchronous).
+        Only loads settings - modifications should be done manually in the file.
+
+        Args:
+            file_path: Path to load the configuration from. Uses default config.json if None.
+        Returns:
+            True if loaded successfully, False if file doesn't exist or no app config found
+        """
+        if file_path is None:
+            file_path = os.path.join(self.get_config_dir(), self.config_file)
+
+        if not os.path.exists(file_path):
+            return False
+
+        try:
+            with open(file_path, "r") as f:
+                config = json.load(f)
+            data = config.get(self.app_key, {})
+            if data:
+                self.from_dict(data)
+                return True
+            return False
+        except Exception as e:
+            print(f"Error loading application configuration from {file_path}: {e}")
+            return False
+
+    async def load(self, file_path: Optional[str] = None) -> bool:
+        """
+        Load application configuration from JSON file (asynchronous).
+        Only loads settings - modifications should be done manually in the file.
+
+        Args:
+            file_path: Path to load the configuration from. Uses default config.json if None.
+        Returns:
+            True if loaded successfully, False if file doesn't exist or no app config found
+        """
+        if file_path is None:
+            file_path = os.path.join(self.get_config_dir(), self.config_file)
+
+        if not os.path.exists(file_path):
+            return False
+
+        try:
+            async with aiofiles.open(file_path, "r") as f:
+                content = await f.read()
+                config = json.loads(content)
+            data = config.get(self.app_key, {})
+            if data:
+                self.from_dict(data)
+                return True
+            return False
+        except Exception as e:
+            print(f"Error loading application configuration from {file_path}: {e}")
+            return False
+
 
 class ServerConfig:
     """
@@ -166,7 +270,7 @@ class ServerConfig:
         """
         self.app_config = app_config or ApplicationConfig()
         self.config_file = config_file or os.path.join(
-            self.app_config.get_config_dir(), self.app_config.server_config_file
+            self.app_config.get_config_dir(), self.app_config.config_file
         )
 
         # Connection settings
@@ -379,7 +483,7 @@ class ServerConfig:
     # Persistence
     async def save(self, file_path: Optional[str] = None) -> None:
         """
-        Save configuration to JSON file.
+        Save configuration to JSON file under 'server' key.
 
         Args:
             file_path: Path to save the configuration. Uses self.config_file if None.
@@ -392,13 +496,25 @@ class ServerConfig:
             if dir_path:
                 os.makedirs(dir_path, exist_ok=True)
 
+            # Load existing config or create new one
+            existing_config = {}
+            if os.path.exists(file_path):
+                try:
+                    async with aiofiles.open(file_path, "r") as f:
+                        content = await f.read()
+                        if content.strip():
+                            existing_config = json.loads(content)
+                except Exception:
+                    pass
+
             try:
                 config_data = self.to_dict()
-                json_content = json.dumps(config_data, indent=4)
+                existing_config[self.app_config.server_key] = config_data
+                json_content = json.dumps(existing_config, indent=4)
             except Exception as e:
                 raise ValueError(f"Failed to serialize configuration ({e})")
 
-            if not config_data or not json_content.strip():
+            if not existing_config or not json_content.strip():
                 raise ValueError("Configuration data is empty, aborting save")
 
             temp_file = f"{file_path}.tmp"
@@ -429,9 +545,12 @@ class ServerConfig:
 
         try:
             with open(file_path, "r") as f:
-                data = json.load(f)
-            self.from_dict(data)
-            return True
+                config = json.load(f)
+            data = config.get(self.app_config.server_key, {})
+            if data:
+                self.from_dict(data)
+                return True
+            return False
         except Exception as e:
             print(f"Error loading configuration from {file_path}: {e}")
             return False
@@ -449,16 +568,17 @@ class ServerConfig:
         file_path = file_path or self.config_file
 
         if not os.path.exists(file_path):
-            # print cwd
-            print(f"Current working directory: {os.getcwd()}")
             return False
 
         try:
             async with aiofiles.open(file_path, "r") as f:
                 content = await f.read()
-                data = json.loads(content)
-            self.from_dict(data)
-            return True
+                config = json.loads(content)
+            data = config.get(self.app_config.server_key, {})
+            if data:
+                self.from_dict(data)
+                return True
+            return False
         except Exception as e:
             print(f"Error loading configuration from {file_path}: {e}")
             return False
@@ -492,7 +612,7 @@ class ClientConfig:
         """
         self.app_config = app_config or ApplicationConfig()
         self.config_file = config_file or os.path.join(
-            self.app_config.get_config_dir(), self.app_config.client_config_file
+            self.app_config.get_config_dir(), self.app_config.config_file
         )
 
         # Server connection information
@@ -663,7 +783,7 @@ class ClientConfig:
     # Persistence
     async def save(self, file_path: Optional[str] = None) -> None:
         """
-        Save configuration to JSON file.
+        Save configuration to JSON file under 'client' key.
 
         Args:
             file_path: Path to save the configuration. Uses self.config_file if None.
@@ -676,13 +796,25 @@ class ClientConfig:
             if dir_path:
                 os.makedirs(dir_path, exist_ok=True)
 
+            # Load existing config or create new one
+            existing_config = {}
+            if os.path.exists(file_path):
+                try:
+                    async with aiofiles.open(file_path, "r") as f:
+                        content = await f.read()
+                        if content.strip():
+                            existing_config = json.loads(content)
+                except Exception:
+                    pass
+
             try:
                 config_data = self.to_dict()
-                json_content = json.dumps(config_data, indent=4)
+                existing_config[self.app_config.client_key] = config_data
+                json_content = json.dumps(existing_config, indent=4)
             except Exception as e:
                 raise ValueError(f"Failed to serialize configuration ({e})")
 
-            if not config_data or not json_content.strip():
+            if not existing_config or not json_content.strip():
                 raise ValueError("Configuration data is empty, aborting save")
 
             temp_file = f"{file_path}.tmp"
@@ -713,9 +845,12 @@ class ClientConfig:
 
         try:
             with open(file_path, "r") as f:
-                data = json.load(f)
-            self.from_dict(data)
-            return True
+                config = json.load(f)
+            data = config.get(self.app_config.client_key, {})
+            if data:
+                self.from_dict(data)
+                return True
+            return False
         except Exception as e:
             print(f"Error loading configuration from {file_path}: {e}")
             return False
@@ -738,9 +873,12 @@ class ClientConfig:
         try:
             async with aiofiles.open(file_path, "r") as f:
                 content = await f.read()
-                data = json.loads(content)
-            self.from_dict(data)
-            return True
+                config = json.loads(content)
+            data = config.get(self.app_config.client_key, {})
+            if data:
+                self.from_dict(data)
+                return True
+            return False
         except Exception as e:
             print(f"Error loading configuration from {file_path}: {e}")
             return False

@@ -1,5 +1,4 @@
-
-#  Perpatua - open-source and cross-platform KVM software.
+#  Perpetua - open-source and cross-platform KVM software.
 #  Copyright (c) 2026 Federico Izzi.
 #
 #  This program is free software: you can redistribute it and/or modify
@@ -92,6 +91,10 @@ class BaseLogger(ABC):
             return logging.CRITICAL
         else:
             return logging.INFO
+
+    @abstractmethod
+    def level(self) -> int:
+        pass
 
     @abstractmethod
     def log(self, message: str, level: int = 0, **kw: Any):
@@ -270,6 +273,23 @@ class Logger(BaseLogger):
         else:
             # Default a INFO per valori non riconosciuti
             self._logger.info(message)
+
+    @property
+    def level(self) -> int:
+        """Restituisce il livello di logging corrente"""
+        current_level = self._logger.level
+        if current_level == logging.DEBUG:
+            return self.DEBUG
+        elif current_level == logging.INFO:
+            return self.INFO
+        elif current_level == logging.WARNING:
+            return self.WARNING
+        elif current_level == logging.ERROR:
+            return self.ERROR
+        elif current_level == logging.CRITICAL:
+            return self.CRITICAL
+        else:
+            return self.INFO
 
     # Metodi di convenience per compatibilità
     def debug(self, message: str, **kw: Any):
@@ -673,6 +693,24 @@ class StructLogger(BaseLogger):
             if self._check_is_root():
                 # If this is the root logger, also update the global configured level to match it
                 StructLogger._global_config["level"] = self._parse_level(level)
+
+    @property
+    def level(self) -> int:
+        """Returns the current logging level for this logger."""
+        current_level = StructLogger._global_config.get("level", logging.INFO)
+
+        if current_level == logging.DEBUG:
+            return self.DEBUG
+        elif current_level == logging.INFO:
+            return self.INFO
+        elif current_level == logging.WARNING:
+            return self.WARNING
+        elif current_level == logging.ERROR:
+            return self.ERROR
+        elif current_level == logging.CRITICAL:
+            return self.CRITICAL
+        else:
+            return self.INFO
 
 
 def get_logger(

@@ -3,7 +3,7 @@ Logic to handle cursor visibility on macOS systems.
 """
 
 
-#  Perpatua - open-source and cross-platform KVM software.
+#  Perpetua - open-source and cross-platform KVM software.
 #  Copyright (c) 2026 Federico Izzi.
 #
 #  This program is free software: you can redistribute it and/or modify
@@ -120,9 +120,15 @@ class CursorHandlerWindow(_base.CursorHandlerWindow):
         result_conn: Connection,
         mouse_conn: Connection,
         debug: bool = False,
+        log_level: int = _base.Logger.DEBUG,
     ):
         super().__init__(
-            command_conn, result_conn, mouse_conn, debug, size=self.WINDOW_SIZE
+            command_conn,
+            result_conn,
+            mouse_conn,
+            debug,
+            log_level=log_level,
+            size=self.WINDOW_SIZE,
         )
         # Panel principale
         self.panel = wx.Panel(self)

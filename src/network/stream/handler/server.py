@@ -1,5 +1,4 @@
-
-#  Perpatua - open-source and cross-platform KVM software.
+#  Perpetua - open-source and cross-platform KVM software.
 #  Copyright (c) 2026 Federico Izzi.
 #
 #  This program is free software: you can redistribute it and/or modify
@@ -273,7 +272,6 @@ class BidirectionalStreamHandler(_ServerStreamHandler):
         return self._active_client is not None and self._active_client.is_connected
 
 
-# TODO: Similar to BidirectionalStreamHandler, maybe refactor common code into a base class or BidirectionalStreamHandler too
 class MulticastStreamHandler(_ServerStreamHandler):
     """
     A custom async bidirectional stream handler for broadcasting messages to all connected clients,
