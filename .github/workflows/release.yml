@@ -1,28 +1,16 @@
 name: "Tagged Release"
 
 on:
-  # workflow_dispatch:
-  #   inputs:
-  #     title:
-  #       description: "Release title"
-  #       required: true
-  #       default: "Development Build"
-  #     version:
-  #       description: "Version to release"
-  #       required: true
-  #       default: "v0.0.0"
-      
   push:
     tags:
-      - "v*.*.*"
+      - "v*"
 
 jobs:
-    release:
-        name: "Release"
-        runs-on: "ubuntu-latest"
-        steps:
-        - name: Create Release
-          uses: "marvinpinto/action-automatic-releases@latest"
-          with:
-            repo_token: "${{ secrets.GITHUB_TOKEN }}"
-            prerelease: false
+  tagged-release:
+    name: "Tagged Release"
+    runs-on: "ubuntu-latest"
+    steps:
+      - uses: "marvinpinto/action-automatic-releases@latest"
+        with:
+          repo_token: "${{ secrets.GITHUB_TOKEN }}"
+          prerelease: false
