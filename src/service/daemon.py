@@ -617,8 +617,11 @@ class Daemon:
 
         # Close socket server
         if self._socket_server:
-            self._socket_server.close()
-            await self._socket_server.wait_closed()
+            try:
+                self._socket_server.close()
+                await self._socket_server.wait_closed()
+            except Exception as e:
+                self._logger.error(f"Error closing socket server -> {e}")
 
         # Remove socket file (Unix only)
         if not IS_WINDOWS and os.path.exists(self.socket_path):
@@ -670,8 +673,11 @@ class Daemon:
                     await writer.drain()
                 finally:
                     if writer:
-                        writer.close()
-                        await writer.wait_closed()
+                        try:
+                            writer.close()
+                            await writer.wait_closed()
+                        except Exception:
+                            pass
                 return
 
             # Accept the connection
