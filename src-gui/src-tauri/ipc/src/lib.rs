@@ -137,7 +137,7 @@ impl Decoder for EventLinesCodec {
                         if buf.len() < read_to {
                             return Ok(None);
                         }
-                        
+
                         // Discard the line if lengths do not match
                         buf.advance(read_to);
                         self.next_index = 0;

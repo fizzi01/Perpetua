@@ -40,6 +40,7 @@ pub mod handler;
 #[derive(Default)]
 struct AppState {
     hard_close: bool,
+    connected: bool,
 }
 
 fn force_close<R>(app: &AppHandle<R>)
@@ -73,7 +74,15 @@ where
     R: Runtime,
 {
     let (r, w) = match connect(Duration::from_millis(100)).await {
-        Ok(conn) => conn,
+        Ok(conn) => {
+            {
+                let state = manager.state::<Mutex<AppState>>();
+                let mut state = state.lock().unwrap();
+                state.connected = true
+            }
+
+            conn
+        },
         Err(e) => {
             println!("Error connecting to daemon: {:?}", e);
             handle_critical("Service unavailable", "", &manager);
@@ -85,6 +94,12 @@ where
 
     // Clone the writer for use in commands
     manager.manage(c_w);
+
+    // Close the splash screen and open the main window after manager is set up
+    let splash_window = manager.get_webview_window("splashscreen").unwrap();
+    splash_window.close().unwrap();
+    create_main_window(&manager);
+    show_window(&manager, "main");
 
     let mut handler = ConnectionHandler::new(r, w);
     // Handle connection events here
@@ -118,11 +133,64 @@ fn prevent_default_ctxmenu() -> tauri::plugin::TauriPlugin<tauri::Wry> {
         .build()
 }
 
-fn show_window<R>(app: &AppHandle<R>)
+fn create_main_window<R>(app: &AppHandle<R>)
 where
     R: Runtime,
 {
-    let window = app.get_webview_window("main").unwrap();
+    let mut win_builder = WebviewWindowBuilder::new(app, "main", WebviewUrl::default())
+                .title("Perpetua")
+                .inner_size(435.0, 600.0)
+                .resizable(false)
+                .visible(false);
+
+    // Set macOS-specific window properties
+    #[cfg(target_os = "macos")]
+    {
+        win_builder = win_builder
+            .hidden_title(true)
+            .title_bar_style(TitleBarStyle::Overlay)
+            .traffic_light_position(Position::Physical(PhysicalPosition { x: 30, y: 50 }));
+    }
+
+    #[cfg(target_os = "windows")]
+    {
+        win_builder = win_builder.decorations(false).transparent(true);
+    }
+
+    win_builder.build().unwrap();
+
+}
+
+fn create_splashscreen_window<R>(app: &AppHandle<R>)
+where
+    R: Runtime,
+{
+    let mut splashscreen_win_builder =  WebviewWindowBuilder::new(app, "splashscreen", WebviewUrl::App("splashscreen".into()))
+        .title("Perpetua")
+        .inner_size(300.0, 200.0)
+        .resizable(false);
+
+    #[cfg(target_os = "macos")]
+    {
+        splashscreen_win_builder = splashscreen_win_builder
+                .hidden_title(true)
+                .decorations(false)
+                .title_bar_style(TitleBarStyle::Transparent);
+    }
+
+    #[cfg(target_os = "windows")]
+    {
+        splashscreen_win_builder = splashscreen_win_builder.decorations(false).transparent(true);
+    }
+
+    splashscreen_win_builder.build().unwrap();
+}
+
+fn show_window<R>(app: &AppHandle<R>, label: &str)
+where
+    R: Runtime,
+{
+    let window = app.get_webview_window(label).unwrap();
     window.show().unwrap();
     window.set_focus().unwrap();
 
@@ -138,9 +206,10 @@ pub fn run() {
     #[cfg(desktop)]
     {
         app = app.plugin(tauri_plugin_single_instance::init(|app, _, _| {
-             let _ = app.get_webview_window("main")
-                       .expect("no main window")
-                       .set_focus();
+            let _ = app
+                .get_webview_window("main")
+                .expect("no main window")
+                .set_focus();
         }))
     }
 
@@ -149,7 +218,7 @@ pub fn run() {
         .plugin(tauri_plugin_dialog::init())
         .plugin(tauri_plugin_opener::init())
         .plugin(prevent_default_ctxmenu())
-        .manage(Mutex::new(AppState { hard_close: false }))
+        .manage(Mutex::new(AppState { hard_close: false, connected: false}))
         .invoke_handler(tauri::generate_handler![
             // -- Server Commands --
             commands::start_server,
@@ -176,30 +245,11 @@ pub fn run() {
             commands::get_log_file_path_cmd,
         ])
         .setup(|app| {
-            let app_handle = app.handle().clone();
+            // Create the splashscreen window
+            create_splashscreen_window(app.handle());
+
             // Initialize connection to the daemon
-            tauri::async_runtime::spawn(async move { setup_connection(app_handle).await });
-
-            let mut win_builder = WebviewWindowBuilder::new(app, "main", WebviewUrl::default())
-                .title("Perpetua")
-                .inner_size(435.0, 600.0)
-                .resizable(false);
-
-            // Set macOS-specific window properties
-            #[cfg(target_os = "macos")]
-            {
-                win_builder = win_builder
-                    .hidden_title(true)
-                    .title_bar_style(TitleBarStyle::Overlay)
-                    .traffic_light_position(Position::Physical(PhysicalPosition { x: 30, y: 50 }));
-            }
-
-            #[cfg(target_os = "windows")]
-            {
-                win_builder = win_builder.decorations(false).transparent(true);
-            }
-
-            win_builder.build().unwrap();
+            tauri::async_runtime::spawn(setup_connection(app.handle().clone()));
 
             let show = MenuItem::with_id(app, "show_window", "Show", true, None::<&str>)?;
             let quit_i = MenuItem::with_id(app, "quit", "Quit", true, None::<&str>)?;
@@ -222,13 +272,13 @@ pub fn run() {
                 .menu(&menu)
                 .on_menu_event(|app, event| match event.id.as_ref() {
                     "show_window" => {
-                        show_window(app);
+                        show_window(app, "main");
                     }
                     "show_log" => {
                         let app_handle = app.clone();
                         app_handle.emit("show_log", {}).unwrap();
 
-                        show_window(app);
+                        show_window(app, "main");
                     }
                     "quit" => {
                         let handle = app.clone();
@@ -269,8 +319,8 @@ pub fn run() {
             }
             _ => {}
         });
-        
-    let app = app    
+
+    let app = app
         .build(tauri::generate_context!())
         .expect("error while running tauri application");
 
@@ -309,7 +359,9 @@ pub fn run() {
             has_visible_windows,
             ..
         } => {
-            if !has_visible_windows {
+            let state = _app_handle.state::<Mutex<AppState>>();
+            let state = state.lock().unwrap();
+            if !has_visible_windows && state.connected {
                 let window = _app_handle.get_webview_window("main").unwrap();
                 window.show().unwrap();
                 window.set_focus().unwrap();

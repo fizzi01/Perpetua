@@ -17,18 +17,13 @@
  */
 
 use crate::{AsyncReader, AsyncWriter};
-use std::{
-    env::{VarError},
-    io,
-    path::{PathBuf},
-    time::Duration,
-};
+use std::{env::VarError, io, path::PathBuf, time::Duration};
 use thiserror::Error;
 
 #[cfg(unix)]
-use tokio::net::UnixStream;
-#[cfg(unix)]
 use std::{env, path::Path};
+#[cfg(unix)]
+use tokio::net::UnixStream;
 
 #[cfg(windows)]
 use tokio::net::TcpStream;
