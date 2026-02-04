@@ -25,7 +25,7 @@ use tauri::{
     AppHandle, Emitter, Manager, Runtime, WebviewUrl, WebviewWindowBuilder,
 };
 use tauri_plugin_dialog::{DialogExt, MessageDialogKind};
-use tauri_plugin_positioner::WindowExt;
+// use tauri_plugin_positioner::WindowExt;
 
 use handler::{EventHandler, Handable};
 use ipc::{
@@ -75,10 +75,11 @@ where
     R: Runtime,
 {
     // Create the splashscreen window
-    if let Err(e) = create_splashscreen_window(&manager) {
-        println!("Error during window creation {:?}", e);
-        handle_critical("Critical error on startup", "", &manager);
-    }
+    // if let Err(e) = create_splashscreen_window(&manager) {
+    //     println!("Error during window creation {:?}", e);
+    //     handle_critical("Critical error on startup", "", &manager);
+    // }
+    show_window(&manager, "splashscreen");
 
     let (r, w) = match connect(Duration::from_millis(100), Duration::from_secs(5)).await {
         Ok(conn) => {
@@ -151,7 +152,7 @@ where
         .title("Perpetua")
         .inner_size(435.0, 600.0)
         .resizable(false)
-        .visible(false);
+        .visible(false).center();
 
     // Set macOS-specific window properties
     #[cfg(target_os = "macos")]
@@ -199,14 +200,21 @@ where
                 show_window(app, "main");
             }
             "quit" => {
-                let handle = app.clone();
-                // Call shutdown command
-                tauri::async_runtime::spawn(async move {
-                    let new = handle;
-                    let cur_state = new.state::<AtomicAsyncWriter>();
-                    let _ = commands::shutdown(cur_state).await;
-                    force_close(&new);
-                });
+                let state = app.state::<Mutex<AppState>>();
+                let state = state.lock().unwrap();
+                if state.connected{
+                    let handle = app.clone();
+                    // Call shutdown command only if connected
+                    tauri::async_runtime::spawn(async move {
+                        let new = handle;
+                        let cur_state = new.state::<AtomicAsyncWriter>();
+                        let _ = commands::shutdown(cur_state).await;
+                        force_close(&new);
+                    });
+                } else {
+                    // Just close
+                    force_close(&app);
+                }
             }
             _ => {
                 println!("menu item {:?} not handled", event.id);
@@ -229,7 +237,7 @@ where
             .title("Perpetua")
             .inner_size(300.0, 200.0)
             .resizable(false)
-            .visible(false);
+            .visible(true).center();
 
     #[cfg(target_os = "macos")]
     {
@@ -246,12 +254,12 @@ where
             .transparent(true);
     }
 
-    let win = splashscreen_win_builder.build()?;
-    let _ = win
-        .as_ref()
-        .window()
-        .move_window(tauri_plugin_positioner::Position::Center);
-    win.show()?;
+    splashscreen_win_builder.build()?;
+    // let _ = win
+    //     .as_ref()
+    //     .window()
+    //     .move_window(tauri_plugin_positioner::Position::Center);
+    // win.show()?;
 
     Ok(())
 }
@@ -261,10 +269,10 @@ where
     R: Runtime,
 {
     let window = app.get_webview_window(label).unwrap();
-    let _ = window
-        .as_ref()
-        .window()
-        .move_window(tauri_plugin_positioner::Position::Center);
+    // let _ = window
+    //     .as_ref()
+    //     .window()
+    //     .move_window(tauri_plugin_positioner::Position::Center);
     window.show().unwrap();
     window.set_focus().unwrap();
 
@@ -288,7 +296,7 @@ pub fn run() {
     }
 
     app = app
-        .plugin(tauri_plugin_positioner::init())
+        // .plugin(tauri_plugin_positioner::init())
         .plugin(tauri_plugin_os::init())
         .plugin(tauri_plugin_dialog::init())
         .plugin(tauri_plugin_opener::init())
@@ -372,7 +380,8 @@ pub fn run() {
         tauri::RunEvent::Exit => {
             let state = _app_handle.state::<Mutex<AppState>>();
             let state = state.lock().unwrap();
-            if !state.hard_close {
+            if !state.hard_close && state.connected{
+                // Only if connected
                 // With hard_close, a shutdown command has already been sent
                 let app_handle = _app_handle.clone();
                 tauri::async_runtime::spawn(async move {
