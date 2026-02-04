@@ -22,7 +22,7 @@ import { motion } from 'motion/react';
 export function SplashScreen() {
 
   var r = document.querySelector(':root') as HTMLElement;
-  r.style.setProperty('--border-radius', '6px');
+  r.style.setProperty('--border-radius', '14px');
 
   return (
     <div data-tauri-drag-region
