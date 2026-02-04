@@ -137,7 +137,7 @@ impl Decoder for EventLinesCodec {
                         if buf.len() < read_to {
                             return Ok(None);
                         }
-                        
+
                         // Discard the line if lengths do not match
                         buf.advance(read_to);
                         self.next_index = 0;
@@ -412,7 +412,7 @@ mod tests {
 
     #[tokio::test]
     async fn test_connection_handler_and_connectio() {
-        match connect(Duration::from_secs(1)).await {
+        match connect(Duration::from_secs(1), Duration::from_secs(2)).await {
             Ok((reader, writer)) => {
                 let mut handler = ConnectionHandler::new(reader, writer);
                 // Test sending a message

@@ -303,9 +303,6 @@ class Launcher:
             self.log.error("Failed to start daemon")
             return 1
 
-        # Give daemon time to initialize
-        sleep(1)
-
         # Start GUI
         if not self.start_gui(executable_dir):
             self.log.error("Failed to start GUI")

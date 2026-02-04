@@ -66,6 +66,7 @@
     "react-redux": "^9.2.0",
     "react-resizable-panels": "2.1.7",
     "react-responsive-masonry": "2.7.1",
+    "react-router-dom": "^7.13.0",
     "react-slick": "0.31.0",
     "recharts": "2.15.2",
     "sonner": "2.0.3",

@@ -3,7 +3,8 @@
   "identifier": "default",
   "description": "Capability for the main window",
   "windows": [
-    "main"
+    "main",
+    "splashscreen"
   ],
   "permissions": [
     "core:default",
@@ -13,6 +14,7 @@
     "core:window:allow-minimize",
     "core:window:allow-start-dragging",
     "dialog:default",
-    "os:default"
+    "os:default",
+    "positioner:default"
   ]
 }

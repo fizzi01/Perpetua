@@ -1,6 +1,6 @@
 [package]
 name = "perpetua"
-version = "0.1.0"
+version = "0.2.0"
 description = "Perpetua GUI application"
 authors = ["fizzi01"]
 edition = "2021"
@@ -36,3 +36,6 @@ members = [
 
 [target.'cfg(not(any(target_os = "android", target_os = "ios")))'.dependencies]
 tauri-plugin-single-instance = "2"
+
+[target.'cfg(any(target_os = "macos", windows, target_os = "linux"))'.dependencies]
+tauri-plugin-positioner = "2.3.1"

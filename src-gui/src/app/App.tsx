@@ -18,6 +18,7 @@
  */
 
 import { useEffect, useState, useRef } from 'react';
+import { BrowserRouter, Routes, Route } from 'react-router-dom';
 import { ClientTab } from './components/client-tab';
 import { ServerTab } from './components/server-tab';
 import { Titlebar } from './components/titlebar';
@@ -32,8 +33,9 @@ import { useAppSelector, useAppDispatch } from './hooks/redux';
 import { ActionType } from './store/actions';
 import { ScrollArea } from './components/ui/scrollbar';
 import { DaemonLogDialog } from './components/ui/DaemonLogDialog';
+import { SplashScreen } from './Splash';
 
-export default function App() {
+export function Main() {
   const [mode, setMode] = useState<'client' | 'server'>('client');
   const [disableModeSwitch, setDisableModeSwitch] = useState<boolean>(false);
   const [stateListenersAdded, setListenersAdded] = useState<boolean>(false);
@@ -187,4 +189,15 @@ export default function App() {
       </div>
     </div>
   );
+}
+
+export default function App() {
+  return (
+    <BrowserRouter>
+      <Routes>
+        <Route path="/" element={<Main />} />
+        <Route path="/splashscreen" element={<SplashScreen />} />
+      </Routes>
+    </BrowserRouter>
+  )
 }
