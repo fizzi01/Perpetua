@@ -75,10 +75,11 @@ where
     R: Runtime,
 {
     // Create the splashscreen window
-    if let Err(e) = create_splashscreen_window(&manager) {
-        println!("Error during window creation {:?}", e);
-        handle_critical("Critical error on startup", "", &manager);
-    }
+    // if let Err(e) = create_splashscreen_window(&manager) {
+    //     println!("Error during window creation {:?}", e);
+    //     handle_critical("Critical error on startup", "", &manager);
+    // }
+    show_window(&manager, "splashscreen");
 
     let (r, w) = match connect(Duration::from_millis(100), Duration::from_secs(5)).await {
         Ok(conn) => {
@@ -199,14 +200,21 @@ where
                 show_window(app, "main");
             }
             "quit" => {
-                let handle = app.clone();
-                // Call shutdown command
-                tauri::async_runtime::spawn(async move {
-                    let new = handle;
-                    let cur_state = new.state::<AtomicAsyncWriter>();
-                    let _ = commands::shutdown(cur_state).await;
-                    force_close(&new);
-                });
+                let state = app.state::<Mutex<AppState>>();
+                let state = state.lock().unwrap();
+                if state.connected{
+                    let handle = app.clone();
+                    // Call shutdown command only if connected
+                    tauri::async_runtime::spawn(async move {
+                        let new = handle;
+                        let cur_state = new.state::<AtomicAsyncWriter>();
+                        let _ = commands::shutdown(cur_state).await;
+                        force_close(&new);
+                    });
+                } else {
+                    // Just close
+                    force_close(&app);
+                }
             }
             _ => {
                 println!("menu item {:?} not handled", event.id);
@@ -372,7 +380,8 @@ pub fn run() {
         tauri::RunEvent::Exit => {
             let state = _app_handle.state::<Mutex<AppState>>();
             let state = state.lock().unwrap();
-            if !state.hard_close {
+            if !state.hard_close && state.connected{
+                // Only if connected
                 // With hard_close, a shutdown command has already been sent
                 let app_handle = _app_handle.clone();
                 tauri::async_runtime::spawn(async move {
