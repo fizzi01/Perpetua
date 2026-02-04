@@ -20,6 +20,10 @@
 import { motion } from 'motion/react';
 
 export function SplashScreen() {
+
+  var r = document.querySelector(':root') as HTMLElement;
+  r.style.setProperty('--border-radius', '6px');
+
   return (
     <div data-tauri-drag-region
         className="min-h-screen w-full flex items-center justify-center" 

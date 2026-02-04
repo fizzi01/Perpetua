@@ -165,7 +165,7 @@ where
 
     #[cfg(target_os = "windows")]
     {
-        win_builder = win_builder.decorations(false).transparent(true).shadow(false);
+        win_builder = win_builder.decorations(false).transparent(true);
     }
 
     win_builder.build().unwrap();
