@@ -25,7 +25,7 @@ use tauri::{
     AppHandle, Emitter, Manager, Runtime, WebviewUrl, WebviewWindowBuilder,
 };
 use tauri_plugin_dialog::{DialogExt, MessageDialogKind};
-use tauri_plugin_positioner::WindowExt;
+// use tauri_plugin_positioner::WindowExt;
 
 use handler::{EventHandler, Handable};
 use ipc::{
@@ -151,7 +151,7 @@ where
         .title("Perpetua")
         .inner_size(435.0, 600.0)
         .resizable(false)
-        .visible(false);
+        .visible(false).center();
 
     // Set macOS-specific window properties
     #[cfg(target_os = "macos")]
@@ -229,7 +229,7 @@ where
             .title("Perpetua")
             .inner_size(300.0, 200.0)
             .resizable(false)
-            .visible(false);
+            .visible(true).center();
 
     #[cfg(target_os = "macos")]
     {
@@ -246,12 +246,12 @@ where
             .transparent(true);
     }
 
-    let win = splashscreen_win_builder.build()?;
-    let _ = win
-        .as_ref()
-        .window()
-        .move_window(tauri_plugin_positioner::Position::Center);
-    win.show()?;
+    splashscreen_win_builder.build()?;
+    // let _ = win
+    //     .as_ref()
+    //     .window()
+    //     .move_window(tauri_plugin_positioner::Position::Center);
+    // win.show()?;
 
     Ok(())
 }
@@ -261,10 +261,10 @@ where
     R: Runtime,
 {
     let window = app.get_webview_window(label).unwrap();
-    let _ = window
-        .as_ref()
-        .window()
-        .move_window(tauri_plugin_positioner::Position::Center);
+    // let _ = window
+    //     .as_ref()
+    //     .window()
+    //     .move_window(tauri_plugin_positioner::Position::Center);
     window.show().unwrap();
     window.set_focus().unwrap();
 
@@ -288,7 +288,7 @@ pub fn run() {
     }
 
     app = app
-        .plugin(tauri_plugin_positioner::init())
+        // .plugin(tauri_plugin_positioner::init())
         .plugin(tauri_plugin_os::init())
         .plugin(tauri_plugin_dialog::init())
         .plugin(tauri_plugin_opener::init())

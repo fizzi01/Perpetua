@@ -14,7 +14,6 @@
     "core:window:allow-minimize",
     "core:window:allow-start-dragging",
     "dialog:default",
-    "os:default",
-    "positioner:default"
+    "os:default"
   ]
 }
