@@ -81,11 +81,9 @@ fn default_path() -> Result<DefaultPath, SocketPathError> {
     }
 }
 
-async fn wait_connection(t: Duration) -> Result<(AsyncReader, AsyncWriter), ConnectionError> {
+async fn wait_connection(t: Duration, max_t: Duration) -> Result<(AsyncReader, AsyncWriter), ConnectionError> {
     let path = default_path()?;
     let mut timeout = t;
-    let max_attempts = 4;
-    let mut attempts = 0;
 
     loop {
         match &path {
@@ -112,17 +110,16 @@ async fn wait_connection(t: Duration) -> Result<(AsyncReader, AsyncWriter), Conn
                 }
             }
         }
-        if attempts >= max_attempts {
+        if timeout == max_t {
             return Err(ConnectionError::Timeout);
         }
-        attempts += 1;
         tokio::time::sleep(timeout).await;
-        timeout = std::cmp::min(timeout * 2, Duration::from_secs(1));
+        timeout = std::cmp::min(timeout * 2, max_t);
     }
 }
 
-pub async fn connect(t: Duration) -> Result<(AsyncReader, AsyncWriter), ConnectionError> {
-    let Ok((reader, writer)) = wait_connection(t).await else {
+pub async fn connect(t: Duration, max_t: Duration) -> Result<(AsyncReader, AsyncWriter), ConnectionError> {
+    let Ok((reader, writer)) = wait_connection(t, max_t).await else {
         return Err(ConnectionError::Timeout);
     };
     Ok((reader, writer))

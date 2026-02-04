@@ -1,6 +1,6 @@
 [package]
 name = "perpetua"
-version = "0.1.0"
+version = "0.2.0"
 description = "Perpetua GUI application"
 authors = ["fizzi01"]
 edition = "2021"

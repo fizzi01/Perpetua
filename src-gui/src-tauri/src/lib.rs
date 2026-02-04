@@ -75,12 +75,12 @@ where
     R: Runtime,
 {
     // Create the splashscreen window
-    if let Err(e) = create_splashscreen_window(&manager){
+    if let Err(e) = create_splashscreen_window(&manager) {
         println!("Error during window creation {:?}", e);
         handle_critical("Critical error on startup", "", &manager);
     }
 
-    let (r, w) = match connect(Duration::from_millis(100)).await {
+    let (r, w) = match connect(Duration::from_millis(100), Duration::from_secs(5)).await {
         Ok(conn) => {
             {
                 let state = manager.state::<Mutex<AppState>>();
@@ -105,7 +105,7 @@ where
     // Close the splash screen and open the main window after manager is set up
     let splash_window = manager.get_webview_window("splashscreen").unwrap();
     splash_window.close().unwrap();
-    if let Err(e) = create_main_window(&manager){
+    if let Err(e) = create_main_window(&manager) {
         println!("Error during window creation {:?}", e);
         handle_critical("Critical error on startup", "", &manager);
     }
@@ -218,7 +218,6 @@ where
     tray.show_menu_on_left_click(true).build(app)?;
 
     Ok(())
-
 }
 
 fn create_splashscreen_window<R>(app: &AppHandle<R>) -> Result<(), Box<dyn std::error::Error>>
@@ -255,7 +254,6 @@ where
     win.show()?;
 
     Ok(())
-
 }
 
 fn show_window<R>(app: &AppHandle<R>, label: &str)

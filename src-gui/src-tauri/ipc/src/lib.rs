@@ -412,7 +412,7 @@ mod tests {
 
     #[tokio::test]
     async fn test_connection_handler_and_connectio() {
-        match connect(Duration::from_secs(1)).await {
+        match connect(Duration::from_secs(1), Duration::from_secs(2)).await {
             Ok((reader, writer)) => {
                 let mut handler = ConnectionHandler::new(reader, writer);
                 // Test sending a message
