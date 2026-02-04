@@ -11,7 +11,21 @@
   },
   "app": {
     "windows": [
+      {
+        "label": "splashscreen",
+        "transparent": true,
+        "width": 300,
+        "height": 200,
+        "resizable": false,
+        "center": true,
+        "hiddenTitle": true,
+        "decorations": false,
+        "titleBarStyle": "Transparent",
+        "visible": false,
+        "url": "splashscreen"
+      }
     ],
+    "macOSPrivateApi": true,
     "security": {
       "csp": null
     }

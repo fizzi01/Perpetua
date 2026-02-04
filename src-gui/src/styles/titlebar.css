@@ -21,6 +21,7 @@
   background-color: light-dark(var(--color-woodsmoke-200),var(--color-woodsmoke-800));
   border-color: light-dark(var(--color-woodsmoke-200),var(--color-woodsmoke-800));
   box-shadow: 0 1px 3px rgba(0, 0, 0, 0.3);
+  z-index: 10;
 }
 
 .titlebar-toggle {
