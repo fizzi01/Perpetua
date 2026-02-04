@@ -25,6 +25,7 @@ use tauri::{
     AppHandle, Emitter, Manager, Runtime, WebviewUrl, WebviewWindowBuilder,
 };
 use tauri_plugin_dialog::{DialogExt, MessageDialogKind};
+use tauri_plugin_positioner::WindowExt;
 
 use handler::{EventHandler, Handable};
 use ipc::{
@@ -73,6 +74,12 @@ async fn setup_connection<'a, R>(manager: AppHandle<R>) -> Result<(), Connection
 where
     R: Runtime,
 {
+    // Create the splashscreen window
+    if let Err(e) = create_splashscreen_window(&manager){
+        println!("Error during window creation {:?}", e);
+        handle_critical("Critical error on startup", "", &manager);
+    }
+
     let (r, w) = match connect(Duration::from_millis(100)).await {
         Ok(conn) => {
             {
@@ -82,7 +89,7 @@ where
             }
 
             conn
-        },
+        }
         Err(e) => {
             println!("Error connecting to daemon: {:?}", e);
             handle_critical("Service unavailable", "", &manager);
@@ -98,7 +105,10 @@ where
     // Close the splash screen and open the main window after manager is set up
     let splash_window = manager.get_webview_window("splashscreen").unwrap();
     splash_window.close().unwrap();
-    create_main_window(&manager);
+    if let Err(e) = create_main_window(&manager){
+        println!("Error during window creation {:?}", e);
+        handle_critical("Critical error on startup", "", &manager);
+    }
     show_window(&manager, "main");
 
     let mut handler = ConnectionHandler::new(r, w);
@@ -133,15 +143,15 @@ fn prevent_default_ctxmenu() -> tauri::plugin::TauriPlugin<tauri::Wry> {
         .build()
 }
 
-fn create_main_window<R>(app: &AppHandle<R>)
+fn create_main_window<R>(app: &AppHandle<R>) -> Result<(), Box<dyn std::error::Error>>
 where
     R: Runtime,
 {
     let mut win_builder = WebviewWindowBuilder::new(app, "main", WebviewUrl::default())
-                .title("Perpetua")
-                .inner_size(435.0, 600.0)
-                .resizable(false)
-                .visible(false);
+        .title("Perpetua")
+        .inner_size(435.0, 600.0)
+        .resizable(false)
+        .visible(false);
 
     // Set macOS-specific window properties
     #[cfg(target_os = "macos")]
@@ -159,31 +169,93 @@ where
 
     win_builder.build().unwrap();
 
+    let show = MenuItem::with_id(app, "show_window", "Show", true, None::<&str>)?;
+    let quit_i = MenuItem::with_id(app, "quit", "Quit", true, None::<&str>)?;
+    let mut menu = MenuBuilder::new(app);
+
+    menu = menu.item(&show).separator();
+
+    // #[cfg(debug_assertions)]
+    menu = menu.item(&MenuItem::with_id(
+        app,
+        "show_log",
+        "Show Logs",
+        true,
+        None::<&str>,
+    )?);
+
+    let menu = menu.separator().item(&quit_i).build()?;
+
+    let tray = TrayIconBuilder::new()
+        .menu(&menu)
+        .on_menu_event(|app, event| match event.id.as_ref() {
+            "show_window" => {
+                show_window(app, "main");
+            }
+            "show_log" => {
+                let app_handle = app.clone();
+                app_handle.emit("show_log", {}).unwrap();
+
+                show_window(app, "main");
+            }
+            "quit" => {
+                let handle = app.clone();
+                // Call shutdown command
+                tauri::async_runtime::spawn(async move {
+                    let new = handle;
+                    let cur_state = new.state::<AtomicAsyncWriter>();
+                    let _ = commands::shutdown(cur_state).await;
+                    force_close(&new);
+                });
+            }
+            _ => {
+                println!("menu item {:?} not handled", event.id);
+            }
+        });
+
+    let tray = tray.icon(app.default_window_icon().unwrap().clone());
+
+    tray.show_menu_on_left_click(true).build(app)?;
+
+    Ok(())
+
 }
 
-fn create_splashscreen_window<R>(app: &AppHandle<R>)
+fn create_splashscreen_window<R>(app: &AppHandle<R>) -> Result<(), Box<dyn std::error::Error>>
 where
     R: Runtime,
 {
-    let mut splashscreen_win_builder =  WebviewWindowBuilder::new(app, "splashscreen", WebviewUrl::App("splashscreen".into()))
-        .title("Perpetua")
-        .inner_size(300.0, 200.0)
-        .resizable(false);
+    let mut splashscreen_win_builder =
+        WebviewWindowBuilder::new(app, "splashscreen", WebviewUrl::App("splashscreen".into()))
+            .title("Perpetua")
+            .inner_size(300.0, 200.0)
+            .resizable(false)
+            .visible(false);
 
     #[cfg(target_os = "macos")]
     {
         splashscreen_win_builder = splashscreen_win_builder
-                .hidden_title(true)
-                .decorations(false)
-                .title_bar_style(TitleBarStyle::Transparent);
+            .hidden_title(true)
+            .decorations(false)
+            .title_bar_style(TitleBarStyle::Transparent);
     }
 
     #[cfg(target_os = "windows")]
     {
-        splashscreen_win_builder = splashscreen_win_builder.decorations(false).transparent(true);
+        splashscreen_win_builder = splashscreen_win_builder
+            .decorations(false)
+            .transparent(true);
     }
 
-    splashscreen_win_builder.build().unwrap();
+    let win = splashscreen_win_builder.build()?;
+    let _ = win
+        .as_ref()
+        .window()
+        .move_window(tauri_plugin_positioner::Position::Center);
+    win.show()?;
+
+    Ok(())
+
 }
 
 fn show_window<R>(app: &AppHandle<R>, label: &str)
@@ -191,6 +263,10 @@ where
     R: Runtime,
 {
     let window = app.get_webview_window(label).unwrap();
+    let _ = window
+        .as_ref()
+        .window()
+        .move_window(tauri_plugin_positioner::Position::Center);
     window.show().unwrap();
     window.set_focus().unwrap();
 
@@ -214,11 +290,15 @@ pub fn run() {
     }
 
     app = app
+        .plugin(tauri_plugin_positioner::init())
         .plugin(tauri_plugin_os::init())
         .plugin(tauri_plugin_dialog::init())
         .plugin(tauri_plugin_opener::init())
         .plugin(prevent_default_ctxmenu())
-        .manage(Mutex::new(AppState { hard_close: false, connected: false}))
+        .manage(Mutex::new(AppState {
+            hard_close: false,
+            connected: false,
+        }))
         .invoke_handler(tauri::generate_handler![
             // -- Server Commands --
             commands::start_server,
@@ -245,59 +325,8 @@ pub fn run() {
             commands::get_log_file_path_cmd,
         ])
         .setup(|app| {
-            // Create the splashscreen window
-            create_splashscreen_window(app.handle());
-
             // Initialize connection to the daemon
             tauri::async_runtime::spawn(setup_connection(app.handle().clone()));
-
-            let show = MenuItem::with_id(app, "show_window", "Show", true, None::<&str>)?;
-            let quit_i = MenuItem::with_id(app, "quit", "Quit", true, None::<&str>)?;
-            let mut menu = MenuBuilder::new(app);
-
-            menu = menu.item(&show).separator();
-
-            // #[cfg(debug_assertions)]
-            menu = menu.item(&MenuItem::with_id(
-                app,
-                "show_log",
-                "Show Logs",
-                true,
-                None::<&str>,
-            )?);
-
-            let menu = menu.separator().item(&quit_i).build()?;
-
-            let tray = TrayIconBuilder::new()
-                .menu(&menu)
-                .on_menu_event(|app, event| match event.id.as_ref() {
-                    "show_window" => {
-                        show_window(app, "main");
-                    }
-                    "show_log" => {
-                        let app_handle = app.clone();
-                        app_handle.emit("show_log", {}).unwrap();
-
-                        show_window(app, "main");
-                    }
-                    "quit" => {
-                        let handle = app.clone();
-                        // Call shutdown command
-                        tauri::async_runtime::spawn(async move {
-                            let new = handle;
-                            let cur_state = new.state::<AtomicAsyncWriter>();
-                            let _ = commands::shutdown(cur_state).await;
-                            force_close(&new);
-                        });
-                    }
-                    _ => {
-                        println!("menu item {:?} not handled", event.id);
-                    }
-                });
-
-            let tray = tray.icon(app.default_window_icon().unwrap().clone());
-
-            tray.show_menu_on_left_click(true).build(app)?;
 
             Ok(())
         })
