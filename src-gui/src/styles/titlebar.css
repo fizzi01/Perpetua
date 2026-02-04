@@ -38,7 +38,7 @@
   max-height: 100%;
   border-color: light-dark(var(--color-woodsmoke-200),var(--color-woodsmoke-800));
   background-color: light-dark(var(--color-woodsmoke-200),var(--color-woodsmoke-800));
-
+  z-index: 10;
 }
 
 .titlebar-system-group > button {
