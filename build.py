@@ -67,8 +67,9 @@ class Builder:
         if parsed_target:
             build_type = Path(parsed_target) / build_type
 
+        self.tauri_target =  self.gui_dir / "src-tauri" / "target" / build_type
         self.gui_exe = (
-            self.gui_dir / "src-tauri" / "target" / build_type / GUI_EXECUTABLE
+             self.tauri_target / GUI_EXECUTABLE
         )
         self.src_dir = project_root / "src"
         self.build_dir = project_root / ".build" / build_type
@@ -150,11 +151,10 @@ class Builder:
             self.log.debug(f"Removing {gui_dist}")
             shutil.rmtree(gui_dist)
 
-        tauri_target = self.gui_dir / "src-tauri" / "target"
-        if tauri_target.exists():
+        if self.tauri_target.exists():
             response = input("Remove Tauri target? [y/N]: ")
             if response.lower() == "y":
-                shutil.rmtree(tauri_target)
+                shutil.rmtree(self.tauri_target)
 
     def _build_gui(self) -> int:
         if self.skip_gui:
@@ -214,13 +214,23 @@ class Builder:
 
         ret = self._run(build_cmd, cwd=self.gui_dir).returncode
         if ret == 0:
-            self.log.info("Copying data files")
+            self._clean_gui_artifacts()
             res = self._clean_data_files()
             if res != 0:
                 return res
+            self.log.info("Copying data files")
             return self._copy_data_files()
         else:
             return ret
+        
+    def _clean_gui_artifacts(self):
+        self.log.info("Cleaning GUI build artifacts")
+
+        artifacts = self.tauri_target / "bundle"
+        if artifacts.exists():
+            self.log.debug(f"Removing {artifacts}")
+            shutil.rmtree(artifacts)
+        
 
     def _clean_data_files(self):
         try:
