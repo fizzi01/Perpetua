@@ -29,6 +29,8 @@ Share clipboard content across all connected devices automatically.
 **Secure by Default**  
 All network communication is encrypted using TLS.
 
+## Download
+[![GitHub Downloads (all assets, latest release)](https://img.shields.io/github/downloads/fizzi01/Perpetua/latest/total?style=for-the-badge&logo=github&label=DOWNLOAD%20LATEST&color=%234f47e4)](https://github.com/fizzi01/Perpetua/releases/latest)
 
 ## Supported Operating Systems
 
