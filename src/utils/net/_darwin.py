@@ -15,8 +15,6 @@
 #  along with this program.  If not, see <https://www.gnu.org/licenses/>.
 #
 
-import netifaces
-
 from . import _base
 from ._base import MissingIpError
 

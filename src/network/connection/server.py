@@ -1,6 +1,5 @@
 """
-Provides logic to handle server-side socket connections using asyncio.
-Handles SSL and NON-SSL connections, heartbeats, and client management.
+Provides logic to handle server-side connections.
 """
 
 

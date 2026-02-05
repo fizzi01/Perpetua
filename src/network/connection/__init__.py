@@ -1,8 +1,3 @@
-"""
-Handles server and client socket logic
-"""
-
-
 #  Perpetua - open-source and cross-platform KVM software.
 #  Copyright (c) 2026 Federico Izzi.
 #

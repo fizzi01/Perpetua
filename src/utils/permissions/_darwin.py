@@ -4,7 +4,6 @@ macOS-specific permission checking implementation.
 This module provides permission checking for macOS systems, including:
 - Accessibility permissions
 - Input monitoring permissions (keyboard and mouse)
-- Screen recording permissions (if needed)
 """
 
 
