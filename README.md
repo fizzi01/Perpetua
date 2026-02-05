@@ -8,11 +8,11 @@ Perpetua is an open-source, cross-platform KVM software solution inspired by App
 Built with Python, Perpetua prioritizes performance through the integration of high-performance event loops: uvloop on macOS, and winloop on Windows. This architectural choice delivers exceptional responsiveness and low-latency input handling, ensuring smooth performance.
 
 <div align="center">
-  <picture>
-      <source media="(prefers-color-scheme: dark)" srcset="docs/imgs/main_dark.png?raw=true">
-      <source media="(prefers-color-scheme: light)" srcset="docs/imgs/main_light.png?raw=true">
-    <img alt="Perpetua Server View" srcset="docs/imgs/main_dark.png" width="450">
-  </picture>
+    <picture>
+        <source media="(prefers-color-scheme: dark)" srcset="docs/imgs/dark.png?raw=true">
+        <source media="(prefers-color-scheme: light)" srcset="docs/imgs/light.png?raw=true">
+        <img alt="Perpetua Server View" srcset="docs/imgs/dark.png" width="450">
+    </picture>
 </div>
 
 ## Features

@@ -36,6 +36,9 @@ import { DaemonLogDialog } from './components/ui/DaemonLogDialog';
 import { SplashScreen } from './Splash';
 
 export function Main() {
+  var r = document.querySelector(':root') as HTMLElement;
+  r.style.setProperty('--border-radius', '0px');
+
   const [mode, setMode] = useState<'client' | 'server'>('client');
   const [disableModeSwitch, setDisableModeSwitch] = useState<boolean>(false);
   const [stateListenersAdded, setListenersAdded] = useState<boolean>(false);
