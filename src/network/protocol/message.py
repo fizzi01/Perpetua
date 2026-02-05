@@ -269,7 +269,10 @@ class MessageBuilder:
         if not chunks:
             raise ValueError("No chunks provided")
 
-        if len(chunks) == 1 and not chunks[0].is_chunk:
+        if len(chunks) == 1 and not chunks[0]:
+            raise ValueError("Single chunk is None")
+
+        if len(chunks) == 1 and chunks[0] and not chunks[0].is_chunk:
             # Single message, no chunking
             return chunks[0]
 

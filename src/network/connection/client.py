@@ -1,5 +1,5 @@
 """
-Async Client Connection Handler using asyncio.
+Client-side connection Handler
 """
 
 
