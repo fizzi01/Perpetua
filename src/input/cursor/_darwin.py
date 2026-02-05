@@ -27,7 +27,6 @@ from wx import Size
 
 from multiprocessing.connection import Connection
 
-# Object-c Library
 import objc
 import Quartz
 
@@ -46,68 +45,9 @@ from AppKit import (
     NSWindowCollectionBehaviorFullScreenAuxiliary,  # ty:ignore[unresolved-import]
 )
 
-# Accessibility API
-
-
 from event.bus import EventBus
 from input.cursor import _base
 from network.stream.handler import StreamHandler
-
-
-class DebugOverlayPanel(wx.Panel):
-    def __init__(self, parent):
-        super().__init__(parent)
-
-        # Layout
-        vbox = wx.BoxSizer(wx.VERTICAL)
-
-        # Titolo
-        title = wx.StaticText(self, label="Test Mouse Capture Window")
-        title.SetForegroundColour(wx.WHITE)
-        title.SetFont(
-            wx.Font(16, wx.FONTFAMILY_DEFAULT, wx.FONTSTYLE_NORMAL, wx.FONTWEIGHT_BOLD)
-        )
-        vbox.Add(title, 0, wx.ALL | wx.CENTER, 10)
-
-        # Info
-        self.info_text = wx.StaticText(
-            self, label="Premi SPAZIO per attivare/disattivare la cattura"
-        )
-        self.info_text.SetForegroundColour(wx.Colour(200, 200, 200))
-        vbox.Add(self.info_text, 0, wx.ALL | wx.CENTER, 5)
-
-        # Stato
-        self.status_text = wx.StaticText(self, label="Mouse Capture: DISATTIVO")
-        self.status_text.SetForegroundColour(wx.Colour(255, 100, 100))
-        self.status_text.SetFont(
-            wx.Font(12, wx.FONTFAMILY_DEFAULT, wx.FONTSTYLE_NORMAL, wx.FONTWEIGHT_BOLD)
-        )
-        vbox.Add(self.status_text, 0, wx.ALL | wx.CENTER, 10)
-
-        # Delta display
-        self.delta_text = wx.StaticText(self, label="Delta X: 0, Delta Y: 0")
-        self.delta_text.SetForegroundColour(wx.WHITE)
-        self.delta_text.SetFont(
-            wx.Font(10, wx.FONTFAMILY_MODERN, wx.FONTSTYLE_NORMAL, wx.FONTWEIGHT_NORMAL)
-        )
-        vbox.Add(self.delta_text, 0, wx.ALL | wx.CENTER, 5)
-
-        # Istruzioni
-        instructions = wx.StaticText(
-            self, label="SPAZIO: Toggle capture\nESC: Disattiva | Q: Esci"
-        )
-        instructions.SetForegroundColour(wx.Colour(150, 150, 150))
-        vbox.Add(instructions, 0, wx.ALL | wx.CENTER, 20)
-
-        # Obtain NSApplication instance
-        NSApp = NSApplication.sharedApplication()
-        # Set activation policy to Accessory to hide the icon in the Dock
-        NSApp.setActivationPolicy_(NSApplicationActivationPolicyAccessory)
-
-        self.SetSizer(vbox)
-
-        # Black background
-        self.SetBackgroundColour(wx.Colour(10, 10, 10))
 
 
 class CursorHandlerWindow(_base.CursorHandlerWindow):
@@ -155,8 +95,9 @@ class CursorHandlerWindow(_base.CursorHandlerWindow):
             super().ForceOverlay()
             self.Move(pt=p)
 
-            self.previous_app = NSWorkspace.sharedWorkspace().frontmostApplication()
-            self.previous_app_pid = self.previous_app.processIdentifier()
+            if not self.previous_app and not self.previous_app_pid:
+                self.previous_app = NSWorkspace.sharedWorkspace().frontmostApplication()
+                self.previous_app_pid = self.previous_app.processIdentifier()
 
             NSApp = NSApplication.sharedApplication()
             NSApp.setPresentationOptions_(
@@ -178,7 +119,7 @@ class CursorHandlerWindow(_base.CursorHandlerWindow):
             ns_window.setIgnoresMouseEvents_(False)
             ns_window.makeKeyAndOrderFront_(None)
         except Exception as e:
-            print(f"Error forcing overlay: {e}")
+            self._logger.error(f"Error forcing overlay: {e}")
 
     def HideOverlay(self):
         try:
@@ -195,7 +136,7 @@ class CursorHandlerWindow(_base.CursorHandlerWindow):
 
             super().HideOverlay()
         except Exception as e:
-            print(f"Error hiding overlay: {e}")
+            self._logger.error(f"Error hiding overlay: {e}")
 
     def RestorePreviousApp(self):
         try:
@@ -206,7 +147,7 @@ class CursorHandlerWindow(_base.CursorHandlerWindow):
             self.previous_app = None
             self.previous_app_pid = None
         except Exception as e:
-            print(f"Error restoring previous app: {e}")
+            self._logger.error(f"Error restoring previous app ({e})")
 
     def _force_recapture(self):
         if not self.mouse_captured_flag.is_set():

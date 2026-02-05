@@ -117,7 +117,7 @@ class MessageExchange:
 
         self._missed_data = 0
 
-        self._lock = asyncio.Lock()
+        # self._lock = asyncio.Lock()
 
         self._logger = get_logger(f"{self.__class__.__name__}({self._id})")
 

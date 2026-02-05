@@ -2,7 +2,6 @@
 Client-side connection Handler
 """
 
-
 #  Perpetua - open-source and cross-platform KVM software.
 #  Copyright (c) 2026 Federico Izzi.
 #
@@ -19,6 +18,9 @@ Client-side connection Handler
 #  You should have received a copy of the GNU General Public License
 #  along with this program.  If not, see <https://www.gnu.org/licenses/>.
 #
+from cffi.setuptools_ext import error
+from src.utils import ExponentialBackoff
+import time
 
 import asyncio
 import ssl
@@ -26,7 +28,7 @@ from typing import Optional, Callable, Any
 
 from model.client import ClientsManager, ClientObj
 from network.data.exchange import MessageExchange, MessageExchangeConfig
-from network.protocol.message import MessageType
+from network.protocol.message import MessageType, ProtocolMessage
 from network.stream import StreamType
 
 from utils.logging import Logger, get_logger
@@ -52,6 +54,11 @@ class ConnectionHandler(BaseConnectionHandler):
     STREAM_CONN_DELAY_GUARD = 1  # seconds
     HANDSHAKE_MSG_TIMEOUT = 5.0  # seconds
     MAX_HEARTBEAT_MISSES = 1
+
+    BACKOFF_INITIAL_DELAY = 1.0  # Start with 1 second
+    BACKOFF_MAX_DELAY = 60.0  # Cap at 1 minute
+    BACKOFF_MULTIPLIER = 2.0  # Double each time
+    BACKOFF_ERROR_THRESHOLD = 5  # Errors before backoff
 
     def __init__(
         self,
@@ -112,6 +119,13 @@ class ConnectionHandler(BaseConnectionHandler):
         # Connection state
         self._running = False
         self._connected = False
+
+        self._backoff = ExponentialBackoff(
+            initial_delay=self.BACKOFF_INITIAL_DELAY,
+            max_delay=self.BACKOFF_MAX_DELAY,
+            multiplier=self.BACKOFF_MULTIPLIER,
+            jitter=False,
+        )
 
         # Asyncio components
         self._core_task: Optional[asyncio.Task] = None
@@ -231,6 +245,7 @@ class ConnectionHandler(BaseConnectionHandler):
                         if await self._handshake():
                             self._connected = True
                             error_count = 0
+                            self._backoff.reset()
 
                             self._logger.log(
                                 "Handshake successful, client connected", Logger.INFO
@@ -274,22 +289,21 @@ class ConnectionHandler(BaseConnectionHandler):
                     else:
                         # Connection failed
                         error_count += 1
-                        if error_count >= self.max_errors and self.auto_reconnect:
-                            self._logger.log(
-                                "Max connection errors reached, going sleep mode",
-                                Logger.ERROR,
-                            )
-                            await asyncio.sleep(
-                                self.RECONNECTION_DELAY
-                            )  # TODO: Implement backoff strategy
-                            # Optionally stop trying to reconnect
-                            # self._running = False
-                            # break
-                        elif error_count >= self.max_errors:
-                            # No auto reconnect, stop
-                            raise Exception("Max connection errors reached")
-
-                        await asyncio.sleep(self.wait)
+                        if self.max_errors > 0 and error_count >= self.max_errors:
+                            error_count = self.max_errors  # Cap error count
+                            if self.auto_reconnect:
+                                # Enter exponential backoff mode
+                                delay = self._backoff.get_next_delay()
+                                self._logger.log(
+                                    f"Max connection errors reached ({error_count}/{self.max_errors}), "
+                                    f"Retrying in {delay:.2f} seconds.",
+                                    Logger.WARNING,
+                                )
+                                await asyncio.sleep(delay)
+                            else:
+                                raise Exception("Max connection errors reached")
+                        else:
+                            await asyncio.sleep(self.wait)
                         continue
 
                 # Connection is established, just wait
@@ -301,10 +315,7 @@ class ConnectionHandler(BaseConnectionHandler):
                 await self.stop()
                 break
             except Exception as e:
-                self._logger.log(f"Error in core loop -> {e}", Logger.ERROR)
-                import traceback
-
-                self._logger.log(traceback.format_exc(), Logger.ERROR)
+                self._logger.exception(f"Error in core loop -> {e}")
 
                 # Handle disconnection
                 if self._connected:
@@ -312,8 +323,9 @@ class ConnectionHandler(BaseConnectionHandler):
 
                 error_count += 1
                 if error_count >= self.max_errors and not self.auto_reconnect:
+                    error_count = self.max_errors  # Cap error count
                     self._logger.log(
-                        "Max errors reached and auto_reconnect disabled, stopping",
+                        "Max errors reached and auto reconnect disabled, stopping",
                         Logger.ERROR,
                     )
                     self._running = False
@@ -565,6 +577,23 @@ class ConnectionHandler(BaseConnectionHandler):
                             if stream_writer:
                                 await stream_writer.close()
                             closed_streams.append(stream_type)
+                        else:
+                            # Send heartbeat
+                            hb_msg = ProtocolMessage(
+                                message_type=MessageType.HEARTBEAT,
+                                source="server",
+                                payload={},
+                                timestamp=time.time(),
+                                sequence_id=0,
+                            )
+
+                            try:
+                                await stream_writer.send(hb_msg.to_bytes())
+                            except Exception as e:
+                                self._logger.warning(
+                                    f"Heartbeat send failed on stream {stream_type} -> {e}"
+                                )
+                                closed_streams.append(stream_type)
 
                 # Attempt to reopen closed streams
                 if len(closed_streams) > 0:

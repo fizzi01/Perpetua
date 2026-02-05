@@ -19,6 +19,7 @@ import hashlib
 import sys
 import importlib
 import time
+import random
 from typing import Optional
 
 
@@ -100,3 +101,81 @@ class UIDGenerator:
             return uid
         except Exception as e:
             raise RuntimeError(f"{e}")
+
+
+class ExponentialBackoff:
+    """
+    Implements exponential backoff with jitter for connection retry logic.
+    
+    Example:
+        backoff = ExponentialBackoff(initial_delay=1, max_delay=300, multiplier=2)
+        delay = backoff.get_next_delay()
+        await asyncio.sleep(delay)
+        # On successful connection:
+        backoff.reset()
+    """
+    
+    def __init__(
+        self,
+        initial_delay: float = 1.0,
+        max_delay: float = 300.0,
+        multiplier: float = 2.0,
+        jitter: bool = True,
+        jitter_ratio: float = 0.1
+    ):
+        """
+        Initialize exponential backoff strategy.
+        
+        Args:
+            initial_delay: Initial delay in seconds (default: 1.0)
+            max_delay: Maximum delay cap in seconds (default: 300.0)
+            multiplier: Exponential growth factor (default: 2.0)
+            jitter: Whether to apply random jitter (default: True)
+            jitter_ratio: Maximum jitter as ratio of delay (default: 0.1 = ±10%)
+        """
+        self.initial_delay = initial_delay
+        self.max_delay = max_delay
+        self.multiplier = multiplier
+        self.jitter = jitter
+        self.jitter_ratio = jitter_ratio
+        
+        self._current_delay = initial_delay
+        self._attempt = 0
+    
+    def get_next_delay(self) -> float:
+        """
+        Calculate and return the next backoff delay.
+        
+        Returns:
+            Delay in seconds for the next retry attempt
+        """
+        self._attempt += 1
+        
+        # Calculate exponential delay
+        delay = min(self._current_delay, self.max_delay)
+        
+        # Apply jitter if enabled
+        if self.jitter and delay > 0:
+            jitter_range = delay * self.jitter_ratio
+            jitter_offset = random.uniform(-jitter_range, jitter_range)
+            delay = max(0, delay + jitter_offset)
+        
+        # Update current delay for next iteration
+        self._current_delay = min(self._current_delay * self.multiplier, self.max_delay)
+        
+        return delay
+    
+    def reset(self):
+        """Reset backoff to initial state after successful connection."""
+        self._current_delay = self.initial_delay
+        self._attempt = 0
+    
+    @property
+    def attempt_count(self) -> int:
+        """Get current attempt count."""
+        return self._attempt
+    
+    @property
+    def current_delay(self) -> float:
+        """Get current delay value (before jitter)."""
+        return min(self._current_delay, self.max_delay)

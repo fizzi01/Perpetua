@@ -2,7 +2,6 @@
 Provides logic to handle server-side connections.
 """
 
-
 #  Perpetua - open-source and cross-platform KVM software.
 #  Copyright (c) 2026 Federico Izzi.
 #
@@ -19,6 +18,7 @@ Provides logic to handle server-side connections.
 #  You should have received a copy of the GNU General Public License
 #  along with this program.  If not, see <https://www.gnu.org/licenses/>.
 #
+import time
 
 import asyncio
 from asyncio.futures import Future
@@ -28,7 +28,7 @@ from typing import Optional, Callable, Any
 
 from model.client import ClientsManager, ClientObj
 from network.data.exchange import MessageExchange, MessageExchangeConfig
-from network.protocol.message import MessageType
+from network.protocol.message import MessageType, ProtocolMessage
 from network.stream import StreamType
 from utils.logging import Logger, get_logger
 
@@ -749,6 +749,23 @@ class ConnectionHandler(BaseConnectionHandler):
                                     if stream_writer:
                                         await stream_writer.close()
                                     closed_streams.append(stream_type)
+                                else:
+                                    # Send heartbeat
+                                    hb_msg = ProtocolMessage(
+                                        message_type=MessageType.HEARTBEAT,
+                                        source="server",
+                                        payload={},
+                                        timestamp=time.time(),
+                                        sequence_id=0,
+                                    )
+
+                                    try:
+                                        await stream_writer.send(hb_msg.to_bytes())
+                                    except Exception as e:
+                                        self._logger.warning(
+                                            f"Heartbeat send failed on stream {stream_type} for client {client.get_net_id()} -> {e}"
+                                        )
+                                        closed_streams.append(stream_type)
 
                             if len(closed_streams) > 0:
                                 self._logger.warning(
