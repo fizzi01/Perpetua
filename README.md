@@ -153,8 +153,8 @@ To work on Perpetua in development mode:
    
    The launcher will automatically start the GUI in development mode with hot-reload capabilities. The daemon will also run in the background, allowing you to test the full application without building.
 
-   > [!NOTE]
-   > Make sure all prerequisites and dependencies are installed before running `launcher.py`.
+> [!NOTE]
+> Make sure all prerequisites and dependencies are installed before running `launcher.py`.
 
 3. **Install GUI dependencies (optional, if you need to modify the GUI):**
    ```bash
