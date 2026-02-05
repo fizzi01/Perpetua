@@ -40,6 +40,7 @@ Actually only Windows and MacOS are supported.
 
 > [!Important]
 > - **Windows**: You can't control a Windows client if there is no real mouse connected to the machine.
+>
 > - **Input Capture Conflicts**: Perpetua cannot control the mouse when other applications have exclusive input capture (e.g., video games). This is an architectural limitation.
 
 
@@ -71,36 +72,39 @@ For a full list of available commands and options:
 
 
 
-## Building from Source
+## Development / Building from Source
 
 <details>
 <summary><b>Prerequisites</b></summary>
 
-Perpetua requires several development tools and libraries to build successfully.
-
-#### Python Environment:
-- Python 3.11 or 3.12
-- Poetry
+- Python Environment:
+    - Python 3.11 or 3.12
+    - Poetry
 
 
-#### GUI Framework:
-- Node.js 18+ and npm
-- Rust toolchain
-- Tauri-cli
+- GUI Framework:
+    - Node.js
+    - Rust
 
 </details>
 <details>
 <summary><b>Platform-Specific Requirements</b></summary>
 
-*macOS:*
-- Xcode Command Line Tools
-  ```bash
-  xcode-select --install
-  ```
+- *macOS:*
+    - Xcode Command Line Tools
+        ```bash
+        xcode-select --install
+        ```
+    - Dependencies needed to build `uvloop`
+        ```bash
+        brew install automake
+        brew install autoconf
+        brew install libtool
+        brew install ccache
+        ```
 
-*Windows:*
-- Microsoft C++ Build Tools
-  - Install the "Desktop development with C++" workload from [Visual Studio Build Tools](https://visualstudio.microsoft.com/downloads/#build-tools-for-visual-studio-2022)
+- *Windows:*
+    - Microsoft C++ Build Tools: Install the "Desktop development with C++" workload from [Visual Studio Build Tools](https://visualstudio.microsoft.com/downloads/#build-tools-for-visual-studio-2022)
 </details>
 
 > [!NOTE]
@@ -131,6 +135,31 @@ The project includes both a build script and Makefile for convenient building.
    poetry run python build.py
    # or
    make build
+   ```
+
+### Development Setup
+
+To work on Perpetua in development mode:
+
+1. **Install Python dependencies:**
+   ```bash
+   poetry install
+   ```
+
+2. **Run in development mode:**
+   ```bash
+   python launcher.py
+   ```
+   
+   The launcher will automatically start the GUI in development mode with hot-reload capabilities. The daemon will also run in the background, allowing you to test the full application without building.
+
+   > [!NOTE]
+   > Make sure all prerequisites and dependencies are installed before running `launcher.py`.
+
+3. **Install GUI dependencies (optional, if you need to modify the GUI):**
+   ```bash
+   cd src-gui
+   npm install
    ```
 
 
