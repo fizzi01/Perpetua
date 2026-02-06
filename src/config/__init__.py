@@ -25,11 +25,14 @@ import asyncio
 import sys
 from dataclasses import dataclass, field
 from typing import Optional, Dict, Any, List
-import json
+import msgspec.json
 import os
 from os import path
 
 import aiofiles
+
+_encoder = msgspec.json.Encoder()
+_decoder = msgspec.json.Decoder()
 
 from model.client import ClientObj, ClientsManager
 from utils.logging import Logger
@@ -164,7 +167,8 @@ class ApplicationConfig:
         # Write default config
         try:
             with open(config_file, "w") as f:
-                json.dump(default_config, f, indent=4)
+                encoded = _encoder.encode(default_config)
+                f.write(encoded.decode())
             return True
         except Exception as e:
             print(f"Error creating config file {config_file}: {e}")
@@ -204,7 +208,8 @@ class ApplicationConfig:
 
         try:
             with open(file_path, "r") as f:
-                config = json.load(f)
+                content = f.read()
+                config = _decoder.decode(content.encode())
             data = config.get(self.app_key, {})
             if data:
                 self.from_dict(data)
@@ -233,7 +238,7 @@ class ApplicationConfig:
         try:
             async with aiofiles.open(file_path, "r") as f:
                 content = await f.read()
-                config = json.loads(content)
+                config = _decoder.decode(content.encode())
             data = config.get(self.app_key, {})
             if data:
                 self.from_dict(data)
@@ -503,14 +508,14 @@ class ServerConfig:
                     async with aiofiles.open(file_path, "r") as f:
                         content = await f.read()
                         if content.strip():
-                            existing_config = json.loads(content)
+                            existing_config = _decoder.decode(content.encode())
                 except Exception:
                     pass
 
             try:
                 config_data = self.to_dict()
                 existing_config[self.app_config.server_key] = config_data
-                json_content = json.dumps(existing_config, indent=4)
+                json_content = _encoder.encode(existing_config).decode()
             except Exception as e:
                 raise ValueError(f"Failed to serialize configuration ({e})")
 
@@ -545,7 +550,8 @@ class ServerConfig:
 
         try:
             with open(file_path, "r") as f:
-                config = json.load(f)
+                content = f.read()
+                config = _decoder.decode(content.encode())
             data = config.get(self.app_config.server_key, {})
             if data:
                 self.from_dict(data)
@@ -573,7 +579,7 @@ class ServerConfig:
         try:
             async with aiofiles.open(file_path, "r") as f:
                 content = await f.read()
-                config = json.loads(content)
+                config = _decoder.decode(content.encode())
             data = config.get(self.app_config.server_key, {})
             if data:
                 self.from_dict(data)
@@ -803,14 +809,14 @@ class ClientConfig:
                     async with aiofiles.open(file_path, "r") as f:
                         content = await f.read()
                         if content.strip():
-                            existing_config = json.loads(content)
+                            existing_config = _decoder.decode(content.encode())
                 except Exception:
                     pass
 
             try:
                 config_data = self.to_dict()
                 existing_config[self.app_config.client_key] = config_data
-                json_content = json.dumps(existing_config, indent=4)
+                json_content = _encoder.encode(existing_config).decode()
             except Exception as e:
                 raise ValueError(f"Failed to serialize configuration ({e})")
 
@@ -845,7 +851,8 @@ class ClientConfig:
 
         try:
             with open(file_path, "r") as f:
-                config = json.load(f)
+                content = f.read()
+                config = _decoder.decode(content.encode())
             data = config.get(self.app_config.client_key, {})
             if data:
                 self.from_dict(data)
@@ -873,7 +880,7 @@ class ClientConfig:
         try:
             async with aiofiles.open(file_path, "r") as f:
                 content = await f.read()
-                config = json.loads(content)
+                config = _decoder.decode(content.encode())
             data = config.get(self.app_config.client_key, {})
             if data:
                 self.from_dict(data)

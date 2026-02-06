@@ -18,7 +18,7 @@ Client-side connection Handler
 #  You should have received a copy of the GNU General Public License
 #  along with this program.  If not, see <https://www.gnu.org/licenses/>.
 #
-from cffi.setuptools_ext import error
+
 from src.utils import ExponentialBackoff
 import time
 

@@ -28,7 +28,7 @@ for receiving commands to control the application.
 import asyncio
 import datetime
 import errno
-import json
+import msgspec
 import os
 
 from os import path
@@ -252,6 +252,9 @@ class Daemon:
 
     MAX_CONNECTIONS = 1  # Only accept one connection at a time
     BUFFER_SIZE = 16384  # 16KB
+
+    _encoder = msgspec.json.Encoder()
+    _decoder = msgspec.json.Decoder()
 
     def __init__(
         self,
@@ -723,7 +726,7 @@ class Daemon:
                             if not isinstance(command, str):
                                 raise ValueError("Missing or invalid 'command' field")
                             params = command_data.get("params", {})
-                        except json.JSONDecodeError as e:
+                        except msgspec.DecodeError as e:
                             response = ErrorEvent(error=f"Invalid JSON -> {e}")
                             await self._send_to_client(response)
                             continue
@@ -781,10 +784,10 @@ class Daemon:
             Encoded bytes with length prefix and newline delimiter
         """
         if isinstance(data, dict):
-            r = json.dumps(data)
+            message_bytes = Daemon._encoder.encode(data)
         else:
-            r = data.to_json()
-        message_bytes = r.encode("utf-8")
+            # Convert NotificationEvent to dict and encode
+            message_bytes = Daemon._encoder.encode(data.to_dict())
         length_prefix = len(message_bytes).to_bytes(4, byteorder="big")
         return message_bytes + length_prefix + b"\n"
 
@@ -823,14 +826,13 @@ class Daemon:
                     length_bytes = data[idx - 4 : idx]
                     msg_length = int.from_bytes(length_bytes, byteorder="big")
                     msg_data = data[offset : offset + msg_length]
-                    message_str = msg_data.decode("utf-8").strip()
-                    lines.append(json.loads(message_str))
+                    lines.append(Daemon._decoder.decode(msg_data))
                     offset += msg_length + 5  # Move past message and delimiter
                 return lines, offset
             else:
                 return [], 0
-        except json.JSONDecodeError as e:
-            raise ValueError(f"Invalid JSON data -> {e}")
+        except msgspec.DecodeError as e:
+            raise ValueError(f"Invalid msgspec data -> {e}")
         except ValueError:
             raise
 
@@ -2154,7 +2156,7 @@ async def _send_unix_command(
         if not data:
             raise ConnectionError("No response from daemon")
 
-        response = json.loads(data.decode("utf-8"))
+        response = Daemon._decoder.decode(data)
         return response
 
     finally:
@@ -2196,7 +2198,7 @@ async def _send_tcp_command(
         if not data:
             raise ConnectionError("No response from daemon")
 
-        response = json.loads(data.decode("utf-8"))
+        response = Daemon._decoder.decode(data)
         return response
 
     finally:

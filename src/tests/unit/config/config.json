@@ -1,0 +1,67 @@
+{
+    "client": {
+    "server_info": {
+        "host": "localhost",
+        "port": 5555,
+        "heartbeat_interval": 1,
+        "auto_reconnect": true,
+        "ssl": false,
+        "additional_params": {
+            "timeout": 30
+        }
+    },
+    "client_hostname": "test-client-hostname",
+    "streams_enabled": {
+        "1": true,
+        "4": true,
+        "12": true,
+        "16": false
+    },
+    "ssl_enabled": false,
+    "log_level": 0,
+    "log_to_file": false,
+    "log_file_path": null
+},
+"server": {
+    "host": "127.0.0.1",
+    "port": 5555,
+    "heartbeat_interval": 1,
+    "streams_enabled": {
+        "0": true,
+        "1": true,
+        "4": true,
+        "12": true,
+        "16": false
+    },
+    "ssl_enabled": false,
+    "log_level": 0,
+    "log_to_file": false,
+    "log_file_path": null,
+    "authorized_clients": [
+        {
+            "host_name": "test-client-1",
+            "ip_address": "192.168.1.100",
+            "connection_time": 123.45,
+            "first_connection_date": "2025-12-20 10:00:00",
+            "last_connection_date": "2025-12-20 12:00:00",
+            "screen_position": "top",
+            "screen_resolution": "1920x1080",
+            "ssl": false,
+            "additional_params": {}
+        },
+        {
+            "host_name": "test-client-2",
+            "ip_address": "192.168.1.101",
+            "connection_time": 67.89,
+            "first_connection_date": "2025-12-20 11:00:00",
+            "last_connection_date": "2025-12-20 12:30:00",
+            "screen_position": "left",
+            "screen_resolution": "2560x1440",
+            "ssl": false,
+            "additional_params": {
+                "custom_field": "test_value"
+            }
+        }
+    ]
+}
+}

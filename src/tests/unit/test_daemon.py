@@ -33,12 +33,15 @@ Tests cover:
 from event.notification import NotificationEvent, NotificationEventType
 
 import asyncio
-import json
+import msgspec.json
 import os
 import sys
 from typing import Optional
 
 import pytest
+
+_encoder = msgspec.json.Encoder()
+_decoder = msgspec.json.Decoder()
 
 from service.daemon import (
     Daemon,
@@ -303,7 +306,9 @@ class TestSingleConnectionPolicy:
 
         # Second client should receive rejection message
         response = await reader2.read(16384)
-        data = json.loads(response.decode("utf-8").strip().split("\n")[0][:-4])
+        data = _decoder.decode(
+            response.decode("utf-8").strip().split("\n")[0][:-4].encode()
+        )
 
         assert data["success"] is False
         assert "another client" in data["error"].lower()
@@ -345,7 +350,7 @@ class TestSingleConnectionPolicy:
         # Should receive welcome message
         response = await reader2.read(16384)
         response = response.decode("utf-8").strip().split("\n")[0][:-4]
-        data = json.loads(response)
+        data = _decoder.decode(response.encode())
 
         assert data["success"] is True
         assert "Connected" in data["data"]["message"]
@@ -419,7 +424,9 @@ class TestContinuousCommandListening:
 
         # Should receive error response
         data = await reader.read(16384)
-        response = json.loads(data.decode("utf-8").strip().split("\n")[0][:-4])
+        response = _decoder.decode(
+            data.decode("utf-8").strip().split("\n")[0][:-4].encode()
+        )
 
         assert response["success"] is False
         assert "Invalid JSON" in response["error"]
@@ -809,7 +816,9 @@ class TestDaemonShutdown:
 
         # Client should receive shutdown notification
         data = await asyncio.wait_for(reader.read(16384), timeout=2.0)
-        response = json.loads(data.decode("utf-8").strip().split("\n")[0][:-4])
+        response = _decoder.decode(
+            data.decode("utf-8").strip().split("\n")[0][:-4].encode()
+        )
 
         assert response["success"] is True
         assert "daemon_shutdown" in response["data"]["event"]
@@ -900,9 +909,7 @@ class TestEdgeCases:
         # Send many commands quickly
         for _ in range(10):
             writer.write(
-                json.dumps({"command": DaemonCommand.PING, "params": {}}).encode(
-                    "utf-8"
-                )
+                _encoder.encode({"command": DaemonCommand.PING.value, "params": {}})
             )
             writer.write(b"\n")
         await writer.drain()

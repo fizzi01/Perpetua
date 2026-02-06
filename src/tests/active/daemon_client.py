@@ -26,7 +26,7 @@ and display responses in a user-friendly format.
 
 import asyncio
 import argparse
-import json
+import msgspec.json
 import sys
 from typing import Optional
 
@@ -38,6 +38,10 @@ except ImportError:
 
     sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
     from service.daemon import send_daemon_command, DaemonCommand, Daemon
+
+# Encoder/Decoder for msgspec (defined once for efficiency)
+_encoder = msgspec.json.Encoder()
+_decoder = msgspec.json.Decoder()
 
 
 class DaemonClient:
@@ -607,7 +611,7 @@ class DaemonClient:
                         # Decode and parse JSON
                         try:
                             message_str = message_bytes.decode("utf-8")
-                            response = json.loads(message_str)
+                            response = _decoder.decode(message_str.encode())
 
                             # First message is the welcome message
                             if first_message:
@@ -618,7 +622,7 @@ class DaemonClient:
 
                             await self._handle_daemon_message(response)
 
-                        except json.JSONDecodeError as e:
+                        except msgspec.DecodeError as e:
                             print(f"\n⚠ Invalid JSON received: {e}")
                             continue
                         except UnicodeDecodeError as e:
@@ -694,7 +698,9 @@ class DaemonClient:
             if verbose:
                 print(f"Sending command: {command}")
                 if params:
-                    print(f"Parameters: {json.dumps(params, indent=2)}")
+                    # Format params as readable JSON for display
+                    formatted_params = _encoder.encode(params).decode()
+                    print(f"Parameters: {formatted_params}")
 
             command_data = {"command": command, "params": params or {}}
             print(command_data)
@@ -875,7 +881,8 @@ class DaemonClient:
                 if verbose:
                     print(f"Sending command: {command}")
                     if params:
-                        print(f"Parameters: {json.dumps(params, indent=2)}")
+                        formatted_params = _encoder.encode(params).decode()
+                        print(f"Parameters: {formatted_params}")
 
                 response = await send_daemon_command(
                     command=command, params=params, socket_path=self.socket_path
@@ -931,14 +938,14 @@ class DaemonClient:
                                     print(f"\t\t\t\t[{idx}] {item}")
                         else:
                             # Large structure, use JSON
-                            print(json.dumps(value, indent=4))
+                            print(_encoder.encode(value).decode())
                     else:
                         print(f"  {key}: {value}")
         elif isinstance(data, list):
             if len(data) == 0:
                 print("  (empty list)")
             else:
-                print(json.dumps(data, indent=2))
+                print(_encoder.encode(data).decode())
         else:
             print(f"  {data}")
 

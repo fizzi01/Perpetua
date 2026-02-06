@@ -20,12 +20,13 @@ Structured message format for improved data handling and ordering.
 #  along with this program.  If not, see <https://www.gnu.org/licenses/>.
 #
 
-import json
+import base64
 import struct
 import time
 import uuid
-from typing import Dict, Any, Optional, List
-from dataclasses import dataclass, asdict
+from typing import Dict, Any, Optional, List, ClassVar
+from dataclasses import dataclass
+import msgspec
 
 
 # Messages type
@@ -41,8 +42,7 @@ class MessageType:
     HEARTBEAT = "HEARTBEAT"
 
 
-@dataclass
-class ProtocolMessage:
+class ProtocolMessage(msgspec.Struct):
     """
     Standardized message format with timestamp and ordering support.
     """
@@ -59,30 +59,24 @@ class ProtocolMessage:
     total_chunks: Optional[int] = None
     is_chunk: bool = False
 
-    _prefix_format = "!Icc"
-    prefix_lenght = struct.calcsize(_prefix_format)
+    _prefix_format: ClassVar[str] = "!Icc"
+    prefix_lenght: ClassVar[int] = struct.calcsize(_prefix_format)
 
     def to_dict(self) -> Dict[str, Any]:
         """Convert message to dictionary for serialization."""
-        return asdict(self)
+        return {f: getattr(self, f) for f in self.__struct_fields__}
 
     def to_json(self) -> str:
         """Serialize message to JSON string."""
-        return json.dumps(self.to_dict())
+        return msgspec.json.encode(self).decode("utf-8")
 
     def to_bytes(self) -> bytes:
         """
         Serialize message directly to binary format.
         This is more efficient than JSON for network transmission.
         """
-        # Convert to dict first
-        data = self.to_dict()
-
-        # Serialize to compact JSON (no spaces)
-        json_str = json.dumps(data, separators=(",", ":"))
-
-        # Convert to bytes
-        json_bytes = json_str.encode("utf-8")
+        # Serialize to JSON bytes
+        json_bytes = msgspec.json.encode(self)
 
         # Add length prefix for proper framing
         length = len(json_bytes)
@@ -91,8 +85,7 @@ class ProtocolMessage:
     @classmethod
     def from_json(cls, json_str: str) -> "ProtocolMessage":
         """Deserialize message from JSON string."""
-        data = json.loads(json_str)
-        return cls(**data)
+        return msgspec.json.decode(json_str.encode("utf-8"), type=cls)
 
     @classmethod
     def read_lenght_prefix(cls, data: bytes) -> int:
@@ -106,7 +99,7 @@ class ProtocolMessage:
             raise ValueError("Invalid binary data: too short for length prefix")
 
         # Read length prefix
-        length, p, y = struct.unpack(cls._prefix_format, data)
+        length, p, y = struct.unpack(cls._prefix_format, data[: cls.prefix_lenght])
         if p != b"P" or y != b"Y":
             raise ValueError("Invalid binary data: not a protocol message")
         return length
@@ -126,17 +119,19 @@ class ProtocolMessage:
             raise ValueError("Invalid binary data: too short for length prefix")
 
         # Read length prefix
-        length, _, _ = struct.unpack(cls._prefix_format, data[: cls.prefix_lenght])
+        length, p, y = struct.unpack(cls._prefix_format, data[: cls.prefix_lenght])
+
+        if p != b"P" or y != b"Y":
+            raise ValueError("Invalid binary data: not a protocol message")
 
         if len(data) < cls.prefix_lenght + length:
             raise ValueError("Invalid binary data: incomplete message")
 
         # Extract JSON bytes
         json_bytes = data[cls.prefix_lenght : cls.prefix_lenght + length]
-        json_str = json_bytes.decode("utf-8")
 
         # Parse JSON and create object
-        return cls.from_json(json_str)
+        return msgspec.json.decode(json_bytes, type=cls)
 
     def is_heartbeat(self) -> bool:
         """Check if the message is a heartbeat message."""
@@ -145,7 +140,7 @@ class ProtocolMessage:
     @classmethod
     def from_dict(cls, data: Dict[str, Any]) -> "ProtocolMessage":
         """Create message from dictionary."""
-        return cls(**data)
+        return msgspec.convert(data, type=cls)
 
     def get_serialized_size(self) -> int:
         """Get the size of the message when serialized to bytes."""
@@ -159,6 +154,8 @@ class MessageBuilder:
 
     def __init__(self):
         self._sequence_counter = 0
+        self._encoder = msgspec.json.Encoder()
+        self._decoder = msgspec.json.Decoder()
 
     def _next_sequence_id(self) -> int:
         """Get next sequence ID for message ordering."""
@@ -189,8 +186,7 @@ class MessageBuilder:
             return [message]
 
         # Need to split the payload into chunks
-        payload_json = json.dumps(message.payload, separators=(",", ":"))
-        payload_bytes = payload_json.encode("utf-8")
+        payload_bytes = self._encoder.encode(message.payload)
 
         # Generate unique message ID for this chunking session
         message_id = self._generate_message_id()
@@ -217,19 +213,27 @@ class MessageBuilder:
             max_chunk_size - overhead_size - 50
         )  # 50 bytes safety margin
 
-        if available_payload_size <= 0:
+        # Adjust available payload size to account for Base64 expansion
+        # Base64 expansion is approx 4/3. So available raw bytes is 3/4 of available string space.
+        # But we simply chunk bytes and encode; the encoded string must fit.
+        raw_chunk_size = (
+            int(available_payload_size * 0.75) - 4
+        )  # minus 4 for padding safety
+
+        if raw_chunk_size <= 0:
             raise ValueError("Chunk size too small to fit ProtocolMessage overhead")
 
         # Split payload into chunks
         chunks = []
-        total_chunks = (
-            len(payload_bytes) + available_payload_size - 1
-        ) // available_payload_size
+        total_chunks = (len(payload_bytes) + raw_chunk_size - 1) // raw_chunk_size
 
         for i in range(total_chunks):
-            start_pos = i * available_payload_size
-            end_pos = min(start_pos + available_payload_size, len(payload_bytes))
+            start_pos = i * raw_chunk_size
+            end_pos = min(start_pos + raw_chunk_size, len(payload_bytes))
             chunk_payload_bytes = payload_bytes[start_pos:end_pos]
+
+            # Encode chunk data to Base64 to ensure Safe transport as string
+            chunk_data_b64 = base64.b64encode(chunk_payload_bytes).decode("ascii")
 
             # Create chunk ProtocolMessage
             chunk_message = ProtocolMessage(
@@ -237,9 +241,7 @@ class MessageBuilder:
                 timestamp=message.timestamp,
                 sequence_id=self._next_sequence_id(),
                 payload={
-                    "_chunk_data": chunk_payload_bytes.decode(
-                        "utf-8", errors="replace"
-                    ),
+                    "_chunk_data": chunk_data_b64,
                     "_original_type": message.message_type,
                 },
                 source=message.source,
@@ -269,41 +271,47 @@ class MessageBuilder:
         if not chunks:
             raise ValueError("No chunks provided")
 
-        if len(chunks) == 1 and not chunks[0]:
-            raise ValueError("Single chunk is None")
+        # Filter None
+        valid_chunks: List[ProtocolMessage] = [c for c in chunks if c is not None]
 
-        if len(chunks) == 1 and chunks[0] and not chunks[0].is_chunk:
+        if not valid_chunks:
+            raise ValueError("No valid chunks provided")
+
+        if len(valid_chunks) == 1 and not valid_chunks[0].is_chunk:
             # Single message, no chunking
-            return chunks[0]
-
-        # Avoid None chunks
-        chunks: list[ProtocolMessage] = [c for c in chunks if c is not None]
+            return valid_chunks[0]
 
         # Sort chunks by index
-        sorted_chunks = sorted(chunks, key=lambda c: c.chunk_index)
+        sorted_chunks = sorted(valid_chunks, key=lambda c: c.chunk_index)  # type: ignore
 
         # Verify chunk integrity
-        expected_total = sorted_chunks[0].total_chunks
+        first_chunk = sorted_chunks[0]
+        expected_total = first_chunk.total_chunks
+
+        if expected_total is None:
+            raise ValueError("Chunk metadata missing")
+
         if len(sorted_chunks) != expected_total:
             raise ValueError(
                 f"Missing chunks: expected {expected_total}, got {len(sorted_chunks)}"
             )
 
-        # Get original message metadata from first chunk
-        first_chunk = sorted_chunks[0]
-
         # Reconstruct payload
-        payload_parts = []
+        payload_bytes_list = []
         for chunk in sorted_chunks:
             if chunk.message_id != first_chunk.message_id:
                 raise ValueError("Chunks have different message IDs")
 
             chunk_data = chunk.payload.get("_chunk_data", "")
-            payload_parts.append(chunk_data)
+            try:
+                chunk_bytes = base64.b64decode(chunk_data)
+                payload_bytes_list.append(chunk_bytes)
+            except Exception:
+                raise ValueError("Failed to decode chunk data")
 
         # Combine payload data
-        combined_payload_str = "".join(payload_parts)
-        combined_payload = json.loads(combined_payload_str)
+        combined_payload_bytes = b"".join(payload_bytes_list)
+        combined_payload = msgspec.json.decode(combined_payload_bytes)
 
         # Create reconstructed message
         reconstructed = ProtocolMessage(

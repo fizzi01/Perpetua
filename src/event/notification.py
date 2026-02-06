@@ -27,9 +27,12 @@ from dataclasses import dataclass, field
 from datetime import datetime
 from enum import Enum
 from typing import Any, Dict, Optional, Callable, Awaitable
-import json
+import msgspec
 
 from utils.logging import get_logger
+
+_encoder = msgspec.json.Encoder()
+_decoder = msgspec.json.Decoder()
 
 
 class NotificationEventType(str, Enum):
@@ -167,7 +170,7 @@ class NotificationEvent:
 
     def to_json(self) -> str:
         """Convert event to JSON string"""
-        return json.dumps(self.to_dict())
+        return _encoder.encode(self.to_dict()).decode("utf-8")
 
     @classmethod
     def from_dict(cls, data: Dict[str, Any]) -> "NotificationEvent":
@@ -190,7 +193,7 @@ class NotificationEvent:
     @classmethod
     def from_json(cls, json_str: str) -> "NotificationEvent":
         """Create event from JSON string"""
-        return cls.from_dict(json.loads(json_str))
+        return cls.from_dict(_decoder.decode(json_str.encode("utf-8")))
 
 
 # ==================== Specific Event Classes ====================

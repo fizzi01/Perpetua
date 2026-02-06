@@ -591,6 +591,9 @@ class MessageExchange:
                 else:
                     send_callback(data)
 
+            if message.target == tr_id:
+                message.target = None  # Clear target for next transport if multicast
+
     async def get_metrics(self) -> Optional[Dict]:
         """
         Obtain current connection metrics as a dictionary.

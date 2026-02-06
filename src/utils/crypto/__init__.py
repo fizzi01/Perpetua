@@ -17,7 +17,7 @@
 
 from cryptography.x509 import DNSName, IPAddress
 from pathlib import Path
-import json
+import msgspec.json
 from typing import Tuple, Optional, Dict
 from cryptography import x509
 from cryptography.x509.oid import NameOID
@@ -29,6 +29,9 @@ import ipaddress
 
 from config import ApplicationConfig
 from utils.logging import Logger, get_logger
+
+_encoder = msgspec.json.Encoder()
+_decoder = msgspec.json.Decoder()
 
 
 class CertificateManager:
@@ -325,7 +328,8 @@ class CertificateManager:
         if mapping_path.exists():
             try:
                 with open(mapping_path, "r") as f:
-                    return json.load(f)
+                    content = f.read()
+                    return _decoder.decode(content.encode())
             except Exception as e:
                 self._logger.log(f"Error loading cert mapping: {e}", Logger.ERROR)
         return {}
@@ -334,7 +338,8 @@ class CertificateManager:
         """Save the certificate mapping to file"""
         try:
             with open(self._get_cert_mapping_path(), "w") as f:
-                json.dump(mapping, f, indent=2)
+                encoded = _encoder.encode(mapping)
+                f.write(encoded.decode())
             return True
         except Exception as e:
             self._logger.log(f"Error saving cert mapping: {e}", Logger.ERROR)
