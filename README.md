@@ -3,7 +3,7 @@
     <h1>Perpetua</h1>
 </div>
 
-Perpetua is an open-source, cross-platform KVM software solution inspired by Apple's Universal Control. It enables users to control multiple devices using a single keyboard and mouse, with seamless cursor transitions between devices, keyboard sharing, and clipboard synchronization across different operating systems.
+Perpetua is an open-source, cross-platform KVM software solution inspired by Apple's Universal Control. It enables users to control multiple devices using a single keyboard and mouse, with seamless cursor transitions between devices, keyboard sharing, and clipboard synchronization.
 
 Built with Python, Perpetua prioritizes performance through the integration of high-performance event loops: uvloop on macOS, and winloop on Windows. This architectural choice delivers exceptional responsiveness and low-latency input handling, ensuring smooth performance.
 
