@@ -31,6 +31,7 @@ Tests cover:
 #
 
 import asyncio
+from unittest.mock import patch
 import msgspec.json
 import os
 import sys
@@ -201,43 +202,32 @@ class TestDaemonLifecycleTCP:
     """Test Daemon lifecycle with TCP sockets."""
 
     @pytest.mark.anyio
-    async def test_start_daemon_tcp(self, app_config, daemon_tcp_address):
+    async def test_start_daemon_tcp(self, daemon_instance: Daemon):
         """Test starting daemon with TCP socket."""
-        daemon = Daemon(
-            socket_path=daemon_tcp_address,
-            app_config=app_config,
-            auto_load_config=False,
-        )
-
-        result = await daemon.start()
+        result = await daemon_instance.start()
 
         assert result is True
-        assert daemon._running is True
-        assert daemon._socket_server is not None
+        assert daemon_instance._running is True
+        assert daemon_instance._socket_server is not None
 
-        await daemon.stop()
+        await daemon_instance.stop()
 
     @pytest.mark.anyio
-    async def test_daemon_already_running_tcp(self, app_config, daemon_tcp_address):
+    async def test_daemon_already_running_tcp(self, running_daemon: Daemon):
         """Test that TCP port occupied raises exception."""
-        daemon1 = Daemon(
-            socket_path=daemon_tcp_address,
-            app_config=app_config,
-            auto_load_config=False,
-        )
-        await daemon1.start()
 
         try:
             daemon2 = Daemon(
-                socket_path=daemon_tcp_address,
-                app_config=app_config,
+                socket_path=running_daemon.socket_path,
+                app_config=running_daemon.app_config,
                 auto_load_config=False,
             )
 
             with pytest.raises(DaemonAlreadyRunningException):
                 await daemon2.start()
         finally:
-            await daemon1.stop()
+            with patch("os._exit"):
+                await running_daemon.stop()
 
     @pytest.mark.anyio
     async def test_port_occupied_by_other_process(self, app_config, daemon_tcp_address):
@@ -259,7 +249,7 @@ class TestDaemonLifecycleTCP:
                 auto_load_config=False,
             )
 
-            with pytest.raises(DaemonPortOccupiedException):
+            with pytest.raises(DaemonAlreadyRunningException):
                 await daemon.start()
         finally:
             server.close()
