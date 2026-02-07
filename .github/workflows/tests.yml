@@ -1,0 +1,55 @@
+name: Tests
+
+on:
+  push:
+    branches:
+      - master
+      - ci
+  pull_request:
+    branches:
+      - master
+
+jobs:
+  test:
+    if: |
+      github.actor != 'github-actions[bot]' &&
+      !(startsWith(github.event.pull_request.title, 'chore') || startsWith(github.event.pull_request.title, 'docs')) &&
+      !(startsWith(github.event.head_commit.message, 'chore') || startsWith(github.event.head_commit.message, 'docs'))
+    runs-on: ${{ matrix.os }}
+    strategy:
+      fail-fast: false
+      matrix:
+        python-version:
+        - "3.11"
+        - "3.12"
+        os: [windows-latest, macos-latest]
+
+    steps:
+    - uses: actions/checkout@v6
+      with:
+        fetch-depth: 50
+        submodules: true
+
+    - name: Install poetry
+      run: pipx install poetry
+
+    - name: Set up Python ${{ matrix.python-version }}
+      uses: actions/setup-python@v6
+      with:
+        python-version: ${{ matrix.python-version }}
+        cache: poetry
+
+    - name: Install macOS deps
+      if: matrix.os == 'macos-latest'
+      env:
+        HOMEBREW_NO_AUTO_UPDATE: 1
+      run: |
+        brew install gnu-sed libtool autoconf automake
+
+    - name: Install Python Deps
+      run: |
+        poetry install --no-interaction
+
+    - name: Test
+      run: |
+        poetry run pytest -vv
