@@ -1,5 +1,23 @@
 # Changelog
 
+## [1.2.0](https://github.com/fizzi01/Perpetua/compare/v1.1.0...v1.2.0) (2026-02-07)
+
+
+### Features
+
+* **connection:** implement exponential backoff for client connection retry logic ([bd3665a](https://github.com/fizzi01/Perpetua/commit/bd3665aba60b2843aaa42d3198aea6ecdc286c1b))
+* **cursor:** add previous app focus restore on Windows ([bd3665a](https://github.com/fizzi01/Perpetua/commit/bd3665aba60b2843aaa42d3198aea6ecdc286c1b))
+* **mouse:** improve screen crossing by preventing crossing while mouse main buttons are being pressed ([#23](https://github.com/fizzi01/Perpetua/issues/23)) ([7ef2cfa](https://github.com/fizzi01/Perpetua/commit/7ef2cfae9849223fb919fc1de60e2ef955bef2ce))
+* replace json with msgspec for improved performance in encoding/decoding ([1c6d249](https://github.com/fizzi01/Perpetua/commit/1c6d249e1e63b37ab3efc00292ed317e956c675f))
+
+
+### Bug Fixes
+
+* **connection:** cap error count to prevent overflow ([bd3665a](https://github.com/fizzi01/Perpetua/commit/bd3665aba60b2843aaa42d3198aea6ecdc286c1b))
+* **cursor:** old focused app not getting focus again on macOS ([bd3665a](https://github.com/fizzi01/Perpetua/commit/bd3665aba60b2843aaa42d3198aea6ecdc286c1b))
+* **mouse:** reduce double-click detection time from 200 to 100ms ([7ef2cfa](https://github.com/fizzi01/Perpetua/commit/7ef2cfae9849223fb919fc1de60e2ef955bef2ce))
+* **network:** missing target reassignment when sending messages in multicast ([1c6d249](https://github.com/fizzi01/Perpetua/commit/1c6d249e1e63b37ab3efc00292ed317e956c675f))
+
 ## [1.1.0](https://github.com/fizzi01/Perpetua/compare/v1.0.0...v1.1.0) (2026-02-05)
 
 
