@@ -43,7 +43,6 @@ from service.daemon import (
     Daemon,
     DaemonCommand,
     DaemonAlreadyRunningException,
-    DaemonPortOccupiedException,
     IS_WINDOWS,
 )
 
