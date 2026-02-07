@@ -17,7 +17,6 @@
 
 import pytest
 import struct
-import base64
 import time
 import msgspec
 from network.protocol.message import ProtocolMessage, MessageType, MessageBuilder

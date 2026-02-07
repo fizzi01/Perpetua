@@ -17,7 +17,6 @@
 
 import asyncio
 from unittest.mock import AsyncMock, MagicMock
-from typing import Optional
 
 import pytest
 

@@ -40,7 +40,6 @@ from event.notification import (
     StreamEnabledEvent,
     StreamDisabledEvent,
     ServerChoiceNeededEvent,
-    ConnectionErrorEvent,
     ServiceErrorEvent,
 )
 from event import EventType, ClientStreamReconnectedEvent

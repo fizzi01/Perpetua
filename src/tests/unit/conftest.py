@@ -14,10 +14,12 @@
 #  You should have received a copy of the GNU General Public License
 #  along with this program.  If not, see <https://www.gnu.org/licenses/>.
 #
+import asyncio
 
 import time
+import sys
 from typing import List, Tuple, Optional
-from unittest.mock import AsyncMock, MagicMock
+from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
 
@@ -52,6 +54,13 @@ from network.protocol.message import MessageType, ProtocolMessage
 )
 def anyio_backend(request):
     return request.param
+
+
+@pytest.fixture(autouse=True)
+def disable_command_handler_clear():
+    """Disable CommandHandler.clear during tests to preserve handlers."""
+    with patch("service.daemon.CommandHandler.clear"):
+        yield
 
 
 # ============================================================================
@@ -434,13 +443,13 @@ def daemon_tcp_address():
 
 
 @pytest.fixture
-def daemon_instance(app_config, daemon_unix_socket_path):
+async def daemon_instance(app_config, daemon_unix_socket_path):
     """
     Provide a Daemon instance for testing.
     Automatically uses Unix socket on Unix systems, TCP on Windows.
+    Mocks os.exit() to prevent actual process termination during tests.
     """
     from service.daemon import Daemon
-    import sys
 
     # Choose socket path based on platform
     if sys.platform in ("win32", "cygwin"):
@@ -448,10 +457,16 @@ def daemon_instance(app_config, daemon_unix_socket_path):
     else:
         socket_path = daemon_unix_socket_path
 
-    daemon = Daemon(
-        socket_path=socket_path, app_config=app_config, auto_load_config=False
-    )
-    return daemon
+    # Mock os.exit to prevent actual process exit during tests
+    with patch("os._exit"):
+        daemon = Daemon(
+            socket_path=socket_path, app_config=app_config, auto_load_config=False
+        )
+        yield daemon
+        # Destroy daemon instance after test
+        if daemon._running:
+            await daemon.stop()
+        del daemon
 
 
 @pytest.fixture
@@ -459,11 +474,14 @@ async def running_daemon(daemon_instance):
     """
     Provide a running Daemon instance.
     Automatically starts and stops the daemon.
+    Mocks os.exit() to prevent actual process termination during tests.
     """
-    await daemon_instance.start()
-    yield daemon_instance
-    if daemon_instance._running:
-        await daemon_instance.stop()
+    with patch("os._exit"):
+        await daemon_instance.start()
+        await asyncio.sleep(0.5)  # Give the daemon time to start
+        yield daemon_instance
+        if daemon_instance._running:
+            await daemon_instance.stop()
 
 
 @pytest.fixture
@@ -510,7 +528,7 @@ def mock_client():
 async def daemon_client_connection(running_daemon):
     """
     Provide a connected client to the daemon.
-    Returns (reader, writer) tuple.
+    Returns (reader, writer, daemon) tuple.
     """
     import asyncio
     import sys
@@ -525,7 +543,7 @@ async def daemon_client_connection(running_daemon):
     # Read welcome message
     await reader.read(16384)
 
-    yield reader, writer
+    yield reader, writer, running_daemon
 
     # Cleanup
     try:

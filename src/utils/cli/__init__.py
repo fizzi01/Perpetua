@@ -16,7 +16,6 @@
 #
 
 import argparse
-from typing import Any
 
 
 def DaemonArguments(

@@ -810,7 +810,7 @@ class TestSyncCallbacks:
         await asyncio.sleep(0.15)
 
         await listener._debug_set_clipboard("Test content")
-        await asyncio.sleep(0.15)
+        await asyncio.sleep(0.2)
 
         await listener.stop()
 
@@ -829,10 +829,10 @@ class TestSyncCallbacks:
 
         await listener._debug_set_clipboard(INIT_CONTENT)
         await listener.start()
-        await asyncio.sleep(0.15)
+        await asyncio.sleep(0.2)
 
         await listener._debug_set_clipboard("Test content")
-        await asyncio.sleep(0.15)
+        await asyncio.sleep(0.2)
 
         # Should still be running
         assert listener.is_listening()
@@ -856,11 +856,11 @@ class TestStateManagement:
 
         await listener._debug_set_clipboard(INIT_CONTENT)
         await listener.start()
-        await asyncio.sleep(0.15)
+        await asyncio.sleep(0.2)
 
         # Set content
         await listener.set_clipboard("Test content")
-        await asyncio.sleep(0.05)
+        await asyncio.sleep(0.2)
 
         # Check hash is set
         assert listener._last_hash is not None
@@ -868,7 +868,7 @@ class TestStateManagement:
 
         # Set different content
         await listener.set_clipboard("Different content")
-        await asyncio.sleep(0.05)
+        await asyncio.sleep(0.2)
 
         # Hash should have changed
         assert listener._last_hash != first_hash
@@ -881,17 +881,17 @@ class TestStateManagement:
 
         await listener._debug_set_clipboard(INIT_CONTENT)
         await listener.start()
-        await asyncio.sleep(0.15)
+        await asyncio.sleep(0.2)
 
         content1 = "First content"
         await listener.set_clipboard(content1)
-        await asyncio.sleep(0.05)
+        await asyncio.sleep(0.2)
 
         assert listener.get_last_content() == content1
 
         content2 = "Second content"
         await listener.set_clipboard(content2)
-        await asyncio.sleep(0.05)
+        await asyncio.sleep(0.2)
 
         assert listener.get_last_content() == content2
 
@@ -904,7 +904,7 @@ class TestStateManagement:
         await listener._debug_set_clipboard(INIT_CONTENT)
         await listener.start()
         await listener.set_clipboard("Test content")
-        await asyncio.sleep(0.15)
+        await asyncio.sleep(0.2)
 
         content = listener.get_last_content()
         await listener.stop()
@@ -914,7 +914,7 @@ class TestStateManagement:
 
         # Restart
         await listener.start()
-        await asyncio.sleep(0.15)
+        await asyncio.sleep(0.2)
         await listener.stop()
 
         # Should still have the content

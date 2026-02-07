@@ -31,11 +31,11 @@ from os import path
 
 import aiofiles
 
-_encoder = msgspec.json.Encoder()
-_decoder = msgspec.json.Decoder()
-
 from model.client import ClientObj, ClientsManager
 from utils.logging import Logger
+
+_encoder = msgspec.json.Encoder()
+_decoder = msgspec.json.Decoder()
 
 
 async def _write(file, content: str) -> None:

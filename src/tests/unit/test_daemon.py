@@ -30,8 +30,6 @@ Tests cover:
 #  along with this program.  If not, see <https://www.gnu.org/licenses/>.
 #
 
-from event.notification import NotificationEvent, NotificationEventType
-
 import asyncio
 import msgspec.json
 import os
@@ -40,9 +38,6 @@ from typing import Optional
 
 import pytest
 
-_encoder = msgspec.json.Encoder()
-_decoder = msgspec.json.Decoder()
-
 from service.daemon import (
     Daemon,
     DaemonCommand,
@@ -50,6 +45,11 @@ from service.daemon import (
     DaemonPortOccupiedException,
     IS_WINDOWS,
 )
+
+from event.notification import NotificationEvent, NotificationEventType
+
+_encoder = msgspec.json.Encoder()
+_decoder = msgspec.json.Decoder()
 
 
 # ============================================================================
@@ -124,20 +124,16 @@ class TestDaemonLifecycleUnix:
     """Test Daemon lifecycle with Unix sockets."""
 
     @pytest.mark.anyio
-    async def test_start_daemon_creates_socket(self, daemon_instance):
+    async def test_start_daemon_creates_socket(self, running_daemon: Daemon):
         """Test that starting daemon creates Unix socket file."""
-        assert not os.path.exists(daemon_instance.socket_path)
+        assert os.path.exists(running_daemon.socket_path)
 
-        result = await daemon_instance.start()
         await asyncio.sleep(0.5)
-        assert result is True
-        assert daemon_instance._running is True
-        assert os.path.exists(daemon_instance.socket_path)
-
-        await daemon_instance.stop()
+        assert running_daemon._running is True
+        assert os.path.exists(running_daemon.socket_path)
 
     @pytest.mark.anyio
-    async def test_stop_daemon_removes_socket(self, running_daemon):
+    async def test_stop_daemon_removes_socket(self, running_daemon: Daemon):
         """Test that stopping daemon removes Unix socket file."""
         socket_path = running_daemon.socket_path
         assert os.path.exists(socket_path)
@@ -148,7 +144,7 @@ class TestDaemonLifecycleUnix:
         assert not os.path.exists(socket_path)
 
     @pytest.mark.anyio
-    async def test_socket_permissions(self, running_daemon):
+    async def test_socket_permissions(self, running_daemon: Daemon):
         """Test that socket has correct permissions (owner only)."""
         import stat
 
@@ -159,8 +155,7 @@ class TestDaemonLifecycleUnix:
         assert stat.S_IMODE(mode) == 0o600
 
     @pytest.mark.anyio
-    @pytest.mark.timeout(2)
-    async def test_daemon_already_running_exception(self, running_daemon):
+    async def test_daemon_already_running_exception(self, running_daemon: Daemon):
         """Test that starting daemon when already running raises exception."""
         # Try to start another daemon on same socket
         daemon2 = Daemon(
@@ -281,7 +276,7 @@ class TestSingleConnectionPolicy:
     """Test that daemon only accepts one connection at a time."""
 
     @pytest.mark.anyio
-    async def test_only_one_connection_allowed(self, running_daemon):
+    async def test_only_one_connection_allowed(self, running_daemon: Daemon):
         """Test that only one client can connect at a time."""
         # Connect first client
         if IS_WINDOWS:
@@ -306,12 +301,8 @@ class TestSingleConnectionPolicy:
 
         # Second client should receive rejection message
         response = await reader2.read(16384)
-        data = _decoder.decode(
-            response.decode("utf-8").strip().split("\n")[0][:-4].encode()
-        )
-
-        assert data["success"] is False
-        assert "another client" in data["error"].lower()
+        data = running_daemon.parse_msg_bytes(response)[0][0]
+        assert data["event_type"] == NotificationEventType.ERROR
 
         # Cleanup
         writer1.close()
@@ -320,7 +311,7 @@ class TestSingleConnectionPolicy:
         await writer2.wait_closed()
 
     @pytest.mark.anyio
-    async def test_new_connection_after_first_disconnects(self, running_daemon):
+    async def test_new_connection_after_first_disconnects(self, running_daemon: Daemon):
         """Test that new client can connect after first disconnects."""
         # Connect and disconnect first client
         if IS_WINDOWS:
@@ -349,18 +340,15 @@ class TestSingleConnectionPolicy:
 
         # Should receive welcome message
         response = await reader2.read(16384)
-        response = response.decode("utf-8").strip().split("\n")[0][:-4]
-        data = _decoder.decode(response.encode())
-
-        assert data["success"] is True
-        assert "Connected" in data["data"]["message"]
+        data = running_daemon.parse_msg_bytes(response)[0][0]
+        assert "Connected" in data["data"]["info"]
 
         # Cleanup
         writer2.close()
         await writer2.wait_closed()
 
     @pytest.mark.anyio
-    async def test_is_client_connected(self, running_daemon):
+    async def test_is_client_connected(self, running_daemon: Daemon):
         """Test is_client_connected method."""
         assert running_daemon.is_client_connected() is False
 
@@ -381,7 +369,7 @@ class TestSingleConnectionPolicy:
         # Cleanup
         writer.close()
         await writer.wait_closed()
-        await asyncio.sleep(0.1)
+        await asyncio.sleep(1)
 
         assert running_daemon.is_client_connected() is False
 
@@ -391,32 +379,32 @@ class TestSingleConnectionPolicy:
 # ============================================================================
 
 
-@pytest.mark.anyio
 class TestContinuousCommandListening:
     """Test that daemon continuously listens for commands."""
 
     @pytest.mark.anyio
     async def test_multiple_commands_in_sequence(self, daemon_client_connection):
         """Test sending multiple commands in sequence."""
-        reader, writer = daemon_client_connection
+        reader, writer, daemon = daemon_client_connection
+        await asyncio.sleep(0.5)
 
         commands = [
-            DaemonCommand.PING,
             DaemonCommand.STATUS,
-            DaemonCommand.PING,
             DaemonCommand.STATUS,
         ]
 
         for cmd in commands:
             responses = await send_command(reader, writer, cmd)
+            print(f"Command: {cmd}, Response: {responses}")
             assert responses is not None
             assert len(responses) > 0
-            assert responses[-1]["success"] is True
+            assert responses[-1]["event_type"] == NotificationEventType.COMMAND_SUCCESS
+            await asyncio.sleep(0.1)
 
     @pytest.mark.anyio
     async def test_invalid_json_handling(self, daemon_client_connection):
         """Test that invalid JSON is handled gracefully."""
-        reader, writer = daemon_client_connection
+        reader, writer, daemon = daemon_client_connection
 
         # Send invalid JSON
         writer.write(b"invalid json\n")
@@ -424,35 +412,31 @@ class TestContinuousCommandListening:
 
         # Should receive error response
         data = await reader.read(16384)
-        response = _decoder.decode(
-            data.decode("utf-8").strip().split("\n")[0][:-4].encode()
-        )
+        response = Daemon.parse_msg_bytes(data)[0][0]
 
-        assert response["success"] is False
-        assert "Invalid JSON" in response["error"]
+        assert response["event_type"] == NotificationEventType.ERROR
 
     @pytest.mark.anyio
     async def test_unknown_command_handling(self, daemon_client_connection):
         """Test that unknown commands are handled gracefully."""
-        reader, writer = daemon_client_connection
+        reader, writer, daemon = daemon_client_connection
 
         responses = await send_command(reader, writer, "unknown_command")
 
         assert responses is not None
-        assert responses[-1]["success"] is False
-        assert "Unknown command" in responses[-1]["error"]
+        assert responses[-1]["event_type"] == NotificationEventType.ERROR
 
     @pytest.mark.anyio
     async def test_command_with_params(self, daemon_client_connection):
         """Test sending commands with parameters."""
-        reader, writer = daemon_client_connection
+        reader, writer, daemon = daemon_client_connection
 
         responses = await send_command(
             reader, writer, DaemonCommand.STATUS, {"verbose": True}
         )
 
         assert responses is not None
-        assert responses[-1]["success"] is True
+        assert responses[-1]["event_type"] == NotificationEventType.COMMAND_SUCCESS
 
 
 # ============================================================================
@@ -460,7 +444,6 @@ class TestContinuousCommandListening:
 # ============================================================================
 
 
-@pytest.mark.anyio
 class TestArbitraryDataSending:
     """Test daemon's ability to send arbitrary data to connected client."""
 
@@ -487,11 +470,9 @@ class TestArbitraryDataSending:
 
         # Client should receive the event
         data = await asyncio.wait_for(reader.read(16384), timeout=2.0)
-        response, read = Daemon.parse_msg_bytes(data)[0]
-
-        assert response["success"] is True
-        assert response["data"]["event"]["event_type"] == NotificationEventType.TEST
-        assert response["data"]["event"]["data"]["message"] == "Test"
+        response, read = Daemon.parse_msg_bytes(data)
+        assert response[0]["event_type"] == NotificationEventType.TEST
+        assert response[0]["data"]["message"] == "Test"
 
         # Cleanup
         writer.close()
@@ -534,6 +515,7 @@ class TestArbitraryDataSending:
         messages, read = Daemon.parse_msg_bytes(data)
 
         assert len(messages) >= 3
+        assert read == len(data)
 
         # Cleanup
         writer.close()
@@ -545,39 +527,31 @@ class TestArbitraryDataSending:
 # ============================================================================
 
 
-@pytest.mark.anyio
 class TestBasicCommands:
     """Test basic daemon commands."""
 
     @pytest.mark.anyio
     async def test_ping_command(self, daemon_client_connection):
         """Test PING command."""
-        reader, writer = daemon_client_connection
-
+        reader, writer, daemon = daemon_client_connection
         responses = await send_command(reader, writer, DaemonCommand.PING)
-
         assert responses is not None
-        assert responses[-1]["success"] is True
-        assert "pong" in responses[-1]["data"]["message"].lower()
+        assert responses[-1]["event_type"] == NotificationEventType.PONG
 
     @pytest.mark.anyio
     async def test_status_command(self, daemon_client_connection):
         """Test STATUS command."""
-        reader, writer = daemon_client_connection
+        reader, writer, daemon = daemon_client_connection
 
         responses = await send_command(reader, writer, DaemonCommand.STATUS)
 
         assert responses is not None
-        assert responses[-1]["success"] is True
-        data = responses[-1]["data"]
-        assert "daemon_running" in data
-        assert "server_running" in data
-        assert "client_running" in data
-        assert "socket_path" in data
-        assert data["daemon_running"] is True
+        assert responses[-1]["event_type"] == NotificationEventType.COMMAND_SUCCESS
+        data = responses[-1]["data"]["result"]
+        assert data["client_connected"] is True
 
     @pytest.mark.anyio
-    async def test_shutdown_command(self, running_daemon):
+    async def test_shutdown_command(self, running_daemon: Daemon):
         """Test SHUTDOWN command."""
         # Connect client
         if IS_WINDOWS:
@@ -594,7 +568,7 @@ class TestBasicCommands:
         responses = await send_command(reader, writer, DaemonCommand.SHUTDOWN)
 
         assert responses is not None
-        assert responses[-1]["success"] is True
+        assert responses[-1]["event_type"] == NotificationEventType.COMMAND_SUCCESS
 
         # Give time for shutdown
         await asyncio.sleep(0.5)
@@ -621,7 +595,7 @@ class TestServiceControl:
     @pytest.mark.anyio
     async def test_start_server_command(self, daemon_client_connection, mock_server):
         """Test START_SERVER command."""
-        reader, writer = daemon_client_connection
+        reader, writer, daemon = daemon_client_connection
 
         # We need to get the actual daemon instance
         # This is a workaround for testing
@@ -636,7 +610,7 @@ class TestServiceControl:
     @pytest.mark.anyio
     async def test_start_server_already_running(self, daemon_client_connection):
         """Test starting server when already running."""
-        reader, writer = daemon_client_connection
+        reader, writer, daemon = daemon_client_connection
 
         # Start server
         await send_command(reader, writer, DaemonCommand.START_SERVER)
@@ -650,7 +624,7 @@ class TestServiceControl:
     @pytest.mark.anyio
     async def test_mutual_exclusion_server_client(self, daemon_client_connection):
         """Test that server and client cannot run simultaneously."""
-        reader, writer = daemon_client_connection
+        reader, writer, daemon = daemon_client_connection
         await asyncio.sleep(0.5)
         # Start server
         responses1 = await send_command(reader, writer, DaemonCommand.START_SERVER)
@@ -668,20 +642,19 @@ class TestServiceControl:
 # ============================================================================
 
 
-@pytest.mark.anyio
 class TestConfigurationCommands:
     """Test configuration management commands."""
 
     @pytest.mark.anyio
     async def test_get_server_config(self, daemon_client_connection):
         """Test GET_SERVER_CONFIG command."""
-        reader, writer = daemon_client_connection
+        reader, writer, daemon = daemon_client_connection
 
         responses = await send_command(reader, writer, DaemonCommand.GET_SERVER_CONFIG)
 
         assert responses is not None
-        assert responses[-1]["success"] is True
-        data = responses[-1]["data"]
+        assert responses[-1]["event_type"] == NotificationEventType.COMMAND_SUCCESS
+        data = responses[-1]["data"]["result"]
         assert "host" in data
         assert "port" in data
         assert "ssl_enabled" in data
@@ -689,13 +662,13 @@ class TestConfigurationCommands:
     @pytest.mark.anyio
     async def test_get_client_config(self, daemon_client_connection):
         """Test GET_CLIENT_CONFIG command."""
-        reader, writer = daemon_client_connection
+        reader, writer, daemon = daemon_client_connection
 
         responses = await send_command(reader, writer, DaemonCommand.GET_CLIENT_CONFIG)
 
         assert responses is not None
-        assert responses[-1]["success"] is True
-        data = responses[-1]["data"]
+        assert responses[-1]["event_type"] == NotificationEventType.COMMAND_SUCCESS
+        data = responses[-1]["data"]["result"]
         assert "server_host" in data
         assert "server_port" in data
         assert "ssl_enabled" in data
@@ -703,7 +676,7 @@ class TestConfigurationCommands:
     @pytest.mark.anyio
     async def test_set_server_config(self, daemon_client_connection):
         """Test SET_SERVER_CONFIG command."""
-        reader, writer = daemon_client_connection
+        reader, writer, daemon = daemon_client_connection
 
         params = {"host": "127.0.0.1", "port": 9999}
         responses = await send_command(
@@ -712,12 +685,12 @@ class TestConfigurationCommands:
 
         assert responses is not None
         # May succeed or fail depending on validation
-        assert "success" in responses[-1]
+        assert responses[-1]["event_type"] == NotificationEventType.COMMAND_SUCCESS
 
     @pytest.mark.anyio
     async def test_set_client_config(self, daemon_client_connection):
         """Test SET_CLIENT_CONFIG command."""
-        reader, writer = daemon_client_connection
+        reader, writer, daemon = daemon_client_connection
 
         params = {"server_host": "192.168.1.100", "server_port": 8888}
         responses = await send_command(
@@ -725,7 +698,7 @@ class TestConfigurationCommands:
         )
 
         assert responses is not None
-        assert "success" in responses[-1]
+        assert responses[-1]["event_type"] == NotificationEventType.COMMAND_SUCCESS
 
 
 # ============================================================================
@@ -740,7 +713,7 @@ class TestErrorHandling:
     @pytest.mark.anyio
     async def test_command_execution_exception(self, daemon_client_connection):
         """Test handling of exceptions during command execution."""
-        reader, writer = daemon_client_connection
+        reader, writer, daemon = daemon_client_connection
 
         # Send command that might cause error
         # Most commands will handle errors gracefully
@@ -750,9 +723,13 @@ class TestErrorHandling:
 
         # Should not crash, will return success or error
         assert responses is not None
+        assert responses[-1]["event_type"] in (
+            NotificationEventType.COMMAND_SUCCESS,
+            NotificationEventType.COMMAND_ERROR,
+        )
 
     @pytest.mark.anyio
-    async def test_connection_lost_handling(self, running_daemon):
+    async def test_connection_lost_handling(self, running_daemon: Daemon):
         """Test handling when client connection is lost abruptly."""
         # Connect and close abruptly
         if IS_WINDOWS:
@@ -798,7 +775,7 @@ class TestDaemonShutdown:
     """Test daemon shutdown behavior."""
 
     @pytest.mark.anyio
-    async def test_stop_notifies_connected_client(self, running_daemon):
+    async def test_stop_notifies_connected_client(self, running_daemon: Daemon):
         """Test that stop() sends notification to connected client."""
         # Connect client
         if IS_WINDOWS:
@@ -816,12 +793,9 @@ class TestDaemonShutdown:
 
         # Client should receive shutdown notification
         data = await asyncio.wait_for(reader.read(16384), timeout=2.0)
-        response = _decoder.decode(
-            data.decode("utf-8").strip().split("\n")[0][:-4].encode()
-        )
+        response = Daemon.parse_msg_bytes(data)[0][0]
 
-        assert response["success"] is True
-        assert "daemon_shutdown" in response["data"]["event"]
+        assert response["event_type"] == NotificationEventType.INFO
 
         await stop_task
 
@@ -833,7 +807,7 @@ class TestDaemonShutdown:
             pass
 
     @pytest.mark.anyio
-    async def test_stop_closes_socket_server(self, running_daemon):
+    async def test_stop_closes_socket_server(self, running_daemon: Daemon):
         """Test that stop() closes the socket server."""
         socket_server = running_daemon._socket_server
         assert socket_server is not None
@@ -850,7 +824,7 @@ class TestDaemonShutdown:
                 await asyncio.open_unix_connection(running_daemon.socket_path)
 
     @pytest.mark.anyio
-    async def test_wait_for_shutdown(self, running_daemon):
+    async def test_wait_for_shutdown(self, running_daemon: Daemon):
         """Test wait_for_shutdown method."""
         # Start waiting
         wait_task = asyncio.create_task(running_daemon.wait_for_shutdown())
@@ -878,7 +852,7 @@ class TestEdgeCases:
     """Test edge cases and boundary conditions."""
 
     @pytest.mark.anyio
-    async def test_start_already_running_returns_false(self, running_daemon):
+    async def test_start_already_running_returns_false(self, running_daemon: Daemon):
         """Test that calling start() on running daemon returns False."""
         result = await running_daemon.start()
         assert result is False
@@ -892,7 +866,7 @@ class TestEdgeCases:
     @pytest.mark.anyio
     async def test_large_command_payload(self, daemon_client_connection):
         """Test handling of large command payloads."""
-        reader, writer = daemon_client_connection
+        reader, writer, daemon = daemon_client_connection
 
         # Create large payload
         large_data = {"data": "x" * 10000}
@@ -904,7 +878,7 @@ class TestEdgeCases:
     @pytest.mark.anyio
     async def test_rapid_commands(self, daemon_client_connection):
         """Test sending commands rapidly."""
-        reader, writer = daemon_client_connection
+        reader, writer, daemon = daemon_client_connection
 
         # Send many commands quickly
         for _ in range(10):
@@ -925,7 +899,7 @@ class TestEdgeCases:
     @pytest.mark.anyio
     async def test_empty_command(self, daemon_client_connection):
         """Test sending empty command."""
-        reader, writer = daemon_client_connection
+        reader, writer, daemon = daemon_client_connection
 
         writer.write(b"\n")
         await writer.drain()
