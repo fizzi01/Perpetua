@@ -80,7 +80,11 @@ class EdgeDetector:
 
     @staticmethod
     def is_at_edge(
-        movement_history: list, x: float | int, y: float | int, screen_size: tuple
+        movement_history: list,
+        x: float | int,
+        y: float | int,
+        screen_size: tuple,
+        is_dragging: bool,
     ) -> Optional[ScreenEdge]:
         """
         Determines if the cursor is moving towards and has reached any edge of the screen.
@@ -90,9 +94,13 @@ class EdgeDetector:
             x (float | int): Current x position of the cursor.
             y (float | int): Current y position of the cursor.
             screen_size (tuple): A tuple representing the screen size (width, height).
+            is_dragging (bool): Whether the user is currently dragging (holding a button).
         Returns:
             Optional[ScreenEdge]: The edge the cursor is at, or None if not at any
         """
+        if is_dragging:
+            return None
+
         # Check all the previous movements to determine the direction
         queue_data = movement_history
         queue_size = len(queue_data)
@@ -135,6 +143,7 @@ class EdgeDetector:
         x: float | int,
         y: float | int,
         screen_size: tuple,
+        is_dragging: bool,
         callbacks: dict[ScreenEdge, Callable],
     ):
         """
@@ -145,8 +154,9 @@ class EdgeDetector:
             x (float | int): Current x position of the cursor.
             y (float | int): Current y position of the cursor.
             screen_size (tuple): A tuple representing the screen size (width, height).
+            is_dragging (bool): Whether the user is currently dragging (holding a button).
         """
-        edge = self.is_at_edge(movement_history, x, y, screen_size)
+        edge = self.is_at_edge(movement_history, x, y, screen_size, is_dragging)
         if edge and edge in callbacks:
             callbacks[edge]()
 
@@ -248,6 +258,7 @@ class ServerMouseListener(object):
 
         # Queue for mouse movements history to detect screen edge reaching
         self._movement_history = deque(maxlen=self.MOVEMENT_HISTORY_LEN)
+        self._is_dragging = False
 
         self._logger = get_logger(self.__class__.__name__)
 
@@ -402,7 +413,11 @@ class ServerMouseListener(object):
                 queue_data = list(self._movement_history)
 
                 edge = EdgeDetector.is_at_edge(
-                    movement_history=queue_data, x=x, y=y, screen_size=self._screen_size
+                    movement_history=queue_data,
+                    x=x,
+                    y=y,
+                    screen_size=self._screen_size,
+                    is_dragging=self._is_dragging,
                 )
                 if edge is None:
                     sleep(0)
@@ -541,6 +556,12 @@ class ServerMouseListener(object):
                 self._schedule_async(self.stream.send(mouse_event))
             except Exception as e:
                 self._logger.error(f"Failed to dispatch mouse click event -> {e}")
+        else:
+            # Track dragging state to avoid edge crossing
+            self._is_dragging = pressed and ButtonMapping[button.name].value in [
+                ButtonMapping.left.value,
+                ButtonMapping.right.value,
+            ]
         return True
 
     def on_scroll(self, x, y, dx, dy):
@@ -663,6 +684,7 @@ class ClientMouseController(object):
         self._pressed = False
         self._last_press_time = -99
         self._doubleclick_counter = 0
+        self._is_dragging = False
 
         self._logger = get_logger(self.__class__.__name__)
 
@@ -891,7 +913,11 @@ class ClientMouseController(object):
                 queue_data = list(self._movement_history)
 
                 edge = EdgeDetector.is_at_edge(
-                    movement_history=queue_data, x=x, y=y, screen_size=self._screen_size
+                    movement_history=queue_data,
+                    x=x,
+                    y=y,
+                    screen_size=self._screen_size,
+                    is_dragging=self._is_dragging,
                 )
 
                 # If we reach an edge, dispatch event to deactivate client and send cross screen message to server
@@ -1008,6 +1034,11 @@ class ClientMouseController(object):
                 self._pressed = True
 
             self._last_press_time = current_time
+
+        self._is_dragging = is_pressed and ButtonMapping(button).value in [
+            ButtonMapping.left.value,
+            ButtonMapping.right.value,
+        ]
 
     def _scroll(self, dx: int | float, dy: int | float):
         """
