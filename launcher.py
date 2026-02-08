@@ -1,5 +1,5 @@
 
-#  Perpatua - open-source and cross-platform KVM software.
+#  Perpetua - open-source and cross-platform KVM software.
 #  Copyright (c) 2026 Federico Izzi.
 #
 #  This program is free software: you can redistribute it and/or modify
@@ -29,6 +29,7 @@ from psutil import pid_exists
 from utils.logging import get_logger
 from utils.permissions import PermissionChecker
 from utils.cli import DaemonArguments
+from utils.screen import Screen
 from config import ApplicationConfig
 
 IS_WINDOWS = sys.platform in ("win32", "cygwin")
@@ -313,6 +314,8 @@ class Launcher:
 
 
 if __name__ == "__main__":
+    Screen.hide_icon()
+    
     launcher = None
     launcher_parser = ArgumentParser(description="Perpetua Launcher")
     launcher_parser.add_argument('--daemon', action='store_true', help='Run only the daemon process')

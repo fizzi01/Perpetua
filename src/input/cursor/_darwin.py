@@ -36,7 +36,6 @@ from AppKit import (
     NSApplication,  # ty:ignore[unresolved-import]
     NSWindowCollectionBehaviorCanJoinAllSpaces,  # ty:ignore[unresolved-import]
     NSScreenSaverWindowLevel,  # ty:ignore[unresolved-import]
-    NSApplicationActivationPolicyAccessory,  # ty:ignore[unresolved-import]
     NSWorkspace,  # ty:ignore[unresolved-import]
     NSApplicationActivateIgnoringOtherApps,  # ty:ignore[unresolved-import]
     NSApplicationPresentationAutoHideDock,  # ty:ignore[unresolved-import]
@@ -48,6 +47,7 @@ from AppKit import (
 from event.bus import EventBus
 from input.cursor import _base
 from network.stream.handler import StreamHandler
+from src.utils.screen import Screen
 
 
 class CursorHandlerWindow(_base.CursorHandlerWindow):
@@ -73,10 +73,7 @@ class CursorHandlerWindow(_base.CursorHandlerWindow):
         # Panel principale
         self.panel = wx.Panel(self)
 
-        # Obtain NSApplication instance
-        NSApp = NSApplication.sharedApplication()
-        # Set activation policy to Accessory to hide the icon in the Dock
-        NSApp.setActivationPolicy_(NSApplicationActivationPolicyAccessory)
+        Screen.hide_icon()
 
         self.previous_app = NSWorkspace.sharedWorkspace().frontmostApplication()
         self.previous_app_pid = self.previous_app.processIdentifier()

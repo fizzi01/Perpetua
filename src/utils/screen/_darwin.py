@@ -15,7 +15,11 @@
 #  along with this program.  If not, see <https://www.gnu.org/licenses/>.
 #
 
-from Quartz import CGDisplayBounds, CGMainDisplayID, CGSessionCopyCurrentDictionary
+from Quartz import CGDisplayBounds, CGMainDisplayID, CGSessionCopyCurrentDictionary  # ty:ignore[unresolved-import]
+from AppKit import (
+    NSApplication,  # ty:ignore[unresolved-import]
+    NSApplicationActivationPolicyAccessory,  # ty:ignore[unresolved-import]
+)
 
 from . import _base
 
@@ -38,3 +42,11 @@ class Screen(_base.Screen):
         return (
             d.get("CGSSessionScreenIsLocked") and d.get("CGSSessionScreenIsLocked") == 1
         )
+
+    @classmethod
+    def hide_icon(cls):
+        """
+        Hides the application icon from the dock.
+        """
+        app = NSApplication.sharedApplication()
+        app.setActivationPolicy_(NSApplicationActivationPolicyAccessory)
