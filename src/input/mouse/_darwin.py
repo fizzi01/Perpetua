@@ -39,7 +39,6 @@ from AppKit import (
 
 
 from . import _base
-from ._base import Logger
 
 
 def _no_suppress_filter(event_type, event):

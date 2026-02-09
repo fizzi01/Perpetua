@@ -17,8 +17,6 @@
 
 from Quartz import (
     CGEventGetFlags,  # ty:ignore[unresolved-import]
-    CGEventGetIntegerValueField,  # ty:ignore[unresolved-import]
-    kCGKeyboardEventKeycode,  # ty:ignore[unresolved-import]
     NSEventModifierFlagCapsLock,  # ty:ignore[unresolved-import]
     kCGEventFlagMaskAlphaShift,  # ty:ignore[unresolved-import]
     kCGEventKeyDown,  # ty:ignore[unresolved-import]
@@ -29,7 +27,6 @@ from event.bus import EventBus
 from network.stream.handler import StreamHandler
 
 from . import _base
-from ._base import KeyUtilities, Key
 
 
 class ServerKeyboardListener(_base.ServerKeyboardListener):
