@@ -45,7 +45,8 @@ import {
   shareCertificate, 
   startServer, stopServer, 
   saveServerConfig, 
-  addClient as addClientCommand, removeClient as removeClientCommand} from '../api/Sender';
+  addClient as addClientCommand, removeClient as removeClientCommand,
+  switchTrayIcon} from '../api/Sender';
 import { listenCommand, listenGeneralEvent } from '../api/Listener';
 import { EventType, CommandType, ClientObj, StreamType, ServerStatus, OtpInfo, ClientEditObj} from '../api/Interface';
 
@@ -149,6 +150,7 @@ export function ServerTab({ onStatusChange, state }: ServerTabProps) {
     console.log('[Server] State updated', state);
     onStatusChange(state.running);
     setIsRunning(state.running);
+    switchTrayIcon(state.running);
     setUid(state.uid);
     setHost(state.host);
     setPort(state.port.toString());
@@ -224,6 +226,7 @@ export function ServerTab({ onStatusChange, state }: ServerTabProps) {
       listenCommand(EventType.CommandSuccess, CommandType.StartServer, (event) => {
         console.log(`Server started successfully: ${event.message}`);
         setIsRunning(true);
+        switchTrayIcon(true);
         let res = event.data?.result;
         if (res) {
           addNotification('success', 'Server started', `Listening on ${res.host}:${res.port}`);
@@ -285,7 +288,7 @@ export function ServerTab({ onStatusChange, state }: ServerTabProps) {
         addNotification('warning', 'Server stopped');
         onStatusChange(false);
         setRunningPending(false);
-        
+        switchTrayIcon(false);
         // Auto-unlisten
         listeners.removeListener('stop-server');
       }).then(unlisten => {

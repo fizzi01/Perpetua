@@ -434,3 +434,23 @@ pub async fn get_log_file_path_cmd() -> Result<String, String> {
     let log_file = get_log_file_path()?;
     Ok(log_file.to_string_lossy().to_string())
 }
+
+#[tauri::command]
+pub async fn switch_tray_icon(app: tauri::AppHandle, active: bool) -> Result<(), String> {
+    #[cfg(target_os = "macos")]
+    {
+        const ACTIVE_ICON: &[u8] = include_bytes!("../icons/macos/32x32.png");
+        const IDLE_ICON: &[u8] = include_bytes!("../icons/macos/32x32_idle.png");
+        let icon_data = if active { ACTIVE_ICON } else { IDLE_ICON };
+        if let Some(tray) = app.tray_by_id("main") {
+            let icon_data =  tauri::image::Image::from_bytes(icon_data)
+                .unwrap_or_else(|e| panic!("Failed to load icon from bytes: {}", e));
+            if let Err(e) = tray.set_icon(Some(icon_data)) {
+                eprintln!("Failed to set tray icon: {}", e);
+            }
+        } else {
+            eprintln!("Tray with ID 'main' not found");
+        }
+    }
+    Ok(())
+}

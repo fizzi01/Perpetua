@@ -28,7 +28,7 @@ import { PowerButton } from './ui/power-button';
 import { ClientTabProps } from '../commons/Tab';
 import { ClientConnectionInfo, ClientStatus, CommandType, EventType, ServerChoice, ServerFound, ServiceError, StreamType } from '../api/Interface';
 import { listenCommand, listenGeneralEvent } from '../api/Listener';
-import { setOtp, startClient, stopClient, chooseServer, saveClientConfig } from '../api/Sender';
+import { setOtp, startClient, stopClient, chooseServer, saveClientConfig, switchTrayIcon } from '../api/Sender';
 import { useEventListeners } from '../hooks/useEventListeners';
 
 import { parseStreams, isValidIpAddress } from '../api/Utility'
@@ -145,6 +145,7 @@ export function ClientTab({ onStatusChange, state }: ClientTabProps) {
     console.log('[Client] State updated', state);
     onStatusChange(state.running);
     setIsRunning(state.running);
+    switchTrayIcon(state.connected);
     setIsConnected(state.connected);
   
     setCurrentConnection(state.server_info);
@@ -188,6 +189,7 @@ export function ClientTab({ onStatusChange, state }: ClientTabProps) {
         setHost(res.host);
         setPort(res.port.toString());
         setIsConnected(true);
+        switchTrayIcon(true);
         setShowOtpInput(false);
         addNotification('success', 'Connected', `${res.host}:${res.port}`);
       }).then((unlisten) => {
@@ -196,6 +198,7 @@ export function ClientTab({ onStatusChange, state }: ClientTabProps) {
 
       listenGeneralEvent(EventType.Disconnected, false, () => {
         setIsConnected(false);
+        switchTrayIcon(false);
         setConnectionTime(0);
         // setDataUsage(0);
         setControlStatus('none'); //TODO: Implement in backend
@@ -255,6 +258,7 @@ export function ClientTab({ onStatusChange, state }: ClientTabProps) {
     listenCommand(EventType.CommandSuccess, CommandType.StopClient, (event) => {
       console.log(`Client stopped successfully`, event);
       setIsRunning(false);
+      switchTrayIcon(false);
       setIsConnected(false);
       setConnectionTime(0);
       // setDataUsage(0);
@@ -321,6 +325,7 @@ export function ClientTab({ onStatusChange, state }: ClientTabProps) {
         addNotification('error', 'Connection Failed', event.data?.error || 'Unknown error');
         setRunningPending(false);
         setIsRunning(false);
+        switchTrayIcon(false);
         setIsConnected(false);
         onStatusChange(false);
 
