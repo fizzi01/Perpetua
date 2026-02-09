@@ -296,6 +296,46 @@ class TestEdgeDetector:
         assert x == -1
         assert y == -1
 
+    def test_clamp_to_screen_within_bounds(self, screen_size):
+        """Test coordinates within bounds remain unchanged."""
+        x, y = EdgeDetector.clamp_to_screen(100, 200, screen_size)
+        assert x == 100
+        assert y == 200
+
+    def test_clamp_to_screen_left_edge(self, screen_size):
+        """Test clamping coordinates beyond left edge."""
+        x, y = EdgeDetector.clamp_to_screen(-5, 500, screen_size)
+        assert x == 0
+        assert y == 500
+
+    def test_clamp_to_screen_right_edge(self, screen_size):
+        """Test clamping coordinates beyond right edge."""
+        x, y = EdgeDetector.clamp_to_screen(1925, 500, screen_size)
+        assert x == 1919  # screen_size[0] - 1
+        assert y == 500
+
+    def test_clamp_to_screen_top_edge(self, screen_size):
+        """Test clamping coordinates beyond top edge."""
+        x, y = EdgeDetector.clamp_to_screen(500, -10, screen_size)
+        assert x == 500
+        assert y == 0
+
+    def test_clamp_to_screen_bottom_edge(self, screen_size):
+        """Test clamping coordinates beyond bottom edge."""
+        x, y = EdgeDetector.clamp_to_screen(500, 1085, screen_size)
+        assert x == 500
+        assert y == 1079  # screen_size[1] - 1
+
+    def test_clamp_to_screen_multiple_edges(self, screen_size):
+        """Test clamping coordinates beyond multiple edges."""
+        x, y = EdgeDetector.clamp_to_screen(-10, -20, screen_size)
+        assert x == 0
+        assert y == 0
+
+        x, y = EdgeDetector.clamp_to_screen(2000, 1100, screen_size)
+        assert x == 1919
+        assert y == 1079
+
 
 # ============================================================================
 # ServerMouseListener Tests
@@ -1064,250 +1104,3 @@ class TestClientMouseController:
             assert len(controller._movement_history) == 8
             # Should keep most recent
             assert controller._movement_history[-1] == (19, 19)
-
-
-# ============================================================================
-# macOS-specific ClientMouseController Tests
-# ============================================================================
-
-
-class TestClientMouseControllerDarwin:
-    """Test ClientMouseController macOS-specific functionality."""
-
-    @pytest.mark.anyio
-    async def test_move_cursor_relative_clamps_left_edge(
-        self,
-        event_bus,
-        mock_stream_handler,
-        mock_mouse_controller,
-    ):
-        """Test relative cursor movement is clamped when at left edge moving left."""
-        with patch(
-            "input.mouse._base.MouseController", return_value=mock_mouse_controller
-        ):
-            with patch("input.mouse._base.Screen.get_size", return_value=(1920, 1080)):
-                from input.mouse._darwin import (
-                    ClientMouseController as DarwinClientMouseController,
-                )
-
-                controller = DarwinClientMouseController(
-                    event_bus,
-                    mock_stream_handler,
-                    mock_stream_handler,
-                )
-                # Position cursor beyond left edge
-                mock_mouse_controller.position = (-5, 500)
-
-                # Try to move further left
-                controller._move_cursor(-1, -1, -10, 5)
-
-                # dx should be clamped to 0, dy should remain
-                mock_mouse_controller.move.assert_called_once_with(dx=0, dy=5)
-
-    @pytest.mark.anyio
-    async def test_move_cursor_relative_clamps_right_edge(
-        self,
-        event_bus,
-        mock_stream_handler,
-        mock_mouse_controller,
-    ):
-        """Test relative cursor movement is clamped when at right edge moving right."""
-        with patch(
-            "input.mouse._base.MouseController", return_value=mock_mouse_controller
-        ):
-            with patch("input.mouse._base.Screen.get_size", return_value=(1920, 1080)):
-                from input.mouse._darwin import (
-                    ClientMouseController as DarwinClientMouseController,
-                )
-
-                controller = DarwinClientMouseController(
-                    event_bus,
-                    mock_stream_handler,
-                    mock_stream_handler,
-                )
-                # Position cursor beyond right edge
-                mock_mouse_controller.position = (1925, 500)
-
-                # Try to move further right
-                controller._move_cursor(-1, -1, 10, 5)
-
-                # dx should be clamped to 0, dy should remain
-                mock_mouse_controller.move.assert_called_once_with(dx=0, dy=5)
-
-    @pytest.mark.anyio
-    async def test_move_cursor_relative_clamps_top_edge(
-        self,
-        event_bus,
-        mock_stream_handler,
-        mock_mouse_controller,
-    ):
-        """Test relative cursor movement is clamped when at top edge moving up."""
-        with patch(
-            "input.mouse._base.MouseController", return_value=mock_mouse_controller
-        ):
-            with patch("input.mouse._base.Screen.get_size", return_value=(1920, 1080)):
-                from input.mouse._darwin import (
-                    ClientMouseController as DarwinClientMouseController,
-                )
-
-                controller = DarwinClientMouseController(
-                    event_bus,
-                    mock_stream_handler,
-                    mock_stream_handler,
-                )
-                # Position cursor beyond top edge
-                mock_mouse_controller.position = (500, -3)
-
-                # Try to move further up
-                controller._move_cursor(-1, -1, 5, -10)
-
-                # dy should be clamped to 0, dx should remain
-                mock_mouse_controller.move.assert_called_once_with(dx=5, dy=0)
-
-    @pytest.mark.anyio
-    async def test_move_cursor_relative_clamps_bottom_edge(
-        self,
-        event_bus,
-        mock_stream_handler,
-        mock_mouse_controller,
-    ):
-        """Test relative cursor movement is clamped when at bottom edge moving down."""
-        with patch(
-            "input.mouse._base.MouseController", return_value=mock_mouse_controller
-        ):
-            with patch("input.mouse._base.Screen.get_size", return_value=(1920, 1080)):
-                from input.mouse._darwin import (
-                    ClientMouseController as DarwinClientMouseController,
-                )
-
-                controller = DarwinClientMouseController(
-                    event_bus,
-                    mock_stream_handler,
-                    mock_stream_handler,
-                )
-                # Position cursor beyond bottom edge
-                mock_mouse_controller.position = (500, 1085)
-
-                # Try to move further down
-                controller._move_cursor(-1, -1, 5, 10)
-
-                # dy should be clamped to 0, dx should remain
-                mock_mouse_controller.move.assert_called_once_with(dx=5, dy=0)
-
-    @pytest.mark.anyio
-    async def test_move_cursor_relative_allows_recovery_from_left(
-        self,
-        event_bus,
-        mock_stream_handler,
-        mock_mouse_controller,
-    ):
-        """Test relative cursor movement is allowed when moving back from left edge."""
-        with patch(
-            "input.mouse._base.MouseController", return_value=mock_mouse_controller
-        ):
-            with patch("input.mouse._base.Screen.get_size", return_value=(1920, 1080)):
-                from input.mouse._darwin import (
-                    ClientMouseController as DarwinClientMouseController,
-                )
-
-                controller = DarwinClientMouseController(
-                    event_bus,
-                    mock_stream_handler,
-                    mock_stream_handler,
-                )
-                # Position cursor beyond left edge
-                mock_mouse_controller.position = (-5, 500)
-
-                # Move right (recovery direction)
-                controller._move_cursor(-1, -1, 10, 5)
-
-                # Both dx and dy should be allowed
-                mock_mouse_controller.move.assert_called_once_with(dx=10, dy=5)
-
-    @pytest.mark.anyio
-    async def test_move_cursor_relative_allows_recovery_from_right(
-        self,
-        event_bus,
-        mock_stream_handler,
-        mock_mouse_controller,
-    ):
-        """Test relative cursor movement is allowed when moving back from right edge."""
-        with patch(
-            "input.mouse._base.MouseController", return_value=mock_mouse_controller
-        ):
-            with patch("input.mouse._base.Screen.get_size", return_value=(1920, 1080)):
-                from input.mouse._darwin import (
-                    ClientMouseController as DarwinClientMouseController,
-                )
-
-                controller = DarwinClientMouseController(
-                    event_bus,
-                    mock_stream_handler,
-                    mock_stream_handler,
-                )
-                # Position cursor beyond right edge
-                mock_mouse_controller.position = (1925, 500)
-
-                # Move left (recovery direction)
-                controller._move_cursor(-1, -1, -10, 5)
-
-                # Both dx and dy should be allowed
-                mock_mouse_controller.move.assert_called_once_with(dx=-10, dy=5)
-
-    @pytest.mark.anyio
-    async def test_move_cursor_relative_clamps_multiple_axes(
-        self,
-        event_bus,
-        mock_stream_handler,
-        mock_mouse_controller,
-    ):
-        """Test relative cursor movement clamps both axes when out of bounds."""
-        with patch(
-            "input.mouse._base.MouseController", return_value=mock_mouse_controller
-        ):
-            with patch("input.mouse._base.Screen.get_size", return_value=(1920, 1080)):
-                from input.mouse._darwin import (
-                    ClientMouseController as DarwinClientMouseController,
-                )
-
-                controller = DarwinClientMouseController(
-                    event_bus,
-                    mock_stream_handler,
-                    mock_stream_handler,
-                )
-                # Position cursor beyond left and top edges
-                mock_mouse_controller.position = (-5, -3)
-
-                # Try to move further left and up
-                controller._move_cursor(-1, -1, -10, -10)
-
-                # Both dx and dy should be clamped to 0
-                mock_mouse_controller.move.assert_called_once_with(dx=0, dy=0)
-
-    @pytest.mark.anyio
-    async def test_move_cursor_relative_handles_invalid_delta(
-        self,
-        event_bus,
-        mock_stream_handler,
-        mock_mouse_controller,
-    ):
-        """Test relative cursor movement handles invalid delta values."""
-        with patch(
-            "input.mouse._base.MouseController", return_value=mock_mouse_controller
-        ):
-            from input.mouse._darwin import (
-                ClientMouseController as DarwinClientMouseController,
-            )
-
-            controller = DarwinClientMouseController(
-                event_bus,
-                mock_stream_handler,
-                mock_stream_handler,
-            )
-            mock_mouse_controller.position = (100, 100)
-
-            # Pass non-numeric values
-            controller._move_cursor(-1, -1, "invalid", "also_invalid")
-
-            # Should fallback to 0, 0
-            mock_mouse_controller.move.assert_called_once_with(dx=0, dy=0)
