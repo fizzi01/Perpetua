@@ -448,6 +448,9 @@ pub async fn switch_tray_icon(app: tauri::AppHandle, active: bool) -> Result<(),
             if let Err(e) = tray.set_icon(Some(icon_data)) {
                 eprintln!("Failed to set tray icon: {}", e);
             }
+            if let Err(e) = tray.set_icon_as_template(true) {
+                eprintln!("Failed to set tray icon as template: {}", e);
+            }
         } else {
             eprintln!("Tray with ID 'main' not found");
         }
