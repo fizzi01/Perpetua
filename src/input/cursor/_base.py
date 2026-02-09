@@ -182,7 +182,7 @@ class CursorHandlerWindow(wx.Frame):
         except Exception as e:
             self._logger.error(f"Error processing commands ({e})")
 
-    def _quit_app(self):
+    def _quit_app(self, event=None):
         """Quit the wx application properly"""
 
         # Unbind all events to prevent further processing

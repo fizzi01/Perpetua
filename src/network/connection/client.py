@@ -19,7 +19,6 @@ Client-side connection Handler
 #  along with this program.  If not, see <https://www.gnu.org/licenses/>.
 #
 
-from src.utils import ExponentialBackoff
 import time
 
 import asyncio
@@ -32,6 +31,7 @@ from network.protocol.message import MessageType, ProtocolMessage
 from network.stream import StreamType
 
 from utils.logging import Logger, get_logger
+from utils import ExponentialBackoff
 
 from . import ClientConnection, StreamWrapper
 from .handler import CallbackError, BaseConnectionHandler
