@@ -34,7 +34,7 @@ else:
 from typing import Optional
 
 from event import (
-    EventType,
+    BusEventType,
     MouseEvent,
     ActiveScreenChangedEvent,
     ClientDisconnectedEvent,
@@ -180,7 +180,7 @@ class CursorHandlerWindow(wx.Frame):
                     # time.sleep(0)
                     continue
         except Exception as e:
-            print(f"Error processing commands: {e}")
+            self._logger.error(f"Error processing commands ({e})")
 
     def _quit_app(self):
         """Quit the wx application properly"""
@@ -730,11 +730,11 @@ class CursorHandlerWorker(object):
 
         # Register to active_screen with async callbacks
         self.event_bus.subscribe(
-            event_type=EventType.SCREEN_CHANGE_GUARD,
+            event_type=BusEventType.SCREEN_CHANGE_GUARD,
             callback=self._on_screen_change_guard,
         )
         self.event_bus.subscribe(
-            event_type=EventType.CLIENT_DISCONNECTED,
+            event_type=BusEventType.CLIENT_DISCONNECTED,
             callback=self._on_client_disconnected,
         )
 
@@ -754,7 +754,7 @@ class CursorHandlerWorker(object):
             # dispatch event before enabling capture to set correct cursor position
             await self.event_bus.dispatch(
                 # when ServerMouseController receives this event will set the correct cursor position
-                event_type=EventType.ACTIVE_SCREEN_CHANGED,
+                event_type=BusEventType.ACTIVE_SCREEN_CHANGED,
                 data=self._last_event,
             )
             await asyncio.sleep(0)
@@ -772,7 +772,7 @@ class CursorHandlerWorker(object):
             # dispatch event after disabling capture
             await self.event_bus.dispatch(
                 # when ServerMouseController receives this event will set the correct cursor position
-                event_type=EventType.ACTIVE_SCREEN_CHANGED,
+                event_type=BusEventType.ACTIVE_SCREEN_CHANGED,
                 data=self._last_event,
             )
             self._active_client = None

@@ -19,7 +19,7 @@ import asyncio
 from typing import Any, Optional
 
 from event import (
-    EventType,
+    BusEventType,
     ActiveScreenChangedEvent,
     ClientStreamReconnectedEvent,
     ClientDisconnectedEvent,
@@ -298,15 +298,15 @@ class _ServerStreamHandler(StreamHandler):
         Redefine in subclasses if needed.
         """
         self.event_bus.subscribe(
-            event_type=EventType.ACTIVE_SCREEN_CHANGED,
+            event_type=BusEventType.ACTIVE_SCREEN_CHANGED,
             callback=self._on_active_screen_changed,
         )
         self.event_bus.subscribe(
-            event_type=EventType.CLIENT_DISCONNECTED,
+            event_type=BusEventType.CLIENT_DISCONNECTED,
             callback=self._on_client_disconnected,
         )
         self.event_bus.subscribe(
-            event_type=EventType.CLIENT_STREAM_RECONNECTED,
+            event_type=BusEventType.CLIENT_STREAM_RECONNECTED,
             callback=self._on_streams_reconnected,
         )
 
@@ -523,13 +523,13 @@ class _ClientStreamHandler(StreamHandler):
         Redefine in subclasses if needed.
         """
         self.event_bus.subscribe(
-            event_type=EventType.CLIENT_ACTIVE, callback=self._on_client_active
+            event_type=BusEventType.CLIENT_ACTIVE, callback=self._on_client_active
         )
         self.event_bus.subscribe(
-            event_type=EventType.CLIENT_INACTIVE, callback=self._on_client_inactive
+            event_type=BusEventType.CLIENT_INACTIVE, callback=self._on_client_inactive
         )
         self.event_bus.subscribe(
-            event_type=EventType.CLIENT_STREAM_RECONNECTED,
+            event_type=BusEventType.CLIENT_STREAM_RECONNECTED,
             callback=self._on_streams_reconnected,
         )
 

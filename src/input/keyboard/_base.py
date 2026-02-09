@@ -19,13 +19,15 @@ import asyncio
 from typing import Optional
 
 from event import (
-    EventType,
+    BusEventType,
     EventMapper,
     KeyboardEvent,
     ActiveScreenChangedEvent,
     ClientConnectedEvent,
     ClientDisconnectedEvent,
     ClientActiveEvent,
+    CommandEvent,
+    KeyboardStateSyncCommandEvent,
 )
 from event.bus import EventBus
 
@@ -38,6 +40,7 @@ from pynput.keyboard import (
 # import keyboard as hotkey_controller  # Unused anymore
 
 from network.stream.handler import StreamHandler
+from network.protocol.message import MessageType
 
 from utils.logging import get_logger
 from utils.screen import Screen
@@ -77,6 +80,23 @@ class KeyUtilities:
 
         # Otherwise return the original string (unmapped)
         return None
+
+    @staticmethod
+    def map_vk(vk_code: int) -> KeyCode:
+        """
+        Maps a virtual key code to a pynput KeyCode.
+        """
+        return KeyCode.from_vk(vk_code)
+
+    @staticmethod
+    def map_to_key(kc: KeyCode) -> Key | None:
+        """
+        Maps a pynput KeyCode to a Key if possible, otherwise returns None.
+        """
+        try:
+            return Key(kc)
+        except (KeyError, AttributeError, ValueError):
+            return None
 
     @staticmethod
     def is_special(
@@ -125,6 +145,7 @@ class ServerKeyboardListener(object):
         self._listening = False
         self._active_screens = {}
         self._screen_size: tuple[int, int] = Screen.get_size()
+        self._caps_lock_state = self._get_lock_state()
 
         # Check platform to set appropriate mouse filter
         self._filter_args = {}
@@ -153,18 +174,31 @@ class ServerKeyboardListener(object):
             # No event loop running yet - will be set when start() is called
             self._loop = None
 
+        # TODO: Work in progress
+        # self.command_stream.register_receive_callback(
+        #     self._command_callback, message_type=MessageType.COMMAND
+        # )
+
         # Subscribe with async callbacks
         self.event_bus.subscribe(
-            event_type=EventType.ACTIVE_SCREEN_CHANGED,
+            event_type=BusEventType.ACTIVE_SCREEN_CHANGED,
             callback=self._on_active_screen_changed,
         )
         self.event_bus.subscribe(
-            event_type=EventType.CLIENT_CONNECTED, callback=self._on_client_connected
+            event_type=BusEventType.CLIENT_CONNECTED, callback=self._on_client_connected
         )
         self.event_bus.subscribe(
-            event_type=EventType.CLIENT_DISCONNECTED,
+            event_type=BusEventType.CLIENT_DISCONNECTED,
             callback=self._on_client_disconnected,
         )
+
+    @staticmethod
+    def _get_lock_state() -> bool:
+        """
+        Helper to get current Caps Lock state.
+        Os-specific implementations should override this method to return actual state.
+        """
+        return False
 
     def _create_listener(self) -> KeyboardListener:
         """
@@ -176,7 +210,7 @@ class ServerKeyboardListener(object):
 
     def start(self) -> bool:
         """
-        Starts the mouse listener.
+        Starts the keyboard listener.
         """
         # Capture event loop reference if not already set
         if self._loop is None:
@@ -195,7 +229,7 @@ class ServerKeyboardListener(object):
 
     def stop(self) -> bool:
         """
-        Stops the mouse listener.
+        Stops the keyboard listener.
         """
         if self._listener and self.is_alive():
             self._listener.stop()
@@ -205,6 +239,24 @@ class ServerKeyboardListener(object):
 
     def is_alive(self):
         return self._listener.is_alive() if self._listener else False
+
+    async def _command_callback(self, message):
+        try:
+            event = EventMapper.get_event(message)
+            if not isinstance(event, CommandEvent):
+                self._logger.warning(f"Received non-command event -> {event}")
+                return
+
+            if event.command == CommandEvent.KEYBOARD_STATE_SYNC:
+                kev = KeyboardStateSyncCommandEvent().from_command_event(event)
+                for key in kev.get_pressed_keys():
+                    key = KeyUtilities.map_key(key)
+                    if key is not None and key == Key.caps_lock:
+                        await self._sync_caps_lock_state(ext_state=True)
+                        break
+        except Exception as e:
+            self._logger.error(f"Error processing command message -> {e}")
+            return
 
     async def _on_client_connected(self, data: Optional[ClientConnectedEvent]):
         """
@@ -247,10 +299,24 @@ class ServerKeyboardListener(object):
 
         if active_screen is not None:
             self._listening = True
+            asyncio.create_task(self._sync_caps_lock_state())
         else:
             self._listening = False
 
         await asyncio.sleep(0)
+
+    async def _sync_caps_lock_state(self, ext_state: Optional[bool] = None):
+        """
+        Sync server's Caps Lock state with clients by sending a toggle event if needed.
+        """
+        if ext_state is None:
+            ext_state = self._get_lock_state()
+
+        if self._get_lock_state() != ext_state:
+            event = KeyboardEvent(
+                key=Key.caps_lock.name, action=KeyboardEvent.PRESS_ACTION
+            )
+            await self.stream.send(event)
 
     def _darwin_suppress_filter(self, event_type, event):
         raise NotImplementedError("Mouse suppress filter not implemented yet.")
@@ -393,7 +459,7 @@ class ClientKeyboardController(object):
         # Track pressed keys for hotkey combinations
         self.pressed_keys = set()
         self._pressed_general_keys = set()
-        self.is_caps_locked = False
+        self._caps_lock_state = False
 
         self._logger = get_logger(self.__class__.__name__)
 
@@ -404,15 +470,15 @@ class ClientKeyboardController(object):
 
         # Register to receive mouse events from the stream (async callback)
         self.stream.register_receive_callback(
-            self._key_event_callback, message_type="keyboard"
+            self._key_event_callback, message_type=MessageType.KEYBOARD
         )
 
         # Subscribe with async callbacks
         self.event_bus.subscribe(
-            event_type=EventType.CLIENT_ACTIVE, callback=self._on_client_active
+            event_type=BusEventType.CLIENT_ACTIVE, callback=self._on_client_active
         )
         self.event_bus.subscribe(
-            event_type=EventType.CLIENT_INACTIVE, callback=self._on_client_inactive
+            event_type=BusEventType.CLIENT_INACTIVE, callback=self._on_client_inactive
         )
 
     async def start(self):

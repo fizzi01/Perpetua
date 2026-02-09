@@ -1,5 +1,4 @@
-
-#  Perpatua - open-source and cross-platform KVM software.
+#  Perpetua - open-source and cross-platform KVM software.
 #  Copyright (c) 2026 Federico Izzi.
 #
 #  This program is free software: you can redistribute it and/or modify
@@ -29,10 +28,12 @@ from psutil import pid_exists
 from utils.logging import get_logger
 from utils.permissions import PermissionChecker
 from utils.cli import DaemonArguments
+from utils.screen import Screen
 from config import ApplicationConfig
 
 IS_WINDOWS = sys.platform in ("win32", "cygwin")
 COMPILED = "__compiled__" in globals()
+
 
 class Launcher:
     """Launcher class to manage daemon and GUI processes with centralized logging."""
@@ -40,7 +41,11 @@ class Launcher:
     def __init__(self, args: Optional[Namespace] = None):
         self.main_path = ApplicationConfig.get_main_path()
         self.pid_file = Path(os.path.join(self.main_path, "daemon.pid"))
-        self.log_file = Path(os.path.join(self.main_path, ApplicationConfig.get_default_log_file() or "daemon.log"))
+        self.log_file = Path(
+            os.path.join(
+                self.main_path, ApplicationConfig.get_default_log_file() or "daemon.log"
+            )
+        )
         self.temp_log_file = Path(os.path.join(self.main_path, "launcher_temp.log"))
         self._args = args
         self._log = None
@@ -50,7 +55,9 @@ class Launcher:
     def log(self):
         """Lazy initialization of logger."""
         if self._log is None:
-            self._log = get_logger("launcher", verbose=True, log_file=self.temp_log_file)
+            self._log = get_logger(
+                "launcher", verbose=True, log_file=self.temp_log_file
+            )
         return self._log
 
     def _get_project_root(self) -> Path:
@@ -81,7 +88,11 @@ class Launcher:
                 self.log_file.unlink()
                 self.log.info("Old log file removed", path=str(self.log_file))
             except Exception as e:
-                self.log.warning("Failed to remove old log file", path=str(self.log_file), error=str(e))
+                self.log.warning(
+                    "Failed to remove old log file",
+                    path=str(self.log_file),
+                    error=str(e),
+                )
 
     def get_daemon_pid(self) -> int | None:
         """Get daemon PID from file if exists and process is running."""
@@ -117,7 +128,9 @@ class Launcher:
             self.log_file = None
 
         # Reinitialize logger with daemon log file
-        self._log = get_logger("launcher", is_root=True, verbose=True, log_file=self.log_file)
+        self._log = get_logger(
+            "launcher", is_root=True, verbose=True, log_file=self.log_file
+        )
 
         # Write PID file
         self.write_daemon_pid(os.getpid())
@@ -162,17 +175,17 @@ class Launcher:
             self_path = os.path.join(executable_dir, "Perpetua")
             if IS_WINDOWS:
                 self_path += ".exe"
-            
-            daemon_cmd = [self_path, '--daemon']
+
+            daemon_cmd = [self_path, "--daemon"]
         else:
             # Running as Python script
             python_exe = self._get_python_executable()
             launcher_script = os.path.join(executable_dir, "launcher.py")
-            daemon_cmd = [python_exe, launcher_script, '--daemon']
+            daemon_cmd = [python_exe, launcher_script, "--daemon"]
 
         # If sys.args has other relevant args, pass them to daemon
         for arg in sys.argv[1:]:
-            if arg not in ('--daemon',):
+            if arg not in ("--daemon",):
                 daemon_cmd.append(arg)
 
         try:
@@ -192,7 +205,9 @@ class Launcher:
                     close_fds=True,
                 )
 
-            self.log.info("Daemon process spawned", mode="compiled" if COMPILED else "script")
+            self.log.info(
+                "Daemon process spawned", mode="compiled" if COMPILED else "script"
+            )
 
             # Wait for daemon to write PID file (up to 3 seconds)
             for _ in range(6):
@@ -213,7 +228,7 @@ class Launcher:
         """Start GUI process."""
         if COMPILED:
             # Running as compiled executable
-            gui_path = os.path.join(executable_dir, '_perpetua')
+            gui_path = os.path.join(executable_dir, "_perpetua")
             if IS_WINDOWS:
                 gui_path += ".exe"
 
@@ -225,7 +240,7 @@ class Launcher:
         else:
             # Running as Python script - start Tauri dev server
             gui_dir = os.path.join(executable_dir, "src-gui")
-            
+
             if not os.path.isdir(gui_dir):
                 self.log.error("GUI directory not found", path=gui_dir)
                 return False
@@ -237,7 +252,7 @@ class Launcher:
                 return False
 
             gui_cmd = [package_manager, "run", "tauri", "dev"]
-            
+
         try:
             if COMPILED:
                 g = subprocess.Popen(
@@ -246,7 +261,7 @@ class Launcher:
                     stderr=subprocess.DEVNULL,
                     stdin=subprocess.DEVNULL,
                     start_new_session=True,
-                    close_fds=True
+                    close_fds=True,
                 )
                 self.log.info("GUI started", mode="compiled")
                 g.wait()
@@ -256,11 +271,11 @@ class Launcher:
                     gui_cmd,
                     cwd=os.path.join(executable_dir, "src-gui"),
                     start_new_session=True,
-                    close_fds=True
+                    close_fds=True,
                 )
                 self.log.info("GUI started in dev mode", mode="script", cwd=gui_cmd)
                 g.wait()
-            
+
             return True
         except Exception as e:
             self.log.error("Failed to start GUI", error=str(e))
@@ -268,13 +283,13 @@ class Launcher:
 
     def _get_package_manager(self) -> str | None:
         """Detect available package manager."""
-        for pm in ['pnpm', 'npm', 'yarn']:
+        for pm in ["pnpm", "npm", "yarn"]:
             try:
                 result = subprocess.run(
-                    [pm, '--version'],
+                    [pm, "--version"],
                     stdout=subprocess.DEVNULL,
                     stderr=subprocess.DEVNULL,
-                    timeout=5
+                    timeout=5,
                 )
                 if result.returncode == 0:
                     return pm
@@ -290,14 +305,16 @@ class Launcher:
         if len(permissions) > 0:
             self.log.info("Requesting missing permissions", permissions=permissions)
             for permission in permissions:
-                result = permission_checker.request_permission(permission.permission_type)
+                result = permission_checker.request_permission(
+                    permission.permission_type
+                )
                 if not result.is_granted:
                     self.log.error("Permission not granted", permission=permission)
                     return 1
 
         # Determine executable directory based on execution mode
         executable_dir = str(self.project_root)
-        
+
         # Start daemon if not already running
         if not self.start_daemon(executable_dir):
             self.log.error("Failed to start daemon")
@@ -308,14 +325,20 @@ class Launcher:
             self.log.error("Failed to start GUI")
             return 1
 
-        self.log.info("Launcher completed successfully", mode="compiled" if COMPILED else "script")
+        self.log.info(
+            "Launcher completed successfully", mode="compiled" if COMPILED else "script"
+        )
         return 0
 
 
 if __name__ == "__main__":
+    Screen.hide_icon()
+
     launcher = None
     launcher_parser = ArgumentParser(description="Perpetua Launcher")
-    launcher_parser.add_argument('--daemon', action='store_true', help='Run only the daemon process')
+    launcher_parser.add_argument(
+        "--daemon", action="store_true", help="Run only the daemon process"
+    )
     daemon_parser = DaemonArguments(parent=launcher_parser)
 
     args = launcher_parser.parse_args()
@@ -323,7 +346,7 @@ if __name__ == "__main__":
         launcher = Launcher(args=args)
         if args.daemon:
             # Reset arguments to avoid recursion
-            sys.argv = [arg for arg in sys.argv if arg != '--daemon']
+            sys.argv = [arg for arg in sys.argv if arg != "--daemon"]
             launcher.run_daemon()
             sys.exit(0)
 

@@ -174,7 +174,7 @@ where
     let quit_i = MenuItem::with_id(app, "quit", "Quit", true, None::<&str>)?;
     let mut menu = MenuBuilder::new(app);
 
-    menu = menu.item(&show).separator();
+    menu = menu.item(&show);
 
     // #[cfg(debug_assertions)]
     menu = menu.item(&MenuItem::with_id(
@@ -184,10 +184,9 @@ where
         true,
         None::<&str>,
     )?);
-
     let menu = menu.separator().item(&quit_i).build()?;
 
-    let tray = TrayIconBuilder::new()
+    let tray = TrayIconBuilder::with_id("main")
         .menu(&menu)
         .on_menu_event(|app, event| match event.id.as_ref() {
             "show_window" => {
@@ -221,13 +220,27 @@ where
             }
         });
 
-    let tray = tray.icon(app.default_window_icon().unwrap().clone());
+    #[allow(unused)]
+    let mut icon_data = app.default_window_icon().unwrap().clone();
+    
+    #[cfg(target_os = "macos")]
+    {
+        icon_data = tauri::image::Image::from_bytes(include_bytes!("../icons/macos/32x32_idle.png"))?;
+    }
+    
+    let mut tray = tray.icon(icon_data);
+
+    #[cfg(target_os = "macos")]
+    {
+        tray = tray.icon_as_template(true)
+    }
 
     tray.show_menu_on_left_click(true).build(app)?;
 
     Ok(())
 }
 
+#[allow(dead_code)]
 fn create_splashscreen_window<R>(app: &AppHandle<R>) -> Result<(), Box<dyn std::error::Error>>
 where
     R: Runtime,
@@ -329,11 +342,12 @@ pub fn run() {
             // -- Log Commands --
             commands::read_daemon_logs,
             commands::get_log_file_path_cmd,
+            // -- UI Commands --
+            commands::switch_tray_icon,
         ])
         .setup(|app| {
             // Initialize connection to the daemon
             tauri::async_runtime::spawn(setup_connection(app.handle().clone()));
-
             Ok(())
         })
         .on_window_event(|window, event| match event {

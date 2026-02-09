@@ -36,3 +36,7 @@ class Screen(_base.Screen):
         Monitor display sleep/wake events on Windows.
         """
         return False  # Placeholder implementation
+
+    @classmethod
+    def hide_icon(cls):
+        pass

@@ -26,7 +26,7 @@ from pynput.mouse import Button, Controller as MouseController
 from pynput.mouse import Listener as MouseListener
 
 from event import (
-    EventType,
+    BusEventType,
     MouseEvent,
     EventMapper,
     CrossScreenCommandEvent,
@@ -77,6 +77,24 @@ class EdgeDetector:
     """
     A utility class for detecting when the mouse cursor reaches the edges of the screen.
     """
+
+    @staticmethod
+    def clamp_to_screen(
+        x: float | int, y: float | int, screen_size: tuple
+    ) -> tuple[float, float]:
+        """
+        Clamps the given (x, y) coordinates to be within the bounds of the screen.
+
+        Args:
+            x (float | int): The x coordinate to clamp.
+            y (float | int): The y coordinate to clamp.
+            screen_size (tuple): A tuple representing the screen size (width, height).
+        Returns:
+            tuple[float, float]: The clamped (x, y) coordinates.
+        """
+        clamped_x = max(0, min(x, screen_size[0] - 1))
+        clamped_y = max(0, min(y, screen_size[1] - 1))
+        return clamped_x, clamped_y
 
     @staticmethod
     def is_at_edge(
@@ -271,17 +289,17 @@ class ServerMouseListener(object):
 
         # Subscribe with async callbacks
         self.event_bus.subscribe(
-            event_type=EventType.ACTIVE_SCREEN_CHANGED,
+            event_type=BusEventType.ACTIVE_SCREEN_CHANGED,
             callback=self._on_active_screen_changed,
             priority=True,
         )
         self.event_bus.subscribe(
-            event_type=EventType.CLIENT_CONNECTED,
+            event_type=BusEventType.CLIENT_CONNECTED,
             callback=self._on_client_connected,
             priority=True,
         )
         self.event_bus.subscribe(
-            event_type=EventType.CLIENT_DISCONNECTED,
+            event_type=BusEventType.CLIENT_DISCONNECTED,
             callback=self._on_client_disconnected,
             priority=True,
         )
@@ -526,7 +544,7 @@ class ServerMouseListener(object):
 
                 # We notify the system that an active screen change has occurred
                 await self.event_bus.dispatch(
-                    event_type=EventType.SCREEN_CHANGE_GUARD,  # We first notify the cursor guard (cursor handler)
+                    event_type=BusEventType.SCREEN_CHANGE_GUARD,  # We first notify the cursor guard (cursor handler)
                     data=ActiveScreenChangedEvent(active_screen=screen),
                 )
 
@@ -598,7 +616,7 @@ class ServerMouseController(object):
 
         # Register for active screen changed events to reposition the cursor
         self.event_bus.subscribe(
-            event_type=EventType.ACTIVE_SCREEN_CHANGED,
+            event_type=BusEventType.ACTIVE_SCREEN_CHANGED,
             callback=self._on_active_screen_changed,
         )
 
@@ -704,10 +722,10 @@ class ClientMouseController(object):
 
         # Subscribe with async callbacks
         self.event_bus.subscribe(
-            event_type=EventType.CLIENT_ACTIVE, callback=self._on_client_active
+            event_type=BusEventType.CLIENT_ACTIVE, callback=self._on_client_active
         )
         self.event_bus.subscribe(
-            event_type=EventType.CLIENT_INACTIVE, callback=self._on_client_inactive
+            event_type=BusEventType.CLIENT_INACTIVE, callback=self._on_client_inactive
         )
 
     def check_cursor_validity(self) -> bool:
@@ -922,6 +940,17 @@ class ClientMouseController(object):
 
                 # If we reach an edge, dispatch event to deactivate client and send cross screen message to server
                 if edge:
+                    # Clamp cursor position to screen bounds
+                    cx, cy = EdgeDetector.clamp_to_screen(x, y, self._screen_size)
+                    if (cx, cy) != (x, y):
+                        try:
+                            self._controller.position = (cx, cy)
+                            x, y = cx, cy
+                        except Exception as e:
+                            self._logger.log(
+                                f"Failed to clamp cursor to screen -> {e}", Logger.ERROR
+                            )
+
                     x, y = EdgeDetector.get_crossing_coords(
                         x=x,
                         y=y,
@@ -945,10 +974,9 @@ class ClientMouseController(object):
                     # Send command and dispatch event sequentially
                     await self.command_stream.send(command)
                     await self.event_bus.dispatch(
-                        event_type=EventType.CLIENT_INACTIVE, data=None
+                        event_type=BusEventType.CLIENT_INACTIVE, data=None
                     )
 
-                    # Piccolo delay per garantire che i messaggi siano stati processati
                     return await asyncio.sleep(0)
 
         except Exception as e:
@@ -1005,7 +1033,11 @@ class ClientMouseController(object):
             except ValueError:
                 return
 
-            self._controller.position = (x, y)
+            try:
+                self._controller.position = (x, y)
+            except Exception as e:
+                # On some platforms, positioning may fail when cursor misses
+                self._logger.log(f"Failed to position cursor -> {e}", Logger.ERROR)
 
     def _click(self, button: int | None, is_pressed: bool):
         """

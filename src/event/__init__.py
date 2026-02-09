@@ -23,7 +23,7 @@ from typing import Optional, Self
 from network.protocol.message import ProtocolMessage, MessageType
 
 
-class EventType(IntEnum):
+class BusEventType(IntEnum):
     """
     Events type to subscribe to and dispatch.
 
@@ -222,6 +222,7 @@ class CommandEvent(Event):
     """
 
     CROSS_SCREEN = "cross_screen"
+    KEYBOARD_STATE_SYNC = "keyboard_state_sync"
 
     def __init__(
         self,
@@ -280,6 +281,42 @@ class CrossScreenCommandEvent(CommandEvent):
         return {
             "command": self.command,
             "params": {"x": self.params.get("x", -1), "y": self.params.get("y", -1)},
+        }
+
+
+class KeyboardStateSyncCommandEvent(CommandEvent):
+    """
+    Keyboard state sync command event data structure.
+    """
+
+    def __init__(
+        self,
+        source: str = "",
+        target: str = "",
+        pressed_keys: Optional[list[str]] = None,
+    ):
+        super().__init__(
+            command=CommandEvent.KEYBOARD_STATE_SYNC,
+            source=source,
+            target=target,
+            params={"pressed_keys": pressed_keys if pressed_keys else []},
+        )
+
+    def get_pressed_keys(self) -> list[str]:
+        return self.params.get("pressed_keys", [])
+
+    @classmethod
+    def from_command_event(cls, event: CommandEvent) -> Self:
+        return cls(
+            source=event.source,
+            target=event.target,
+            pressed_keys=event.params.get("pressed_keys", []),
+        )
+
+    def to_dict(self) -> dict:
+        return {
+            "command": self.command,
+            "params": {"pressed_keys": self.params.get("pressed_keys", [])},
         }
 
 

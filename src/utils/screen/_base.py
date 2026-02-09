@@ -40,3 +40,10 @@ class Screen:
         raise NotImplementedError(
             "Screen lock status check not implemented for this OS."
         )
+
+    @classmethod
+    def hide_icon(cls):
+        """
+        Hides the application icon from the taskbar/dock.
+        """
+        raise NotImplementedError("Icon hiding not implemented for this OS.")

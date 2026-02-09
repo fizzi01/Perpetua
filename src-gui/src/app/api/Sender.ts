@@ -87,3 +87,11 @@ export function enableStream(streamType: StreamType): Promise<void> {
 export function disableStream(streamType: StreamType): Promise<void> {
     return invoke(getType(CommandType, CommandType.DisableStream), { streamType });
 }
+
+export function switchTrayIcon(active: boolean): void {
+    try {
+        invoke("switch_tray_icon", { active });
+    } catch (error) {
+        console.error("Failed to switch tray icon:", error);
+    }
+}

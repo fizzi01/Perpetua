@@ -296,6 +296,46 @@ class TestEdgeDetector:
         assert x == -1
         assert y == -1
 
+    def test_clamp_to_screen_within_bounds(self, screen_size):
+        """Test coordinates within bounds remain unchanged."""
+        x, y = EdgeDetector.clamp_to_screen(100, 200, screen_size)
+        assert x == 100
+        assert y == 200
+
+    def test_clamp_to_screen_left_edge(self, screen_size):
+        """Test clamping coordinates beyond left edge."""
+        x, y = EdgeDetector.clamp_to_screen(-5, 500, screen_size)
+        assert x == 0
+        assert y == 500
+
+    def test_clamp_to_screen_right_edge(self, screen_size):
+        """Test clamping coordinates beyond right edge."""
+        x, y = EdgeDetector.clamp_to_screen(1925, 500, screen_size)
+        assert x == 1919  # screen_size[0] - 1
+        assert y == 500
+
+    def test_clamp_to_screen_top_edge(self, screen_size):
+        """Test clamping coordinates beyond top edge."""
+        x, y = EdgeDetector.clamp_to_screen(500, -10, screen_size)
+        assert x == 500
+        assert y == 0
+
+    def test_clamp_to_screen_bottom_edge(self, screen_size):
+        """Test clamping coordinates beyond bottom edge."""
+        x, y = EdgeDetector.clamp_to_screen(500, 1085, screen_size)
+        assert x == 500
+        assert y == 1079  # screen_size[1] - 1
+
+    def test_clamp_to_screen_multiple_edges(self, screen_size):
+        """Test clamping coordinates beyond multiple edges."""
+        x, y = EdgeDetector.clamp_to_screen(-10, -20, screen_size)
+        assert x == 0
+        assert y == 0
+
+        x, y = EdgeDetector.clamp_to_screen(2000, 1100, screen_size)
+        assert x == 1919
+        assert y == 1079
+
 
 # ============================================================================
 # ServerMouseListener Tests

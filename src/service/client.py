@@ -42,7 +42,7 @@ from event.notification import (
     ServerChoiceNeededEvent,
     ServiceErrorEvent,
 )
-from event import EventType, ClientStreamReconnectedEvent
+from event import BusEventType, ClientStreamReconnectedEvent
 from network.connection.client import ConnectionHandler
 from network.stream.handler.client import (
     UnidirectionalStreamHandler,
@@ -1272,7 +1272,7 @@ class Client:
                     self._logger.error(f"Failed to start stream handler: {stream_type}")
 
         # Dispatch event
-        await self.event_bus.dispatch(event_type=EventType.CLIENT_ACTIVE, data=None)
+        await self.event_bus.dispatch(event_type=BusEventType.CLIENT_ACTIVE, data=None)
 
         await self.save_config()
 
@@ -1290,7 +1290,9 @@ class Client:
         self._connected = False
 
         # Dispatch event
-        await self.event_bus.dispatch(event_type=EventType.CLIENT_INACTIVE, data=None)
+        await self.event_bus.dispatch(
+            event_type=BusEventType.CLIENT_INACTIVE, data=None
+        )
 
         # Stop all stream handlers
         for stream_type, handler in list(self._stream_handlers.items()):
@@ -1321,7 +1323,7 @@ class Client:
         """Handle streams reconnected event"""
         self._logger.info("Streams reconnected", streams=streams)
         await self.event_bus.dispatch(
-            event_type=EventType.CLIENT_STREAM_RECONNECTED,
+            event_type=BusEventType.CLIENT_STREAM_RECONNECTED,
             data=ClientStreamReconnectedEvent(
                 client_screen=client.get_screen_position(), streams=streams
             ),

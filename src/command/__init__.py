@@ -22,7 +22,7 @@ Contains the logic to handle client/server commands coming from command streams.
 
 import asyncio
 from event import (
-    EventType,
+    BusEventType,
     CommandEvent,
     EventMapper,
     ActiveScreenChangedEvent,
@@ -86,7 +86,7 @@ class CommandHandler:
             # Async dispatch
             await self.event_bus.dispatch(
                 # when ServerMouseController receives this event will set the correct cursor position
-                event_type=EventType.SCREEN_CHANGE_GUARD,  # We first notify the cursor guard (cursor handler)
+                event_type=BusEventType.SCREEN_CHANGE_GUARD,  # We first notify the cursor guard (cursor handler)
                 data=ActiveScreenChangedEvent(
                     active_screen=None,
                     source=event.source,
@@ -96,7 +96,7 @@ class CommandHandler:
         else:
             # Dispatch CLIENT_ACTIVE event to notify that client itself is now active
             await self.event_bus.dispatch(
-                event_type=EventType.CLIENT_ACTIVE,
+                event_type=BusEventType.CLIENT_ACTIVE,
                 data=ClientActiveEvent(
                     client_screen=event.target,
                 ),
