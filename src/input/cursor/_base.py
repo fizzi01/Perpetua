@@ -180,7 +180,7 @@ class CursorHandlerWindow(wx.Frame):
                     # time.sleep(0)
                     continue
         except Exception as e:
-            print(f"Error processing commands: {e}")
+            self._logger.error(f"Error processing commands ({e})")
 
     def _quit_app(self):
         """Quit the wx application properly"""

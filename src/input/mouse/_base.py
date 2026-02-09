@@ -79,6 +79,22 @@ class EdgeDetector:
     """
 
     @staticmethod
+    def clamp_to_screen(x: float | int, y: float | int, screen_size: tuple) -> tuple[float, float]:
+        """
+        Clamps the given (x, y) coordinates to be within the bounds of the screen.
+
+        Args:
+            x (float | int): The x coordinate to clamp.
+            y (float | int): The y coordinate to clamp.
+            screen_size (tuple): A tuple representing the screen size (width, height).
+        Returns:
+            tuple[float, float]: The clamped (x, y) coordinates.
+        """
+        clamped_x = max(0, min(x, screen_size[0] - 1))
+        clamped_y = max(0, min(y, screen_size[1] - 1))
+        return clamped_x, clamped_y
+
+    @staticmethod
     def is_at_edge(
         movement_history: list,
         x: float | int,
@@ -922,6 +938,17 @@ class ClientMouseController(object):
 
                 # If we reach an edge, dispatch event to deactivate client and send cross screen message to server
                 if edge:
+                                        # Clamp cursor position to screen bounds
+                    cx, cy = EdgeDetector.clamp_to_screen(x, y, self._screen_size)
+                    if (cx, cy) != (x, y):
+                        try:
+                            self._controller.position = (cx, cy)
+                            x, y = cx, cy
+                        except Exception as e:
+                            self._logger.log(
+                                f"Failed to clamp cursor to screen -> {e}", Logger.ERROR
+                            )
+                    
                     x, y = EdgeDetector.get_crossing_coords(
                         x=x,
                         y=y,
@@ -948,7 +975,6 @@ class ClientMouseController(object):
                         event_type=BusEventType.CLIENT_INACTIVE, data=None
                     )
 
-                    # Piccolo delay per garantire che i messaggi siano stati processati
                     return await asyncio.sleep(0)
 
         except Exception as e:
