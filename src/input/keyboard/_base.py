@@ -125,6 +125,7 @@ class ServerKeyboardListener(object):
         self._listening = False
         self._active_screens = {}
         self._screen_size: tuple[int, int] = Screen.get_size()
+        self._caps_lock_state = False
 
         # Check platform to set appropriate mouse filter
         self._filter_args = {}
@@ -306,6 +307,9 @@ class ServerKeyboardListener(object):
         """
         Callback for key press events.
         """
+        if key and key == Key.caps_lock:
+            self._caps_lock_state = not self._caps_lock_state
+
         if not self._listening or key is None:
             return
 
@@ -393,7 +397,7 @@ class ClientKeyboardController(object):
         # Track pressed keys for hotkey combinations
         self.pressed_keys = set()
         self._pressed_general_keys = set()
-        self.is_caps_locked = False
+        self._caps_lock_state = False
 
         self._logger = get_logger(self.__class__.__name__)
 

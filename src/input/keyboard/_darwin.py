@@ -40,7 +40,7 @@ class ServerKeyboardListener(_base.ServerKeyboardListener):
 
             media_volume_event = 14
 
-            if caps_lock != 0:
+            if caps_lock != 0 and not self._caps_lock_state:
                 return event
             elif event_type == Quartz.kCGEventKeyDown:  # Key press event
                 pass
