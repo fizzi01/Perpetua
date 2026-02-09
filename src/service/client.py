@@ -1290,7 +1290,9 @@ class Client:
         self._connected = False
 
         # Dispatch event
-        await self.event_bus.dispatch(event_type=BusEventType.CLIENT_INACTIVE, data=None)
+        await self.event_bus.dispatch(
+            event_type=BusEventType.CLIENT_INACTIVE, data=None
+        )
 
         # Stop all stream handlers
         for stream_type, handler in list(self._stream_handlers.items()):

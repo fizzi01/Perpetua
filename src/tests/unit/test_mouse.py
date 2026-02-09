@@ -1086,7 +1086,9 @@ class TestClientMouseControllerDarwin:
             "input.mouse._base.MouseController", return_value=mock_mouse_controller
         ):
             with patch("input.mouse._base.Screen.get_size", return_value=(1920, 1080)):
-                from input.mouse._darwin import ClientMouseController as DarwinClientMouseController
+                from input.mouse._darwin import (
+                    ClientMouseController as DarwinClientMouseController,
+                )
 
                 controller = DarwinClientMouseController(
                     event_bus,
@@ -1114,7 +1116,9 @@ class TestClientMouseControllerDarwin:
             "input.mouse._base.MouseController", return_value=mock_mouse_controller
         ):
             with patch("input.mouse._base.Screen.get_size", return_value=(1920, 1080)):
-                from input.mouse._darwin import ClientMouseController as DarwinClientMouseController
+                from input.mouse._darwin import (
+                    ClientMouseController as DarwinClientMouseController,
+                )
 
                 controller = DarwinClientMouseController(
                     event_bus,
@@ -1142,7 +1146,9 @@ class TestClientMouseControllerDarwin:
             "input.mouse._base.MouseController", return_value=mock_mouse_controller
         ):
             with patch("input.mouse._base.Screen.get_size", return_value=(1920, 1080)):
-                from input.mouse._darwin import ClientMouseController as DarwinClientMouseController
+                from input.mouse._darwin import (
+                    ClientMouseController as DarwinClientMouseController,
+                )
 
                 controller = DarwinClientMouseController(
                     event_bus,
@@ -1170,7 +1176,9 @@ class TestClientMouseControllerDarwin:
             "input.mouse._base.MouseController", return_value=mock_mouse_controller
         ):
             with patch("input.mouse._base.Screen.get_size", return_value=(1920, 1080)):
-                from input.mouse._darwin import ClientMouseController as DarwinClientMouseController
+                from input.mouse._darwin import (
+                    ClientMouseController as DarwinClientMouseController,
+                )
 
                 controller = DarwinClientMouseController(
                     event_bus,
@@ -1198,7 +1206,9 @@ class TestClientMouseControllerDarwin:
             "input.mouse._base.MouseController", return_value=mock_mouse_controller
         ):
             with patch("input.mouse._base.Screen.get_size", return_value=(1920, 1080)):
-                from input.mouse._darwin import ClientMouseController as DarwinClientMouseController
+                from input.mouse._darwin import (
+                    ClientMouseController as DarwinClientMouseController,
+                )
 
                 controller = DarwinClientMouseController(
                     event_bus,
@@ -1226,7 +1236,9 @@ class TestClientMouseControllerDarwin:
             "input.mouse._base.MouseController", return_value=mock_mouse_controller
         ):
             with patch("input.mouse._base.Screen.get_size", return_value=(1920, 1080)):
-                from input.mouse._darwin import ClientMouseController as DarwinClientMouseController
+                from input.mouse._darwin import (
+                    ClientMouseController as DarwinClientMouseController,
+                )
 
                 controller = DarwinClientMouseController(
                     event_bus,
@@ -1254,7 +1266,9 @@ class TestClientMouseControllerDarwin:
             "input.mouse._base.MouseController", return_value=mock_mouse_controller
         ):
             with patch("input.mouse._base.Screen.get_size", return_value=(1920, 1080)):
-                from input.mouse._darwin import ClientMouseController as DarwinClientMouseController
+                from input.mouse._darwin import (
+                    ClientMouseController as DarwinClientMouseController,
+                )
 
                 controller = DarwinClientMouseController(
                     event_bus,
@@ -1281,7 +1295,9 @@ class TestClientMouseControllerDarwin:
         with patch(
             "input.mouse._base.MouseController", return_value=mock_mouse_controller
         ):
-            from input.mouse._darwin import ClientMouseController as DarwinClientMouseController
+            from input.mouse._darwin import (
+                ClientMouseController as DarwinClientMouseController,
+            )
 
             controller = DarwinClientMouseController(
                 event_bus,

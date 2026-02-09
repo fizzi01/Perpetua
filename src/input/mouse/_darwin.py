@@ -20,7 +20,15 @@ Provides mouse input support for macOS (Darwin) systems.
 #  along with this program.  If not, see <https://www.gnu.org/licenses/>.
 #
 
-import Quartz
+from Quartz import (
+    kCGEventLeftMouseDown,  # ty:ignore[unresolved-import]
+    kCGEventRightMouseDown,  # ty:ignore[unresolved-import]
+    kCGEventOtherMouseDown,  # ty:ignore[unresolved-import]
+    kCGEventLeftMouseDragged,  # ty:ignore[unresolved-import]
+    kCGEventRightMouseDragged,  # ty:ignore[unresolved-import]
+    kCGEventOtherMouseDragged,  # ty:ignore[unresolved-import]
+    kCGEventScrollWheel,  # ty:ignore[unresolved-import]
+)
 from AppKit import (
     NSEventTypeGesture,  # ty:ignore[unresolved-import]
     NSEventTypeBeginGesture,  # ty:ignore[unresolved-import]
@@ -71,13 +79,13 @@ class ServerMouseListener(_base.ServerMouseListener):
             if (
                 event_type
                 in [
-                    Quartz.kCGEventLeftMouseDown,
-                    Quartz.kCGEventRightMouseDown,
-                    Quartz.kCGEventOtherMouseDown,
-                    Quartz.kCGEventLeftMouseDragged,
-                    Quartz.kCGEventRightMouseDragged,
-                    Quartz.kCGEventOtherMouseDragged,
-                    Quartz.kCGEventScrollWheel,
+                    kCGEventLeftMouseDown,
+                    kCGEventRightMouseDown,
+                    kCGEventOtherMouseDown,
+                    kCGEventLeftMouseDragged,
+                    kCGEventRightMouseDragged,
+                    kCGEventOtherMouseDragged,
+                    kCGEventScrollWheel,
                 ]
                 + gesture_events
             ):

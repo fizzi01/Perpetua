@@ -49,7 +49,7 @@ class Builder:
         self.release = release
         self.target = target
         if not self.target:
-            self.target= self.architecture.lower()
+            self.target = self.architecture.lower()
 
         self.system = sys.platform
         self.is_macos = self.system == "darwin"
@@ -67,10 +67,8 @@ class Builder:
         if parsed_target:
             build_type = Path(parsed_target) / build_type
 
-        self.tauri_target =  self.gui_dir / "src-tauri" / "target" / build_type
-        self.gui_exe = (
-             self.tauri_target / GUI_EXECUTABLE
-        )
+        self.tauri_target = self.gui_dir / "src-tauri" / "target" / build_type
+        self.gui_exe = self.tauri_target / GUI_EXECUTABLE
         self.src_dir = project_root / "src"
         self.build_dir = project_root / ".build" / build_type
 
@@ -109,7 +107,7 @@ class Builder:
                 "aarch64": "aarch64-pc-windows-msvc",
                 "arm64": "aarch64-pc-windows-msvc",
                 "i686": "i686-pc-windows-msvc",
-            }
+            },
         }
 
         platform_map = target_map.get(self.system, {})
@@ -222,7 +220,7 @@ class Builder:
             return self._copy_data_files()
         else:
             return ret
-        
+
     def _clean_gui_artifacts(self):
         self.log.info("Cleaning GUI build artifacts")
 
@@ -230,7 +228,6 @@ class Builder:
         if artifacts.exists():
             self.log.debug(f"Removing {artifacts}")
             shutil.rmtree(artifacts)
-        
 
     def _clean_data_files(self):
         try:
@@ -280,9 +277,7 @@ class Builder:
         # Check that the GUI executable exists
         if not output_exe.exists():
             # Try to copy data files
-            self.log.warning(
-                "GUI executable not found, attempting to copy data files"
-            )
+            self.log.warning("GUI executable not found, attempting to copy data files")
             if self._copy_data_files() != 0:
                 self.log.error("GUI executable not found and failed to copy data files")
                 return 1
@@ -394,8 +389,12 @@ class Builder:
 
 def main():
     parser = argparse.ArgumentParser(description="Build script")
-    parser.add_argument("--skip-gui", "-d", action="store_true", help="Skip GUI build (Daemon only)")
-    parser.add_argument("--skip-daemon", "-g", action="store_true", help="Skip daemon build (GUI only)")
+    parser.add_argument(
+        "--skip-gui", "-d", action="store_true", help="Skip GUI build (Daemon only)"
+    )
+    parser.add_argument(
+        "--skip-daemon", "-g", action="store_true", help="Skip daemon build (GUI only)"
+    )
     parser.add_argument("--clean", "-c", action="store_true", help="Clean before build")
     parser.add_argument("--debug", action="store_true", help="Debug build")
     parser.add_argument(
@@ -405,7 +404,8 @@ def main():
         choices=["x86_64", "amd64", "aarch64", "arm64", "i686"],
     )
     parser.add_argument(
-        "--nuitka-args", "-n",
+        "--nuitka-args",
+        "-n",
         nargs=argparse.REMAINDER,
         default=[],
         help="Extra arguments for Nuitka",
