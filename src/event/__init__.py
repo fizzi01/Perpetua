@@ -23,7 +23,7 @@ from typing import Optional, Self
 from network.protocol.message import ProtocolMessage, MessageType
 
 
-class EventType(IntEnum):
+class BusEventType(IntEnum):
     """
     Events type to subscribe to and dispatch.
 
@@ -222,6 +222,7 @@ class CommandEvent(Event):
     """
 
     CROSS_SCREEN = "cross_screen"
+    KEYBOARD_STATE_SYNC = "keyboard_state_sync"
 
     def __init__(
         self,

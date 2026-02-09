@@ -38,7 +38,7 @@ from event.notification import (
     StreamDisabledEvent,
 )
 from event import (
-    EventType,
+    BusEventType,
     ClientConnectedEvent,
     ClientDisconnectedEvent,
     ClientStreamReconnectedEvent,
@@ -1085,7 +1085,7 @@ class Server:
     async def _on_client_connected(self, client: ClientObj, streams: list[int]):
         """Handle client connection event"""
         await self.event_bus.dispatch(
-            event_type=EventType.CLIENT_CONNECTED,
+            event_type=BusEventType.CLIENT_CONNECTED,
             data=ClientConnectedEvent(
                 client_screen=client.get_screen_position(), streams=streams
             ),
@@ -1106,7 +1106,7 @@ class Server:
     async def _on_client_disconnected(self, client: ClientObj, streams: list[int]):
         """Handle client disconnection event"""
         await self.event_bus.dispatch(
-            event_type=EventType.CLIENT_DISCONNECTED,
+            event_type=BusEventType.CLIENT_DISCONNECTED,
             data=ClientDisconnectedEvent(
                 client_screen=client.get_screen_position(), streams=streams
             ),
@@ -1128,7 +1128,7 @@ class Server:
     ):
         """Handle client stream reconnection event"""
         await self.event_bus.dispatch(
-            event_type=EventType.CLIENT_STREAM_RECONNECTED,
+            event_type=BusEventType.CLIENT_STREAM_RECONNECTED,
             data=ClientStreamReconnectedEvent(
                 client_screen=client.get_screen_position(), streams=streams
             ),

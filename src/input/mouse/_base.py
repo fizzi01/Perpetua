@@ -26,7 +26,7 @@ from pynput.mouse import Button, Controller as MouseController
 from pynput.mouse import Listener as MouseListener
 
 from event import (
-    EventType,
+    BusEventType,
     MouseEvent,
     EventMapper,
     CrossScreenCommandEvent,
@@ -271,17 +271,17 @@ class ServerMouseListener(object):
 
         # Subscribe with async callbacks
         self.event_bus.subscribe(
-            event_type=EventType.ACTIVE_SCREEN_CHANGED,
+            event_type=BusEventType.ACTIVE_SCREEN_CHANGED,
             callback=self._on_active_screen_changed,
             priority=True,
         )
         self.event_bus.subscribe(
-            event_type=EventType.CLIENT_CONNECTED,
+            event_type=BusEventType.CLIENT_CONNECTED,
             callback=self._on_client_connected,
             priority=True,
         )
         self.event_bus.subscribe(
-            event_type=EventType.CLIENT_DISCONNECTED,
+            event_type=BusEventType.CLIENT_DISCONNECTED,
             callback=self._on_client_disconnected,
             priority=True,
         )
@@ -526,7 +526,7 @@ class ServerMouseListener(object):
 
                 # We notify the system that an active screen change has occurred
                 await self.event_bus.dispatch(
-                    event_type=EventType.SCREEN_CHANGE_GUARD,  # We first notify the cursor guard (cursor handler)
+                    event_type=BusEventType.SCREEN_CHANGE_GUARD,  # We first notify the cursor guard (cursor handler)
                     data=ActiveScreenChangedEvent(active_screen=screen),
                 )
 
@@ -598,7 +598,7 @@ class ServerMouseController(object):
 
         # Register for active screen changed events to reposition the cursor
         self.event_bus.subscribe(
-            event_type=EventType.ACTIVE_SCREEN_CHANGED,
+            event_type=BusEventType.ACTIVE_SCREEN_CHANGED,
             callback=self._on_active_screen_changed,
         )
 
@@ -704,10 +704,10 @@ class ClientMouseController(object):
 
         # Subscribe with async callbacks
         self.event_bus.subscribe(
-            event_type=EventType.CLIENT_ACTIVE, callback=self._on_client_active
+            event_type=BusEventType.CLIENT_ACTIVE, callback=self._on_client_active
         )
         self.event_bus.subscribe(
-            event_type=EventType.CLIENT_INACTIVE, callback=self._on_client_inactive
+            event_type=BusEventType.CLIENT_INACTIVE, callback=self._on_client_inactive
         )
 
     def check_cursor_validity(self) -> bool:
@@ -945,7 +945,7 @@ class ClientMouseController(object):
                     # Send command and dispatch event sequentially
                     await self.command_stream.send(command)
                     await self.event_bus.dispatch(
-                        event_type=EventType.CLIENT_INACTIVE, data=None
+                        event_type=BusEventType.CLIENT_INACTIVE, data=None
                     )
 
                     # Piccolo delay per garantire che i messaggi siano stati processati

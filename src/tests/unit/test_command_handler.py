@@ -27,7 +27,7 @@ import pytest
 
 from command import CommandHandler
 from event import (
-    EventType,
+    BusEventType,
     CommandEvent,
     ActiveScreenChangedEvent,
     CrossScreenCommandEvent,
@@ -213,7 +213,7 @@ class TestHandleCrossScreen:
         call_args = mock_event_bus.dispatch.call_args
 
         # Check event type
-        assert call_args.kwargs["event_type"] == EventType.SCREEN_CHANGE_GUARD
+        assert call_args.kwargs["event_type"] == BusEventType.SCREEN_CHANGE_GUARD
 
         # Check event data
         event_data = call_args.kwargs["data"]
@@ -239,7 +239,7 @@ class TestHandleCrossScreen:
         call_args = mock_event_bus.dispatch.call_args
 
         # Check event type
-        assert call_args.kwargs["event_type"] == EventType.CLIENT_ACTIVE
+        assert call_args.kwargs["event_type"] == BusEventType.CLIENT_ACTIVE
 
         # Check event data
         event_data = call_args.kwargs["data"]
@@ -373,7 +373,7 @@ class TestIntegrationScenarios:
         call_args = mock_event_bus.dispatch.call_args
 
         # Verify correct event type
-        assert call_args.kwargs["event_type"] == EventType.SCREEN_CHANGE_GUARD
+        assert call_args.kwargs["event_type"] == BusEventType.SCREEN_CHANGE_GUARD
 
         # Verify event data
         event_data = call_args.kwargs["data"]
@@ -405,7 +405,7 @@ class TestIntegrationScenarios:
         call_args = mock_event_bus.dispatch.call_args
 
         # Verify correct event type
-        assert call_args.kwargs["event_type"] == EventType.CLIENT_ACTIVE
+        assert call_args.kwargs["event_type"] == BusEventType.CLIENT_ACTIVE
 
         # Verify event data
         event_data = call_args.kwargs["data"]

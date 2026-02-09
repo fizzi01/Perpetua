@@ -23,7 +23,7 @@ from model.client import ClientsManager
 
 from event.bus import EventBus
 from event import (
-    EventType,
+    BusEventType,
     ActiveScreenChangedEvent,
     ClientDisconnectedEvent,
     ClientConnectedEvent,
@@ -345,14 +345,14 @@ class MulticastStreamHandler(_ServerStreamHandler):
         # self.event_bus.subscribe(event_type=EventType.ACTIVE_SCREEN_CHANGED, callback=self._on_active_screen_changed)
 
         self.event_bus.subscribe(
-            event_type=EventType.CLIENT_CONNECTED, callback=self._on_client_connected
+            event_type=BusEventType.CLIENT_CONNECTED, callback=self._on_client_connected
         )
         self.event_bus.subscribe(
-            event_type=EventType.CLIENT_DISCONNECTED,
+            event_type=BusEventType.CLIENT_DISCONNECTED,
             callback=self._on_client_disconnected,
         )
         self.event_bus.subscribe(
-            event_type=EventType.CLIENT_STREAM_RECONNECTED,
+            event_type=BusEventType.CLIENT_STREAM_RECONNECTED,
             callback=self._on_streams_reconnected,
         )
 

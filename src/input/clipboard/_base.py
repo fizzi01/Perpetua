@@ -24,7 +24,7 @@ import hashlib
 
 from event import (
     ClipboardEvent,
-    EventType,
+    BusEventType,
     EventMapper,
     ClientConnectedEvent,
     ClientDisconnectedEvent,
@@ -357,14 +357,14 @@ class ClipboardListener:
         )
 
         self.event_bus.subscribe(
-            event_type=EventType.CLIENT_CONNECTED, callback=self._on_client_connected
+            event_type=BusEventType.CLIENT_CONNECTED, callback=self._on_client_connected
         )
         self.event_bus.subscribe(
-            event_type=EventType.CLIENT_DISCONNECTED,
+            event_type=BusEventType.CLIENT_DISCONNECTED,
             callback=self._on_client_disconnected,
         )
         self.event_bus.subscribe(
-            event_type=EventType.CLIENT_ACTIVE, callback=self._on_client_active
+            event_type=BusEventType.CLIENT_ACTIVE, callback=self._on_client_active
         )
         # Behavior change: We do not stop listening on inactive clients
         # self.event_bus.subscribe(event_type=EventType.CLIENT_INACTIVE, callback=self._on_client_inactive)
