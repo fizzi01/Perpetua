@@ -79,6 +79,23 @@ class KeyUtilities:
         return None
 
     @staticmethod
+    def map_vk(vk_code: int) -> KeyCode:
+        """
+        Maps a virtual key code to a pynput KeyCode.
+        """
+        return KeyCode.from_vk(vk_code)
+
+    @staticmethod
+    def map_to_key(kc: KeyCode) -> Key | None:
+        """
+        Maps a pynput KeyCode to a Key if possible, otherwise returns None.
+        """
+        try:
+            return Key(kc)
+        except (KeyError, AttributeError, ValueError):
+            return None
+
+    @staticmethod
     def is_special(
         key: Key | KeyCode | None, filter_out: Optional[list[Key]] = None
     ) -> bool:

@@ -21,9 +21,12 @@ from event.bus import EventBus
 from network.stream.handler import StreamHandler
 
 from . import _base
+from ._base import KeyUtilities, Key
 
 
 class ServerKeyboardListener(_base.ServerKeyboardListener):
+    MEDIA_VOLUME_EVENT = 14
+
     def __init__(
         self,
         event_bus: EventBus,
@@ -36,15 +39,20 @@ class ServerKeyboardListener(_base.ServerKeyboardListener):
     def _darwin_suppress_filter(self, event_type, event):
         if self._listening:
             flags = Quartz.CGEventGetFlags(event)
-            caps_lock = flags & Quartz.kCGEventFlagMaskAlphaShift
 
-            media_volume_event = 14
+            # Handle Caps Lock state
+            key_code = Quartz.CGEventGetIntegerValueField(event, Quartz.kCGKeyboardEventKeycode)
+            key = KeyUtilities.map_vk(key_code)
+            key = KeyUtilities.map_to_key(key)
+            caps_lock = flags & Quartz.kCGEventFlagMaskAlphaShift
+            if caps_lock != 0 and not key == Key.caps_lock:
+                caps_lock = 0
 
             if caps_lock != 0 and not self._caps_lock_state:
                 return event
             elif event_type == Quartz.kCGEventKeyDown:  # Key press event
                 pass
-            elif event_type == media_volume_event:
+            elif event_type == self.MEDIA_VOLUME_EVENT:
                 pass
             else:
                 return event
