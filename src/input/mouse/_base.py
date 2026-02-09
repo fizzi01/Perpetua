@@ -1005,7 +1005,11 @@ class ClientMouseController(object):
             except ValueError:
                 return
 
-            self._controller.position = (x, y)
+            try:
+                self._controller.position = (x, y)
+            except Exception as e:
+                # On some platforms, positioning may fail when cursor misses
+                self._logger.log(f"Failed to position cursor -> {e}", Logger.ERROR)
 
     def _click(self, button: int | None, is_pressed: bool):
         """
