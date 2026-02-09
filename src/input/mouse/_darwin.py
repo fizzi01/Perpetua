@@ -22,16 +22,17 @@ Provides mouse input support for macOS (Darwin) systems.
 
 import Quartz
 from AppKit import (
-    NSEventTypeGesture,
-    NSEventTypeBeginGesture,
-    NSEventTypeSwipe,
-    NSEventTypeRotate,
-    NSEventTypeMagnify,
+    NSEventTypeGesture,  # ty:ignore[unresolved-import]
+    NSEventTypeBeginGesture,  # ty:ignore[unresolved-import]
+    NSEventTypeSwipe,  # ty:ignore[unresolved-import]
+    NSEventTypeRotate,  # ty:ignore[unresolved-import]
+    NSEventTypeMagnify,  # ty:ignore[unresolved-import]
 )
 
 
 from . import _base
 from ._base import Logger
+
 
 def _no_suppress_filter(event_type, event):
     return event

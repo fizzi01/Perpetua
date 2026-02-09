@@ -15,7 +15,15 @@
 #  along with this program.  If not, see <https://www.gnu.org/licenses/>.
 #
 
-import Quartz
+from Quartz import (
+    CGEventGetFlags,  # ty:ignore[unresolved-import]
+    CGEventGetIntegerValueField,  # ty:ignore[unresolved-import]
+    kCGKeyboardEventKeycode,  # ty:ignore[unresolved-import]
+    NSEventModifierFlagCapsLock,  # ty:ignore[unresolved-import]
+    kCGEventFlagMaskAlphaShift,  # ty:ignore[unresolved-import]
+    kCGEventKeyDown,  # ty:ignore[unresolved-import]
+)
+from AppKit import NSEvent  # ty:ignore[unresolved-import]
 
 from event.bus import EventBus
 from network.stream.handler import StreamHandler
@@ -36,21 +44,19 @@ class ServerKeyboardListener(_base.ServerKeyboardListener):
     ):
         super().__init__(event_bus, stream_handler, command_stream, filtering)
 
+    @staticmethod
+    def _get_lock_state() -> bool:
+        return NSEvent.modifierFlags() & NSEventModifierFlagCapsLock != 0
+
     def _darwin_suppress_filter(self, event_type, event):
         if self._listening:
-            flags = Quartz.CGEventGetFlags(event)
+            flags = CGEventGetFlags(event)
 
             # Handle Caps Lock state
-            key_code = Quartz.CGEventGetIntegerValueField(event, Quartz.kCGKeyboardEventKeycode)
-            key = KeyUtilities.map_vk(key_code)
-            key = KeyUtilities.map_to_key(key)
-            caps_lock = flags & Quartz.kCGEventFlagMaskAlphaShift
-            if caps_lock != 0 and not key == Key.caps_lock:
-                caps_lock = 0
-
-            if caps_lock != 0 and not self._caps_lock_state:
+            caps_lock = flags & kCGEventFlagMaskAlphaShift
+            if caps_lock != 0 and not self._get_lock_state():
                 return event
-            elif event_type == Quartz.kCGEventKeyDown:  # Key press event
+            elif event_type == kCGEventKeyDown:  # Key press event
                 pass
             elif event_type == self.MEDIA_VOLUME_EVENT:
                 pass

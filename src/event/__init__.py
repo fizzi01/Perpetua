@@ -284,6 +284,42 @@ class CrossScreenCommandEvent(CommandEvent):
         }
 
 
+class KeyboardStateSyncCommandEvent(CommandEvent):
+    """
+    Keyboard state sync command event data structure.
+    """
+
+    def __init__(
+        self,
+        source: str = "",
+        target: str = "",
+        pressed_keys: Optional[list[str]] = None,
+    ):
+        super().__init__(
+            command=CommandEvent.KEYBOARD_STATE_SYNC,
+            source=source,
+            target=target,
+            params={"pressed_keys": pressed_keys if pressed_keys else []},
+        )
+
+    def get_pressed_keys(self) -> list[str]:
+        return self.params.get("pressed_keys", [])
+
+    @classmethod
+    def from_command_event(cls, event: CommandEvent) -> Self:
+        return cls(
+            source=event.source,
+            target=event.target,
+            pressed_keys=event.params.get("pressed_keys", []),
+        )
+
+    def to_dict(self) -> dict:
+        return {
+            "command": self.command,
+            "params": {"pressed_keys": self.params.get("pressed_keys", [])},
+        }
+
+
 class ScreenEvent(Event):
     """
     Screen event data structure.
