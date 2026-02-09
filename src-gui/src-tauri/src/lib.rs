@@ -221,7 +221,13 @@ where
             }
         });
 
-    let tray = tray.icon(app.default_window_icon().unwrap().clone());
+    let mut tray = tray.icon(app.default_window_icon().unwrap().clone());
+
+
+    #[cfg(target_os = "macos")]
+    {
+        tray = tray.icon_as_template(true)
+    }
 
     tray.show_menu_on_left_click(true).build(app)?;
 
