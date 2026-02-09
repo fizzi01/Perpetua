@@ -412,9 +412,7 @@ pub fn run() {
             let state = _app_handle.state::<Mutex<AppState>>();
             let state = state.lock().unwrap();
             if !has_visible_windows && state.connected {
-                let window = _app_handle.get_webview_window("main").unwrap();
-                window.show().unwrap();
-                window.set_focus().unwrap();
+                show_window(&_app_handle, "main");
             }
         }
         _ => {}

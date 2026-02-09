@@ -308,6 +308,7 @@ class Builder:
                     "--macos-app-protected-resource=NSAppleEventsUsageDescription:Automation Control",
                     f"--macos-app-name={APP_NAME}",
                     f"--macos-app-icon={self.icons_dir / 'icon.icns'}",
+                    "--macos-app-mode=ui-element",
                 ]
             )
 

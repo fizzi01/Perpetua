@@ -332,8 +332,6 @@ class Launcher:
 
 
 if __name__ == "__main__":
-    Screen.hide_icon()
-
     launcher = None
     launcher_parser = ArgumentParser(description="Perpetua Launcher")
     launcher_parser.add_argument(
