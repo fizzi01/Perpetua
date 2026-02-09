@@ -79,7 +79,9 @@ class EdgeDetector:
     """
 
     @staticmethod
-    def clamp_to_screen(x: float | int, y: float | int, screen_size: tuple) -> tuple[float, float]:
+    def clamp_to_screen(
+        x: float | int, y: float | int, screen_size: tuple
+    ) -> tuple[float, float]:
         """
         Clamps the given (x, y) coordinates to be within the bounds of the screen.
 
@@ -938,7 +940,7 @@ class ClientMouseController(object):
 
                 # If we reach an edge, dispatch event to deactivate client and send cross screen message to server
                 if edge:
-                                        # Clamp cursor position to screen bounds
+                    # Clamp cursor position to screen bounds
                     cx, cy = EdgeDetector.clamp_to_screen(x, y, self._screen_size)
                     if (cx, cy) != (x, y):
                         try:
@@ -948,7 +950,7 @@ class ClientMouseController(object):
                             self._logger.log(
                                 f"Failed to clamp cursor to screen -> {e}", Logger.ERROR
                             )
-                    
+
                     x, y = EdgeDetector.get_crossing_coords(
                         x=x,
                         y=y,
