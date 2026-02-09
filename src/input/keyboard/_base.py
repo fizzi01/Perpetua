@@ -174,9 +174,10 @@ class ServerKeyboardListener(object):
             # No event loop running yet - will be set when start() is called
             self._loop = None
 
-        self.command_stream.register_receive_callback(
-            self._command_callback, message_type=MessageType.COMMAND
-        )
+        # TODO: Work in progress
+        # self.command_stream.register_receive_callback(
+        #     self._command_callback, message_type=MessageType.COMMAND
+        # )
 
         # Subscribe with async callbacks
         self.event_bus.subscribe(
