@@ -105,28 +105,33 @@ where
 
     // Close the splash screen and open the main window after manager is set up
     let splash_window = manager.get_webview_window("splashscreen").unwrap();
-    splash_window.close().unwrap();
     if let Err(e) = create_main_window(&manager) {
         println!("Error during window creation {:?}", e);
         handle_critical("Critical error on startup", "", &manager);
     }
-    show_window(&manager, "main");
 
+    let manager_clone = manager.clone();
     let mut handler = ConnectionHandler::new(r, w);
-    // Handle connection events here
-    if let Err(e) = handler
-        .listen(
-            |msg| {
-                EventHandler::new(msg).handle(&manager);
-            },
-            &Duration::from_secs(1),
-        )
-        .await
-    {
-        println!("Error listening to events: {:?}", e);
-        // Connection lost, close the app
-        handle_critical("Service Disconnected", "", &manager);
-    }
+    tauri::async_runtime::spawn(async move {
+        // Handle connection events here
+        if let Err(e) = handler
+                .listen(
+                    |msg| {
+                        EventHandler::new(msg).handle(&manager);
+                    },
+                    &Duration::from_secs(1),
+                )
+                .await
+            {
+                println!("Error listening to events: {:?}", e);
+                // Connection lost, close the app
+                handle_critical("Service Disconnected", "", &manager);
+            }
+    });
+
+    splash_window.close().unwrap();
+    show_window(&manager_clone, "main");
+    
     Ok(())
 }
 
