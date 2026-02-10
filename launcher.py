@@ -63,7 +63,7 @@ class Launcher:
         """Get the project root directory based on execution mode."""
         if COMPILED:
             # When compiled, executable is in the build directory
-            return Path(sys.executable).parent
+            return Path(sys.executable).parent.resolve()
         else:
             # When running as script, launcher.py is in the project root
             return Path(__file__).parent.resolve()
@@ -146,9 +146,9 @@ class Launcher:
 
         try:
             if IS_WINDOWS:
-                import winloop as asyncloop  # type: ignore
+                import winloop as asyncloop  # ty:ignore[unresolved-import]
             else:
-                import uvloop as asyncloop  # type: ignore
+                import uvloop as asyncloop  # ty:ignore[unresolved-import]
             asyncloop.run(main())
         except ImportError:
             asyncio.run(main())
@@ -311,16 +311,13 @@ class Launcher:
                     self.log.error("Permission not granted", permission=permission)
                     return 1
 
-        # Determine executable directory based on execution mode
-        executable_dir = str(self.project_root)
-
         # Start daemon if not already running
-        if not self.start_daemon(executable_dir):
+        if not self.start_daemon(str(self.project_root)):
             self.log.error("Failed to start daemon")
             return 1
 
         # Start GUI
-        if not self.start_gui(executable_dir):
+        if not self.start_gui(str(self.project_root)):
             self.log.error("Failed to start GUI")
             return 1
 
