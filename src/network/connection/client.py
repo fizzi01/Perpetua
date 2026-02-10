@@ -289,7 +289,7 @@ class ConnectionHandler(BaseConnectionHandler):
                     else:
                         # Connection failed
                         error_count += 1
-                        if self.max_errors > 0 and error_count >= self.max_errors:
+                        if 0 < self.max_errors <= error_count:
                             error_count = self.max_errors  # Cap error count
                             if self.auto_reconnect:
                                 # Enter exponential backoff mode

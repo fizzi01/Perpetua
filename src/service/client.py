@@ -1284,6 +1284,7 @@ class Client:
                 connection_data=self.config.server_info.to_dict(),
             )
         )
+        return None
 
     async def _on_disconnected(self, client: ClientObj):
         """Handle disconnection from server event"""
@@ -1318,6 +1319,7 @@ class Client:
         await self._send_notification(
             DisconnectedEvent(connection_data=self.config.server_info.to_dict())
         )
+        return None
 
     async def _on_streams_reconnected(self, client: ClientObj, streams: list[int]):
         """Handle streams reconnected event"""

@@ -693,6 +693,7 @@ class ClientMouseController(object):
         self._is_active = False
         self._current_screen = None
         self._screen_size: tuple[int, int] = Screen.get_size()
+        Screen.hide_icon()  # On macOs calling controller.position can spawn a dock icon...
 
         # Instead of creating a listener, we just check edge cases after a mouse move event is received
         # Using deque for better performance and async compatibility

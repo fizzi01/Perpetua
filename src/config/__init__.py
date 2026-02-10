@@ -22,6 +22,7 @@ Handles server and client configurations with persistent storage support.
 #
 
 import asyncio
+import json
 import sys
 from dataclasses import dataclass, field
 from typing import Optional, Dict, Any, List
@@ -168,7 +169,7 @@ class ApplicationConfig:
         try:
             with open(config_file, "w") as f:
                 encoded = _encoder.encode(default_config)
-                f.write(encoded.decode())
+                json.dump(encoded, f, indent=2)
             return True
         except Exception as e:
             print(f"Error creating config file {config_file}: {e}")
@@ -515,7 +516,7 @@ class ServerConfig:
             try:
                 config_data = self.to_dict()
                 existing_config[self.app_config.server_key] = config_data
-                json_content = _encoder.encode(existing_config).decode()
+                json_content = json.dumps(existing_config, indent=2)
             except Exception as e:
                 raise ValueError(f"Failed to serialize configuration ({e})")
 
@@ -816,7 +817,7 @@ class ClientConfig:
             try:
                 config_data = self.to_dict()
                 existing_config[self.app_config.client_key] = config_data
-                json_content = _encoder.encode(existing_config).decode()
+                json_content = json.dumps(existing_config, indent=2)
             except Exception as e:
                 raise ValueError(f"Failed to serialize configuration ({e})")
 

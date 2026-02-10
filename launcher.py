@@ -28,7 +28,6 @@ from psutil import pid_exists
 from utils.logging import get_logger
 from utils.permissions import PermissionChecker
 from utils.cli import DaemonArguments
-from utils.screen import Screen
 from config import ApplicationConfig
 
 IS_WINDOWS = sys.platform in ("win32", "cygwin")
@@ -189,7 +188,7 @@ class Launcher:
                 daemon_cmd.append(arg)
 
         try:
-            if COMPILED and not "--log-terminal" in sys.argv:
+            if COMPILED and "--log-terminal" not in sys.argv:
                 subprocess.Popen(
                     daemon_cmd,
                     stdout=subprocess.DEVNULL,
