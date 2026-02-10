@@ -42,6 +42,11 @@ class Builder:
         target: Optional[str] = None,
         nuitka_args: Optional[list[str]] = None,
     ):
+        self.system = sys.platform
+        self.is_macos = self.system == "darwin"
+        self.is_windows = self.system == "win32"
+        self.is_linux = self.system == "linux"
+
         self.project_root = project_root
         self.skip_gui = skip_gui
         self.skip_daemon = skip_daemon
@@ -51,26 +56,21 @@ class Builder:
         if not self.target:
             self.target = self.architecture.lower()
 
-        self.system = sys.platform
-        self.is_macos = self.system == "darwin"
-        self.is_windows = self.system == "win32"
-        self.is_linux = self.system == "linux"
-
         self.nuitka_args = nuitka_args or []
         self.log = get_logger("build", verbose=True)
 
         self.gui_dir = project_root / "src-gui"
-        build_type = "release" if release else "debug"
+        self.build_type = "release" if release else "debug"
         self.icons_dir = self.gui_dir / "src-tauri" / "icons"
 
         parsed_target = self.parse_target(gui=True)
         if parsed_target:
-            build_type = Path(parsed_target) / build_type
+            self.build_type = Path(parsed_target) / self.build_type
 
-        self.tauri_target = self.gui_dir / "src-tauri" / "target" / build_type
+        self.tauri_target = self.gui_dir / "src-tauri" / "target" / self.build_type
         self.gui_exe = self.tauri_target / GUI_EXECUTABLE
         self.src_dir = project_root / "src"
-        self.build_dir = project_root / ".build" / build_type
+        self.build_dir = project_root / ".build" / self.build_type
 
         # OS-specific adjustments
         if self.is_windows:
@@ -210,16 +210,7 @@ class Builder:
         if target:
             build_cmd.extend(["--target", target])
 
-        ret = self._run(build_cmd, cwd=self.gui_dir).returncode
-        if ret == 0:
-            self._clean_gui_artifacts()
-            res = self._clean_data_files()
-            if res != 0:
-                return res
-            self.log.info("Copying data files")
-            return self._copy_data_files()
-        else:
-            return ret
+        return self._run(build_cmd, cwd=self.gui_dir).returncode
 
     def _clean_gui_artifacts(self):
         self.log.info("Cleaning GUI build artifacts")
@@ -272,15 +263,13 @@ class Builder:
                 return res.returncode
 
         launcher_py = self.project_root / "launcher.py"
-        output_exe = self.build_dir / self.gui_exe.name
+        output_exe = self.gui_exe
 
         # Check that the GUI executable exists
         if not output_exe.exists():
             # Try to copy data files
-            self.log.warning("GUI executable not found, attempting to copy data files")
-            if self._copy_data_files() != 0:
-                self.log.error("GUI executable not found and failed to copy data files")
-                return 1
+            self.log.error("GUI executable not found, build GUI first")
+            return -1
 
         nuitka_cmd = [
             sys.executable,
@@ -323,11 +312,7 @@ class Builder:
 
         nuitka_cmd.extend(self.nuitka_args)
         nuitka_cmd.append(str(launcher_py))
-        res = self._run(nuitka_cmd, cwd=self.src_dir, print_cmd=False).returncode
-        if res == 0:
-            # Clean up
-            self._clean_data_files()
-        return res
+        return self._run(nuitka_cmd, cwd=self.src_dir, print_cmd=False).returncode
 
     def _sign_bundle(self):
         if self.is_macos:
