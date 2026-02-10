@@ -66,7 +66,7 @@ export const DaemonLogViewer: React.FC<LogViewerProps> = ({
 
       setLogs(response.logs);
     } catch (err) {
-      setError(`Error reading logs: ${err}`);
+      setError(`${err}`);
     } finally {
       setLoading(false);
     }
@@ -195,14 +195,14 @@ export const DaemonLogViewer: React.FC<LogViewerProps> = ({
       {/* Header */}
       <div className="border-b" style={{ 
         borderColor: 'var(--border)',
-        backgroundColor: 'var(--background)',
+        backgroundColor: 'var(--app-bg-secondary)',
       }}>
         {/* First row - Controls */}
         <div className="flex items-center justify-between px-3 py-1.5">
           <div className="flex items-center gap-2">
             {/* Number of lines selector */}
             <div className="flex items-center gap-1.5">
-              <label className="text-xs font-medium" style={{ color: 'var(--muted-foreground)' }}>Lines</label>
+              <label className="text-xs font-medium" style={{ color: 'var(--app-text-muted)' }}>Lines</label>
               <select
                 value={numLines}
                 onChange={(e) => {
@@ -212,9 +212,9 @@ export const DaemonLogViewer: React.FC<LogViewerProps> = ({
                 }}
                 className="border rounded-md px-1.5 py-0.5 text-xs font-medium transition-all cursor-pointer hover:border-opacity-70 focus:outline-none focus:ring-2 focus:ring-opacity-50"
                 style={{ 
-                  backgroundColor: 'var(--input-background)',
-                  borderColor: 'var(--border)',
-                  color: 'var(--foreground)',
+                  backgroundColor: 'var(--app-input-background)',
+                  borderColor: 'var(--app-border)',
+                  color: 'var(--app-foreground)',
                 }}
               >
                 <option value={50}>50</option>
@@ -229,36 +229,37 @@ export const DaemonLogViewer: React.FC<LogViewerProps> = ({
               onClick={() => setAutoRefresh(!autoRefresh)}
               className="cursor-pointer flex items-center gap-2 px-2 py-1.5 rounded-md text-xs font-medium transition-all hover:scale-105 active:scale-95 focus:outline-none focus:ring-2 focus:ring-opacity-50 shadow-sm"
               style={{
-                backgroundColor: autoRefresh ? 'var(--primary)' : 'var(--muted)',
-                color: autoRefresh ? 'var(--primary-foreground)' : 'var(--muted-foreground)',
+                backgroundColor: autoRefresh ? 'var(--app-primary)' : 'var(--app-secondary)',
+                color: autoRefresh ? '#ffffff' : 'var(--app-text-muted)',
               }}
               title={autoRefresh ? 'Auto-refresh enabled' : 'Auto-refresh disabled'}
             >
               {autoRefresh ? <Pause size={12} /> : <Play size={12} />}
-              {autoRefresh ? 'Pause' : 'Play'}
+              {/* {autoRefresh ? 'Pause' : 'Play'} */}
             </button>
 
             {/* Refresh button */}
             <button
               onClick={() => fetchLogs()}
               disabled={loading}
-              className="cursor-pointer flex items-center gap-1 px-2 py-1.5 rounded-md text-xs font-medium transition-all hover:scale-105 hover:shadow-md active:scale-95 disabled:opacity-50 disabled:cursor-not-allowed disabled:hover:scale-100 focus:outline-none focus:ring-2 focus:ring-opacity-50 shadow-sm"
+              className="cursor-pointer flex items-center gap-2 px-2 py-1.5 rounded-md text-xs font-medium transition-all hover:scale-105 hover:shadow-md active:scale-95 disabled:opacity-50 disabled:cursor-not-allowed disabled:hover:scale-100 focus:outline-none focus:ring-2 focus:ring-opacity-50 shadow-sm"
               style={{
-                backgroundColor: 'var(--accent)',
-                color: 'var(--accent-foreground)',
+                backgroundColor: 'var(--app-primary-light)',
+                color: '#ffffff',
               }}
               title="Refresh logs"
             >
               <RefreshCw size={12} className={loading ? 'animate-spin' : ''} />
+              
             </button>
 
             {/* Word wrap toggle */}
             <button
               onClick={() => setWrapLines(!wrapLines)}
-              className="cursor-pointer flex items-center gap-1 px-2 py-1.5 rounded-md text-xs font-medium transition-all hover:scale-105 active:scale-95 focus:outline-none focus:ring-2 focus:ring-opacity-50 shadow-sm"
+              className="cursor-pointer flex items-center gap-2 px-2 py-1.5 rounded-md text-xs font-medium transition-all hover:scale-105 active:scale-95 focus:outline-none focus:ring-2 focus:ring-opacity-50 shadow-sm"
               style={{
-                backgroundColor: wrapLines ? 'var(--primary)' : 'var(--muted)',
-                color: wrapLines ? 'var(--primary-foreground)' : 'var(--muted-foreground)',
+                backgroundColor: wrapLines ? 'var(--app-primary)' : 'var(--app-secondary)',
+                color: wrapLines ? '#ffffff' : 'var(--app-text-muted)',
               }}
               title={wrapLines ? 'Line wrapping enabled' : 'Line wrapping disabled'}
             >
@@ -270,18 +271,18 @@ export const DaemonLogViewer: React.FC<LogViewerProps> = ({
           <div className="flex items-center gap-2">
             {searchQuery ? (
               <>
-                <Search size={14} style={{ color: 'var(--muted-foreground)' }} />
+                <Search size={14} style={{ color: 'var(--app-text-muted)' }} />
                 <span className="text-xs font-medium px-2 py-0.5 rounded" style={{
-                  backgroundColor: filteredLogs.length > 0 ? 'var(--primary)' : 'var(--muted)',
-                  color: filteredLogs.length > 0 ? 'var(--primary-foreground)' : 'var(--muted-foreground)',
+                  backgroundColor: filteredLogs.length > 0 ? 'var(--app-primary)' : 'var(--app-secondary)',
+                  color: filteredLogs.length > 0 ? '#ffffff' : 'var(--app-text-muted)',
                 }}>
                   {filteredLogs.length}
                 </span>
               </>
             ) : (
               <>
-                <FileText size={14} style={{ color: 'var(--muted-foreground)' }} />
-                <span className="text-xs font-medium" style={{ color: 'var(--muted-foreground)' }}>
+                <FileText size={14} style={{ color: 'var(--app-text-muted)' }} />
+                <span className="text-xs font-medium" style={{ color: 'var(--app-text-muted)' }}>
                   {logs.length}
                 </span>
               </>
@@ -292,7 +293,7 @@ export const DaemonLogViewer: React.FC<LogViewerProps> = ({
         {/* Second row - Search */}
         <div className="px-3 pb-1.5">
           <div className="relative flex items-center w-full">
-            <Search size={12} className="absolute left-2" style={{ color: 'var(--muted-foreground)' }} />
+            <Search size={12} className="absolute left-2" style={{ color: 'var(--app-text-muted)' }} />
             <input
               type="text"
               value={searchQuery}
@@ -300,16 +301,16 @@ export const DaemonLogViewer: React.FC<LogViewerProps> = ({
               placeholder="Search logs..."
               className="w-full pl-7 pr-7 py-1 text-xs rounded-md border transition-all focus:outline-none focus:ring-2 focus:ring-opacity-50"
               style={{
-                backgroundColor: 'var(--input-background)',
-                borderColor: 'var(--border)',
-                color: 'var(--foreground)',
+                backgroundColor: 'var(--app-input-background)',
+                borderColor: 'var(--app-input-border)',
+                color: 'var(--app-text-primary)',
               }}
             />
             {searchQuery && (
               <button
                 onClick={() => setSearchQuery('')}
                 className="cursor-pointer absolute right-2 hover:opacity-70 transition-opacity"
-                style={{ color: 'var(--muted-foreground)' }}
+                style={{ color: 'var(--app-text-muted)' }}
               >
                 <X size={12} />
               </button>

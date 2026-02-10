@@ -56,20 +56,20 @@ export const DaemonLogDialog: React.FC<DaemonLogDialogProps> = ({ isOpen, onClos
             transition={{ duration: 0.3, ease: 'easeInOut' }}
             className="relative rounded-lg shadow-2xl w-full h-full max-w-6xl max-h-[85vh] flex flex-col border"
             style={{
-              backgroundColor: 'var(--card)',
-              borderColor: 'var(--border)',
+              backgroundColor: 'var(--app-card-bg)',
+              borderColor: 'var(--app-card-border)',
             }}
             onClick={(e) => e.stopPropagation()}
           >
             {/* Dialog Header */}
             <div data-tauri-drag-region
             className="flex items-center justify-between rounded-lg px-4 py-1 border-b backdrop-blur-sm" style={{ 
-              borderColor: 'var(--border)',
-              backgroundColor: 'var(--muted)',
+              borderColor: 'var(--app-card-border)',
+              backgroundColor: 'var(--app-card-bg)',
             }}>
               <div className="flex items-center gap-2">
-                <FileText size={16} style={{ color: 'var(--muted-foreground)' }} />
-                <h2 className="font-medium text-sm" style={{ color: 'var(--foreground)' }}>
+                <FileText size={16} style={{ color: 'var(--app-text-primary)' }} />
+                <h2 className="font-medium text-sm" style={{ color: 'var(--app-text-primary)' }}>
                   Logs
                 </h2>
               </div>
@@ -79,7 +79,7 @@ export const DaemonLogDialog: React.FC<DaemonLogDialogProps> = ({ isOpen, onClos
                 onClick={onClose}
                 className="cursor-pointer p-1.5 rounded-md hover:bg-black/10 dark:hover:bg-white/10 active:scale-95 transition-all focus:outline-none focus:ring-2 focus:ring-opacity-50"
                 style={{ 
-                  color: 'var(--muted-foreground)',
+                  color: 'var(--app-text-primary)',
                 }}
                 aria-label="Close"
               >
