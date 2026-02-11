@@ -33,7 +33,7 @@ use ipc::{
     AtomicAsyncWriter,
 };
 use ipc::{ConnectionHandler, DataListener};
-use std::{sync::Mutex, time::Duration};
+use std::{panic, sync::Mutex, time::Duration};
 
 pub mod commands;
 pub mod handler;
@@ -49,7 +49,7 @@ where
     R: Runtime,
 {
     let state = app.state::<Mutex<AppState>>();
-    let mut state = state.lock().unwrap();
+    let mut state = state.lock().unwrap_or_else(|_| panic!("Failed to acquire lock on AppState"));
     state.hard_close = true;
     app.exit(0);
 }
@@ -85,7 +85,7 @@ where
         Ok(conn) => {
             {
                 let state = manager.state::<Mutex<AppState>>();
-                let mut state = state.lock().unwrap();
+                let mut state = state.lock().unwrap_or_else(|_| panic!("Failed to acquire lock on AppState"));
                 state.connected = true
             }
 
@@ -98,13 +98,17 @@ where
         }
     };
 
-    let c_w = w.get_writer().clone();
-
     // Clone the writer for use in commands
+    let c_w = w.get_writer().clone();
     manager.manage(c_w);
 
-    // Close the splash screen and open the main window after manager is set up
-    let splash_window = manager.get_webview_window("splashscreen").unwrap();
+    // Create main window
+    let splash_window = manager.get_webview_window("splashscreen").unwrap_or_else(|| {
+        println!("Error getting splashscreen window");
+        handle_critical("Critical error on startup", "", &manager);
+        panic!("Critical error on startup");
+    });
+
     if let Err(e) = create_main_window(&manager) {
         println!("Error during window creation {:?}", e);
         handle_critical("Critical error on startup", "", &manager);
@@ -129,7 +133,12 @@ where
             }
     });
 
-    splash_window.close().unwrap();
+    // Close splashscreen and show the main window
+    if let Err(e) = splash_window.close() {
+        println!("Error closing splashscreen window: {:?}", e);
+        handle_critical("Critical error on startup", "", &manager_clone);
+    }
+    
     show_window(&manager_clone, "main");
     
     Ok(())
@@ -286,13 +295,24 @@ fn show_window<R>(app: &AppHandle<R>, label: &str)
 where
     R: Runtime,
 {
-    let window = app.get_webview_window(label).unwrap();
+    let window = app.get_webview_window(label).unwrap_or_else(|| {
+        println!("Error getting window with label {}", label);
+        handle_critical("Critical error occurred", "", app);
+        panic!("Critical error occurred");
+    });
     // let _ = window
     //     .as_ref()
     //     .window()
     //     .move_window(tauri_plugin_positioner::Position::Center);
-    window.show().unwrap();
-    window.set_focus().unwrap();
+
+    window.show().unwrap_or_else(|_| {
+        println!("Error showing window with label {}", label);
+        handle_critical("Critical error occurred", "", app);
+    });
+    window.set_focus().unwrap_or_else(|_| {
+        println!("Error setting focus on window with label {}", label);
+        handle_critical("Critical error occurred", "", app);
+    });
 
     #[cfg(target_os = "macos")]
     app.set_activation_policy(tauri::ActivationPolicy::Regular)
