@@ -20,7 +20,7 @@
 use tauri::{PhysicalPosition, Position, TitleBarStyle};
 
 #[cfg(target_os = "windows")]
-use tray::{MouseButton, TrayIconEvent};
+use tauri::tray::{MouseButton, TrayIconEvent};
 
 use tauri::{
     menu::{MenuBuilder, MenuItem},
