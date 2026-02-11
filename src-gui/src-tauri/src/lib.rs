@@ -20,9 +20,7 @@
 use tauri::{PhysicalPosition, Position, TitleBarStyle};
 
 use tauri::{
-    menu::{MenuBuilder, MenuItem},
-    tray::TrayIconBuilder,
-    AppHandle, Emitter, Manager, Runtime, WebviewUrl, WebviewWindowBuilder,
+    AppHandle, Emitter, Manager, Runtime, WebviewUrl, WebviewWindowBuilder, menu::{MenuBuilder, MenuItem}, tray::{MouseButton, TrayIconBuilder, TrayIconEvent}
 };
 use tauri_plugin_dialog::{DialogExt, MessageDialogKind};
 // use tauri_plugin_positioner::WindowExt;
@@ -246,10 +244,25 @@ where
 
     #[cfg(target_os = "macos")]
     {
-        tray = tray.icon_as_template(true)
+        tray = tray.icon_as_template(true);
+        tray = tray.show_menu_on_left_click(true);
     }
 
-    tray.show_menu_on_left_click(true).build(app)?;
+    #[cfg(target_os = "windows")]
+    {
+        let handle = app.clone();
+        tray = tray.show_menu_on_left_click(false);
+        tray = tray.on_tray_icon_event(move |_, event| {
+            // Get an app handle
+            if let TrayIconEvent::Click { button, .. } = event {
+                if let MouseButton::Left = button {
+                    show_window(&handle, "main");
+                }
+            }
+        });
+    }
+
+    tray.build(app)?;
 
     Ok(())
 }
