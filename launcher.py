@@ -64,7 +64,7 @@ class Launcher:
         """Get the project root directory based on execution mode."""
         if COMPILED:
             # When compiled, executable is in the build directory
-            return Path(sys.executable).parent
+            return Path(sys.executable).parent.resolve()
         else:
             # When running as script, launcher.py is in the project root
             return Path(__file__).parent.resolve()
@@ -147,9 +147,9 @@ class Launcher:
 
         try:
             if IS_WINDOWS:
-                import winloop as asyncloop  # type: ignore
+                import winloop as asyncloop  # ty:ignore[unresolved-import]
             else:
-                import uvloop as asyncloop  # type: ignore
+                import uvloop as asyncloop  # ty:ignore[unresolved-import]
             asyncloop.run(main())
         except ImportError:
             asyncio.run(main())
@@ -317,16 +317,16 @@ class Launcher:
 
         # Start
         self.log.info("Starting daemon and GUI")
-        
+
         with ThreadPoolExecutor(max_workers=2) as executor:
             # Submit both tasks concurrently
             future_daemon = executor.submit(self.start_daemon, executable_dir)
             future_gui = executor.submit(self.start_gui, executable_dir)
-            
+
             # Wait for both to complete and check results
             daemon_success = False
             gui_success = False
-            
+
             for future in as_completed([future_daemon, future_gui]):
                 try:
                     result = future.result()
@@ -343,7 +343,7 @@ class Launcher:
                         self.log.error("Exception starting daemon", error=str(e))
                     elif future == future_gui:
                         self.log.error("Exception starting GUI", error=str(e))
-            
+
             if not daemon_success or not gui_success:
                 return 1
 
