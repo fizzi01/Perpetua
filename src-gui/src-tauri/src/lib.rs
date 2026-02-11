@@ -19,8 +19,13 @@
 #[cfg(target_os = "macos")]
 use tauri::{PhysicalPosition, Position, TitleBarStyle};
 
+#[cfg(target_os = "windows")]
+use tray::{MouseButton, TrayIconEvent};
+
 use tauri::{
-    AppHandle, Emitter, Manager, Runtime, WebviewUrl, WebviewWindowBuilder, menu::{MenuBuilder, MenuItem}, tray::{MouseButton, TrayIconBuilder, TrayIconEvent}
+    menu::{MenuBuilder, MenuItem},
+    tray::TrayIconBuilder,
+    AppHandle, Emitter, Manager, Runtime, WebviewUrl, WebviewWindowBuilder,
 };
 use tauri_plugin_dialog::{DialogExt, MessageDialogKind};
 // use tauri_plugin_positioner::WindowExt;
@@ -47,7 +52,9 @@ where
     R: Runtime,
 {
     let state = app.state::<Mutex<AppState>>();
-    let mut state = state.lock().unwrap_or_else(|_| panic!("Failed to acquire lock on AppState"));
+    let mut state = state
+        .lock()
+        .unwrap_or_else(|_| panic!("Failed to acquire lock on AppState"));
     state.hard_close = true;
     app.exit(0);
 }
@@ -83,7 +90,9 @@ where
         Ok(conn) => {
             {
                 let state = manager.state::<Mutex<AppState>>();
-                let mut state = state.lock().unwrap_or_else(|_| panic!("Failed to acquire lock on AppState"));
+                let mut state = state
+                    .lock()
+                    .unwrap_or_else(|_| panic!("Failed to acquire lock on AppState"));
                 state.connected = true
             }
 
@@ -101,11 +110,13 @@ where
     manager.manage(c_w);
 
     // Create main window
-    let splash_window = manager.get_webview_window("splashscreen").unwrap_or_else(|| {
-        println!("Error getting splashscreen window");
-        handle_critical("Critical error on startup", "", &manager);
-        panic!("Critical error on startup");
-    });
+    let splash_window = manager
+        .get_webview_window("splashscreen")
+        .unwrap_or_else(|| {
+            println!("Error getting splashscreen window");
+            handle_critical("Critical error on startup", "", &manager);
+            panic!("Critical error on startup");
+        });
 
     if let Err(e) = create_main_window(&manager) {
         println!("Error during window creation {:?}", e);
@@ -117,18 +128,18 @@ where
     tauri::async_runtime::spawn(async move {
         // Handle connection events here
         if let Err(e) = handler
-                .listen(
-                    |msg| {
-                        EventHandler::new(msg).handle(&manager);
-                    },
-                    &Duration::from_secs(1),
-                )
-                .await
-            {
-                println!("Error listening to events: {:?}", e);
-                // Connection lost, close the app
-                handle_critical("Service Disconnected", "", &manager);
-            }
+            .listen(
+                |msg| {
+                    EventHandler::new(msg).handle(&manager);
+                },
+                &Duration::from_secs(1),
+            )
+            .await
+        {
+            println!("Error listening to events: {:?}", e);
+            // Connection lost, close the app
+            handle_critical("Service Disconnected", "", &manager);
+        }
     });
 
     // Close splashscreen and show the main window
@@ -136,9 +147,9 @@ where
         println!("Error closing splashscreen window: {:?}", e);
         handle_critical("Critical error on startup", "", &manager_clone);
     }
-    
+
     show_window(&manager_clone, "main");
-    
+
     Ok(())
 }
 
@@ -164,7 +175,8 @@ where
         .title("Perpetua")
         .inner_size(435.0, 600.0)
         .resizable(false)
-        .visible(false).center();
+        .visible(false)
+        .center();
 
     // Set macOS-specific window properties
     #[cfg(target_os = "macos")]
@@ -213,7 +225,7 @@ where
             "quit" => {
                 let state = app.state::<Mutex<AppState>>();
                 let state = state.lock().unwrap();
-                if state.connected{
+                if state.connected {
                     let handle = app.clone();
                     // Call shutdown command only if connected
                     tauri::async_runtime::spawn(async move {
@@ -234,12 +246,13 @@ where
 
     #[allow(unused)]
     let mut icon_data = app.default_window_icon().unwrap().clone();
-    
+
     #[cfg(target_os = "macos")]
     {
-        icon_data = tauri::image::Image::from_bytes(include_bytes!("../icons/macos/32x32_idle.png"))?;
+        icon_data =
+            tauri::image::Image::from_bytes(include_bytes!("../icons/macos/32x32_idle.png"))?;
     }
-    
+
     let mut tray = tray.icon(icon_data);
 
     #[cfg(target_os = "macos")]
@@ -277,7 +290,8 @@ where
             .title("Perpetua")
             .inner_size(300.0, 200.0)
             .resizable(false)
-            .visible(true).center();
+            .visible(true)
+            .center();
 
     #[cfg(target_os = "macos")]
     {
@@ -432,7 +446,7 @@ pub fn run() {
         tauri::RunEvent::Exit => {
             let state = _app_handle.state::<Mutex<AppState>>();
             let state = state.lock().unwrap();
-            if !state.hard_close && state.connected{
+            if !state.hard_close && state.connected {
                 // Only if connected
                 // With hard_close, a shutdown command has already been sent
                 let app_handle = _app_handle.clone();

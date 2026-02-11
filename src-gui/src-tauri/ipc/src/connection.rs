@@ -81,7 +81,10 @@ fn default_path() -> Result<DefaultPath, SocketPathError> {
     }
 }
 
-async fn wait_connection(t: Duration, max_t: Duration) -> Result<(AsyncReader, AsyncWriter), ConnectionError> {
+async fn wait_connection(
+    t: Duration,
+    max_t: Duration,
+) -> Result<(AsyncReader, AsyncWriter), ConnectionError> {
     let path = default_path()?;
     let mut timeout = t;
 
@@ -118,7 +121,10 @@ async fn wait_connection(t: Duration, max_t: Duration) -> Result<(AsyncReader, A
     }
 }
 
-pub async fn connect(t: Duration, max_t: Duration) -> Result<(AsyncReader, AsyncWriter), ConnectionError> {
+pub async fn connect(
+    t: Duration,
+    max_t: Duration,
+) -> Result<(AsyncReader, AsyncWriter), ConnectionError> {
     let Ok((reader, writer)) = wait_connection(t, max_t).await else {
         return Err(ConnectionError::Timeout);
     };
