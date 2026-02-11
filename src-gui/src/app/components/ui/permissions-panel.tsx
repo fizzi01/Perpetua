@@ -135,7 +135,7 @@ export function PermissionsPanel({
           whileHover={!disableAllStreams ? { scale: 1.05 } : {}}
           whileTap={!disableAllStreams ? { scale: 0.95 } : {}}
           onClick={() => handleStreamToggle(StreamType.Mouse, !enableMouse, setEnableMouse)}
-          className={`cursor-pointer flex-1 flex items-center justify-center gap-2 px-3 py-2 rounded-lg transition-all`}
+          className={`flex-1 flex items-center justify-center gap-2 px-3 py-2 rounded-lg transition-all`}
           style={{
             backgroundColor: enableMouse ? 'var(--app-success-bg)' : 'var(--app-danger-bg)',
             color: enableMouse ? 'var(--app-success)' : 'var(--app-danger)',
@@ -152,7 +152,7 @@ export function PermissionsPanel({
           whileHover={!disableAllStreams ? { scale: 1.05 } : {}}
           whileTap={!disableAllStreams ? { scale: 0.95 } : {}}
           onClick={() => handleStreamToggle(StreamType.Keyboard, !enableKeyboard, setEnableKeyboard)}
-          className={`cursor-pointer flex-1 flex items-center justify-center gap-2 px-3 py-2 rounded-lg transition-all`}
+          className={`flex-1 flex items-center justify-center gap-2 px-3 py-2 rounded-lg transition-all`}
           style={{
             backgroundColor: enableKeyboard ? 'var(--app-success-bg)' : 'var(--app-danger-bg)',
             color: enableKeyboard ? 'var(--app-success)' : 'var(--app-danger)',

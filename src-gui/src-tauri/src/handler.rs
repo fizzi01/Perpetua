@@ -42,7 +42,9 @@ impl Handable for EventHandler {
             }
             _ => match self.event.event_type.to_string() {
                 Ok(event_type) => {
-                    app.emit(&event_type, &self.event).unwrap();
+                    app.emit(&event_type, &self.event).unwrap_or_else(|e| {
+                        println!("Failed to emit event ({:?})", e);  // TODO: Should panic here?
+                    });
                 }
                 Err(e) => {
                     println!("Failed to convert event type to string ({:?})", e);

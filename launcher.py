@@ -21,6 +21,7 @@ import os
 import subprocess
 import sys
 from argparse import ArgumentParser, Namespace
+from concurrent.futures import ThreadPoolExecutor, as_completed
 from pathlib import Path
 from time import sleep
 from psutil import pid_exists
@@ -311,15 +312,40 @@ class Launcher:
                     self.log.error("Permission not granted", permission=permission)
                     return 1
 
-        # Start daemon if not already running
-        if not self.start_daemon(str(self.project_root)):
-            self.log.error("Failed to start daemon")
-            return 1
+        # Determine executable directory based on execution mode
+        executable_dir = str(self.project_root)
 
-        # Start GUI
-        if not self.start_gui(str(self.project_root)):
-            self.log.error("Failed to start GUI")
-            return 1
+        # Start
+        self.log.info("Starting daemon and GUI")
+
+        with ThreadPoolExecutor(max_workers=2) as executor:
+            # Submit both tasks concurrently
+            future_daemon = executor.submit(self.start_daemon, executable_dir)
+            future_gui = executor.submit(self.start_gui, executable_dir)
+
+            # Wait for both to complete and check results
+            daemon_success = False
+            gui_success = False
+
+            for future in as_completed([future_daemon, future_gui]):
+                try:
+                    result = future.result()
+                    if future == future_daemon:
+                        daemon_success = result
+                        if not result:
+                            self.log.error("Failed to start daemon")
+                    elif future == future_gui:
+                        gui_success = result
+                        if not result:
+                            self.log.error("Failed to start GUI")
+                except Exception as e:
+                    if future == future_daemon:
+                        self.log.error("Exception starting daemon", error=str(e))
+                    elif future == future_gui:
+                        self.log.error("Exception starting GUI", error=str(e))
+
+            if not daemon_success or not gui_success:
+                return 1
 
         self.log.info(
             "Launcher completed successfully", mode="compiled" if COMPILED else "script"
