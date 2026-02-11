@@ -75,8 +75,8 @@ class CursorHandlerWindow(_base.CursorHandlerWindow):
 
         Screen.hide_icon()
 
-        self.previous_app = NSWorkspace.sharedWorkspace().frontmostApplication()
-        self.previous_app_pid = self.previous_app.processIdentifier()
+        self.previous_app = None
+        self.previous_app_pid = None
 
         self._create()
 
@@ -166,8 +166,8 @@ class CursorHandlerWindow(_base.CursorHandlerWindow):
                         self.ForceOverlay()
                     else:
                         self._recapture_timer.Stop()
-                except Exception as e:
-                    self._logger.error(f"Error during recapture attempt ({e})")
+                except Exception as er:
+                    self._logger.error(f"Error during recapture attempt ({er})")
 
             self.Bind(wx.EVT_TIMER, on_timer, self._recapture_timer)
             self._recapture_timer.Start(retry_interval)
