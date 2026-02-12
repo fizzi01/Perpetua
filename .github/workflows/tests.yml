@@ -13,8 +13,8 @@ jobs:
   test:
     if: |
       github.actor != 'github-actions[bot]' &&
-      !(startsWith(github.event.pull_request.title, 'chore') || startsWith(github.event.pull_request.title, 'docs')) &&
-      !(startsWith(github.event.head_commit.message, 'chore') || startsWith(github.event.head_commit.message, 'docs'))
+      !(startsWith(github.event.pull_request.title, 'chore') || startsWith(github.event.pull_request.title, 'docs') || startsWith(github.event.pull_request.title, 'ci')) &&
+      !(startsWith(github.event.head_commit.message, 'chore') || startsWith(github.event.head_commit.message, 'docs') || startsWith(github.event.head_commit.message, 'ci'))
     runs-on: ${{ matrix.os }}
     strategy:
       fail-fast: false
