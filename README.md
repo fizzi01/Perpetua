@@ -50,6 +50,9 @@ Actually only Windows and MacOS are supported.
 
 Launch `Perpetua` and choose whether to run as a server or client. The GUI will guide you through the necessary configuration steps.
 
+> [!TIP]
+> For detailed configuration options, including client authorization, client-server pairing, and security settings, see the [Configuration](#configuration) section below.
+
 #### Background Mode:
 
 You can run Perpetua as a background service using the daemon mode:
