@@ -22,7 +22,7 @@ jobs:
           release-type: python
 
       - name: Sync version for Tauri
-        if: ${{ steps.release.outputs.prs_created == 'true' }}
+        if: ${{ steps.release.outputs.pr != '' }}
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: |
