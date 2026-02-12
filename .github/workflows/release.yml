@@ -16,6 +16,36 @@ jobs:
     steps:
       - uses: actions/checkout@v6
       - uses: googleapis/release-please-action@v4
+        id: release
         with:
           token: ${{ secrets.GITHUB_TOKEN }}
           release-type: python
+
+      - name: Sync version for Tauri
+        if: ${{ steps.release.outputs.prs_created == 'true' }}
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          # Checkout the PR branch
+          PR_BRANCH=$(echo '${{ steps.release.outputs.pr }}' | jq -r '.headBranchName')
+          git fetch origin "$PR_BRANCH"
+          git checkout "$PR_BRANCH"
+
+          # Extract version from pyproject.toml
+          VERSION=$(grep -m1 '^version' pyproject.toml | sed 's/version = "\(.*\)"/\1/')
+          echo "Detected version: $VERSION"
+
+          # Update tauri.conf.json
+          TAURI_CONF="src-gui/src-tauri/tauri.conf.json"
+          jq --arg v "$VERSION" '.version = $v' "$TAURI_CONF" > tmp.json && mv tmp.json "$TAURI_CONF"
+
+          # Amend the existing commit and force push
+          if git diff --quiet "$TAURI_CONF"; then
+            echo "tauri.conf.json already up to date"
+          else
+            git config user.name "github-actions[bot]"
+            git config user.email "github-actions[bot]@users.noreply.github.com"
+            git add "$TAURI_CONF"
+            git commit --amend --no-edit
+            git push --force origin "$PR_BRANCH"
+          fi
