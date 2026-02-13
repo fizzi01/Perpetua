@@ -1,0 +1,177 @@
+name: Build
+
+on:
+  workflow_dispatch:
+  push:
+    branches: [ci]
+  release:
+    types: [published]
+
+permissions:
+  contents: write
+
+env:
+  PYTHON_VERSION: "3.12"
+  NODE_VERSION: "20"
+
+jobs:
+  build-gui:
+    name: Build GUI (${{ matrix.platform }})
+    runs-on: ${{ matrix.os }}
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - os: macos-latest
+            platform: macOS-arm64
+            rust-target: aarch64-apple-darwin
+            artifact-name: gui-macos-arm64
+            gui-exe-name: perpetua
+          - os: windows-latest
+            platform: Windows-x64
+            rust-target: x86_64-pc-windows-msvc
+            artifact-name: gui-windows-x64
+            gui-exe-name: perpetua.exe
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v6
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: ${{ env.NODE_VERSION }}
+
+      - name: Setup Rust toolchain
+        uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: ${{ matrix.rust-target }}
+
+      - name: Cache Rust dependencies
+        uses: Swatinem/rust-cache@v2
+        with:
+          workspaces: src-gui/src-tauri -> target
+
+      - name: Cache Tauri CLI
+        id: cache-tauri-cli
+        uses: actions/cache@v4
+        with:
+          path: |
+            ~/.cargo/bin/cargo-tauri
+            ~/.cargo/bin/cargo-tauri.exe
+          key: tauri-cli-${{ runner.os }}-v2
+
+      - name: Install Tauri CLI
+        if: steps.cache-tauri-cli.outputs.cache-hit != 'true'
+        run: cargo install tauri-cli --version "^2.0.0" --locked
+
+      - name: Install npm dependencies
+        working-directory: src-gui
+        run: npm install
+
+      - name: Build GUI
+        working-directory: src-gui
+        run: cargo tauri build --target ${{ matrix.rust-target }}
+
+      - name: Upload GUI executable
+        uses: actions/upload-artifact@v4
+        with:
+          name: ${{ matrix.artifact-name }}
+          path: src-gui/src-tauri/target/${{ matrix.rust-target }}/release/${{ matrix.gui-exe-name }}
+          retention-days: 1
+          if-no-files-found: error
+
+  build-daemon:
+    name: Build Daemon (${{ matrix.platform }})
+    needs: build-gui
+    runs-on: ${{ matrix.os }}
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - os: macos-latest
+            platform: macOS-arm64
+            rust-target: aarch64-apple-darwin
+            artifact-name: gui-macos-arm64
+            gui-exe-name: perpetua
+            build-output: .build/aarch64-apple-darwin/release
+            archive-name: Perpetua-macOS-arm64
+          - os: windows-latest
+            platform: Windows-x64
+            rust-target: x86_64-pc-windows-msvc
+            artifact-name: gui-windows-x64
+            gui-exe-name: perpetua.exe
+            build-output: .build/x86_64-pc-windows-msvc/release
+            archive-name: Perpetua-Windows-x64
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v6
+
+      - name: Install Poetry
+        run: pipx install poetry
+
+      - name: Setup Python
+        uses: actions/setup-python@v6
+        with:
+          python-version: ${{ env.PYTHON_VERSION }}
+          cache: poetry
+
+      - name: Install macOS build dependencies
+        if: runner.os == 'macOS'
+        env:
+          HOMEBREW_NO_AUTO_UPDATE: 1
+        run: brew install automake autoconf libtool ccache
+
+      - name: Install Python dependencies
+        run: poetry install --no-interaction
+
+      - name: Download GUI artifact
+        uses: actions/download-artifact@v4
+        with:
+          name: ${{ matrix.artifact-name }}
+          path: src-gui/src-tauri/target/${{ matrix.rust-target }}/release
+
+      - name: Set executable permission
+        if: runner.os != 'Windows'
+        run: chmod +x src-gui/src-tauri/target/${{ matrix.rust-target }}/release/${{ matrix.gui-exe-name }}
+
+      - name: Decode and import certificate
+        if: runner.os == 'macOS'
+        env:
+          MAC_CERTIFICATE: ${{ secrets.CERTIFICATE }}
+          MAC_CERTIFICATE_PASSWORD: ${{ secrets.CERTIFICATE_PASSWORD }}
+        run: |
+          echo "$MAC_CERTIFICATE" | base64 --decode > certificate.p12
+          security create-keychain -p "action" build.keychain
+          security import certificate.p12 -k build.keychain -P "$MAC_CERTIFICATE_PASSWORD" -T /usr/bin/codesign
+          security list-keychains -s build.keychain
+          security unlock-keychain -p "action" build.keychain
+          security set-key-partition-list -S apple-tool:,apple:,codesign: -s -k "action" build.keychain
+          rm certificate.p12
+
+      - name: Build daemon
+        run: poetry run python build.py --skip-gui
+
+      - name: Upload build artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: ${{ matrix.archive-name }}
+          path: ${{ matrix.build-output }}
+          if-no-files-found: error
+
+      - name: Create release archive (macOS)
+        if: github.event_name == 'release' && runner.os == 'macOS'
+        working-directory: ${{ matrix.build-output }}
+        run: zip -ry "${{ github.workspace }}/${{ matrix.archive-name }}.zip" .
+
+      - name: Create release archive (Windows)
+        if: github.event_name == 'release' && runner.os == 'Windows'
+        shell: pwsh
+        run: Compress-Archive -Path "${{ matrix.build-output }}\*" -DestinationPath "${{ matrix.archive-name }}.zip"
+
+      - name: Upload release asset
+        if: github.event_name == 'release'
+        uses: softprops/action-gh-release@v2
+        with:
+          files: ${{ matrix.archive-name }}.zip
