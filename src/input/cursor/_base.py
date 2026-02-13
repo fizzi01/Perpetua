@@ -977,21 +977,21 @@ class CursorHandlerWorker(object):
         Reads from the pipe in a non-blocking way using executor.
         """
         loop = asyncio.get_running_loop()
+        conn = self.mouse_conn_rec
+        # poll_timeout = self.DATA_POLL_TIMEOUT
+
+        # Pre-allocate a reusable event object
+        mouse_event = MouseEvent(action=MouseEvent.MOVE_ACTION)
 
         while self._is_running and self.stream is not None:
             try:
                 # Non-blocking poll
-                has_data = await loop.run_in_executor(
-                    None, self.mouse_conn_rec.poll, self.DATA_POLL_TIMEOUT
-                )
+                has_data = conn.poll
 
                 if has_data:
                     # Read from the pipe in executor
-                    delta_x, delta_y = await loop.run_in_executor(
-                        None, self.mouse_conn_rec.recv
-                    )  # type: ignore # ty:ignore[unused-ignore-comment]
+                    delta_x, delta_y = await loop.run_in_executor(None, conn.recv)  # type: ignore # ty:ignore[unused-ignore-comment]
 
-                    mouse_event = MouseEvent(action=MouseEvent.MOVE_ACTION)
                     mouse_event.dx = delta_x
                     mouse_event.dy = delta_y
 
@@ -999,7 +999,7 @@ class CursorHandlerWorker(object):
                     await self.stream.send(mouse_event)
                 else:
                     # Small sleep to avoid busy waiting
-                    await asyncio.sleep(0.0001)
+                    await asyncio.sleep(0)
 
             except EOFError:
                 await asyncio.sleep(0)
