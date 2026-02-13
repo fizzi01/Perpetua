@@ -1,5 +1,18 @@
 # Changelog
 
+## [1.2.1](https://github.com/fizzi01/Perpetua/compare/v1.2.0...v1.2.1) (2026-02-13)
+
+
+### Bug Fixes
+
+* **mouse:** optimize and fix edge crossing ([#31](https://github.com/fizzi01/Perpetua/issues/31)) ([c776755](https://github.com/fizzi01/Perpetua/commit/c7767550d5b584f1995e6a3c4277603109ce754d))
+* overall mouse control performance boost and improvement ([#33](https://github.com/fizzi01/Perpetua/issues/33)) ([17e544c](https://github.com/fizzi01/Perpetua/commit/17e544cc460bd5d8ee0548b8513f4aaf3b7bbd32))
+
+
+### Documentation
+
+* update README for clarity and improved structure ([0f07e6c](https://github.com/fizzi01/Perpetua/commit/0f07e6c8faf74332aa49440d03991ac3163dd511))
+
 ## [1.2.0](https://github.com/fizzi01/Perpetua/compare/v1.1.0...v1.2.0) (2026-02-12)
 
 
