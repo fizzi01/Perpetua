@@ -151,7 +151,20 @@ jobs:
           rm certificate.p12
 
       - name: Build daemon
-        run: poetry run python build.py --skip-gui
+        run: poetry run python build.py --skip-gui --nuitka-args --assume-yes-for-downloads
+
+      - name: Clean Nuitka build cache
+        run: find ${{ matrix.build-output }} -maxdepth 1 -name '*.build' -type d -exec rm -rf {} +
+        shell: bash
+
+      - name: Rename dist folder (Windows)
+        if: runner.os == 'Windows'
+        shell: pwsh
+        run: |
+          $dist = Get-ChildItem -Path "${{ matrix.build-output }}" -Filter "*.dist" -Directory
+          if ($dist) {
+            Rename-Item -Path $dist.FullName -NewName "Perpetua"
+          }
 
       - name: Upload build artifact
         uses: actions/upload-artifact@v4
