@@ -3,9 +3,10 @@
     <h1>Perpetua</h1>
 </div>
 
-Perpetua is an open-source, cross-platform KVM software solution inspired by Apple's Universal Control. It enables users to control multiple devices using a single keyboard and mouse, with seamless cursor transitions between devices, keyboard sharing, and clipboard synchronization.
+Perpetua is an open-source, cross-platform KVM software that lets you share a single keyboard and mouse across multiple devices. Inspired by Apple's Universal Control, it provides seamless cursor movement between devices, keyboard sharing, and automatic clipboard synchronization. All secured with TLS encryption.
 
-Built with Python, Perpetua prioritizes performance through the integration of high-performance event loops: uvloop on macOS, and winloop on Windows. This architectural choice delivers exceptional responsiveness and low-latency input handling, ensuring smooth performance.
+Built with Python, leveraging high-performance uvloop (macOS) and winloop (Windows) for low-latency, responsive input handling.
+
 
 <div align="center">
     <picture>
@@ -14,20 +15,6 @@ Built with Python, Perpetua prioritizes performance through the integration of h
         <img alt="Perpetua Server View" srcset="docs/imgs/dark.png" width="450">
     </picture>
 </div>
-
-## Features
-
-**Unified Input Control**  
-Control multiple computers with a single keyboard and mouse. Move your cursor seamlessly across device boundaries as if they were multiple monitors connected to one system.
-
-**Spatial Configuration**  
-Define the physical arrangement of your devices (left, right, above, below) to enable intuitive cursor transitions that match your actual workspace layout.
-
-**Clipboard Synchronization**  
-Share clipboard content across all connected devices automatically.
-
-**Secure by Default**  
-All network communication is encrypted using TLS.
 
 ## Download
 [![GitHub Downloads (all assets, latest release)](https://img.shields.io/github/downloads/fizzi01/Perpetua/latest/total?style=for-the-badge&logo=github&label=DOWNLOAD%20LATEST&color=%234f47e4)](https://github.com/fizzi01/Perpetua/releases/latest)
@@ -48,12 +35,17 @@ Actually only Windows and MacOS are supported.
 
 ## Usage
 
-Launch `Perpetua` and choose whether to run as a server or client. The GUI will guide you through the necessary configuration steps.
+[Download](#download) the latest release.
+
+- **macOS**: Extract the `.zip` and launch `Perpetua.app`.
+- **Windows**: Extract the archive and run `Perpetua.exe` inside the `Perpetua` folder.
+
+The GUI will guide you through choosing server or client mode and the initial configuration.
 
 > [!TIP]
-> For detailed configuration options, including client authorization, client-server pairing, and security settings, see the [Configuration](#configuration) section below.
+> For detailed configuration options, including client-server pairing, and security settings, see the [Configuration](#configuration) section below.
 
-#### Background Mode:
+#### Background Mode
 
 You can run Perpetua as a background service using the daemon mode:
 
@@ -156,10 +148,15 @@ To work on Perpetua in development mode:
    python launcher.py
    ```
    
-   The launcher will automatically start the GUI in development mode with hot-reload capabilities. The daemon will also run in the background, allowing you to test the full application without building.
+   The launcher will automatically start the GUI in development mode and the daemon in background.
+
+   To run the *daemon only*:
+   ```bash
+   python src/service/daemon.py
+   ```
 
 > [!NOTE]
-> Make sure all prerequisites and dependencies are installed before running `launcher.py`.
+> Make sure all prerequisites and dependencies are installed before running `launcher.py` or `daemon.py`.
 
 3. **Install GUI dependencies (optional, if you need to modify the GUI):**
    ```bash
@@ -240,7 +237,7 @@ Configuration File Locations:
 <details>
 <summary><b>Server Configuration</b></summary>
 
-The server configuration is managed automatically for basic setup (certificate generation, network binding). However, to accept client connections, you must manually add each client to the server configuration, specifying:
+The server configuration is managed automatically for basic setup (certificate generation, network binding). However, to accept client connections, you must manually add each client to the server configuration (or in `Server > Clients` section), specifying:
 
 - Client IP or Hostname
 - Screen Position: The spatial arrangement relative to the server (left, right, top, bottom)
@@ -259,7 +256,7 @@ Auto Discovery (Default):
 - Works out of the box, no configuration needed
 
 Manual Configuration:
-- Set the server's hostname or IP address directly in the config file
+- Set the server's hostname or IP address directly in the config file (or in the appropiate field in `Client > Options`)
 - Use this when auto-discovery doesn't work or you have a static network setup
 
 </details>
@@ -270,21 +267,21 @@ Manual Configuration:
 When a client connects to a new server for the first time, it needs to get the server's TLS certificate to establish a secure connection. Here's how it works:
 
 1. The client starts the connection process
-2. On the server (which must be running and listening), generate an OTP through the GUI in the Security section
-3. Enter the OTP in the client when prompted (the GUI walks you through this)
+2. On the `Server` (which must be running and listening), generate an OTP through the GUI in the `Security` section ("*Secure connection*" must be **enabled**!)
+3. Enter the OTP on the `Client` when prompted (the GUI walks you through this)
 4. If the certificate exchange succeeds and the client is in the server's allowlist, the connection is established
 5. Done!
 
-The OTP is just for the initial certificate exchange. After that, connections authenticate automatically using the saved certificates.
+The OTP is just for the initial certificate exchange. After that, connections (to the same server) authenticate automatically using the saved certificates.
 
 </details>
 
 <details>
 <summary><b>Configuration File Structure</b></summary>
 
-The configuration json file is split into three sections: `server`, `client`, and `general`.
+The configuration [json file](#file-structure) is split into three sections: `server`, `client`, and `general`.
 
-#### Server Section:
+#### Server Section
 
 `streams_enabled` controls what the server will manage on each connected client:
 - `1`: Mouse
@@ -302,11 +299,11 @@ The configuration json file is split into three sections: `server`, `client`, an
 
 Other fields are automatically populated by the system.
 
-#### Client Section:
+#### Client Section
 
 The same field names have the same meaning as in the server section. The `server_info` block tells the client which server to connect to (leave it empty for auto-discovery or fill in the `host` field for manual configuration).
 
-#### General Section:
+#### General Section
 
 These parameters affect the application's internal behavior. Only modify them if you know what you're doing.
 
