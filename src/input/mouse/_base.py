@@ -98,17 +98,18 @@ class EdgeDetector:
 
     @staticmethod
     def is_at_edge(
-        movement_history: list,
+        movement_history: deque | list,
         x: float | int,
         y: float | int,
         screen_size: tuple,
         is_dragging: bool,
+        direction_ratio: float = 0.85,
     ) -> Optional[ScreenEdge]:
         """
         Determines if the cursor is moving towards and has reached any edge of the screen.
 
         Args:
-            movement_history (list): A list of recent (x, y) positions of the cursor.
+            movement_history (deque | list): A deque or list of recent (x, y) positions of the cursor.
             x (float | int): Current x position of the cursor.
             y (float | int): Current y position of the cursor.
             screen_size (tuple): A tuple representing the screen size (width, height).
@@ -119,45 +120,61 @@ class EdgeDetector:
         if is_dragging:
             return None
 
-        # Check all the previous movements to determine the direction
-        queue_data = movement_history
-        queue_size = len(queue_data)
+        size = len(movement_history)
+        if size < 2:
+            return None
 
-        moving_towards_left = all(
-            queue_data[i][0] > queue_data[i + 1][0] for i in range(queue_size - 1)
-        )
-        moving_towards_right = all(
-            queue_data[i][0] < queue_data[i + 1][0] for i in range(queue_size - 1)
-        )
-        moving_towards_top = all(
-            queue_data[i][1] > queue_data[i + 1][1] for i in range(queue_size - 1)
-        )
-        moving_towards_bottom = all(
-            queue_data[i][1] < queue_data[i + 1][1] for i in range(queue_size - 1)
-        )
+        w, h = screen_size
 
-        # Check if we are at the edges
-        at_left_edge = x <= 0
-        at_right_edge = x >= screen_size[0] - 1
-        at_top_edge = y <= 0
-        at_bottom_edge = y >= screen_size[1] - 1
+        x_edge = None
+        x_axis_sign = 0
+        if x <= 0:
+            x_edge = ScreenEdge.LEFT
+            x_axis_sign = -1
+        elif x >= w - 1:
+            x_edge = ScreenEdge.RIGHT
+            x_axis_sign = 1
 
-        edge = None
+        y_edge = None
+        y_axis_sign = 0
+        if y <= 0:
+            y_edge = ScreenEdge.TOP
+            y_axis_sign = -1
+        elif y >= h - 1:
+            y_edge = ScreenEdge.BOTTOM
+            y_axis_sign = 1
 
-        if at_left_edge and moving_towards_left:
-            edge = ScreenEdge.LEFT
-        elif at_right_edge and moving_towards_right:
-            edge = ScreenEdge.RIGHT
-        elif at_top_edge and moving_towards_top:
-            edge = ScreenEdge.TOP
-        elif at_bottom_edge and moving_towards_bottom:
-            edge = ScreenEdge.BOTTOM
+        if x_edge is None and y_edge is None:
+            return None
 
-        return edge
+        # Direction check with jitter tolerance
+        pairs = size - 1
+        min_agreements = int(pairs * direction_ratio)
+        hist = movement_history
+
+        # Check x-axis edge first (LEFT/RIGHT)
+        if x_edge is not None:
+            agreements = 0
+            for i in range(pairs):
+                if (hist[i + 1][0] - hist[i][0]) * x_axis_sign > 0:
+                    agreements += 1
+            if agreements >= min_agreements:
+                return x_edge
+
+        # Check y-axis edge (TOP/BOTTOM)
+        if y_edge is not None:
+            agreements = 0
+            for i in range(pairs):
+                if (hist[i + 1][1] - hist[i][1]) * y_axis_sign > 0:
+                    agreements += 1
+            if agreements >= min_agreements:
+                return y_edge
+
+        return None
 
     def detect_edge(
         self,
-        movement_history: list,
+        movement_history: deque | list,
         x: float | int,
         y: float | int,
         screen_size: tuple,
@@ -168,7 +185,7 @@ class EdgeDetector:
         Detects if the cursor is at the edge and invokes the appropriate callback.
 
         Args:
-            movement_history (list): A list of recent (x, y) positions of the cursor.
+            movement_history (deque | list): A deque or list of recent (x, y) positions of the cursor.
             x (float | int): Current x position of the cursor.
             y (float | int): Current y position of the cursor.
             screen_size (tuple): A tuple representing the screen size (width, height).
@@ -428,10 +445,8 @@ class ServerMouseListener(object):
 
             if len(self._movement_history) >= self.MOVEMENT_HISTORY_N_THRESHOLD:
                 # Check all the previous movements to determine the direction
-                queue_data = list(self._movement_history)
-
                 edge = EdgeDetector.is_at_edge(
-                    movement_history=queue_data,
+                    movement_history=self._movement_history,
                     x=x,
                     y=y,
                     screen_size=self._screen_size,
@@ -928,11 +943,8 @@ class ClientMouseController(object):
                 if len(self._movement_history) < self.MOVEMENT_HISTORY_N_THRESHOLD:
                     return None
 
-                # Convert deque to list for edge detection
-                queue_data = list(self._movement_history)
-
                 edge = EdgeDetector.is_at_edge(
-                    movement_history=queue_data,
+                    movement_history=self._movement_history,
                     x=x,
                     y=y,
                     screen_size=self._screen_size,

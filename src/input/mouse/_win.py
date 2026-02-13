@@ -67,4 +67,7 @@ class ClientMouseController(_base.ClientMouseController):
     Its main purpose is to move the mouse cursor and perform clicks.
     """
 
+    MOVEMENT_HISTORY_N_THRESHOLD = 4
+    MOVEMENT_HISTORY_LEN = 5
+
     pass
