@@ -64,7 +64,7 @@ jobs:
           path: |
             ~/.cargo/bin/cargo-tauri
             ~/.cargo/bin/cargo-tauri.exe
-          key: tauri-cli-${{ runner.os }}-v2
+          key: tauri-cli-${{ matrix.platform }}-v2
 
       - name: Install Tauri CLI
         if: steps.cache-tauri-cli.outputs.cache-hit != 'true'
