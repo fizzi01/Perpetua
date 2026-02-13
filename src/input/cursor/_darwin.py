@@ -75,8 +75,8 @@ class CursorHandlerWindow(_base.CursorHandlerWindow):
 
         Screen.hide_icon()
 
-        self.previous_app = None
-        self.previous_app_pid = None
+        self.previous_app = NSWorkspace.sharedWorkspace().frontmostApplication()
+        self.previous_app_pid = self.previous_app.processIdentifier()
 
         self._create()
 
