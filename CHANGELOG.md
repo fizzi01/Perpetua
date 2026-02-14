@@ -1,5 +1,12 @@
 # Changelog
 
+## [1.2.2](https://github.com/fizzi01/Perpetua/compare/v1.2.1...v1.2.2) (2026-02-14)
+
+
+### Bug Fixes
+
+* extend mouse control to higher polling rates and improve double-click  ([#34](https://github.com/fizzi01/Perpetua/issues/34)) ([06029f3](https://github.com/fizzi01/Perpetua/commit/06029f35ea310b9947dab0cfcde0b9e8400ac7fb))
+
 ## [1.2.1](https://github.com/fizzi01/Perpetua/compare/v1.2.0...v1.2.1) (2026-02-13)
 
 
