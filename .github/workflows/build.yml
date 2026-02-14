@@ -35,7 +35,7 @@ jobs:
           - os: windows-latest
             platform: Windows-x86_64
             rust-target: x86_64-pc-windows-msvc
-            artifact-name: gui-windows-x64
+            artifact-name: gui-windows-x86_64
             gui-exe-name: perpetua.exe
 
     steps:
