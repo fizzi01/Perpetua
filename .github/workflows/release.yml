@@ -18,13 +18,13 @@ jobs:
       - uses: googleapis/release-please-action@v4
         id: release
         with:
-          token: ${{ secrets.GITHUB_TOKEN }}
+          token: ${{ secrets.PERPETUA_TOKEN }}
           release-type: python
 
       - name: Sync version for Tauri
         if: ${{ steps.release.outputs.pr != '' }}
         env:
-          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          GH_TOKEN: ${{ secrets.PERPETUA_TOKEN }}
         run: |
           # Checkout the PR branch
           PR_BRANCH=$(echo '${{ steps.release.outputs.pr }}' | jq -r '.headBranchName')
