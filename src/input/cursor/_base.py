@@ -515,20 +515,12 @@ class CursorHandlerWindow(wx.Frame):
 
         # Process only if there is movement
         if delta_x != 0 or delta_y != 0:
-            self.accumulated_delta_x += delta_x
-            self.accumulated_delta_y += delta_y
-
-            current_time_ns = time.monotonic_ns()
-            if current_time_ns - self.last_mouse_send_time >= self.mouse_send_interval_ns:
-                try:
-                    self.mouse_conn.send(
-                        (self.accumulated_delta_x, self.accumulated_delta_y)
-                    )
-                    self.accumulated_delta_x = 0
-                    self.accumulated_delta_y = 0
-                    self.last_mouse_send_time = current_time_ns
-                except Exception:
-                    pass
+            try:
+                self.mouse_conn.send(
+                    (delta_x, delta_y)
+                )
+            except Exception:
+                pass
 
             # Reset position
             time.sleep(0)
