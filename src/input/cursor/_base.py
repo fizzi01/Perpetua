@@ -67,7 +67,7 @@ class CursorHandlerWindow(wx.Frame):
 
     WINDOW_SIZE: Size = Size(400, 400)
     BORDER_OFFSET: int = 1
-    DATA_SEND_INTERVAL: float = 0.005  # seconds
+    # DATA_SEND_INTERVAL: float = 0.0005  # seconds
     LOCK_STATUS_CHECK_INTERVAL: int = 500  # ms
 
     def __init__(
@@ -116,10 +116,10 @@ class CursorHandlerWindow(wx.Frame):
         if not self._debug:
             self.SetTransparent(0)
 
-        self.last_mouse_send_time = 0
-        self.mouse_send_interval = self.DATA_SEND_INTERVAL
-        self.accumulated_delta_x = 0
-        self.accumulated_delta_y = 0
+        # self.last_mouse_send_time = 0
+        # self.mouse_send_interval_ns = int(self.DATA_SEND_INTERVAL * 1_000_000_000)
+        # self.accumulated_delta_x = 0
+        # self.accumulated_delta_y = 0
 
         # Screen lock monitoring
         self._screen_monitor_timer = wx.Timer(self)
@@ -515,20 +515,10 @@ class CursorHandlerWindow(wx.Frame):
 
         # Process only if there is movement
         if delta_x != 0 or delta_y != 0:
-            self.accumulated_delta_x += delta_x
-            self.accumulated_delta_y += delta_y
-
-            current_time = time.time()
-            if current_time - self.last_mouse_send_time >= self.mouse_send_interval:
-                try:
-                    self.mouse_conn.send(
-                        (self.accumulated_delta_x, self.accumulated_delta_y)
-                    )
-                    self.accumulated_delta_x = 0
-                    self.accumulated_delta_y = 0
-                    self.last_mouse_send_time = current_time
-                except Exception:
-                    pass
+            try:
+                self.mouse_conn.send((delta_x, delta_y))
+            except Exception:
+                pass
 
             # Reset position
             time.sleep(0)
