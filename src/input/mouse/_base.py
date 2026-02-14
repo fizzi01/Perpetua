@@ -1069,9 +1069,13 @@ class ClientMouseController(object):
             self._pressed = False
         elif not self._pressed and is_pressed:
             # If we receive a press event within 100ms of the last press, treat it as a double-click
-            if (current_time - self._last_press_time) < 0.1:
+            if (current_time - self._last_press_time) < 0.15:
                 self._controller.click(btn, 2 + self._doubleclick_counter)
-                self._doubleclick_counter = 0 if self._doubleclick_counter == 2 else 2
+                self._doubleclick_counter = (
+                    0
+                    if self._doubleclick_counter == 2
+                    else self._doubleclick_counter + 1
+                )
                 self._pressed = False
             else:
                 self._controller.press(btn)

@@ -516,9 +516,7 @@ class CursorHandlerWindow(wx.Frame):
         # Process only if there is movement
         if delta_x != 0 or delta_y != 0:
             try:
-                self.mouse_conn.send(
-                    (delta_x, delta_y)
-                )
+                self.mouse_conn.send((delta_x, delta_y))
             except Exception:
                 pass
 
