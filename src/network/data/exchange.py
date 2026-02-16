@@ -96,7 +96,9 @@ class MessageExchange:
         self.builder = MessageBuilder()
 
         # Message handlers registry
-        self._handlers: Dict[str, Callable[[ProtocolMessage], Coroutine[Any, Any, None]]] = {}
+        self._handlers: Dict[
+            str, Callable[[ProtocolMessage], Coroutine[Any, Any, None]]
+        ] = {}
 
         # Chunk reassembly buffer
         self._chunk_buffer: Dict[str, list[Optional[ProtocolMessage]]] = {}
@@ -173,11 +175,11 @@ class MessageExchange:
                     timeout=0.1,
                 )
             except asyncio.TimeoutError:
-                #await asyncio.sleep(0)
+                # await asyncio.sleep(0)
                 return
 
             if not new_data:
-                #await asyncio.sleep(0)
+                # await asyncio.sleep(0)
                 return
 
             if self._metrics:
@@ -192,12 +194,13 @@ class MessageExchange:
                 try:
                     # If prefix is invalid, this will raise ValueError and we will skip 1 byte
                     msg_length = ProtocolMessage.read_lenght_prefix(
-                        bytes(persistent_buffer[offset : offset + prefix_len]),
-                        False
+                        bytes(persistent_buffer[offset : offset + prefix_len]), False
                     )
 
                     if msg_length > max_msg_size:
-                        self._logger.debug(f"Received message length {msg_length} exceeds maximum allowed {max_msg_size}. Skipping.")
+                        self._logger.debug(
+                            f"Received message length {msg_length} exceeds maximum allowed {max_msg_size}. Skipping."
+                        )
                         # Messaggio troppo grande, cerca prossimo marker
                         offset += 1
                         # await asyncio.sleep(0)
@@ -208,15 +211,19 @@ class MessageExchange:
                     # Verifica se abbiamo il messaggio completo
                     if offset + total_length > buffer_len:
                         # Messaggio incompleto, mantieni da offset in poi
-                        #await asyncio.sleep(0)
-                        self._logger.debug(f"Incomplete message received. Expected length: {total_length}, current buffer length: {buffer_len - offset}. Waiting for more data.")
+                        # await asyncio.sleep(0)
+                        self._logger.debug(
+                            f"Incomplete message received. Expected length: {total_length}, current buffer length: {buffer_len - offset}. Waiting for more data."
+                        )
                         break
 
                     # Estrai e processa il messaggio completo
                     message_data = bytes(
                         persistent_buffer[offset : offset + total_length]
                     )
-                    message = ProtocolMessage.from_bytes(message_data, validate=False, length=msg_length)
+                    message = ProtocolMessage.from_bytes(
+                        message_data, validate=False, length=msg_length
+                    )
                     # message.timestamp = time()
                     if message.timestamp:
                         receive_latency = time() - message.timestamp
@@ -552,10 +559,7 @@ class MessageExchange:
             data = message.to_bytes()
 
             # Check if chunking is needed
-            if (
-                self.config.auto_chunk
-                and len(data) > self.config.max_chunk_size
-            ):
+            if self.config.auto_chunk and len(data) > self.config.max_chunk_size:
                 chs = self.builder.create_chunked_message(
                     message, self.config.max_chunk_size
                 )

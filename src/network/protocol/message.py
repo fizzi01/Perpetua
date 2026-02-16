@@ -25,7 +25,6 @@ import struct
 import time
 import uuid
 from typing import Dict, Any, Optional, List, ClassVar
-from dataclasses import dataclass
 from enum import StrEnum
 import msgspec
 
@@ -112,7 +111,9 @@ class ProtocolMessage(msgspec.Struct):
         return length
 
     @classmethod
-    def from_bytes(cls, data: bytes, validate: bool = True, length: Optional[int] = None) -> "ProtocolMessage":
+    def from_bytes(
+        cls, data: bytes, validate: bool = True, length: Optional[int] = None
+    ) -> "ProtocolMessage":
         """
         Deserialize message from binary format.
 
@@ -136,7 +137,7 @@ class ProtocolMessage(msgspec.Struct):
 
             if len(data) < cls.prefix_lenght + length:
                 raise ValueError("Invalid binary data: incomplete message")
-        
+
         elif length is None:
             # If not validating, we must be given the length to know how much to read
             raise ValueError("Length must be provided if not validating")
