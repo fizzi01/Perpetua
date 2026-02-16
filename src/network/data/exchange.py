@@ -197,7 +197,7 @@ class MessageExchange:
                     )
 
                     if msg_length > max_msg_size:
-                        print(f"Received message length {msg_length} exceeds maximum allowed {max_msg_size}. Skipping.")
+                        self._logger.debug(f"Received message length {msg_length} exceeds maximum allowed {max_msg_size}. Skipping.")
                         # Messaggio troppo grande, cerca prossimo marker
                         offset += 1
                         # await asyncio.sleep(0)
@@ -209,7 +209,7 @@ class MessageExchange:
                     if offset + total_length > buffer_len:
                         # Messaggio incompleto, mantieni da offset in poi
                         #await asyncio.sleep(0)
-                        print(f"Incomplete message received. Expected length: {total_length}, current buffer length: {buffer_len - offset}. Waiting for more data.")
+                        self._logger.debug(f"Incomplete message received. Expected length: {total_length}, current buffer length: {buffer_len - offset}. Waiting for more data.")
                         break
 
                     # Estrai e processa il messaggio completo
