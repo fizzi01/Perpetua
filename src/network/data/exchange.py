@@ -25,7 +25,7 @@ from asyncio.queues import Queue
 import asyncio
 from dataclasses import dataclass
 from time import time
-from typing import Callable, Dict, Optional, Any, List
+from typing import Callable, Dict, Optional, Any, List, Coroutine
 
 from config import ApplicationConfig
 from network.data import MissingTransportError
@@ -96,7 +96,7 @@ class MessageExchange:
         self.builder = MessageBuilder()
 
         # Message handlers registry
-        self._handlers: Dict[str, Callable[[ProtocolMessage], Any]] = {}
+        self._handlers: Dict[str, Callable[[ProtocolMessage], Coroutine[Any, Any, None]]] = {}
 
         # Chunk reassembly buffer
         self._chunk_buffer: Dict[str, list[Optional[ProtocolMessage]]] = {}
@@ -105,6 +105,7 @@ class MessageExchange:
         # We support multiple transports for multicast scenarios
         self._send_callbacks: Dict[str, Optional[Callable[[bytes], Any]]] = {}
         self._receive_callbacks: Dict[str, Optional[Callable[[int], Any]]] = {}
+        self._send_async: Dict[str, bool] = {}
 
         # Metrics
         self._metrics: Optional[ConnectionMetrics] = None
@@ -172,11 +173,11 @@ class MessageExchange:
                     timeout=0.1,
                 )
             except asyncio.TimeoutError:
-                await asyncio.sleep(0)
+                #await asyncio.sleep(0)
                 return
 
             if not new_data:
-                await asyncio.sleep(0)  # Breve pausa per evitare busy waiting
+                #await asyncio.sleep(0)
                 return
 
             if self._metrics:
@@ -189,28 +190,14 @@ class MessageExchange:
             # Processa tutti i messaggi completi nel buffer
             while offset + prefix_len <= buffer_len:
                 try:
-                    # Verifica marker "PY" prima di leggere il prefisso
-                    if persistent_buffer[offset + 4 : offset + 6] != b"PY":
-                        # Cerca il prossimo marker valido
-                        next_marker = persistent_buffer.find(b"PY", offset + 1)
-                        if next_marker == -1 or next_marker < 4:
-                            # Nessun marker trovato, mantieni ultimi 5 byte
-                            persistent_buffer = (
-                                persistent_buffer[-5:]
-                                if buffer_len > 5
-                                else bytearray()
-                            )
-                            await asyncio.sleep(0)
-                            break
-                        offset = next_marker - 4
-                        continue
-
-                    # Leggi lunghezza messaggio
+                    # If prefix is invalid, this will raise ValueError and we will skip 1 byte
                     msg_length = ProtocolMessage.read_lenght_prefix(
-                        bytes(persistent_buffer[offset : offset + prefix_len])
+                        bytes(persistent_buffer[offset : offset + prefix_len]),
+                        False
                     )
 
                     if msg_length > max_msg_size:
+                        print(f"Received message length {msg_length} exceeds maximum allowed {max_msg_size}. Skipping.")
                         # Messaggio troppo grande, cerca prossimo marker
                         offset += 1
                         # await asyncio.sleep(0)
@@ -221,14 +208,15 @@ class MessageExchange:
                     # Verifica se abbiamo il messaggio completo
                     if offset + total_length > buffer_len:
                         # Messaggio incompleto, mantieni da offset in poi
-                        await asyncio.sleep(0)
+                        #await asyncio.sleep(0)
+                        print(f"Incomplete message received. Expected length: {total_length}, current buffer length: {buffer_len - offset}. Waiting for more data.")
                         break
 
                     # Estrai e processa il messaggio completo
                     message_data = bytes(
                         persistent_buffer[offset : offset + total_length]
                     )
-                    message = ProtocolMessage.from_bytes(message_data)
+                    message = ProtocolMessage.from_bytes(message_data, validate=False, length=msg_length)
                     # message.timestamp = time()
                     if message.timestamp:
                         receive_latency = time() - message.timestamp
@@ -271,9 +259,7 @@ class MessageExchange:
 
             # Rimuovi dati processati dal buffer
             if offset > 0:
-                tmp = persistent_buffer[offset:]
-                persistent_buffer.clear()
-                persistent_buffer.extend(tmp)
+                del persistent_buffer[:offset]
 
             await asyncio.sleep(0)
 
@@ -327,7 +313,7 @@ class MessageExchange:
         Core loop for receiving and processing incoming messages.
         Handles chunk reassembly and dispatching to registered handlers.
         """
-        persistent_buffer = bytearray()
+        buffers: Dict[str, bytearray] = {}
         prefix_len = ProtocolMessage.prefix_lenght
         max_msg_size = self.config.max_chunk_size * 100
 
@@ -335,15 +321,13 @@ class MessageExchange:
             await asyncio.sleep(0)
             callbacks_snapshot = list(self._receive_callbacks.items())
             for tr_id, receive_callback in callbacks_snapshot:
-                # We need to execute one by one
-                # to avoid concurrency issues on the buffer
-                await asyncio.create_task(
-                    self._receive_logic(
-                        receive_callback,
-                        persistent_buffer,
-                        prefix_len,
-                        max_msg_size,
-                    )
+                if tr_id not in buffers:
+                    buffers[tr_id] = bytearray()
+                await self._receive_logic(
+                    receive_callback,
+                    buffers[tr_id],
+                    prefix_len,
+                    max_msg_size,
                 )
                 await asyncio.sleep(0)
 
@@ -367,27 +351,29 @@ class MessageExchange:
                 The transport ID associated with the callbacks, required in multicast
                 configurations.
         """
-        # async with self._lock: # Protect transport callbacks assignment
-        if not self.config.multicast:  # Single transport
-            self._send_callbacks[self.DEFAULT_TRANSPORT_ID] = send_callback
-            self._receive_callbacks[self.DEFAULT_TRANSPORT_ID] = receive_callback
-        else:
-            if tr_id is None:
-                raise ValueError(
-                    "Transport ID must be provided for multicast configuration."
-                )
+        # Single transport if not multicast, otherwise use provided transport ID
+        effective_id = tr_id if self.config.multicast else self.DEFAULT_TRANSPORT_ID
+        if effective_id is None:
+            raise ValueError(
+                "Transport ID must be provided for multicast configuration."
+            )
 
-            self._send_callbacks[tr_id] = send_callback
-            self._receive_callbacks[tr_id] = receive_callback
+        self._send_callbacks[effective_id] = send_callback
+        self._receive_callbacks[effective_id] = receive_callback
+        self._send_async[effective_id] = asyncio.iscoroutinefunction(send_callback)
         await asyncio.sleep(0)
 
-    def register_handler(self, message_type: str, handler: Callable):
+    def register_handler(
+        self,
+        message_type: str,
+        handler: Callable[[ProtocolMessage], Coroutine[Any, Any, None]],
+    ):
         """
         Register a handler for a specific message type.
 
         Args:
             message_type: Type of message to handle (mouse, keyboard, etc.)
-            handler: Callback function to process the message
+            handler: Async callback coroutine to process the message
         """
         self._handlers[message_type] = handler
 
@@ -563,11 +549,12 @@ class MessageExchange:
 
             # Set target if not already set
             message.target = message.target if message.target else tr_id
+            data = message.to_bytes()
 
             # Check if chunking is needed
             if (
                 self.config.auto_chunk
-                and message.get_serialized_size() > self.config.max_chunk_size
+                and len(data) > self.config.max_chunk_size
             ):
                 chs = self.builder.create_chunked_message(
                     message, self.config.max_chunk_size
@@ -577,7 +564,7 @@ class MessageExchange:
                     if self._metrics:
                         self._metrics.record_sent(len(data))
 
-                    if asyncio.iscoroutinefunction(send_callback):
+                    if self._send_async[tr_id]:
                         await send_callback(data)
                     else:
                         send_callback(data)
@@ -586,7 +573,7 @@ class MessageExchange:
                 if self._metrics:
                     self._metrics.record_sent(len(data))
 
-                if asyncio.iscoroutinefunction(send_callback):
+                if self._send_async[tr_id]:
                     await send_callback(data)
                 else:
                     send_callback(data)
@@ -653,14 +640,10 @@ class MessageExchange:
         handler = self._handlers.get(message.message_type)
         if handler:
             try:
-                # Se handler è async, await, altrimenti chiamalo normalmente
-                if asyncio.iscoroutinefunction(handler):
-                    await handler(message)
-                else:
-                    handler(message)
+                await handler(message)
             except Exception as e:
                 self._logger.log(
-                    f"Error in message handler for {message.message_type}: {e}",
+                    f"Error in message handler for {message.message_type} ({e})",
                     Logger.ERROR,
                 )
         else:

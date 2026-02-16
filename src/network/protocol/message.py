@@ -26,12 +26,12 @@ import time
 import uuid
 from typing import Dict, Any, Optional, List, ClassVar
 from dataclasses import dataclass
+from enum import StrEnum
 import msgspec
 
 
 # Messages type
-@dataclass
-class MessageType:
+class MessageType(StrEnum):
     MOUSE = "mouse"
     KEYBOARD = "keyboard"
     CLIPBOARD = "clipboard"
@@ -80,7 +80,10 @@ class ProtocolMessage(msgspec.Struct):
 
         # Add length prefix for proper framing
         length = len(json_bytes)
-        return struct.pack(self._prefix_format, length, b"P", b"Y") + json_bytes
+        buf = bytearray(self.prefix_lenght + length)
+        struct.pack_into(self._prefix_format, buf, 0, length, b"P", b"Y")
+        buf[self.prefix_lenght :] = json_bytes
+        return bytes(buf)
 
     @classmethod
     def from_json(cls, json_str: str) -> "ProtocolMessage":
@@ -88,44 +91,55 @@ class ProtocolMessage(msgspec.Struct):
         return msgspec.json.decode(json_str.encode("utf-8"), type=cls)
 
     @classmethod
-    def read_lenght_prefix(cls, data: bytes) -> int:
+    def read_lenght_prefix(cls, data: bytes, auto_slice: bool = True) -> int:
         """
         Read length prefix from binary data.
 
         Args:
             data: Binary data containing serialized ProtocolMessage
+            auto_slice: If True, slice the data to only include the prefix length
         """
         if len(data) < cls.prefix_lenght:
             raise ValueError("Invalid binary data: too short for length prefix")
 
+        if auto_slice:
+            data = data[: cls.prefix_lenght]
+
         # Read length prefix
-        length, p, y = struct.unpack(cls._prefix_format, data[: cls.prefix_lenght])
+        length, p, y = struct.unpack_from(cls._prefix_format, data)
         if p != b"P" or y != b"Y":
             raise ValueError("Invalid binary data: not a protocol message")
         return length
 
     @classmethod
-    def from_bytes(cls, data: bytes) -> "ProtocolMessage":
+    def from_bytes(cls, data: bytes, validate: bool = True, length: Optional[int] = None) -> "ProtocolMessage":
         """
         Deserialize message from binary format.
 
         Args:
             data: Binary data containing serialized ProtocolMessage
+            validate: If True, validate the length prefix and framing. If False, assumes data is correctly framed.
+            length: If not validating, the caller must provide the length of the message to read.
 
         Returns:
             Deserialized ProtocolMessage
         """
-        if len(data) < cls.prefix_lenght:
-            raise ValueError("Invalid binary data: too short for length prefix")
+        if validate:
+            if len(data) < cls.prefix_lenght:
+                raise ValueError("Invalid binary data: too short for length prefix")
 
-        # Read length prefix
-        length, p, y = struct.unpack(cls._prefix_format, data[: cls.prefix_lenght])
+            # Read length prefix
+            length, p, y = struct.unpack(cls._prefix_format, data[: cls.prefix_lenght])
 
-        if p != b"P" or y != b"Y":
-            raise ValueError("Invalid binary data: not a protocol message")
+            if p != b"P" or y != b"Y":
+                raise ValueError("Invalid binary data: not a protocol message")
 
-        if len(data) < cls.prefix_lenght + length:
-            raise ValueError("Invalid binary data: incomplete message")
+            if len(data) < cls.prefix_lenght + length:
+                raise ValueError("Invalid binary data: incomplete message")
+        
+        elif length is None:
+            # If not validating, we must be given the length to know how much to read
+            raise ValueError("Length must be provided if not validating")
 
         # Extract JSON bytes
         json_bytes = data[cls.prefix_lenght : cls.prefix_lenght + length]
@@ -180,10 +194,13 @@ class MessageBuilder:
         Returns:
             List of ProtocolMessage chunks, each containing chunking metadata
         """
+        message_bytes = message.to_bytes()
+        msg_len = len(message_bytes)
         # First check if message fits in one chunk
-        if message.get_serialized_size() <= max_chunk_size:
+        if msg_len <= max_chunk_size:
             # No chunking needed, return original message
             return [message]
+        del message_bytes
 
         # Need to split the payload into chunks
         payload_bytes = self._encoder.encode(message.payload)
