@@ -948,10 +948,9 @@ class ClientMouseController(object):
                     x=x,
                     y=y,
                     screen_size=self._screen_size,
-                    is_dragging=self._is_dragging,
+                    is_dragging=False,  # Force to false, we will handle it separately
                 )
 
-                # If we reach an edge, dispatch event to deactivate client and send cross screen message to server
                 if edge:
                     # Clamp cursor position to screen bounds
                     cx, cy = EdgeDetector.clamp_to_screen(x, y, self._screen_size)
@@ -959,11 +958,16 @@ class ClientMouseController(object):
                         try:
                             self._controller.position = (cx, cy)
                             x, y = cx, cy
+                            print(f"Clamped cursor to screen bounds: ({x}, {y})")
                         except Exception as e:
                             self._logger.log(
                                 f"Failed to clamp cursor to screen -> {e}", Logger.ERROR
                             )
 
+                # If we reach an edge, dispatch event to deactivate client and send cross screen message to server
+                if (
+                    edge and not self._is_dragging
+                ):  # Don't trigger edge crossing if dragging
                     x, y = EdgeDetector.get_crossing_coords(
                         x=x,
                         y=y,
