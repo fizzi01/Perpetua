@@ -958,7 +958,6 @@ class ClientMouseController(object):
                         try:
                             self._controller.position = (cx, cy)
                             x, y = cx, cy
-                            print(f"Clamped cursor to screen bounds: ({x}, {y})")
                         except Exception as e:
                             self._logger.log(
                                 f"Failed to clamp cursor to screen -> {e}", Logger.ERROR
