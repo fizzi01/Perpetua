@@ -1,5 +1,15 @@
 # Changelog
 
+## [1.2.2](https://github.com/fizzi01/Perpetua/compare/v1.2.1...v1.2.2) (2026-02-16)
+
+
+### Bug Fixes
+
+* extend mouse control to higher polling rates and improve double-click  ([#34](https://github.com/fizzi01/Perpetua/issues/34)) ([06029f3](https://github.com/fizzi01/Perpetua/commit/06029f35ea310b9947dab0cfcde0b9e8400ac7fb))
+* **gui:** removed client hostname info when connected ([#38](https://github.com/fizzi01/Perpetua/issues/38)) ([517be4d](https://github.com/fizzi01/Perpetua/commit/517be4da2e685d2d36ce174b1571c5c777d063eb))
+* **mouse:** fix sticky cursor when dragging ([3462bc9](https://github.com/fizzi01/Perpetua/commit/3462bc9c38cef6922fa4c98eb29dee733161c232))
+* **network:** improve performance in receive and send data ([#37](https://github.com/fizzi01/Perpetua/issues/37)) ([3462bc9](https://github.com/fizzi01/Perpetua/commit/3462bc9c38cef6922fa4c98eb29dee733161c232))
+
 ## [1.2.1](https://github.com/fizzi01/Perpetua/compare/v1.2.0...v1.2.1) (2026-02-13)
 
 
