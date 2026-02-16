@@ -2,6 +2,11 @@ name: Build
 
 on:
   workflow_dispatch:
+    inputs:
+      update-release:
+        description: "Update assets of the latest release"
+        type: boolean
+        default: false
   push:
     branches: [ci]
   release:
@@ -186,17 +191,25 @@ jobs:
           if-no-files-found: error
 
       - name: Create release archive (macOS)
-        if: github.event_name == 'release' && runner.os == 'macOS'
+        if: (github.event_name == 'release' || inputs.update-release) && runner.os == 'macOS'
         working-directory: ${{ matrix.build-output }}
         run: zip -ry "${{ github.workspace }}/${{ matrix.archive-name }}.zip" .
 
       - name: Create release archive (Windows)
-        if: github.event_name == 'release' && runner.os == 'Windows'
+        if: (github.event_name == 'release' || inputs.update-release) && runner.os == 'Windows'
         shell: pwsh
         run: Compress-Archive -Path "${{ matrix.build-output }}\*" -DestinationPath "${{ matrix.archive-name }}.zip"
 
+      - name: Get latest release tag
+        if: inputs.update-release
+        id: latest-release
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: echo "tag=$(gh release view --json tagName -q .tagName)" >> "$GITHUB_OUTPUT"
+
       - name: Upload release asset
-        if: github.event_name == 'release'
+        if: github.event_name == 'release' || inputs.update-release
         uses: softprops/action-gh-release@v2
         with:
+          tag_name: ${{ steps.latest-release.outputs.tag || github.event.release.tag_name }}
           files: ${{ matrix.archive-name }}.zip
