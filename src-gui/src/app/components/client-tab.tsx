@@ -666,12 +666,12 @@ export function ClientTab({ onStatusChange, state }: ClientTabProps) {
             </motion.div>
           </div>
 
-          {/* Client Hostname - Full Width */}
+          {/* Client Hostname - Full Width
           {clientHostname && (
-            <motion.div 
+            <motion.div
               whileHover={{ scale: 1.02 }}
               className="flex items-center gap-3 p-4 rounded-lg border backdrop-blur-sm"
-              style={{ 
+              style={{
                 backgroundColor: 'var(--app-card-bg)',
                 borderColor: 'var(--app-card-border)'
               }}
@@ -686,7 +686,7 @@ export function ClientTab({ onStatusChange, state }: ClientTabProps) {
                 <div className="text-xs" style={{ color: 'var(--app-text-muted)' }}>Your Hostname</div>
               </div>
             </motion.div>
-          )}
+          )}*/}
 
           {/* Data Usage - Full Width */}
           {/* <motion.div 
