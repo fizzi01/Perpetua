@@ -116,7 +116,7 @@ class ConnectionHandler(BaseConnectionHandler):
 
             return True
         except Exception as e:
-            self._logger.exception(f"Failed to start async server -> {e}")
+            self._logger.exception(f"Failed to start server ({e})")
             self._running = False
             return False
 
@@ -201,7 +201,7 @@ class ConnectionHandler(BaseConnectionHandler):
                 )
             except Exception as e:
                 self._logger.log(
-                    f"Error force disconnecting client {client.get_net_id()} -> {e}",
+                    f"Error force disconnecting client {client.get_net_id()} ({e})",
                     Logger.ERROR,
                 )
             client.is_connected = False
@@ -213,7 +213,7 @@ class ConnectionHandler(BaseConnectionHandler):
                     callback=self.disconnected_callback, client=client, streams=[]
                 )
             except CallbackError as e:
-                self._logger.log(f"Error in disconnected callback -> {e}", Logger.ERROR)
+                self._logger.log(f"Error in disconnected callback ({e})", Logger.ERROR)
 
     async def _check_pending_streams(
         self, reader: asyncio.StreamReader, writer: asyncio.StreamWriter, address: str
@@ -267,7 +267,7 @@ class ConnectionHandler(BaseConnectionHandler):
                     return True
         except Exception as e:
             self._logger.log(
-                f"Error checking pending streams for {address} -> {e}", Logger.ERROR
+                f"Error checking pending streams for {address} ({e})", Logger.ERROR
             )
 
         return False
@@ -307,10 +307,10 @@ class ConnectionHandler(BaseConnectionHandler):
                 return
 
         except (ConnectionResetError, ConnectionAbortedError) as e:
-            self._logger.log(f"Connection lost from {addr} -> {e}", Logger.WARNING)
+            self._logger.log(f"Connection lost from {addr} ({e})", Logger.WARNING)
             await self._clean_on_connection_lost(writer)
         except Exception as e:
-            self._logger.log(f"Error handling client {addr} -> {e}", Logger.ERROR)
+            self._logger.log(f"Error handling client {addr} ({e})", Logger.ERROR)
             import traceback
 
             self._logger.log(traceback.format_exc(), Logger.ERROR)
@@ -511,7 +511,7 @@ class ConnectionHandler(BaseConnectionHandler):
                         )
                     except Exception as e:
                         self._logger.log(
-                            f"Error in connected callback -> {e}", Logger.ERROR
+                            f"Error in connected callback ({e})", Logger.ERROR
                         )
 
                 return True
@@ -540,7 +540,7 @@ class ConnectionHandler(BaseConnectionHandler):
             return False
         except Exception as e:
             self._logger.log(
-                f"Handshake error with client {client_addr} -> {e}", Logger.ERROR
+                f"Handshake error with client {client_addr} ({e})", Logger.ERROR
             )
             # import traceback
             # self._logger.log(traceback.format_exc(), Logger.ERROR)
@@ -632,7 +632,7 @@ class ConnectionHandler(BaseConnectionHandler):
 
             except Exception as e:
                 self._logger.log(
-                    f"Error accepting stream {stream_type} -> {e}",
+                    f"Error accepting stream {stream_type} ({e})",
                     Logger.ERROR,
                 )
                 self._cleanup_pending_stream(client.ip_address, stream_type)
@@ -668,7 +668,7 @@ class ConnectionHandler(BaseConnectionHandler):
                 await conn.wait_closed()
         except Exception as e:
             self._logger.warning(
-                f"Error while waiting for client {client.get_net_id()} connection to close -> {e}"
+                f"Error while waiting for client {client.get_net_id()} connection to close ({e})"
             )
 
         client.set_connection(None)
@@ -679,7 +679,7 @@ class ConnectionHandler(BaseConnectionHandler):
                 callback=self.disconnected_callback, client=client, streams=[]
             )
         except CallbackError as e:
-            self._logger.log(f"Error in disconnected callback -> {e}", Logger.ERROR)
+            self._logger.log(f"Error in disconnected callback ({e})", Logger.ERROR)
 
     async def _handle_streams_reconnection(
         self, client: ClientObj, closed_streams: list[int]
@@ -763,7 +763,7 @@ class ConnectionHandler(BaseConnectionHandler):
                                         await stream_writer.send(hb_msg.to_bytes())
                                     except Exception as e:
                                         self._logger.warning(
-                                            f"Heartbeat send failed on stream {stream_type} for client {client.get_net_id()} -> {e}"
+                                            f"Heartbeat send failed on stream {stream_type} for client {client.get_net_id()} ({e})"
                                         )
                                         closed_streams.append(stream_type)
 
@@ -794,7 +794,7 @@ class ConnectionHandler(BaseConnectionHandler):
                                         )
                                     except CallbackError as e:
                                         self._logger.log(
-                                            f"Error in reconnected callback -> {e}",
+                                            f"Error in reconnected callback ({e})",
                                             Logger.ERROR,
                                         )
 
@@ -815,7 +815,7 @@ class ConnectionHandler(BaseConnectionHandler):
                                 heartbeat_trials[client.get_net_id()] = 0
                         except Exception as e:
                             self._logger.log(
-                                f"Heartbeat error for client {client.get_net_id()} -> {e}",
+                                f"Heartbeat error for client {client.get_net_id()} ({e})",
                                 Logger.CRITICAL,
                             )
         except asyncio.CancelledError:
