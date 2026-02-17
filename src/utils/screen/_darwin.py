@@ -17,8 +17,7 @@
 
 from Quartz import CGDisplayBounds, CGMainDisplayID, CGSessionCopyCurrentDictionary  # ty:ignore[unresolved-import]
 from AppKit import (
-    NSApplication,  # ty:ignore[unresolved-import]
-    NSApplicationActivationPolicyAccessory,  # ty:ignore[unresolved-import]
+    NSBundle,  # ty:ignore[unresolved-import]
 )
 
 from . import _base
@@ -47,6 +46,8 @@ class Screen(_base.Screen):
     def hide_icon(cls):
         """
         Hides the application icon from the dock.
+        Modify directly the bundle info dict, because wx.App will read it
         """
-        app = NSApplication.sharedApplication()
-        app.setActivationPolicy_(NSApplicationActivationPolicyAccessory)
+        info = NSBundle.mainBundle().infoDictionary()
+        if not info.get("LSUIElement", False):
+            info["LSUIElement"] = "1"

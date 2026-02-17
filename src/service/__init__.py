@@ -26,7 +26,13 @@ import asyncio
 from typing import Optional
 import socket
 
-from zeroconf import ServiceInfo, ServiceListener, Zeroconf, BadTypeInNameException
+from zeroconf import (
+    ServiceInfo,
+    ServiceListener,
+    Zeroconf,
+    BadTypeInNameException,
+    NonUniqueNameException,
+)
 from zeroconf.asyncio import AsyncZeroconf, AsyncServiceBrowser, AsyncServiceInfo
 
 from config import ApplicationConfig
@@ -288,6 +294,8 @@ class ServiceDiscovery:
             )
         except BadTypeInNameException:
             raise ValueError("Invalid service type or name")
+        except NonUniqueNameException:
+            raise RuntimeError("Service name is already in use on the network")
         except Exception as e:
             self._logger.exception(f"{e}")
             raise RuntimeError(f"Failed to register mDNS service ({e})")

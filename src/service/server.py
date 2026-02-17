@@ -329,7 +329,7 @@ class Server:
                 self._logger.info("SSL certificates found and loaded")
                 return certfile, keyfile
         except Exception as e:
-            self._logger.error(f"Error setting up SSL certificates -> {e}")
+            self._logger.error(f"Error setting up SSL certificates ({e})")
             raise
 
     # TODO: Better handling -> We should keep the sharing server alive because port may be blocked
@@ -389,7 +389,7 @@ class Server:
                 return False, None
 
         except Exception as e:
-            self._logger.error(f"Error starting certificate sharing -> {e}")
+            self._logger.error(f"Error starting certificate sharing ({e})")
             return False, None
 
     async def stop_cert_sharing(self):
@@ -655,8 +655,8 @@ class Server:
 
             traceback.print_exc()
             await self.disable_stream(stream_type)
-            self._logger.error(f"Failed to enable {stream_type} stream -> {e}")
-            raise RuntimeError(f"Failed to enable {stream_type} stream -> {e}")
+            self._logger.error(f"Failed to enable {stream_type} stream ({e})")
+            raise RuntimeError(f"Failed to enable {stream_type} stream ({e})")
 
     async def disable_stream_runtime(self, stream_type: int) -> bool:
         """Disable a stream at runtime"""
@@ -682,8 +682,8 @@ class Server:
             self._logger.info(f"Runtime disabled stream: {stream_type}")
             return True
         except Exception as e:
-            self._logger.error(f"Failed to disable {stream_type} stream -> {e}")
-            raise RuntimeError(f"Failed to disable {stream_type} stream -> {e}")
+            self._logger.error(f"Failed to disable {stream_type} stream ({e})")
+            raise RuntimeError(f"Failed to disable {stream_type} stream ({e})")
 
     # ==================== Server Lifecycle ====================
 
@@ -699,7 +699,7 @@ class Server:
         try:
             await self._initialize_streams()
         except Exception as e:
-            self._logger.error(f"Failed to initialize streams -> {e}")
+            self._logger.error(f"Failed to initialize streams ({e})")
             await self.stop()
             return False
 
@@ -718,17 +718,21 @@ class Server:
         )
 
         # Start mDNS service
-        service_task = asyncio.create_task(
-            self._mdns_service.register_service(
-                host=self.config.host, port=self.config.port, uid=self.config.uid
+        try:
+            service_task = asyncio.create_task(
+                self._mdns_service.register_service(
+                    host=self.config.host, port=self.config.port, uid=self.config.uid
+                )
             )
-        )
+        except RuntimeError as re:
+            self._logger.warning(f"Failed to start mDNS service ({re})")
+            # TODO: Should we stop on fail? mDNS is not critical
 
         # Initialize and start enabled components
         try:
             await self._initialize_components()
         except Exception as e:
-            self._logger.error(f"Failed to initialize components -> {e}")
+            self._logger.error(f"Failed to initialize components ({e})")
             await self.stop()
             return False
 
@@ -739,8 +743,10 @@ class Server:
             ):  # At this point we have a UID generated and assigned
                 self.config.uid = self._mdns_service.get_uid()
                 await self.save_config()
+        except RuntimeError as re:
+            self._logger.warning(f"Failed to start mDNS service ({re})")
         except Exception as e:
-            self._logger.error(f"Failed to start mDNS service -> {e}")
+            self._logger.error(f"Failed to start mDNS service ({e})")
             await self.stop()
             return False
 
@@ -776,7 +782,7 @@ class Server:
                     else:
                         component.stop()
             except Exception as e:
-                self._logger.error(f"Error stopping component {component_name} -> {e}")
+                self._logger.error(f"Error stopping component {component_name} ({e})")
 
         # Stop all stream handlers
         for stream_type, handler in list(self._stream_handlers.items()):
@@ -784,9 +790,7 @@ class Server:
                 if hasattr(handler, "stop"):
                     tasks.append(asyncio.create_task(handler.stop()))
             except Exception as e:
-                self._logger.error(
-                    f"Error stopping stream handler {stream_type} -> {e}"
-                )
+                self._logger.error(f"Error stopping stream handler {stream_type} ({e})")
 
         # Stop performance monitor
         tasks.append(asyncio.create_task(self._performance_monitor.stop()))

@@ -47,7 +47,6 @@ from AppKit import (
 from event.bus import EventBus
 from input.cursor import _base
 from network.stream.handler import StreamHandler
-from utils.screen import Screen
 
 
 class CursorHandlerWindow(_base.CursorHandlerWindow):
@@ -72,8 +71,6 @@ class CursorHandlerWindow(_base.CursorHandlerWindow):
         )
         # Panel principale
         self.panel = wx.Panel(self)
-
-        Screen.hide_icon()
 
         self.previous_app = NSWorkspace.sharedWorkspace().frontmostApplication()
         self.previous_app_pid = self.previous_app.processIdentifier()
