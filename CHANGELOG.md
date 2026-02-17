@@ -1,5 +1,14 @@
 # Changelog
 
+## [1.2.3](https://github.com/fizzi01/Perpetua/compare/v1.2.2...v1.2.3) (2026-02-17)
+
+
+### Bug Fixes
+
+* **build:** update macOS app bundle configuration ([781d097](https://github.com/fizzi01/Perpetua/commit/781d097e81895d3688894d5fae283326fb3fa653))
+* improve macOS dock icon suppression logic ([781d097](https://github.com/fizzi01/Perpetua/commit/781d097e81895d3688894d5fae283326fb3fa653))
+* unhandle mdns service exception, general errors logging improvements ([#39](https://github.com/fizzi01/Perpetua/issues/39)) ([781d097](https://github.com/fizzi01/Perpetua/commit/781d097e81895d3688894d5fae283326fb3fa653))
+
 ## [1.2.2](https://github.com/fizzi01/Perpetua/compare/v1.2.1...v1.2.2) (2026-02-16)
 
 
