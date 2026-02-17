@@ -18,7 +18,7 @@
 from Quartz import CGDisplayBounds, CGMainDisplayID, CGSessionCopyCurrentDictionary  # ty:ignore[unresolved-import]
 from AppKit import (
     NSBundle,  # ty:ignore[unresolved-import]
-    )
+)
 
 from . import _base
 
