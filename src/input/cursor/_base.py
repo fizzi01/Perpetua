@@ -56,7 +56,7 @@ class CustomApp(wx.App):
         return False
 
     def OnInit(self):
-        #Screen.hide_icon()
+        # Screen.hide_icon()
         return True
 
 

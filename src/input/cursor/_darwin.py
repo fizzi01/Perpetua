@@ -47,7 +47,6 @@ from AppKit import (
 from event.bus import EventBus
 from input.cursor import _base
 from network.stream.handler import StreamHandler
-from utils.screen import Screen
 
 
 class CursorHandlerWindow(_base.CursorHandlerWindow):

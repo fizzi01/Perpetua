@@ -18,9 +18,7 @@
 from Quartz import CGDisplayBounds, CGMainDisplayID, CGSessionCopyCurrentDictionary  # ty:ignore[unresolved-import]
 from AppKit import (
     NSBundle,  # ty:ignore[unresolved-import]
-    NSApplication,  # ty:ignore[unresolved-import]
-    NSApplicationActivationPolicyAccessory,  # ty:ignore[unresolved-import]
-)
+    )
 
 from . import _base
 
@@ -53,4 +51,3 @@ class Screen(_base.Screen):
         info = NSBundle.mainBundle().infoDictionary()
         if not info.get("LSUIElement", False):
             info["LSUIElement"] = "1"
-
