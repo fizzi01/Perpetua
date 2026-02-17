@@ -158,13 +158,16 @@ jobs:
         env:
           MAC_CERTIFICATE: ${{ secrets.CERTIFICATE }}
           MAC_CERTIFICATE_PASSWORD: ${{ secrets.CERTIFICATE_PASSWORD }}
+          KEYCHAIN_PASSWORD: ${{ secrets.KEYCHAIN_PASSWORD }}
         run: |
           echo "$MAC_CERTIFICATE" | base64 --decode > certificate.p12
-          security create-keychain -p "action" build.keychain
+          security create-keychain -p $KEYCHAIN_PASSWORD build.keychain
+          security default-keychain -s build.keychain
+          security unlock-keychain -p "$KEYCHAIN_PASSWORD" build.keychain
+          security set-keychain-settings -t 3600 -u build.keychain
           security import certificate.p12 -k build.keychain -P "$MAC_CERTIFICATE_PASSWORD" -T /usr/bin/codesign
-          security list-keychains -s build.keychain
-          security unlock-keychain -p "action" build.keychain
           security set-key-partition-list -S apple-tool:,apple:,codesign: -s -k "action" build.keychain
+          security find-identity -v -p codesigning build.keychain
           rm certificate.p12
 
       - name: Build daemon
