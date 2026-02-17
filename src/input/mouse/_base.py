@@ -347,6 +347,7 @@ class ServerMouseListener(object):
                 )
 
         if not self.is_alive():
+            Screen.hide_icon()
             self._listener = self._create_listener()
             self._listener.start()
         self._logger.debug("Started.")
@@ -626,6 +627,7 @@ class ServerMouseController(object):
 
         self._screen_size: tuple[int, int] = Screen.get_size()
 
+        Screen.hide_icon()
         self._controller = MouseController()
         self._logger = get_logger(self.__class__.__name__)
 

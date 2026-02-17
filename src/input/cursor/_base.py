@@ -51,6 +51,15 @@ wxEVT_SCREEN_UNLOCKED = wx.NewEventType()
 EVT_SCREEN_UNLOCKED = wx.PyEventBinder(wxEVT_SCREEN_UNLOCKED, 1)
 
 
+class CustomApp(wx.App):
+    def OSXIsGUIApplication(self):
+        return False
+
+    def OnInit(self):
+        #Screen.hide_icon()
+        return True
+
+
 class ScreenUnlockedEvent(wx.PyEvent):
     """Event to signal that the screen has been unlocked."""
 
@@ -618,6 +627,8 @@ class _CursorHandlerProcess:
         log_level: int = Logger.INFO,
     ):
         """Run the cursor handler window process"""
+        # wx.App grabs infos from bundle dict, so we need to call it before
+        Screen.hide_icon()  # Suppress dock icon on macOS
         _logger = get_logger(
             "_CursorHandlerProcess",
             level=log_level,
@@ -628,7 +639,8 @@ class _CursorHandlerProcess:
         app = None
         window = None
         try:
-            app = wx.App()
+            app = CustomApp()
+
             window = window_class(
                 command_conn=command_conn,
                 result_conn=result_conn,

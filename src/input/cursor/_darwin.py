@@ -73,8 +73,6 @@ class CursorHandlerWindow(_base.CursorHandlerWindow):
         # Panel principale
         self.panel = wx.Panel(self)
 
-        Screen.hide_icon()
-
         self.previous_app = NSWorkspace.sharedWorkspace().frontmostApplication()
         self.previous_app_pid = self.previous_app.processIdentifier()
 
