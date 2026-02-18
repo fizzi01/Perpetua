@@ -3,6 +3,7 @@ name: release-please
 on:
   push:
     branches:
+      - ci
       - master
 
 permissions:
@@ -19,6 +20,7 @@ jobs:
         id: release
         with:
           token: ${{ secrets.PERPETUA_TOKEN }}
+          manifest-file: .github/.release-please-manifest.json
           release-type: python
 
       - name: Sync version for Tauri

@@ -7,8 +7,8 @@ on:
         description: "Update assets of the latest release"
         type: boolean
         default: false
-  push:
-    branches: [ci]
+  # push:
+  #   branches: [ci]
   release:
     types: [published]
 
