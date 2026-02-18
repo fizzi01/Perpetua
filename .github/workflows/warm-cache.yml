@@ -1,0 +1,65 @@
+name: Warm GUI Build Cache
+
+on:
+  workflow_dispatch:
+
+env:
+  NODE_VERSION: "20"
+
+jobs:
+  warm-cache:
+    name: Warm Cache (${{ matrix.platform }})
+    runs-on: ${{ matrix.os }}
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - os: macos-26
+            platform: macOS-arm64
+            rust-target: aarch64-apple-darwin
+          - os: macos-15-intel
+            platform: macOS-x86_64
+            rust-target: x86_64-apple-darwin
+          - os: windows-latest
+            platform: Windows-x86_64
+            rust-target: x86_64-pc-windows-msvc
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v6
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: ${{ env.NODE_VERSION }}
+
+      - name: Setup Rust toolchain
+        uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: ${{ matrix.rust-target }}
+
+      - name: Cache Rust dependencies
+        uses: Swatinem/rust-cache@v2
+        with:
+          workspaces: src-gui/src-tauri -> target
+
+      - name: Cache Tauri CLI
+        id: cache-tauri-cli
+        uses: actions/cache@v4
+        with:
+          path: |
+            ~/.cargo/bin/cargo-tauri
+            ~/.cargo/bin/cargo-tauri.exe
+          key: tauri-cli-${{ matrix.platform }}-v2
+
+      - name: Install Tauri CLI
+        if: steps.cache-tauri-cli.outputs.cache-hit != 'true'
+        run: cargo install tauri-cli --version "^2.0.0" --locked
+
+      - name: Install npm dependencies
+        working-directory: src-gui
+        run: npm install
+
+      - name: Build GUI
+        working-directory: src-gui
+        run: cargo tauri build --target ${{ matrix.rust-target }}
