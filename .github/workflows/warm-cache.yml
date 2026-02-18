@@ -42,6 +42,7 @@ jobs:
         uses: Swatinem/rust-cache@v2
         with:
           workspaces: src-gui/src-tauri -> target
+          shared-key: build-gui
 
       - name: Cache Tauri CLI
         id: cache-tauri-cli
