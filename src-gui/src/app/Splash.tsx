@@ -18,11 +18,13 @@
  */
 
 import { motion } from 'motion/react';
+import { platform } from '@tauri-apps/plugin-os';
 
 export function SplashScreen() {
 
   var r = document.querySelector(':root') as HTMLElement;
-  r.style.setProperty('--border-radius', '14px');
+  const currentPlatform = platform();
+  r.style.setProperty('--border-radius', currentPlatform === 'windows' ? '0px' : '14px');
 
   return (
     <div data-tauri-drag-region
