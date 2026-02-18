@@ -634,7 +634,7 @@ class Daemon:
         self._logger.info("Daemon stopped")
 
         # Force exit to ensure all tasks are cleaned up
-        os._exit(0)
+        # os._exit(0)
 
     async def wait_for_shutdown(self):
         """Wait until daemon is shutdown"""

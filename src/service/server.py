@@ -700,7 +700,7 @@ class Server:
             await self._initialize_streams()
         except Exception as e:
             self._logger.error(f"Failed to initialize streams ({e})")
-            await self.stop()
+            await self.stop(True)
             return False
 
         # TODO: We should check if port is available before starting by using ServiceDiscovery utils
@@ -733,7 +733,7 @@ class Server:
             await self._initialize_components()
         except Exception as e:
             self._logger.error(f"Failed to initialize components ({e})")
-            await self.stop()
+            await self.stop(True)
             return False
 
         try:
@@ -747,21 +747,21 @@ class Server:
             self._logger.warning(f"Failed to start mDNS service ({re})")
         except Exception as e:
             self._logger.error(f"Failed to start mDNS service ({e})")
-            await self.stop()
+            await self.stop(True)
             return False
 
         if not await self.connection_handler.start():
             self._logger.error("Failed to start connection handler")
-            await self.stop()
+            await self.stop(True)
             return False
 
         self._running = True
         self._logger.info(f"Server started on {self.config.host}:{self.config.port}")
         return True
 
-    async def stop(self):
+    async def stop(self, force: bool = False):
         """Stop all server components"""
-        if not self._running:
+        if not self._running and not force:
             self._logger.warning("Server not running")
             return
 
@@ -803,7 +803,10 @@ class Server:
 
         # Await all stop tasks
         if len(tasks) > 0:
-            await asyncio.gather(*tasks, return_exceptions=True)
+            try:
+                await asyncio.gather(*tasks, return_exceptions=True)
+            except Exception as e:
+                self._logger.error(f"Error during shutdown tasks ({e})")
 
         self.cleanup()
         self._running = False

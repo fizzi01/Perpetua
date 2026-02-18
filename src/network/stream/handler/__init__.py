@@ -278,6 +278,7 @@ class _ServerStreamHandler(StreamHandler):
         )
 
         self._active_client: Optional[ClientObj] = None
+        self._send_ready: asyncio.Event = asyncio.Event()
         self.handler_id = (
             handler_id
             if handler_id
@@ -411,42 +412,65 @@ class _ServerStreamHandler(StreamHandler):
         """
         raise NotImplementedError("_send_clause must be implemented in subclasses.")
 
+    def _notify_send_ready(self):
+        """
+        Signal that sending conditions may have changed.
+        Call this whenever _send_clause() result might become True
+        (e.g., active client set, client connected).
+        """
+        self._send_ready.set()
+
+    def _notify_send_not_ready(self):
+        """
+        Clear the send-ready signal.
+        Call this whenever _send_clause() result becomes False
+        (e.g., active client disconnected / set to None).
+        """
+        self._send_ready.clear()
+
     async def _core_sender(self):
         while self._active:
-            if self._send_clause():
-                try:
-                    await self._send_logic()
-                except asyncio.TimeoutError:
+            if not self._send_clause():
+                # Suspend until signaled instead of busy-waiting
+                self._send_ready.clear()
+                await self._send_ready.wait()
+                continue
+
+            try:
+                await self._send_logic()
+            except asyncio.TimeoutError:
+                await asyncio.sleep(self._waiting_time)
+                continue
+            except AttributeError:
+                # Active client became None during await
+                self._active_client = None
+                self._notify_send_not_ready()
+                await asyncio.sleep(0)  # yield control
+            except (BrokenPipeError, ConnectionResetError) as e:
+                self._logger.warning(f"Connection error -> {e}")
+                # Set active client to None on connection errors
+                self._active_client = None
+                self._notify_send_not_ready()
+                await asyncio.sleep(0)  # yield control
+            except MissingTransportError:
+                self._logger.warning("Missing transport")
+                await asyncio.sleep(0)  # yield control
+            except RuntimeError as e:
+                # uv/winloop runtime error on closed tcp transport
+                if "closed=True" in str(e):
+                    self._logger.warning("Transport closed")
+                    await asyncio.sleep(0)  # yield control
+                else:
+                    self._logger.error(f"Runtime error in core loop -> {e}")
                     await asyncio.sleep(self._waiting_time)
-                    continue
-                except AttributeError:
-                    # Active client became None during await
-                    self._active_client = None
-                    await asyncio.sleep(0)  # yield control
-                except (BrokenPipeError, ConnectionResetError) as e:
-                    self._logger.warning(f"Connection error -> {e}")
-                    # Set active client to None on connection errors
-                    self._active_client = None
-                    await asyncio.sleep(0)  # yield control
-                except MissingTransportError:
-                    self._logger.warning("Missing transport")
-                    await asyncio.sleep(0)  # yield control
-                except RuntimeError as e:
-                    # uv/winloop runtime error on closed tcp transport
-                    if "closed=True" in str(e):
-                        self._logger.warning("Transport closed")
-                        await asyncio.sleep(0)  # yield control
-                    else:
-                        self._logger.error(f"Runtime error in core loop -> {e}")
-                        await asyncio.sleep(self._waiting_time)
-                    self._active_client = None
-                except Exception as e:
-                    self._logger.error(f"Error in core loop -> {e}")
-                    await asyncio.sleep(self._waiting_time)
-            else:
+                self._active_client = None
+                self._notify_send_not_ready()
+            except Exception as e:
+                self._logger.error(f"Error in core loop -> {e}")
                 await asyncio.sleep(self._waiting_time)
 
     async def stop(self):
+        self._send_ready.set()  # Unblock _core_sender so it can exit
         await super().stop()
         await self.msg_exchange.stop()
 
@@ -489,6 +513,7 @@ class _ClientStreamHandler(StreamHandler):
         )
 
         self._is_active = False  # Track if current client is active
+        self._send_ready: asyncio.Event = asyncio.Event()
 
         self.handler_id = (
             handler_id
@@ -588,11 +613,28 @@ class _ClientStreamHandler(StreamHandler):
         """
         return self._active_only and not self._is_active
 
+    def _notify_send_ready(self):
+        """
+        Signal that sending conditions may have changed.
+        Call this whenever _send_clause() result might become True
+        (e.g., client becomes active, streams reconnected).
+        """
+        self._send_ready.set()
+
+    def _notify_send_not_ready(self):
+        """
+        Clear the send-ready signal.
+        Call this whenever _send_clause() result becomes False
+        (e.g., client becomes inactive, disconnection).
+        """
+        self._send_ready.clear()
+
     async def _handle_disconnection(self):
         """
         Handle disconnection logic for the client stream handler.
         """
         self._is_active = False
+        self._notify_send_not_ready()
         await self.msg_exchange.stop()
         self._clear_buffer()
         # try to close client stream
@@ -606,7 +648,9 @@ class _ClientStreamHandler(StreamHandler):
     async def _core_sender(self):
         while self._active:
             if self._send_clause():
-                await asyncio.sleep(self._waiting_time)
+                # Suspend until signaled instead of busy-waiting
+                self._send_ready.clear()
+                await self._send_ready.wait()
                 continue
 
             try:
@@ -633,6 +677,7 @@ class _ClientStreamHandler(StreamHandler):
                     await asyncio.sleep(self._waiting_time)
                 if self._active_only:
                     self._is_active = False
+                    self._notify_send_not_ready()
                     await self.msg_exchange.stop()
                     self._clear_buffer()
             except Exception as e:
@@ -647,5 +692,6 @@ class _ClientStreamHandler(StreamHandler):
         self.msg_exchange.register_handler(message_type, receive_callback)
 
     async def stop(self):
+        self._send_ready.set()  # Unblock _core_sender so it can exit
         await super().stop()
         await self.msg_exchange.stop()
