@@ -42,7 +42,7 @@ from network.stream import StreamType
 from network.stream.handler import StreamHandler
 
 from utils.logging import get_logger, Logger
-# from utils.screen import Screen
+from utils.screen import Screen
 
 
 class ButtonMapping(enum.Enum):

@@ -121,6 +121,8 @@ class Launcher:
         """Run daemon in this process (called with --daemon argument)."""
         from service.daemon import main
         import signal
+        from utils.screen import Screen
+        Screen.hide_icon()
 
         self.clean_log_file()
 
@@ -320,8 +322,9 @@ class Launcher:
 
         with ThreadPoolExecutor(max_workers=2) as executor:
             # Submit both tasks concurrently
-            future_daemon = executor.submit(self.start_daemon, executable_dir)
             future_gui = executor.submit(self.start_gui, executable_dir)
+            sleep(0.5)
+            future_daemon = executor.submit(self.start_daemon, executable_dir)
 
             # Wait for both to complete and check results
             daemon_success = False
