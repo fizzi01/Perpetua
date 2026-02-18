@@ -1,5 +1,15 @@
 # Changelog
 
+## [1.2.4](https://github.com/fizzi01/Perpetua/compare/v1.2.3...v1.2.4) (2026-02-18)
+
+
+### Bug Fixes
+
+* **daemon:** ensure graceful shutdown ([f1ff45f](https://github.com/fizzi01/Perpetua/commit/f1ff45f55df141589e861ffaf74171dd80486b43))
+* **gui:** adjust splash-screen border-radius on Windows ([#45](https://github.com/fizzi01/Perpetua/issues/45)) ([9a1e8e1](https://github.com/fizzi01/Perpetua/commit/9a1e8e127ff8270a00c34f5e7d50b27777f26c6f))
+* improve cpu usage and streams performance ([#43](https://github.com/fizzi01/Perpetua/issues/43)) ([f1ff45f](https://github.com/fizzi01/Perpetua/commit/f1ff45f55df141589e861ffaf74171dd80486b43))
+* **launcher:** fix launcher behaviour ([f1ff45f](https://github.com/fizzi01/Perpetua/commit/f1ff45f55df141589e861ffaf74171dd80486b43))
+
 ## [1.2.3](https://github.com/fizzi01/Perpetua/compare/v1.2.2...v1.2.3) (2026-02-17)
 
 
