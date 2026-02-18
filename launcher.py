@@ -122,6 +122,7 @@ class Launcher:
         from service.daemon import main
         import signal
         from utils.screen import Screen
+
         Screen.hide_icon()
 
         self.clean_log_file()
