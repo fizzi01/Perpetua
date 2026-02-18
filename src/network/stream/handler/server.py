@@ -71,6 +71,9 @@ class UnidirectionalStreamHandler(_ServerStreamHandler):
                     # If send only, we disable the active client if no valid transport
                     if self._sender:
                         self._active_client = None
+                        self._notify_send_not_ready()
+                else:
+                    self._notify_send_ready()
             finally:
                 self._clear_buffer()
 
@@ -88,6 +91,7 @@ class UnidirectionalStreamHandler(_ServerStreamHandler):
         ):
             try:
                 self._active_client = None
+                self._notify_send_not_ready()
                 await self.msg_exchange.set_transport(
                     send_callback=None, receive_callback=None
                 )
@@ -120,9 +124,11 @@ class UnidirectionalStreamHandler(_ServerStreamHandler):
                     # If send only, we disable the active client if no valid transport
                     if self._sender:
                         self._active_client = None
+                        self._notify_send_not_ready()
                 else:
                     # Set active client only after successful transport configuration
                     self._active_client = c
+                    self._notify_send_ready()
         finally:
             self._clear_buffer()
 
@@ -202,6 +208,7 @@ class BidirectionalStreamHandler(_ServerStreamHandler):
             and self._active_client.screen_position == client_screen
         ):
             self._active_client = None
+            self._notify_send_not_ready()
             # self.logger.debug(f"Active client disconnected {client_screen}")
             await self.msg_exchange.set_transport(
                 send_callback=None, receive_callback=None
@@ -235,6 +242,9 @@ class BidirectionalStreamHandler(_ServerStreamHandler):
                     transport_id=None,
                 ):
                     self._active_client = None
+                    self._notify_send_not_ready()
+                else:
+                    self._notify_send_ready()
             finally:
                 self._clear_buffer()
 
@@ -262,9 +272,11 @@ class BidirectionalStreamHandler(_ServerStreamHandler):
                     transport_id=None,
                 ):
                     self._active_client = None
+                    self._notify_send_not_ready()
                 else:
                     # Set active client only after successful transport configuration
                     self._active_client = c
+                    self._notify_send_ready()
         finally:
             self._clear_buffer()
 
@@ -394,6 +406,7 @@ class MulticastStreamHandler(_ServerStreamHandler):
 
     async def _on_client_connected(self, data: Optional[ClientConnectedEvent]):
         self._clients_connected += 1
+        self._notify_send_ready()
 
         if data is None:
             return
@@ -434,6 +447,7 @@ class MulticastStreamHandler(_ServerStreamHandler):
         finally:
             if self._clients_connected == 0:
                 await self.msg_exchange.stop()
+                self._notify_send_not_ready()
                 self._clear_buffer()
 
     async def _on_active_screen_changed(self, data: Optional[ActiveScreenChangedEvent]):

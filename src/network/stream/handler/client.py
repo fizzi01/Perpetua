@@ -39,6 +39,7 @@ class UnidirectionalStreamHandler(_ClientStreamHandler):
             return
 
         self._is_active = True
+        self._notify_send_ready()
         self._clear_buffer()  # Clear buffer before configuring transport
 
         try:
@@ -47,6 +48,7 @@ class UnidirectionalStreamHandler(_ClientStreamHandler):
             if self._main_client is None:
                 self._logger.error("No main client found in ClientsManager")
                 self._is_active = False
+                self._notify_send_not_ready()
                 await self.msg_exchange.stop()  # Just in case
                 return
 
@@ -57,6 +59,7 @@ class UnidirectionalStreamHandler(_ClientStreamHandler):
                 transport_id=None,
             ):
                 self._is_active = False
+                self._notify_send_not_ready()
                 return
         finally:
             self._clear_buffer()
@@ -67,6 +70,7 @@ class UnidirectionalStreamHandler(_ClientStreamHandler):
         """
         try:
             self._is_active = False
+            self._notify_send_not_ready()
             # Stop msg exchange listener
             await self.msg_exchange.stop()
             # self.logger.debug(f"[{self.handler_id}] Client is inactive")
@@ -99,7 +103,9 @@ class UnidirectionalStreamHandler(_ClientStreamHandler):
             transport_id=None,
         ):
             self._is_active = False
+            self._notify_send_not_ready()
             return
+        self._notify_send_ready()
 
 
 class BidirectionalStreamHandler(_ClientStreamHandler):
@@ -149,6 +155,7 @@ class BidirectionalStreamHandler(_ClientStreamHandler):
             return
 
         self._is_active = True
+        self._notify_send_ready()
 
         try:
             # Retrieve main client
@@ -156,6 +163,7 @@ class BidirectionalStreamHandler(_ClientStreamHandler):
             if self._main_client is None:
                 self._logger.error("No main client found in ClientsManager")
                 self._is_active = False
+                self._notify_send_not_ready()
                 await self.msg_exchange.stop()  # Just in case
                 return
 
@@ -166,6 +174,7 @@ class BidirectionalStreamHandler(_ClientStreamHandler):
                 transport_id=None,
             ):
                 self._is_active = False
+                self._notify_send_not_ready()
                 return
         finally:
             self._clear_buffer()
@@ -177,6 +186,7 @@ class BidirectionalStreamHandler(_ClientStreamHandler):
         # We stop sending, if active_only is set
         if self._active_only:
             self._is_active = False
+            self._notify_send_not_ready()
             self._clear_buffer()
         # await self.msg_exchange.set_transport(send_callback=None, receive_callback=None)
         # await self.msg_exchange.stop()
@@ -207,4 +217,6 @@ class BidirectionalStreamHandler(_ClientStreamHandler):
             transport_id=None,
         ):
             self._is_active = False
+            self._notify_send_not_ready()
             return
+        self._notify_send_ready()
