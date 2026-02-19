@@ -178,12 +178,28 @@ jobs:
         run: find ${{ matrix.build-output }} -maxdepth 1 -name '*.build' -type d -exec rm -rf {} +
         shell: bash
 
+      - name: Setup Node.js
+        if: runner.os == 'macOS'
+        uses: actions/setup-node@v4
+        with:
+          node-version: ${{ env.NODE_VERSION }}
+
+      - name: Install create-dmg
+        if: runner.os == 'macOS'
+        run: npm install --global create-dmg
+
       - name: Set executable permissions and create archive (macOS)
         if: runner.os == 'macOS'
         run: |
           chmod +x ${{ matrix.build-output }}/Perpetua.app/Contents/MacOS/Perpetua
           chmod +x ${{ matrix.build-output }}/Perpetua.app/Contents/MacOS/_perpetua
           ditto -c -k --sequesterRsrc --keepParent ${{ matrix.build-output }}/Perpetua.app ${{ matrix.build-output }}/${{ matrix.archive-name }}.zip
+
+      - name: Create DMG (macOS)
+        if: runner.os == 'macOS'
+        run: |
+          create-dmg --overwrite ${{ matrix.build-output }}/Perpetua.app ${{ matrix.build-output }}
+          mv ${{ matrix.build-output }}/Perpetua*.dmg ${{ matrix.build-output }}/${{ matrix.archive-name }}.dmg
 
       - name: Rename dist folder (Windows)
         if: runner.os == 'Windows'
@@ -204,6 +220,14 @@ jobs:
         with:
           name: ${{ matrix.archive-name }}
           path: ${{ matrix.build-output }}/${{ matrix.archive-name }}.zip
+          if-no-files-found: error
+
+      - name: Upload DMG artifact
+        if: runner.os == 'macOS'
+        uses: actions/upload-artifact@v4
+        with:
+          name: ${{ matrix.archive-name }}-dmg
+          path: ${{ matrix.build-output }}/${{ matrix.archive-name }}.dmg
           if-no-files-found: error
 
   update-release:
@@ -230,4 +254,6 @@ jobs:
         uses: softprops/action-gh-release@v2
         with:
           tag_name: ${{ steps.latest-release.outputs.tag || github.event.release.tag_name }}
-          files: artifacts/*.zip
+          files: |
+            artifacts/*.zip
+            artifacts/*.dmg
