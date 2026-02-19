@@ -32,16 +32,16 @@ jobs:
             rust-target: aarch64-apple-darwin
             artifact-name: gui-macos-arm64
             gui-exe-name: perpetua
-          - os: macos-15-intel
-            platform: macOS-x86_64
-            rust-target: x86_64-apple-darwin
-            artifact-name: gui-macos-x86_64
-            gui-exe-name: perpetua
-          - os: windows-latest
-            platform: Windows-x86_64
-            rust-target: x86_64-pc-windows-msvc
-            artifact-name: gui-windows-x86_64
-            gui-exe-name: perpetua.exe
+          # - os: macos-15-intel
+          #   platform: macOS-x86_64
+          #   rust-target: x86_64-apple-darwin
+          #   artifact-name: gui-macos-x86_64
+          #   gui-exe-name: perpetua
+          # - os: windows-latest
+          #   platform: Windows-x86_64
+          #   rust-target: x86_64-pc-windows-msvc
+          #   artifact-name: gui-windows-x86_64
+          #   gui-exe-name: perpetua.exe
 
     steps:
       - name: Checkout
@@ -107,20 +107,20 @@ jobs:
             gui-exe-name: perpetua
             build-output: .build/aarch64-apple-darwin/release
             archive-name: Perpetua-macOS
-          - os: macos-15-intel
-            platform: macOS-x86_64
-            rust-target: x86_64-apple-darwin
-            artifact-name: gui-macos-x86_64
-            gui-exe-name: perpetua
-            build-output: .build/x86_64-apple-darwin/release
-            archive-name: Perpetua-macOS-Intel
-          - os: windows-latest
-            platform: Windows-x86_64
-            rust-target: x86_64-pc-windows-msvc
-            artifact-name: gui-windows-x86_64
-            gui-exe-name: perpetua.exe
-            build-output: .build/x86_64-pc-windows-msvc/release
-            archive-name: Perpetua-Windows-x86_64
+          # - os: macos-15-intel
+          #   platform: macOS-x86_64
+          #   rust-target: x86_64-apple-darwin
+          #   artifact-name: gui-macos-x86_64
+          #   gui-exe-name: perpetua
+          #   build-output: .build/x86_64-apple-darwin/release
+          #   archive-name: Perpetua-macOS-Intel
+          # - os: windows-latest
+          #   platform: Windows-x86_64
+          #   rust-target: x86_64-pc-windows-msvc
+          #   artifact-name: gui-windows-x86_64
+          #   gui-exe-name: perpetua.exe
+          #   build-output: .build/x86_64-pc-windows-msvc/release
+          #   archive-name: Perpetua-Windows-x86_64
 
     steps:
       - name: Checkout
