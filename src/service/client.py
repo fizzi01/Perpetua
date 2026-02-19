@@ -24,6 +24,7 @@ Provides a clean interface to configure and manage client components.
 import asyncio
 import os
 from pathlib import Path
+from contextlib import asynccontextmanager
 from typing import Optional, Dict, Callable, Awaitable
 
 from config import ApplicationConfig, ClientConfig
@@ -65,6 +66,12 @@ from utils.crypto.sharing import (
 from utils.metrics import MetricsCollector, PerformanceMonitor
 from utils.screen import Screen
 from utils.logging import get_logger
+
+
+class ClientAbortedError(Exception):
+    """Raised when a client operation is aborted before completion."""
+
+    pass
 
 
 class Client:
@@ -229,6 +236,7 @@ class Client:
 
         # -- Inner state --
         self._state_lock = asyncio.Lock()
+        self._handler_lock = asyncio.Lock()
         self._is_starting = asyncio.Event()
         # If ssl is enabled but no cert, we will wait for it in connection, so we need to set the otp future
         self._otp_needed: asyncio.Future[bool] = asyncio.Future()
@@ -238,6 +246,15 @@ class Client:
         self._server: asyncio.Future[Service] = (
             asyncio.Future()
         )  # We will set the result when user choose a server
+
+    @asynccontextmanager
+    async def _guarded_handler(self, check: bool = True):
+        """Context manager that acquires handler_lock and checks for abort."""
+        async with self._handler_lock:
+            if check and not self._is_starting.is_set():
+                self._logger.warning("Client start aborted")
+                raise ClientAbortedError()
+            yield
 
     # ==================== Notification Callback Management ====================
 
@@ -263,7 +280,7 @@ class Client:
             try:
                 await self._notification_callback(event)
             except Exception as e:
-                self._logger.error(f"Error sending notification: {e}")
+                self._logger.error(f"Error sending notification({e})")
 
     # ==================== Configuration Management ====================
 
@@ -280,7 +297,7 @@ class Client:
             await self._send_notification(ConfigSavedEvent(config_type="client"))
             return True
         except Exception as e:
-            self._logger.error(f"Error saving configuration: {e}")
+            self._logger.error(f"Error saving configuration({e})")
             return False
 
     async def load_config(self) -> bool:
@@ -299,7 +316,7 @@ class Client:
                 self._logger.warning("Configuration file not found")
                 return False
         except Exception as e:
-            self._logger.error(f"Error loading configuration: {e}")
+            self._logger.error(f"Error loading configuration({e})")
             return False
 
     # ==================== Certificate Management ====================
@@ -472,7 +489,7 @@ class Client:
         except CertificateSharingError:
             raise
         except Exception as e:
-            self._logger.error(f"Error receiving certificate -> {e}")
+            self._logger.error(f"Error receiving certificate ({e})")
             import traceback
 
             self._logger.error(traceback.format_exc())
@@ -570,8 +587,8 @@ class Client:
             return True
         except Exception as e:
             await self.disable_stream(stream_type)
-            self._logger.error(f"Failed to enable {stream_type} stream: {e}")
-            raise RuntimeError(f"Failed to enable {stream_type} stream: {e}")
+            self._logger.error(f"Failed to enable {stream_type} stream({e})")
+            raise RuntimeError(f"Failed to enable {stream_type} stream({e})")
 
     async def disable_stream_runtime(self, stream_type: int) -> bool:
         """Disable a stream at runtime"""
@@ -604,8 +621,8 @@ class Client:
             self._logger.info(f"Runtime disabled stream: {stream_type}")
             return True
         except Exception as e:
-            self._logger.error(f"Failed to disable {stream_type} stream: {e}")
-            raise RuntimeError(f"Failed to disable {stream_type} stream: {e}")
+            self._logger.error(f"Failed to disable {stream_type} stream({e})")
+            raise RuntimeError(f"Failed to disable {stream_type} stream({e})")
 
     # ==================== Client Lifecycle ====================
 
@@ -719,7 +736,7 @@ class Client:
             servers_info = [service.as_dict() for service in self._found_services]
             await self._send_notification(ServerListFoundEvent(servers=servers_info))
         except Exception as e:
-            self._logger.error(f"Error during server discovery -> {e}")
+            self._logger.error(f"Error during server discovery ({e})")
 
     async def _handle_certificate_check(self) -> Optional[str]:
         """
@@ -757,7 +774,7 @@ class Client:
                 source_id=self.config.get_server_uid(),
             )
         except Exception as e:
-            self._logger.error(f"Error during certificate check -> {e}")
+            self._logger.error(f"Error during certificate check ({e})")
             raise CertificateReceiveError(e)
         finally:
             if not self._otp_needed.done():
@@ -784,16 +801,22 @@ class Client:
             port = self.config.get_server_port()
 
             try:
-                # Attempt connection with short timeout
-                _, writer = await asyncio.wait_for(
-                    asyncio.open_connection(host, port), timeout=3.0
-                )
-                writer.close()
-                await writer.wait_closed()
-                return True
-            except (asyncio.TimeoutError, ConnectionRefusedError, OSError) as e:
-                self._logger.warning(f"Server {host}:{port} not reachable ({e})")
-                return False
+                async with self._guarded_handler():
+                    try:
+                        # Attempt connection with short timeout
+                        _, writer = await asyncio.wait_for(
+                            asyncio.open_connection(host, port), timeout=3.0
+                        )
+                        writer.close()
+                        await writer.wait_closed()
+                        return True
+                    except (asyncio.TimeoutError, ConnectionRefusedError, OSError) as e:
+                        self._logger.warning(
+                            f"Server {host}:{port} not reachable ({e})"
+                        )
+                        return False
+            except ClientAbortedError:
+                raise
 
         self._logger.warning("No server configured")
         return False
@@ -826,28 +849,32 @@ class Client:
                 if await self._is_server_available():
                     return True
 
-                if len(self._found_services) == 1:
-                    # Auto choose the only available server
-                    if self._found_services[0].uid is not None:
-                        self.choose_server(self._found_services[0].uid)
-                        self._need_server_choice.set_result(False)
-                    else:
-                        self._logger.warning(
-                            "Discovered server has no UID, cannot choose it."
-                        )
-                        return False
-                else:
-                    servers = [s.as_dict() for s in self._found_services]
-                    self._logger.info(
-                        "Multiple servers found. Please choose one to connect.",
-                        servers=servers,
-                    )
-                    self._need_server_choice.set_result(True)
-                    await self._send_notification(
-                        ServerChoiceNeededEvent(
-                            servers=servers,
-                        )
-                    )
+                try:
+                    async with self._guarded_handler():
+                        if len(self._found_services) == 1:
+                            # Auto choose the only available server
+                            if self._found_services[0].uid is not None:
+                                self.choose_server(self._found_services[0].uid)
+                                self._need_server_choice.set_result(False)
+                            else:
+                                self._logger.warning(
+                                    "Discovered server has no UID, cannot choose it."
+                                )
+                                return False
+                        else:
+                            servers = [s.as_dict() for s in self._found_services]
+                            self._logger.info(
+                                "Multiple servers found. Please choose one to connect.",
+                                servers=servers,
+                            )
+                            self._need_server_choice.set_result(True)
+                            await self._send_notification(
+                                ServerChoiceNeededEvent(
+                                    servers=servers,
+                                )
+                            )
+                except ClientAbortedError:
+                    raise
 
                 # If server not found, we wait the user to choose it and set the future
                 res = await self._server
@@ -861,8 +888,10 @@ class Client:
                 )
 
             return True
+        except ClientAbortedError:
+            raise
         except Exception as e:
-            self._logger.error(f"Error during server availability check -> {e}")
+            self._logger.error(f"Error during server availability check ({e})")
             return False
         finally:
             if not self._need_server_choice.done():
@@ -881,41 +910,47 @@ class Client:
             self._logger.info("Starting Client...")
             self._is_starting.set()
 
-            # Initial server availability check
-            if not await self._handle_server_availability():
-                return False
-
-            # Initialize stream handlers (but don't start them yet)
             try:
-                await self._initialize_streams()
-            except Exception as e:
-                self._logger.error(f"Failed to initialize streams: {e}")
-                return False
+                # Initial server availability check
+                if not await self._handle_server_availability():
+                    return False
 
-            # Get enabled streams
-            enabled_streams = self._get_enabled_stream_types()
+                async with self._guarded_handler():
+                    # Initialize stream handlers (but don't start them yet)
+                    try:
+                        await self._initialize_streams()
+                    except Exception as e:
+                        self._logger.error(f"Failed to initialize streams({e})")
+                        return False
 
-            # Get certificate path if SSL is enabled
-            certfile = await self._handle_certificate_check()
+                    # Get enabled streams
+                    enabled_streams = self._get_enabled_stream_types()
 
-            # Initialize connection handler
-            self.connection_handler = ConnectionHandler(
-                connected_callback=self._on_connected,
-                disconnected_callback=self._on_disconnected,
-                reconnected_callback=self._on_streams_reconnected,
-                host=self.config.get_server_host(),
-                port=self.config.get_server_port(),
-                heartbeat_interval=self.config.get_heartbeat_interval(),
-                clients=self.clients_manager,
-                open_streams=enabled_streams,
-                auto_reconnect=self.config.do_auto_reconnect(),
-                use_ssl=self.config.ssl_enabled,
-                certfile=certfile,
-            )
+                async with self._guarded_handler():
+                    # Get certificate path if SSL is enabled
+                    certfile = await self._handle_certificate_check()
 
-            # Connect to server
-            if not await self.connection_handler.start():
-                self._logger.error("Failed to connect to server")
+                async with self._guarded_handler():
+                    # Initialize connection handler
+                    self.connection_handler = ConnectionHandler(
+                        connected_callback=self._on_connected,
+                        disconnected_callback=self._on_disconnected,
+                        reconnected_callback=self._on_streams_reconnected,
+                        host=self.config.get_server_host(),
+                        port=self.config.get_server_port(),
+                        heartbeat_interval=self.config.get_heartbeat_interval(),
+                        clients=self.clients_manager,
+                        open_streams=enabled_streams,
+                        auto_reconnect=self.config.do_auto_reconnect(),
+                        use_ssl=self.config.ssl_enabled,
+                        certfile=certfile,
+                    )
+
+                    # Connect to server
+                    if not await self.connection_handler.start():
+                        self._logger.error("Failed to connect to server")
+                        return False
+            except ClientAbortedError:
                 return False
 
             self._running = True
@@ -939,68 +974,71 @@ class Client:
                 if not self._is_starting.is_set():
                     self._logger.warning("Client not running")
                     return False
-
-            self._logger.info("Stopping Client...")
-
-            # Stop all components
-            for component_name, component in list(self._components.items()):
-                try:
-                    if hasattr(component, "stop"):
-                        if asyncio.iscoroutinefunction(component.stop):
-                            await component.stop()
-                        else:
-                            component.stop()
-                except Exception as e:
-                    self._logger.error(
-                        f"Error stopping component {component_name}: {e}"
-                    )
-
-            # Stop all stream handlers
-            for stream_type, handler in list(self._stream_handlers.items()):
-                try:
-                    if hasattr(handler, "stop"):
-                        await handler.stop()
-                except Exception as e:
-                    self._logger.error(
-                        f"Error stopping stream handler {stream_type}: {e}"
-                    )
-
-            # Disconnect from server
-            if self.connection_handler:
-                await self.connection_handler.stop()
-
-            # Wait a moment to ensure everything is cleaned up
-            await asyncio.sleep(self.CLEANUP_DELAY)
-            # Cleanup resources
-            self.cleanup()
-            self._running = False
-            self._connected = False
-            self._logger.info("Client stopped")
-            return True
-        finally:
+                    
+            # Clear is_starting to abort pending start process
             self._is_starting.clear()
+            # Force cleanup of futures to unblock any pending operations
             await self._futures_cleanup()
 
+            self._logger.info("Stopping Client...")
+            async with self._guarded_handler(check=False):
+                # Stop all components
+                for component_name, component in list(self._components.items()):
+                    try:
+                        if hasattr(component, "stop"):
+                            if asyncio.iscoroutinefunction(component.stop):
+                                await component.stop()
+                            else:
+                                component.stop()
+                    except Exception as e:
+                        self._logger.error(
+                            f"Error stopping component {component_name}({e})"
+                        )
+
+                # Stop all stream handlers
+                for stream_type, handler in list(self._stream_handlers.items()):
+                    try:
+                        if hasattr(handler, "stop"):
+                            await handler.stop()
+                    except Exception as e:
+                        self._logger.error(
+                            f"Error stopping stream handler {stream_type}({e})"
+                        )
+
+                # Disconnect from server
+                if self.connection_handler:
+                    await self.connection_handler.stop()
+
+                # Wait a moment to ensure everything is cleaned up
+                await asyncio.sleep(self.CLEANUP_DELAY)
+                # Cleanup resources
+                self.cleanup()
+                self._running = False
+                self._connected = False
+                self._logger.info("Client stopped")
+                return True
+        except Exception as e:
+            self._logger.error(f"Error during client stop ({e})")
+            return False
+        #finally:
+            #self._is_starting.clear()
+            #await self._futures_cleanup()
+
     async def _futures_cleanup(self):
-        # Release OTP futures
-        if not self._otp_needed.done():
-            self._otp_needed.set_result(False)
+        # Release futures
+        for future in (
+            self._otp_needed,
+            self._otp_received,
+            self._server,
+            self._need_server_choice,
+        ):
+            if not future.done():
+                future.cancel()
+
         async with self._state_lock:
             self._otp_needed = asyncio.Future()  # Reset for future use
-
-        if not self._otp_received.done():
-            self._otp_received.set_result("")
-        async with self._state_lock:
             self._otp_received = asyncio.Future()  # Reset for future use
-
-        if not self._server.done():
-            self._server.cancel()
-        async with self._state_lock:
             self._server = asyncio.Future()  # Reset for future use
-
-        if not self._need_server_choice.done():
-            self._need_server_choice.set_result(False)
-        async with self._state_lock:
             self._need_server_choice = asyncio.Future()  # Reset for future use
 
     def cleanup(self):
@@ -1300,7 +1338,7 @@ class Client:
             try:
                 await handler.stop()
             except Exception as e:
-                self._logger.error(f"Error stopping stream handler {stream_type}: {e}")
+                self._logger.error(f"Error stopping stream handler {stream_type}({e})")
 
         # Stop all components
         for component_name, component in list(self._components.items()):
@@ -1311,7 +1349,7 @@ class Client:
                     else:
                         component.stop()
             except Exception as e:
-                self._logger.error(f"Error stopping component {component_name}: {e}")
+                self._logger.error(f"Error stopping component {component_name}({e})")
 
         self._logger.info(f"Disconnected from server at {client.get_net_id()}")
 

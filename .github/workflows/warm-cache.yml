@@ -1,4 +1,4 @@
-name: Warm GUI Build Cache
+name: Warm Build Cache
 
 on:
   workflow_dispatch:

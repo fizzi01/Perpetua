@@ -78,6 +78,7 @@ export function ClientTab({ onStatusChange, state }: ClientTabProps) {
   // const [dataUsage, setDataUsage] = useState(0);
   const [controlStatus, setControlStatus] = useState<'none' | 'controlled' | 'idle'>('none');
   const [notifications, setNotifications] = useState<Notification[]>([]);
+  const [pendingForceStop, setPendingForceStop] = useState(false);
 
   const listeners = useEventListeners('client-tab');
   const connectionListeners = handleConnectionListeners();
@@ -249,6 +250,7 @@ export function ClientTab({ onStatusChange, state }: ClientTabProps) {
   };
 
   const handleStopClient = () => {
+    setPendingForceStop(true);
     setRunningPending(true);
 
     listeners.removeListener('client-start');
@@ -269,7 +271,7 @@ export function ClientTab({ onStatusChange, state }: ClientTabProps) {
       onStatusChange(false);
       addNotification('info', 'Stopped');
       setRunningPending(false);
-
+      setPendingForceStop(false);
       listeners.removeListener('client-stop');
       listeners.removeListener('client-stop-error');
     }).then(unlisten => {
@@ -282,6 +284,7 @@ export function ClientTab({ onStatusChange, state }: ClientTabProps) {
 
       listeners.removeListener('client-stop-error');
       listeners.removeListener('client-stop');
+      setPendingForceStop(false);
     }).then(unlisten => {
       listeners.addListenerOnce('client-stop-error', unlisten);
     });
@@ -290,6 +293,7 @@ export function ClientTab({ onStatusChange, state }: ClientTabProps) {
       console.error('Error invoking stopClient:', err);
       addNotification('error', 'Failed to Stop', err.message || 'Unknown error');
       setRunningPending(false);
+      setPendingForceStop(false);
       listeners.forceRemoveListener('client-stop-error');
       listeners.forceRemoveListener('client-stop');
     });
@@ -494,6 +498,7 @@ export function ClientTab({ onStatusChange, state }: ClientTabProps) {
         }
         onClick={handleToggleClient}
         onForceStop={handleStopClient}
+        pendingForceStop={pendingForceStop}
         uid={state.uid}
         stoppedLabel="Disconnected"
         runningLabel="Connected"

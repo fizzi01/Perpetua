@@ -30,6 +30,8 @@ interface PowerButtonProps {
   onClick: () => void;
   /** Callback when force stop is clicked (only shown when connecting) */
   onForceStop?: () => void;
+  /** Whether a force stop is pending (disables the force stop button) */
+  pendingForceStop?: boolean;
   /** Label to show when stopped */
   stoppedLabel?: string;
   /** Label to show when running */
@@ -48,6 +50,7 @@ export function PowerButton({
   status,
   onClick,
   onForceStop,
+  pendingForceStop,
   stoppedLabel = 'Stopped',
   runningLabel = 'Running',
   pendingLabel = '',
@@ -136,28 +139,31 @@ export function PowerButton({
         {(isPending || isConnecting) && onForceStop && (
           <>
             {/* Subtle pulse backdrop */}
-            <motion.div
-              initial={{ opacity: 0, scale: 0.8 }}
-              // animate={{ 
-              //   opacity: [0.2, 0.35, 0.2],
-              //   scale: [1, 1.2, 1]
-              // }}
-              exit={{ opacity: 0 }}
-              transition={{
-                opacity: { duration: 2, repeat: Infinity, ease: "easeInOut" },
-                scale: { duration: 2, repeat: Infinity, ease: "easeInOut" }
-              }}
-              className="absolute w-10 h-10 rounded-full z-10"
-              style={{
-                backgroundColor: 'var(--app-danger)',
-                top: '-5px',
-                right: '-5px',
-                filter: 'blur(6px)',
-              }}
-            />
+            {!pendingForceStop && (
+              <motion.div
+                initial={{ opacity: 0, scale: 0.8 }}
+                // animate={{ 
+                //   opacity: [0.2, 0.35, 0.2],
+                //   scale: [1, 1.2, 1]
+                // }}
+                exit={{ opacity: 0 }}
+                transition={{
+                  opacity: { duration: 2, repeat: Infinity, ease: "easeInOut" },
+                  scale: { duration: 2, repeat: Infinity, ease: "easeInOut" }
+                }}
+                className="absolute w-10 h-10 rounded-full z-10"
+                style={{
+                  backgroundColor: 'var(--app-danger)',
+                  top: '-5px',
+                  right: '-5px',
+                  filter: 'blur(6px)',
+                }}
+              />
+            )}
             
             {/* Force stop button */}
             <motion.button
+              disabled={pendingForceStop}
               initial={{ 
                 opacity: 0,
                 scale: 0,
@@ -179,20 +185,20 @@ export function PowerButton({
                 damping: 15,
                 delay: 0.1
               }}
-              whileHover={{ 
+              whileHover={!pendingForceStop ? { 
                 scale: 1.1,
                 rotate: 90,
                 transition: { duration: 0.2 },
                 backgroundColor: 'var(--app-danger-hover)'
-              }}
-              whileTap={{ 
+              } : {}}
+              whileTap={!pendingForceStop ? { 
                 scale: 0.9,
                 transition: { duration: 0.1 }
-              }}
+              } : {}}
               onClick={onForceStop}
-              className="cursor-pointer absolute w-9 h-9 rounded-full flex items-center justify-center z-20 border-2"
+              className={`${pendingForceStop ? '' : 'cursor-pointer'} absolute w-9 h-9 rounded-full flex items-center justify-center z-20 border-2`}
               style={{
-                backgroundColor: 'var(--app-danger)',
+                backgroundColor: pendingForceStop ? 'var(--app-text-muted)' : 'var(--app-danger)',
                 borderWidth: '0px',
                 color: 'white',
                 top: '-5px',
