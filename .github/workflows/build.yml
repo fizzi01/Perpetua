@@ -164,7 +164,7 @@ jobs:
           security set-keychain-settings -t 3600 -u build.keychain
           security import certificate.p12 -k build.keychain -P "$MAC_CERTIFICATE_PASSWORD" -T /usr/bin/codesign
           security set-key-partition-list -S apple-tool:,apple:,codesign: -s -k "$KEYCHAIN_PASSWORD" build.keychain
-          security find-identity -v -p codesigning build.keychain
+          security find-identity -p codesigning build.keychain
           rm certificate.p12
 
       - name: Build daemon
@@ -194,7 +194,7 @@ jobs:
       - name: Create DMG (macOS)
         if: runner.os == 'macOS'
         run: |
-          IDENTITY=$(security find-identity -v -p codesigning build.keychain | grep -o '"[^"]*"' | head -1 | tr -d '"')
+          IDENTITY=$(security find-identity -p codesigning build.keychain | grep -o '"[^"]*"' | head -1 | tr -d '"')
           echo "Using signing identity: $IDENTITY"
           create-dmg --overwrite --identity="$IDENTITY" ${{ matrix.build-output }}/Perpetua.app ${{ matrix.build-output }}
           mv ${{ matrix.build-output }}/Perpetua*.dmg ${{ matrix.build-output }}/${{ matrix.archive-name }}.dmg
