@@ -37,13 +37,13 @@ Actually only Windows and MacOS are supported.
 
 [Download](#download) the latest release.
 
-- **macOS**: Extract the `.zip` and launch `Perpetua.app`.
+- **macOS**: Extract the `.zip`, run `xattr -c Perpetua.app` and launch `Perpetua.app`.
 - **Windows**: Extract the archive and run `Perpetua.exe` inside the `Perpetua` folder.
 
 The GUI will guide you through choosing server or client mode and the initial configuration.
 
 > [!TIP]
-> For detailed configuration options, including client-server pairing, and security settings, see the [Configuration](#configuration) section below.
+> For detailed configuration options, including client-server pairing and security settings, see the [Configuration](#configuration) section below.
 
 #### Background Mode
 
