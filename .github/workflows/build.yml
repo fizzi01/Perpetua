@@ -198,7 +198,8 @@ jobs:
       - name: Create DMG (macOS)
         if: runner.os == 'macOS'
         run: |
-          create-dmg --overwrite ${{ matrix.build-output }}/Perpetua.app ${{ matrix.build-output }}
+          IDENTITY=$(security find-identity -v -p codesigning build.keychain | head -1 | sed 's/.*"\(.*\)"/\1/')
+          create-dmg --overwrite --identity="$IDENTITY" ${{ matrix.build-output }}/Perpetua.app ${{ matrix.build-output }}
           mv ${{ matrix.build-output }}/Perpetua*.dmg ${{ matrix.build-output }}/${{ matrix.archive-name }}.dmg
 
       - name: Rename dist folder (Windows)
