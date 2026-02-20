@@ -17,7 +17,7 @@
  *
  */
 
-import { StreamType } from "./Interface";
+import {StreamType} from "./Interface";
 
 /**
  * Translate an enum (type) value to a snake_case string.
@@ -29,14 +29,14 @@ import { StreamType } from "./Interface";
  * getType(EventType, EventType.SslHandshakeStarted) // "ssl_handshake_started"
  */
 export function getType<T extends Record<string, string | number>>(
-  enumType: T,
-  value: T[keyof T]
+    enumType: T,
+    value: T[keyof T]
 ): string {
-  const name = enumType[value as keyof T] as string;
-  return name
-    .replace(/([A-Z])/g, '_$1')
-    .toLowerCase()
-    .replace(/^_/, '');
+    const name = enumType[value as keyof T] as string;
+    return name
+        .replace(/([A-Z])/g, '_$1')
+        .toLowerCase()
+        .replace(/^_/, '');
 }
 
 /**
@@ -49,49 +49,49 @@ export function getType<T extends Record<string, string | number>>(
  * getEnumValue(EventType, "ssl_handshake_started") // EventType.SslHandshakeStarted
  */
 export function getEnumValue<T extends Record<string, string | number>>(
-  enumType: T,
-  name: string
+    enumType: T,
+    name: string
 ): T[keyof T] | undefined {
-  // Convert snake_case to PascalCase
-  const pascalCase = name
-    .split('_')
-    .map(word => word.charAt(0).toUpperCase() + word.slice(1).toLowerCase())
-    .join('');
-  
-  // Search for the value in the enum
-  for (const [key, value] of Object.entries(enumType)) {
-    if (key === pascalCase) {
-      return value as T[keyof T];
+    // Convert snake_case to PascalCase
+    const pascalCase = name
+        .split('_')
+        .map(word => word.charAt(0).toUpperCase() + word.slice(1).toLowerCase())
+        .join('');
+
+    // Search for the value in the enum
+    for (const [key, value] of Object.entries(enumType)) {
+        if (key === pascalCase) {
+            return value as T[keyof T];
+        }
     }
-  }
-  
-  return undefined;
+
+    return undefined;
 }
 
 /**
  * Convert streams number in their specific enum representation.
  */
 export function parseStreams(streams: Object): StreamType[] {
-  const result: StreamType[] = [];
-  // Streams object is like { "1": true, "4": false, "12": true }
-  for (const [key, value] of Object.entries(streams)) {
-    if (value) {
-      const streamNum = parseInt(key, 10);
-      if (streamNum in StreamType) {
-        result.push(streamNum as StreamType);
-      }
+    const result: StreamType[] = [];
+    // Streams object is like { "1": true, "4": false, "12": true }
+    for (const [key, value] of Object.entries(streams)) {
+        if (value) {
+            const streamNum = parseInt(key, 10);
+            if (streamNum in StreamType) {
+                result.push(streamNum as StreamType);
+            }
+        }
     }
-  }
-  return result;
+    return result;
 }
 
 /**
  * Check if the given string is a valid IP address.
- */                                                
+ */
 export function isValidIpAddress(ip: string): boolean {
-  const ipv4Regex = /^(?:(?:25[0-5]|2[0-4][0-9]|[01]?[0-9][0-9]?)\.){3}(?:25[0-5]|2[0-4][0-9]|[01]?[0-9][0-9]?)$/;
-  
-  const ipv6Regex = /^(?:[0-9a-fA-F]{1,4}:){7}[0-9a-fA-F]{1,4}$|^::(?:[0-9a-fA-F]{1,4}:){0,6}[0-9a-fA-F]{1,4}$|^[0-9a-fA-F]{1,4}::(?:[0-9a-fA-F]{1,4}:){0,5}[0-9a-fA-F]{1,4}$|^(?:[0-9a-fA-F]{1,4}:){1,6}:$/;
-  
-  return ipv4Regex.test(ip) || ipv6Regex.test(ip);
+    const ipv4Regex = /^(?:(?:25[0-5]|2[0-4][0-9]|[01]?[0-9][0-9]?)\.){3}(?:25[0-5]|2[0-4][0-9]|[01]?[0-9][0-9]?)$/;
+
+    const ipv6Regex = /^(?:[0-9a-fA-F]{1,4}:){7}[0-9a-fA-F]{1,4}$|^::(?:[0-9a-fA-F]{1,4}:){0,6}[0-9a-fA-F]{1,4}$|^[0-9a-fA-F]{1,4}::(?:[0-9a-fA-F]{1,4}:){0,5}[0-9a-fA-F]{1,4}$|^(?:[0-9a-fA-F]{1,4}:){1,6}:$/;
+
+    return ipv4Regex.test(ip) || ipv6Regex.test(ip);
 }

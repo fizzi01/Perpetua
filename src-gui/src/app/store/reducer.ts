@@ -17,7 +17,7 @@
  *
  */
 
-import { combineReducers } from 'redux';
+import {combineReducers} from 'redux';
 
 import serverReducer from './server'
 import clientReducer from './client';

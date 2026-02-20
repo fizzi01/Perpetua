@@ -17,43 +17,43 @@
  *
  */
 
-import { motion } from 'motion/react';
-import { platform } from '@tauri-apps/plugin-os';
+import {motion} from 'motion/react';
+import {platform} from '@tauri-apps/plugin-os';
 
 export function SplashScreen() {
 
-  var r = document.querySelector(':root') as HTMLElement;
-  const currentPlatform = platform();
-  r.style.setProperty('--border-radius', currentPlatform === 'windows' ? '0px' : '14px');
+    var r = document.querySelector(':root') as HTMLElement;
+    const currentPlatform = platform();
+    r.style.setProperty('--border-radius', currentPlatform === 'windows' ? '0px' : '14px');
 
-  return (
-    <div data-tauri-drag-region
-        className="min-h-screen w-full flex items-center justify-center" 
-        style={{ 
-            backgroundColor: 'var(--color-woodsmoke-950)',
-            borderColor: 'var(--app-border)' 
-            }}>
-      <motion.div
-        data-tauri-drag-region
-        animate={{ 
-          rotate: 360 
-        }}
-        transition={{
-          duration: 2,
-          repeat: Infinity,
-          ease: "linear"
-        }}
-        style={{ 
-            backgroundColor: 'var(--color-woodsmoke-950)',
-            borderColor: 'var(--app-border)' 
-        }}
-      >
-        <img 
-          src="/logo_primary.svg" 
-          alt="Perpetua Logo" 
-          className="w-24 h-24 pointer-events-none"
-        />
-      </motion.div>
-    </div>
-  );
+    return (
+        <div data-tauri-drag-region
+             className="min-h-screen w-full flex items-center justify-center"
+             style={{
+                 backgroundColor: 'var(--color-woodsmoke-950)',
+                 borderColor: 'var(--app-border)'
+             }}>
+            <motion.div
+                data-tauri-drag-region
+                animate={{
+                    rotate: 360
+                }}
+                transition={{
+                    duration: 2,
+                    repeat: Infinity,
+                    ease: "linear"
+                }}
+                style={{
+                    backgroundColor: 'var(--color-woodsmoke-950)',
+                    borderColor: 'var(--app-border)'
+                }}
+            >
+                <img
+                    src="/logo_primary.svg"
+                    alt="Perpetua Logo"
+                    className="w-24 h-24 pointer-events-none"
+                />
+            </motion.div>
+        </div>
+    );
 }

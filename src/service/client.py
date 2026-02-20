@@ -974,7 +974,7 @@ class Client:
                 if not self._is_starting.is_set():
                     self._logger.warning("Client not running")
                     return False
-                    
+
             # Clear is_starting to abort pending start process
             self._is_starting.clear()
             # Force cleanup of futures to unblock any pending operations
@@ -1020,9 +1020,9 @@ class Client:
         except Exception as e:
             self._logger.error(f"Error during client stop ({e})")
             return False
-        #finally:
-            #self._is_starting.clear()
-            #await self._futures_cleanup()
+        # finally:
+        # self._is_starting.clear()
+        # await self._futures_cleanup()
 
     async def _futures_cleanup(self):
         # Release futures
