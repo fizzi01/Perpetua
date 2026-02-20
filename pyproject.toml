@@ -21,7 +21,7 @@ dependencies = [
     "pyjwt (>=2.10.1,<3.0.0)",
     "aiofiles (>=25.1.0,<26.0.0)",
     "pylint (>=4.0.4,<5.0.0)",
-    "uvloop @ git+https://github.com/fizzi01/uvloop.git@perpetua ; sys_platform == 'darwin'",
+    "uvloop @ git+https://github.com/fizzi01/uvloop.git@perpetua ; sys_platform == 'darwin' or sys_platform == 'linux'",
     "winloop (==0.5.0) ; sys_platform == 'win32'",
     "structlog (>=25.5.0,<26.0.0)",
     "psutil (>=7.2.1,<8.0.0)",

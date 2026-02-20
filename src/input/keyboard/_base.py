@@ -160,6 +160,8 @@ class ServerKeyboardListener(object):
                     self._filter_args["win32_event_filter"] = (
                         self._win32_suppress_filter
                     )
+                elif current_platform == "Linux":
+                    self._filter_args["suppress"] = True
             except Exception:
                 pass
 
