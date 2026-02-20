@@ -1,5 +1,14 @@
 # Changelog
 
+## [1.2.5](https://github.com/fizzi01/Perpetua/compare/v1.2.4...v1.2.5) (2026-02-20)
+
+
+### Bug Fixes
+
+* **client:** improve abort handling ([#48](https://github.com/fizzi01/Perpetua/issues/48)) ([9823faa](https://github.com/fizzi01/Perpetua/commit/9823faacab10a6fcb93d64709dd57058eaf84141))
+* **gui:** auto-discovery mode info popup not showing correctly ([#50](https://github.com/fizzi01/Perpetua/issues/50)) ([c3b6740](https://github.com/fizzi01/Perpetua/commit/c3b6740944e126e6cd9c3d678fe169ab2b0cf938))
+* **gui:** avoid spamming force stop events with multiple presses ([9823faa](https://github.com/fizzi01/Perpetua/commit/9823faacab10a6fcb93d64709dd57058eaf84141))
+
 ## [1.2.4](https://github.com/fizzi01/Perpetua/compare/v1.2.3...v1.2.4) (2026-02-18)
 
 

@@ -1,5 +1,5 @@
 {
     "$schema": "https://raw.githubusercontent.com/googleapis/release-please/refs/heads/main/schemas/config.json",
     "pull-request-header": "",
-    ".": "1.2.4"
+    ".": "1.2.5"
 }
