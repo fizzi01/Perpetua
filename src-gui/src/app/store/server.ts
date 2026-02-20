@@ -17,8 +17,8 @@
  *
  */
 
-import { ServerStatus } from '../api/Interface'
-import { ActionType } from './actions';
+import {ServerStatus} from '../api/Interface'
+import {ActionType} from './actions';
 
 const initialState: ServerStatus = {
     running: false,
@@ -37,10 +37,10 @@ interface Action {
 }
 
 
-export default function serverReducer(state = initialState, action: Action) {                                                         
+export default function serverReducer(state = initialState, action: Action) {
     switch (action.type) {
         case ActionType.SERVER_STATE:
-            return { ...state, ...action.payload };
+            return {...state, ...action.payload};
         default:
             return state;
     }

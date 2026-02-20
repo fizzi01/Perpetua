@@ -1,4 +1,3 @@
-
 /*
  * Perpetua - open-source and cross-platform KVM software.
  * Copyright (c) 2026 Federico Izzi.
@@ -19,17 +18,17 @@
  */
 
 export interface CommandPayload {
-  data?: {
-    command?: string;
-    result?: any;
-    error?: string;
-  };
-  message?: string;
+    data?: {
+        command?: string;
+        result?: any;
+        error?: string;
+    };
+    message?: string;
 }
 
 export interface GeneralEvent {
-  data?: object;
-  message?: string;
+    data?: object;
+    message?: string;
 }
 
 export enum EventType {
@@ -129,7 +128,7 @@ export enum EventType {
 }
 
 export enum CommandType {
-      // Service control
+    // Service control
     ServiceChoice,
     StartServer,
     StopServer,
@@ -189,84 +188,83 @@ export enum StreamType {
 
 // -- Status Interfaces --
 export interface ClientObj {
-  uid: string;
-  host_name: string;
-  ip_address: string;
-  screen_position: string;
-  ssl: boolean;
-  streams_enabled: number[];
-  is_connected: boolean;
-  first_connection_date: string;
-  last_connection_date: string;
+    uid: string;
+    host_name: string;
+    ip_address: string;
+    screen_position: string;
+    ssl: boolean;
+    streams_enabled: number[];
+    is_connected: boolean;
+    first_connection_date: string;
+    last_connection_date: string;
 }
 
 export interface ClientEditObj {
-  hostname?: string;
-  ip_address?: string;
-  screen_position?: string;
+    hostname?: string;
+    ip_address?: string;
+    screen_position?: string;
 }
 
 export interface ServerStatus {
-  start_time?: string;
-  running: boolean;
-  uid: string;
-  host: string;
-  port: number;
-  heartbeat_interval: number;
-  streams_enabled: Object;
-  ssl_enabled: boolean;
-  authorized_clients: ClientObj[];
+    start_time?: string;
+    running: boolean;
+    uid: string;
+    host: string;
+    port: number;
+    heartbeat_interval: number;
+    streams_enabled: Object;
+    ssl_enabled: boolean;
+    authorized_clients: ClientObj[];
 }
 
 export interface ClientConnectionInfo {
-  uid: string;
-  host: string;
-  hostname: string;
-  port: number;
-  ssl: boolean;
-  auto_reconnect: boolean;
+    uid: string;
+    host: string;
+    hostname: string;
+    port: number;
+    ssl: boolean;
+    auto_reconnect: boolean;
 }
 
-export interface ClientStatus
-{
-  running: boolean;
-  connected: boolean;
-  start_time?: string;
-  otp_needed: boolean;
-  service_choice_needed: boolean;
-  available_servers?: ServerFound[];
-  uid: string;
-  client_hostname: string;
-  streams_enabled: number[];
-  ssl_enabled: boolean;
-  server_info: ClientConnectionInfo;
+export interface ClientStatus {
+    running: boolean;
+    connected: boolean;
+    start_time?: string;
+    otp_needed: boolean;
+    service_choice_needed: boolean;
+    available_servers?: ServerFound[];
+    uid: string;
+    client_hostname: string;
+    streams_enabled: number[];
+    ssl_enabled: boolean;
+    server_info: ClientConnectionInfo;
 }
 
 export interface ServiceStatus {
-  server_info?: ServerStatus;
-  client_info?: ClientStatus;
+    server_info?: ServerStatus;
+    client_info?: ClientStatus;
 }
 
 // -- SSL/OTP Interfaces --
 export interface OtpInfo {
-  otp: string;
-  timeout: number; // in seconds
-  instructions: string;
+    otp: string;
+    timeout: number; // in seconds
+    instructions: string;
 }
 
 
 export interface ServerFound {
-  uid: string;
-  address: string;
-  hostname: string;
-  port: number;
+    uid: string;
+    address: string;
+    hostname: string;
+    port: number;
 }
 
 export interface ServerChoice {
-  servers: ServerFound[];
+    servers: ServerFound[];
 }
 
 export interface ServiceError {
-  error: string;
-  service_name: string;
+    error: string;
+    service_name: string;
 }

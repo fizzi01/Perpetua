@@ -17,8 +17,8 @@
  *
  */
 
-import { ClientStatus} from '../api/Interface'
-import { ActionType } from './actions';
+import {ClientStatus} from '../api/Interface'
+import {ActionType} from './actions';
 
 const initialState: ClientStatus = {
     connected: false,
@@ -46,10 +46,10 @@ interface Action {
 }
 
 
-export default function clientReducer(state = initialState, action: Action) {                                                         
+export default function clientReducer(state = initialState, action: Action) {
     switch (action.type) {
         case ActionType.CLIENT_STATE:
-            return { ...state, ...action.payload };
+            return {...state, ...action.payload};
         default:
             return state;
     }

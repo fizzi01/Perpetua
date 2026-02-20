@@ -17,9 +17,9 @@
  *
  */
 
-import { invoke } from '@tauri-apps/api/core';
-import { getType } from '../api/Utility';
-import { CommandType, StreamType } from '../api/Interface';
+import {invoke} from '@tauri-apps/api/core';
+import {getType} from '../api/Utility';
+import {CommandType, StreamType} from '../api/Interface';
 
 // -- SERVER-SPECIFIC API CALLS --
 
@@ -32,19 +32,23 @@ export function stopServer(): Promise<void> {
 }
 
 export function addClient(hostname: string, ip_address: string, screen_position: string): Promise<void> {
-    return invoke(getType(CommandType, CommandType.AddClient), { hostname, ipAddress: ip_address, screenPosition: screen_position });
+    return invoke(getType(CommandType, CommandType.AddClient), {
+        hostname,
+        ipAddress: ip_address,
+        screenPosition: screen_position
+    });
 }
 
 export function removeClient(hostname: string, ip_address: string): Promise<void> {
-    return invoke(getType(CommandType, CommandType.RemoveClient), { hostname, ipAddress: ip_address });
+    return invoke(getType(CommandType, CommandType.RemoveClient), {hostname, ipAddress: ip_address});
 }
 
 export function saveServerConfig(host: string, port: number, sslEnabled: boolean): Promise<void> {
-    return invoke(getType(CommandType, CommandType.SetServerConfig), { host, port, sslEnabled });
+    return invoke(getType(CommandType, CommandType.SetServerConfig), {host, port, sslEnabled});
 }
 
 export function shareCertificate(timeout: number): Promise<void> {
-    return invoke(getType(CommandType, CommandType.ShareCertificate), { timeout });
+    return invoke(getType(CommandType, CommandType.ShareCertificate), {timeout});
 }
 
 // -- CLIENT-SPECIFIC API CALLS --
@@ -58,22 +62,28 @@ export function stopClient(): Promise<void> {
 }
 
 export function setOtp(otp: string): Promise<void> {
-    return invoke(getType(CommandType, CommandType.SetOtp), { otp });
+    return invoke(getType(CommandType, CommandType.SetOtp), {otp});
 }
 
 export function chooseServer(uid: string): Promise<void> {
-    return invoke(getType(CommandType, CommandType.ChooseServer), { uid });
+    return invoke(getType(CommandType, CommandType.ChooseServer), {uid});
 }
 
 export function saveClientConfig(serverHost: string, serverHostname: string, serverPort: number, sslEnabled: boolean, autoReconnect: boolean): Promise<void> {
-    return invoke(getType(CommandType, CommandType.SetClientConfig), { serverHost, serverHostname, serverPort, sslEnabled, autoReconnect });
+    return invoke(getType(CommandType, CommandType.SetClientConfig), {
+        serverHost,
+        serverHostname,
+        serverPort,
+        sslEnabled,
+        autoReconnect
+    });
 }
 
 // -- GENERAL API CALLS --
 
 export function chooseService(service: 'client' | 'server'): Promise<void> {
     console.log(`[Sender] Choosing service: ${service}`);
-    return invoke(getType(CommandType, CommandType.ServiceChoice), { service });
+    return invoke(getType(CommandType, CommandType.ServiceChoice), {service});
 }
 
 export function getStatus(): Promise<any> {
@@ -81,16 +91,16 @@ export function getStatus(): Promise<any> {
 }
 
 export function enableStream(streamType: StreamType): Promise<void> {
-    return invoke(getType(CommandType, CommandType.EnableStream), { streamType });
+    return invoke(getType(CommandType, CommandType.EnableStream), {streamType});
 }
 
 export function disableStream(streamType: StreamType): Promise<void> {
-    return invoke(getType(CommandType, CommandType.DisableStream), { streamType });
+    return invoke(getType(CommandType, CommandType.DisableStream), {streamType});
 }
 
 export function switchTrayIcon(active: boolean): void {
     try {
-        invoke("switch_tray_icon", { active });
+        invoke("switch_tray_icon", {active});
     } catch (error) {
         console.error("Failed to switch tray icon:", error);
     }

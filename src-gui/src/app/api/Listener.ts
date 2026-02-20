@@ -17,14 +17,14 @@
  *
  */
 
-import { listen} from '@tauri-apps/api/event';
-import { CommandPayload, EventType, CommandType, GeneralEvent } from '../api/Interface';
-import { getType, getEnumValue } from './Utility';
+import {listen} from '@tauri-apps/api/event';
+import {CommandPayload, CommandType, EventType, GeneralEvent} from '../api/Interface';
+import {getEnumValue, getType} from './Utility';
 
 /**
  * Listen for a specific event with a command payload.
  * If the command parameter is an array, it will match any of the commands in the array.
- * 
+ *
  * @param eventType The type of event to listen for.
  * @param command The command or commands to filter for.
  * @param callback The callback function to execute when the event is received.
