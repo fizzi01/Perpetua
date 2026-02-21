@@ -303,7 +303,7 @@ class Launcher:
     def run(self) -> int:
         """Run the launcher: start daemon and GUI."""
         # Check permissions
-        permission_checker = PermissionChecker(self.log)  # type: ignore
+        permission_checker = PermissionChecker(self.log)
         permissions = permission_checker.get_missing_permissions()
         if len(permissions) > 0:
             self.log.info("Requesting missing permissions", permissions=permissions)
