@@ -40,6 +40,9 @@ pub fn get_log_file_path() -> Result<PathBuf, String> {
     #[cfg(target_os = "windows")]
     let app_dir = home.join("AppData").join("Local").join(DEFAULT_APP_DIR);
 
+    #[cfg(target_os = "linux")]
+    let app_dir = home.join(DEFAULT_APP_DIR);
+
     let log_file = app_dir.join("daemon.log");
 
     if !log_file.exists() {

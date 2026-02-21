@@ -31,7 +31,11 @@ use tokio::net::TcpStream;
 #[cfg(windows)]
 const DEFAULT_DAEMON_PORT: u16 = 55652;
 
+#[cfg(not(target_os = "linux"))]
 pub const DEFAULT_APP_DIR: &str = "Perpetua";
+
+#[cfg(target_os = "linux")]
+pub const DEFAULT_APP_DIR: &str = ".perpetua";
 
 #[cfg(unix)]
 pub const DEFAULT_DAEMON_SOCKET: &str = "perpetua_daemon.sock";
@@ -59,17 +63,30 @@ enum DefaultPath {
 }
 
 fn default_path() -> Result<DefaultPath, SocketPathError> {
-    #[cfg(all(unix, target_os = "macos"))]
+    #[cfg(unix)]
     {
         let home = env::var("HOME").map_err(SocketPathError::HomeDirNotFound)?;
+        
+        {
+            #[cfg(target_os = "macos")]
+            Ok(DefaultPath::Unix(
+                Path::new(&home)
+                    .join("Library")
+                    .join("Caches")
+                    .join(DEFAULT_APP_DIR)
+                    .join(DEFAULT_DAEMON_SOCKET),
+            ))
+        }
 
-        Ok(DefaultPath::Unix(
-            Path::new(&home)
-                .join("Library")
-                .join("Caches")
-                .join(DEFAULT_APP_DIR)
-                .join(DEFAULT_DAEMON_SOCKET),
-        ))
+        {
+            #[cfg(not(target_os = "macos"))]
+            Ok(DefaultPath::Unix(
+                Path::new(&home)
+                    .join(DEFAULT_APP_DIR)
+                    .join(DEFAULT_DAEMON_SOCKET),
+            ))
+        }
+
     }
 
     #[cfg(windows)]
