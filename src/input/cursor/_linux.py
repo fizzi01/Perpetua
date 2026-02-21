@@ -31,6 +31,7 @@ from event.bus import EventBus
 from input.cursor import _base
 from network.stream.handler import StreamHandler
 
+
 class CursorHandlerWindow(_base.CursorHandlerWindow):
     BORDER_OFFSET = 1
     WINDOW_SIZE = Size(400, 400)
