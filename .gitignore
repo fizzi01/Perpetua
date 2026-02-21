@@ -152,3 +152,4 @@ _test_config/
 .DS_Store
 logo/**
 **/nuitka-crash-report.xml
+**/node_modules
