@@ -187,7 +187,7 @@ where
             .traffic_light_position(Position::Physical(PhysicalPosition { x: 30, y: 50 }));
     }
 
-    #[cfg(target_os = "windows")]
+    #[cfg(not(target_os = "macos"))]
     {
         win_builder = win_builder.decorations(false).transparent(true);
     }
@@ -253,6 +253,7 @@ where
             tauri::image::Image::from_bytes(include_bytes!("../icons/macos/32x32_idle.png"))?;
     }
 
+    #[allow(unused_mut)]
     let mut tray = tray.icon(icon_data);
 
     #[cfg(target_os = "macos")]
@@ -301,7 +302,7 @@ where
             .title_bar_style(TitleBarStyle::Transparent);
     }
 
-    #[cfg(target_os = "windows")]
+    #[cfg(not(target_os = "macos"))]
     {
         splashscreen_win_builder = splashscreen_win_builder
             .decorations(false)
