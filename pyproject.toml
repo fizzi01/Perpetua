@@ -60,3 +60,6 @@ testpaths = [
     "tests/unit",
 ]
 anyio_mode = "auto"
+pythonpath = [
+    "src"
+]
