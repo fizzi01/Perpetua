@@ -23,10 +23,24 @@ from . import _base
 from ._base import PermissionType, PermissionStatus, PermissionResult
 
 
-def _is_root() -> bool:
-    """Return True if the process is running as root."""
-    return os.getuid() == 0
+def _is_executable_owner() -> bool:
+    """Return True if the current user owns the running application source file.
 
+    When the process is launched via sudo, SUDO_UID is used to recover the
+    original user's UID so that ownership is checked against the real user
+    rather than root.
+    """
+    try:
+        # Under sudo, os.getuid() returns 0; SUDO_UID carries the real user.
+        uid = int(os.environ.get("SUDO_UID", os.getuid()))
+        file_uid = os.stat(__file__).st_uid
+        return file_uid == uid
+    except (OSError, ValueError):
+        return False
+
+def _is_root() -> bool:
+    """Return True if the current user is root."""
+    return os.geteuid() == 0
 
 def _is_in_input_group() -> bool:
     """Return True if the current user belongs to the 'input' group."""
@@ -35,7 +49,6 @@ def _is_in_input_group() -> bool:
         return input_gid in os.getgroups()
     except KeyError:
         return False
-
 
 def _has_input_access() -> bool:
     """Return True if the process can access /dev/input devices."""
@@ -57,7 +70,7 @@ class PermissionChecker(_base.PermissionChecker):
                         status=PermissionStatus.GRANTED,
                     )
                 reason = (
-                    "root privileges or membership in the 'input' group are required"
+                    "the application must be run by its owner or a member of the 'input' group"
                 )
                 return PermissionResult(
                     permission_type=permission_type,
@@ -78,7 +91,7 @@ class PermissionChecker(_base.PermissionChecker):
                     return PermissionResult(
                         permission_type=permission_type,
                         status=PermissionStatus.DENIED,
-                        message="root privileges or membership in the 'input' group are required",
+                        message="the application must be run by its owner or a member of the 'input' group",
                         can_request=False,
                     )
                 return PermissionResult(
