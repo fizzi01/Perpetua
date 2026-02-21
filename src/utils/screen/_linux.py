@@ -28,3 +28,14 @@ class Screen(_base.Screen):
         del app
         geometry = display.GetGeometry()
         return geometry.width, geometry.height
+
+    @classmethod
+    def is_screen_locked(cls) -> bool:
+        """
+        Monitor display sleep/wake events on Linux.
+        """
+        return False  # Placeholder implementation
+
+    @classmethod
+    def hide_icon(cls):
+        pass  # Placeholder implementation

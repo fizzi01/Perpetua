@@ -50,7 +50,7 @@ from network.stream.handler import StreamHandler
 
 
 class CursorHandlerWindow(_base.CursorHandlerWindow):
-    BORDER_OFFSET: int = 1
+    BORDER_OFFSET = 1
     WINDOW_SIZE = Size(400, 400)
 
     def __init__(
