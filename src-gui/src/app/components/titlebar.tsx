@@ -93,9 +93,9 @@ export function Titlebar({disabled, mode, onModeChange}: TitlebarProps) {
     const currentPlatform = platform();
 
     return (
-        currentPlatform === "windows" ? (
+        currentPlatform !== "macos" ? (
             <WindowTitlebar className='titlebar w-full' windowControlsProps={{
-                platform: 'windows',
+                platform: "windows",
                 className: 'titlebar-system-group h-full border-b backdrop-blur-md',
             }}>
                 <InnerBar disabled={disabled} mode={mode} justify_mode='between' onModeChange={onModeChange}/>
