@@ -43,12 +43,15 @@ def _is_root() -> bool:
     return os.geteuid() == 0
 
 def _is_in_input_group() -> bool:
-    """Return True if the current user belongs to the 'input' group."""
-    try:
-        input_gid = grp.getgrnam("input").gr_gid
-        return input_gid in os.getgroups()
-    except KeyError:
-        return False
+    """Return True if the current user belongs to the 'input' or 'plugdev' group."""
+    user_groups = os.getgroups()
+    for group_name in ("input", "plugdev"):
+        try:
+            if grp.getgrnam(group_name).gr_gid in user_groups:
+                return True
+        except KeyError:
+            continue
+    return False
 
 def _has_input_access() -> bool:
     """Return True if the process can access /dev/input devices."""
