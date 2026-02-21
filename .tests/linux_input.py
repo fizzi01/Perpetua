@@ -24,6 +24,7 @@ BLOCK_KEYS = False
 # Helpers
 # ---------------------------------------------------------------------------
 
+
 def find_keyboards() -> list[evdev.InputDevice]:
     """Return all /dev/input/eventX devices that have alphanumeric keys."""
     result = []
@@ -57,16 +58,20 @@ def make_uinput(keyboards: list[evdev.InputDevice]) -> UInput:
 # Async event loop
 # ---------------------------------------------------------------------------
 
+
 async def forward(dev: evdev.InputDevice, ui: UInput) -> None:
     """Read events from one grabbed device and emit them on UInput."""
     async for event in dev.async_read_loop():
         if event.type == ecodes.EV_KEY:
-            value_str = {1: "press", 0: "release", 2: "repeat"}.get(event.value, str(event.value))
+            value_str = {1: "press", 0: "release", 2: "repeat"}.get(
+                event.value, str(event.value)
+            )
             key_name = ecodes.KEY.get(event.code, event.code)
             print(f"[{dev.path}] {key_name} {value_str}")
             if not BLOCK_KEYS:
                 ui.write(ecodes.EV_KEY, event.code, event.value)
                 ui.syn()
+
 
 async def main() -> None:
     keyboards = find_keyboards()
