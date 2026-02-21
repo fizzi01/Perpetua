@@ -38,9 +38,11 @@ def _is_executable_owner() -> bool:
     except (OSError, ValueError):
         return False
 
+
 def _is_root() -> bool:
     """Return True if the current user is root."""
     return os.geteuid() == 0
+
 
 def _is_in_input_group() -> bool:
     """Return True if the current user belongs to the 'input' or 'plugdev' group."""
@@ -52,6 +54,7 @@ def _is_in_input_group() -> bool:
         except KeyError:
             continue
     return False
+
 
 def _has_input_access() -> bool:
     """Return True if the process can access /dev/input devices."""
@@ -66,15 +69,17 @@ def _has_display() -> bool:
 class PermissionChecker(_base.PermissionChecker):
     def check_permission(self, permission_type: PermissionType) -> PermissionResult:
         match permission_type:
-            case PermissionType.KEYBOARD_INPUT | PermissionType.MOUSE_INPUT | PermissionType.ACCESSIBILITY:
+            case (
+                PermissionType.KEYBOARD_INPUT
+                | PermissionType.MOUSE_INPUT
+                | PermissionType.ACCESSIBILITY
+            ):
                 if _has_input_access():
                     return PermissionResult(
                         permission_type=permission_type,
                         status=PermissionStatus.GRANTED,
                     )
-                reason = (
-                    "the application must be run by its owner or a member of the 'input' group"
-                )
+                reason = "the application must be run by its owner or a member of the 'input' group"
                 return PermissionResult(
                     permission_type=permission_type,
                     status=PermissionStatus.DENIED,
@@ -119,7 +124,10 @@ class PermissionChecker(_base.PermissionChecker):
         return self.check_permission(permission_type)
 
     def check_all_permissions(self) -> dict[PermissionType, PermissionResult]:
-        return {permission: self.check_permission(permission) for permission in PermissionType}
+        return {
+            permission: self.check_permission(permission)
+            for permission in PermissionType
+        }
 
     def open_settings(self, permission_type: Optional[PermissionType] = None):
         pass
