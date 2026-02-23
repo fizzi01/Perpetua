@@ -7,9 +7,9 @@ if platform.startswith("linux"):
     if environ.get("XDG_SESSION_TYPE") == "wayland":
         # Wayland backend (not implemented yet)
         raise NotImplementedError("Wayland backend is not implemented yet")
-    else:
-        from ._xorg import MouseListener
-        from pynput.mouse import Controller as MouseController
+    # else:
+    #     from pynput.mouse import Listener as MouseListener
+    #     from pynput.mouse import Controller as MouseController
 else:
     from pynput.mouse import Listener as MouseListener
     from pynput.mouse import Controller as MouseController
