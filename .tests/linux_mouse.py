@@ -41,7 +41,7 @@ class MouseListener(threading.Thread):
         self.on_move = on_move
         self.on_click = on_click
         self.on_scroll = on_scroll
-        self.suppress = suppress
+        self._suppress = suppress
         self._running = threading.Event()
         self._running.clear()
         self._devices = find_mice()
@@ -50,8 +50,20 @@ class MouseListener(threading.Thread):
         self._injected_flag = False
         self._injected_rel_count = 0
         self._injected_key_count = 0
+        self._loop = None
+        self._cleanup_done = threading.Event()
+
+    @property
+    def suppress(self):
+        return self._suppress
+
+    @suppress.setter
+    def suppress(self, value):
+        self._suppress = value
 
     def _get_position(self):
+        if not self._display:
+            return (0, 0)
         try:
             with display_manager(self._display) as d:
                 root = d.screen().root
@@ -66,16 +78,28 @@ class MouseListener(threading.Thread):
         try:
             for dev in self._devices:
                 dev.grab()
-            loop = asyncio.new_event_loop()
-            asyncio.set_event_loop(loop)
+            self._loop = asyncio.new_event_loop()
+            asyncio.set_event_loop(self._loop)
             tasks = [self._forward(dev) for dev in self._devices]
-            loop.run_until_complete(asyncio.gather(*tasks))
+            self._loop.run_until_complete(asyncio.gather(*tasks))
+        except asyncio.CancelledError:
+            pass
+        except RuntimeError as e:
+            if "Event loop is closed" in str(e):
+                pass  # Expected on shutdown
+        except Exception as e:
+            print(f"MouseListener error: {e}")
         finally:
             for dev in self._devices:
-                try: dev.ungrab()
-                except Exception: pass
+                print(f"Ungrab: {dev.path}  ({dev.name})")
+                try: 
+                    dev.ungrab()
+                except Exception: 
+                    pass
             if self._ui:
+                print("Closing UInput device")
                 self._ui.close()
+            self._cleanup_done.set()
 
     async def _forward(self, dev):
         async for event in dev.async_read_loop():
@@ -127,7 +151,7 @@ class MouseListener(threading.Thread):
                     if self.on_scroll(pos[0], pos[1], dx, dy, injected) is False:
                         self.stop()
                         break
-            if not self.suppress and self._ui:
+            if not self._suppress and self._ui:
                 self._ui.write_event(event)
                 self._ui.syn()
             if not self._running.is_set():
@@ -138,9 +162,13 @@ class MouseListener(threading.Thread):
 
     def stop(self):
         self._running.clear()
-        for task in asyncio.all_tasks():
-            task.cancel()
+        if self._loop and self._loop.is_running():
+            self._loop.call_soon_threadsafe(self._loop.stop)
 
+    def join(self, timeout=5):
+        #self.stop()
+        self._cleanup_done.wait(timeout)
+        
     def __enter__(self):
         self.start()
         return self
@@ -269,6 +297,7 @@ def find_mice() -> list[evdev.InputDevice]:
         try:
             dev = evdev.InputDevice(path)
             caps = dev.capabilities()
+            print(f"Found device: {dev.path} ({dev.name}) with capabilities: {caps}")
             has_rel = ecodes.EV_REL in caps
             has_btn = ecodes.EV_KEY in caps and any(
                 btn in caps[ecodes.EV_KEY]
@@ -355,11 +384,18 @@ async def test():
     def on_scroll(x, y, dx, dy, injected):
         print(f"Scroll: dx={dx}, dy={dy} at {x}, {y} (injected={injected})")
 
+    # Listen for ctrl+c to stop the listener
+    loop = asyncio.get_event_loop()
+    stop_event = asyncio.Event()
+    def signal_handler():
+        stop_event.set()
+    loop.add_signal_handler(signal.SIGINT, signal_handler)
+
     with MouseListener(on_move=on_move, on_click=on_click, on_scroll=on_scroll) as listener:
         print("Mouse listener started. Move the mouse or click buttons to see events. Press Ctrl+C to stop.")
-        while True:
-            await asyncio.sleep(1)
-            #print(f"Current position: {controller.position}")
+        await stop_event.wait()
+        print("Stopping mouse listener...")
+        listener.stop()
 
 
 
