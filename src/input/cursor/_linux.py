@@ -33,7 +33,7 @@ from network.stream.handler import StreamHandler
 
 
 class CursorHandlerWindow(_base.CursorHandlerWindow):
-    BORDER_OFFSET = 1
+    BORDER_OFFSET = 40
     WINDOW_SIZE = Size(400, 400)
 
     def __init__(
@@ -62,13 +62,16 @@ class CursorHandlerWindow(_base.CursorHandlerWindow):
 
     def ForceOverlay(self):
         try:
+            self.SetWindowStyleFlag(self.GetWindowStyleFlag() | wx.STAY_ON_TOP)
+            self.SetSize(self.WINDOW_SIZE)
             self.Iconize(False)
-            self.AcceptsFocusRecursively()
 
             p = self._get_centered_coords()
             self.Show(True)
             self.Move(pt=p)
             self.Raise()
+            self.SetFocus()
+            self.AcceptsFocusRecursively()
 
         except Exception as e:
             self._logger.error(f"Error forcing overlay ({e})")
