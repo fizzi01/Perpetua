@@ -10,13 +10,253 @@ events leak to X; we then re-inject them through UInput.
 Run with:  sudo .venv/bin/python .tests/linux_mouse.py
 """
 
+# ---------------------------------------------------------------------------
+# pynput-like MouseListener and MouseController
+# ---------------------------------------------------------------------------
+import threading
+import time
+import contextlib
+
 import asyncio
 import signal
 import evdev
 from evdev import UInput, ecodes
+from Xlib import display
 
 # Set to True to only print events without forwarding them to UInput
 BLOCK_MOUSE = False
+
+
+class MouseListener(threading.Thread):
+    """
+    pynput-like mouse listener using evdev.
+    Args:
+        on_move: callable(x, y, injected)
+        on_click: callable(x, y, button, pressed, injected)
+        on_scroll: callable(x, y, dx, dy, injected)
+        suppress: if True, do not forward events to UInput
+    """
+    def __init__(self, on_move=None, on_click=None, on_scroll=None, suppress=False):
+        super().__init__(daemon=True)
+        self.on_move = on_move
+        self.on_click = on_click
+        self.on_scroll = on_scroll
+        self.suppress = suppress
+        self._running = threading.Event()
+        self._running.clear()
+        self._devices = find_mice()
+        self._ui = make_uinput(self._devices) if not suppress else None
+        self._display = None
+        self._injected_flag = False
+        self._injected_rel_count = 0
+        self._injected_key_count = 0
+
+    def _get_position(self):
+        try:
+            with display_manager(self._display) as d:
+                root = d.screen().root
+                pointer = root.query_pointer()
+                return (pointer.root_x, pointer.root_y)
+        except Exception:
+            return X11Error("Failed to get pointer position from X11")
+
+    def run(self):
+        self._running.set()
+        self._display = display.Display()
+        try:
+            for dev in self._devices:
+                dev.grab()
+            loop = asyncio.new_event_loop()
+            asyncio.set_event_loop(loop)
+            tasks = [self._forward(dev) for dev in self._devices]
+            loop.run_until_complete(asyncio.gather(*tasks))
+        finally:
+            for dev in self._devices:
+                try: dev.ungrab()
+                except Exception: pass
+            if self._ui:
+                self._ui.close()
+
+    async def _forward(self, dev):
+        async for event in dev.async_read_loop():
+            #print(f"[{dev.path}] {ecodes.EV.get(event.type, event.type)} {event.code} {event.value}")
+            # Check for injected marker
+            if event.type == ecodes.EV_MSC and event.code == ecodes.MSC_SCAN and event.value == 0x1337:
+                self._injected_flag = True
+                self._injected_rel_count = 2
+                self._injected_key_count = 1
+                continue
+            injected = self._injected_flag
+            # Handle injected counters
+            if self._injected_flag:
+                if event.type == ecodes.EV_REL:
+                    self._injected_rel_count -= 1
+                    if self._injected_rel_count <= 0:
+                        self._injected_flag = False
+                elif event.type == ecodes.EV_KEY:
+                    self._injected_key_count -= 1
+                    if self._injected_key_count <= 0:
+                        self._injected_flag = False
+            if event.type == ecodes.EV_REL and event.code in (ecodes.REL_X, ecodes.REL_Y):
+                pos = []
+                if event.code == ecodes.REL_X:
+                    pos.append(event.value)
+                    pos.append(0)
+                elif event.code == ecodes.REL_Y:
+                    pos.append(0)
+                    pos.append(event.value)
+                if self.on_move:
+                    pos = self._get_position()
+                    if self.on_move(pos[0], pos[1], injected) is False:
+                        self.stop()
+                        break
+            elif event.type == ecodes.EV_KEY:
+                btn_map = {ecodes.BTN_LEFT: 'left', ecodes.BTN_RIGHT: 'right', ecodes.BTN_MIDDLE: 'middle'}
+                if event.code in btn_map:
+                    pressed = event.value == 1
+                    pos = self._get_position()
+                    if self.on_click:
+                        if self.on_click(pos[0], pos[1], btn_map[event.code], pressed, injected) is False:
+                            self.stop()
+                            break
+            elif event.type == ecodes.EV_REL and event.code in (ecodes.REL_WHEEL, ecodes.REL_HWHEEL, ecodes.REL_WHEEL_HI_RES):
+                dx = event.value if event.code == ecodes.REL_HWHEEL else 0
+                dy = event.value if event.code == ecodes.REL_WHEEL else 0
+                pos = self._get_position()
+                if self.on_scroll:
+                    if self.on_scroll(pos[0], pos[1], dx, dy, injected) is False:
+                        self.stop()
+                        break
+            if not self.suppress and self._ui:
+                self._ui.write_event(event)
+                self._ui.syn()
+            if not self._running.is_set():
+                break
+
+    def start(self):
+        super().start()
+
+    def stop(self):
+        self._running.clear()
+        for task in asyncio.all_tasks():
+            task.cancel()
+
+    def __enter__(self):
+        self.start()
+        return self
+
+    def __exit__(self, exc_type, value, traceback):
+        self.stop()
+        self.join()
+
+
+class X11Error(Exception):
+    """An error that is thrown at the end of a code block managed by a
+    :func:`display_manager` if an *X11* error occurred.
+    """
+    pass
+
+
+@contextlib.contextmanager
+def display_manager(display):
+    """Traps *X* errors and raises an :class:``X11Error`` at the end if any
+    error occurred.
+
+    This handler also ensures that the :class:`Xlib.display.Display` being
+    managed is sync'd.
+
+    :param Xlib.display.Display display: The *X* display.
+
+    :return: the display
+    :rtype: Xlib.display.Display
+    """
+    errors = []
+
+    def handler(*args):
+        """The *Xlib* error handler.
+        """
+        errors.append(args)
+
+    old_handler = display.set_error_handler(handler)
+    try:
+        yield display
+        display.sync()
+    finally:
+        display.set_error_handler(old_handler)
+    if errors:
+        raise X11Error(errors)
+
+
+class MouseController:
+    """
+    pynput-like mouse controller using UInput.
+    """
+    def __init__(self):
+        self._ui = make_uinput(find_mice())
+        self._pos = [0, 0]
+        self._display = display.Display()
+
+    @property
+    def position(self):
+        # Try to get real position from X11
+        try:
+            with display_manager(self._display) as d:
+                root = d.screen().root
+                pointer = root.query_pointer()
+                return (pointer.root_x, pointer.root_y)
+        except Exception:
+            # fallback: local position
+            return tuple(self._pos)
+
+    @position.setter
+    def position(self, pos):
+        current = self.position
+        dx = pos[0] - current[0]
+        dy = pos[1] - current[1]
+        self.move(dx, dy)
+
+    def move(self, dx, dy):
+        self._ui.write(ecodes.EV_MSC, ecodes.MSC_SCAN, 0x1337)
+        self._ui.write(ecodes.EV_REL, ecodes.REL_X, dx)
+        self._ui.write(ecodes.EV_REL, ecodes.REL_Y, dy)
+        self._ui.syn()
+        self._pos[0] += dx
+        self._pos[1] += dy
+
+    def press(self, button):
+        btn_code = self._btn_to_code(button)
+        self._ui.write(ecodes.EV_MSC, ecodes.MSC_SCAN, 0x1337)
+        self._ui.write(ecodes.EV_KEY, btn_code, 1)
+        self._ui.syn()
+
+    def release(self, button):
+        btn_code = self._btn_to_code(button)
+        self._ui.write(ecodes.EV_MSC, ecodes.MSC_SCAN, 0x1337)
+        self._ui.write(ecodes.EV_KEY, btn_code, 0)
+        self._ui.syn()
+
+    def click(self, button, count=1):
+        for _ in range(count):
+            self.press(button)
+            time.sleep(0.01)
+            self.release(button)
+
+    def scroll(self, dx, dy):
+        self._ui.write(ecodes.EV_MSC, ecodes.MSC_SCAN, 0x1337)
+        if dx:
+            self._ui.write(ecodes.EV_REL, ecodes.REL_HWHEEL, dx)
+        if dy:
+            self._ui.write(ecodes.EV_REL, ecodes.REL_WHEEL, dy)
+        self._ui.syn()
+
+    def _btn_to_code(self, button):
+        if button == 'left':
+            return ecodes.BTN_LEFT
+        elif button == 'right':
+            return ecodes.BTN_RIGHT
+        elif button == 'middle':
+            return ecodes.BTN_MIDDLE
+        raise ValueError(f"Unknown button: {button}")
 
 # ---------------------------------------------------------------------------
 # Helpers
@@ -104,6 +344,24 @@ async def main() -> None:
     tasks = [asyncio.ensure_future(forward(dev, ui)) for dev in mice]
     await asyncio.gather(*tasks, return_exceptions=True)
 
+async def test():
+    #controller = MouseController()
+    def on_move(x, y, injected):
+        print(f"Move: {x}, {y} (injected={injected})")
+
+    def on_click(x, y, button, pressed, injected):
+        print(f"Click: {button} {'pressed' if pressed else 'released'} at {x}, {y} (injected={injected})")
+
+    def on_scroll(x, y, dx, dy, injected):
+        print(f"Scroll: dx={dx}, dy={dy} at {x}, {y} (injected={injected})")
+
+    with MouseListener(on_move=on_move, on_click=on_click, on_scroll=on_scroll) as listener:
+        print("Mouse listener started. Move the mouse or click buttons to see events. Press Ctrl+C to stop.")
+        while True:
+            await asyncio.sleep(1)
+            #print(f"Current position: {controller.position}")
+
+
 
 if __name__ == "__main__":
-    asyncio.run(main())
+    asyncio.run(test())
