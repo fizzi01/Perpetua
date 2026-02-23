@@ -22,9 +22,6 @@ from typing import Callable, Optional
 from time import time, sleep
 from threading import Event
 
-from pynput.mouse import Button, Controller as MouseController
-from pynput.mouse import Listener as MouseListener
-
 from event import (
     BusEventType,
     MouseEvent,
@@ -44,6 +41,7 @@ from network.stream.handler import StreamHandler
 from utils.logging import get_logger, Logger
 from utils.screen import Screen
 
+from .backend import MouseListener, MouseController, Button
 
 class ButtonMapping(enum.Enum):
     """The various buttons.
