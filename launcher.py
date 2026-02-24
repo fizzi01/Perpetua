@@ -343,6 +343,8 @@ class Launcher:
 
         # Determine executable directory based on execution mode
         executable_dir, gui_dir = self._get_project_root()
+        if not gui_dir:
+            gui_dir = executable_dir
 
         # Start
         self.log.info("Starting Perpetua")
