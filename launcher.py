@@ -32,6 +32,7 @@ from utils.cli import DaemonArguments
 from config import ApplicationConfig
 
 IS_WINDOWS = sys.platform in ("win32", "cygwin")
+IS_LINUX = sys.platform.startswith("linux")
 COMPILED = "__compiled__" in globals()
 
 
@@ -60,14 +61,29 @@ class Launcher:
             )
         return self._log
 
-    def _get_project_root(self) -> Path:
+    def _get_onefile_root_paths(self) -> tuple[Path, Optional[Path]]:
+        """Get the root paths for onefile mode.
+
+        First path is the directory of the executable,
+        second is the onefile dir where we find for gui executable.
+        """
+        r = (
+            __compiled__.containing_dir  # ty:ignore[unresolved-reference]  # noqa: F821
+            if globals().get("__compiled__")
+            else os.path.dirname(sys.argv[0])
+        )
+        return Path(r).resolve(), Path(__file__).parent.resolve()
+
+    def _get_project_root(self) -> tuple[Path, Optional[Path]]:
         """Get the project root directory based on execution mode."""
-        if COMPILED:
+        if COMPILED and IS_LINUX:
+            return self._get_onefile_root_paths()
+        elif COMPILED:
             # When compiled, executable is in the build directory
-            return Path(sys.executable).parent.resolve()
+            return Path(sys.executable).parent.resolve(), None
         else:
             # When running as script, launcher.py is in the project root
-            return Path(__file__).parent.resolve()
+            return Path(__file__).parent.resolve(), None
 
     def _get_python_executable(self) -> str:
         """Get the Python executable path for running scripts."""
@@ -326,16 +342,16 @@ class Launcher:
             return 1
 
         # Determine executable directory based on execution mode
-        executable_dir = str(self.project_root)
+        executable_dir, gui_dir = self._get_project_root()
 
         # Start
-        self.log.info("Starting daemon and GUI")
+        self.log.info("Starting Perpetua")
 
         with ThreadPoolExecutor(max_workers=2) as executor:
             # Submit both tasks concurrently
-            future_gui = executor.submit(self.start_gui, executable_dir)
+            future_gui = executor.submit(self.start_gui, str(gui_dir))
             sleep(0.5)
-            future_daemon = executor.submit(self.start_daemon, executable_dir)
+            future_daemon = executor.submit(self.start_daemon, str(executable_dir))
 
             # Wait for both to complete and check results
             daemon_success = False

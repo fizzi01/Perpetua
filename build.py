@@ -109,6 +109,13 @@ class Builder:
                 "arm64": "aarch64-pc-windows-msvc",
                 "i686": "i686-pc-windows-msvc",
             },
+            "linux": {
+                "x86_64": "x86_64-unknown-linux-gnu",
+                "amd64": "x86_64-unknown-linux-gnu",
+                "aarch64": "aarch64-unknown-linux-gnu",
+                "arm64": "aarch64-unknown-linux-gnu",
+                "i686": "i686-unknown-linux-gnu",
+            },
         }
 
         platform_map = target_map.get(self.system, {})
