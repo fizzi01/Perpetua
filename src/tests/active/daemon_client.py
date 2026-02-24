@@ -314,6 +314,35 @@ class DaemonClient:
         subparsers.add_parser("shutdown", help="Shutdown the daemon")
         subparsers.add_parser("ping", help="Ping the daemon")
 
+        # Add socket argument to main parser
+        parser.add_argument(
+            "--socket",
+            default=Daemon.DEFAULT_SOCKET_PATH,
+            help="Path to daemon socket (default: %(default)s)",
+        )
+
+        # Add interactive mode flag
+        parser.add_argument(
+            "--interactive",
+            "-i",
+            action="store_true",
+            help="Start in interactive mode (allows multiple commands)",
+        )
+
+        # Persistent and multi-response flags
+        parser.add_argument(
+            "--persistent",
+            action="store_true",
+            help="Keep connection open to listen for multiple responses",
+        )
+
+        parser.add_argument(
+            "--verbose",
+            "-v",
+            action="store_true",
+            help="Enable verbose output for debugging",
+        )
+
         return parser
 
     @staticmethod
@@ -952,325 +981,10 @@ class DaemonClient:
 
 async def main():
     """Main CLI entry point"""
-    parser = argparse.ArgumentParser(
-        description="pyContinuity Daemon Client",
-        formatter_class=argparse.RawDescriptionHelpFormatter,
-        epilog="""
-Examples:
-  # Check daemon status (single command)
-  %(prog)s status
-  
-  # Start server
-  %(prog)s start-server
-  
-  # Interactive mode - send multiple commands without restarting
-  %(prog)s -i
-  %(prog)s --interactive
-  
-  # Interactive mode with initial command
-  %(prog)s start-client --interactive
-  
-  # Persistent mode - listen for daemon events
-  %(prog)s start-client --persistent
-  
-  # Check if server choice needed (client)
-  %(prog)s check-server-choice
-  
-  # Get found servers (client)
-  %(prog)s get-found-servers
-  
-  # Choose server (client)
-  %(prog)s choose-server --uid abc123
-  
-  # Check if OTP needed (client)
-  %(prog)s check-otp
-  
-  # Set OTP (client)
-  %(prog)s set-otp --otp 123456
-  
-  # Share certificate (server) with interactive mode
-  %(prog)s share-cert -i
-  
-  # Discover services
-  %(prog)s discover --timeout 5
-        """,
-    )
-
-    parser.add_argument(
-        "--socket",
-        default=Daemon.DEFAULT_SOCKET_PATH,
-        help="Socket path for daemon communication",
-    )
-
-    parser.add_argument("--verbose", "-v", action="store_true", help="Verbose output")
-
-    parser.add_argument(
-        "--persistent",
-        "-p",
-        action="store_true",
-        help="Keep connection open to listen for daemon events (Ctrl+C to exit)",
-    )
-
-    parser.add_argument(
-        "--interactive",
-        "-i",
-        action="store_true",
-        help="Interactive mode: keep connection open and allow sending multiple commands",
-    )
-
-    parser.add_argument(
-        "--multi-response",
-        action="store_true",
-        help="(Deprecated) Use --persistent instead",
-    )
-
-    parser.add_argument(
-        "--max-responses",
-        type=int,
-        default=10,
-        help="Maximum number of responses to wait for (default: 10)",
-    )
-
-    parser.add_argument(
-        "--response-timeout",
-        type=float,
-        default=1.0,
-        help="Timeout in seconds for each response (default: 30.0)",
-    )
-
-    subparsers = parser.add_subparsers(dest="command", help="Command to execute")
-
-    # Service control commands
-    subparsers.add_parser("start-server", help="Start server service")
-    subparsers.add_parser("stop-server", help="Stop server service")
-    subparsers.add_parser("start-client", help="Start client service")
-    subparsers.add_parser("stop-client", help="Stop client service")
-
-    # Status commands
-    subparsers.add_parser("status", help="Get overall daemon status")
-    subparsers.add_parser("server-status", help="Get server status")
-    subparsers.add_parser("client-status", help="Get client status")
-
-    # Configuration commands
-    subparsers.add_parser("get-server-config", help="Get server configuration")
-
-    set_server_parser = subparsers.add_parser(
-        "set-server-config", help="Set server configuration"
-    )
-    set_server_parser.add_argument("--host", help="Server host address")
-    set_server_parser.add_argument("--port", type=int, help="Server port")
-    set_server_parser.add_argument(
-        "--heartbeat-interval", type=int, help="Heartbeat interval"
-    )
-    set_server_parser.add_argument(
-        "--ssl-enabled", action="store_true", help="Enable SSL"
-    )
-    set_server_parser.add_argument(
-        "--no-ssl", dest="ssl_enabled", action="store_false", help="Disable SSL"
-    )
-    set_server_parser.add_argument("--log-level", type=int, help="Log level")
-
-    subparsers.add_parser("get-client-config", help="Get client configuration")
-
-    set_client_parser = subparsers.add_parser(
-        "set-client-config", help="Set client configuration"
-    )
-    set_client_parser.add_argument("--server-host", help="Server host to connect to")
-    set_client_parser.add_argument(
-        "--server-port", type=int, help="Server port to connect to"
-    )
-    set_client_parser.add_argument("--hostname", help="Client hostname")
-    set_client_parser.add_argument(
-        "--heartbeat-interval", type=int, help="Heartbeat interval"
-    )
-    set_client_parser.add_argument(
-        "--auto-reconnect", action="store_true", help="Enable auto-reconnect"
-    )
-    set_client_parser.add_argument(
-        "--no-auto-reconnect",
-        dest="auto_reconnect",
-        action="store_false",
-        help="Disable auto-reconnect",
-    )
-    set_client_parser.add_argument(
-        "--ssl-enabled", action="store_true", help="Enable SSL"
-    )
-    set_client_parser.add_argument(
-        "--no-ssl", dest="ssl_enabled", action="store_false", help="Disable SSL"
-    )
-    set_client_parser.add_argument("--log-level", type=int, help="Log level")
-
-    save_config_parser = subparsers.add_parser(
-        "save-config", help="Save configuration to disk"
-    )
-    save_config_parser.add_argument(
-        "--type",
-        choices=["server", "client", "both"],
-        default="both",
-        help="Which configuration to save",
-    )
-
-    reload_config_parser = subparsers.add_parser(
-        "reload-config", help="Reload configuration from disk"
-    )
-    reload_config_parser.add_argument(
-        "--type",
-        choices=["server", "client", "both"],
-        default="both",
-        help="Which configuration to reload",
-    )
-
-    # Stream management
-    enable_stream_parser = subparsers.add_parser(
-        "enable-stream", help="Enable a stream"
-    )
-    enable_stream_parser.add_argument(
-        "--stream-type",
-        "-t",
-        required=True,
-        type=int,
-        help="Stream type (1=MOUSE, 4=KEYBOARD, 12=CLIPBOARD)",
-    )
-    enable_stream_parser.add_argument(
-        "--service",
-        "-s",
-        choices=["server", "client", "auto"],
-        default="auto",
-        help="Which service to enable stream on",
-    )
-
-    disable_stream_parser = subparsers.add_parser(
-        "disable-stream", help="Disable a stream"
-    )
-    disable_stream_parser.add_argument(
-        "--stream-type",
-        "-t",
-        required=True,
-        type=int,
-        help="Stream type (1=MOUSE, 2=KEYBOARD, 3=CLIPBOARD)",
-    )
-    disable_stream_parser.add_argument(
-        "--service",
-        "-s",
-        choices=["server", "client", "auto"],
-        default="auto",
-        help="Which service to disable stream on",
-    )
-
-    get_streams_parser = subparsers.add_parser(
-        "get-streams", help="Get stream information"
-    )
-    get_streams_parser.add_argument(
-        "--service",
-        "-s",
-        choices=["server", "client", "auto"],
-        default="auto",
-        help="Which service to query",
-    )
-
-    # Client management (server only)
-    subparsers.add_parser("list-clients", help="List registered clients (server only)")
-
-    add_client_parser = subparsers.add_parser(
-        "add-client", help="Add a client (server only)"
-    )
-    add_client_parser.add_argument("--hostname", help="Client hostname")
-    add_client_parser.add_argument("--ip-address", help="Client IP address")
-    add_client_parser.add_argument(
-        "--screen-position",
-        required=True,
-        choices=["top", "bottom", "left", "right"],
-        help="Screen position",
-    )
-
-    remove_client_parser = subparsers.add_parser(
-        "remove-client", help="Remove a client (server only)"
-    )
-    remove_client_parser.add_argument("--hostname", help="Client hostname")
-    remove_client_parser.add_argument("--ip-address", help="Client IP address")
-
-    edit_client_parser = subparsers.add_parser(
-        "edit-client", help="Edit a client (server only)"
-    )
-    edit_client_parser.add_argument("--hostname", help="Client hostname")
-    edit_client_parser.add_argument("--ip-address", help="Client IP address")
-    edit_client_parser.add_argument(
-        "--new-screen-position",
-        required=True,
-        choices=["top", "bottom", "left", "right"],
-        help="New screen position",
-    )
-
-    # SSL/Certificate management
-    enable_ssl_parser = subparsers.add_parser("enable-ssl", help="Enable SSL")
-    enable_ssl_parser.add_argument(
-        "--service",
-        "-s",
-        choices=["server", "client", "auto"],
-        default="auto",
-        help="Which service to enable SSL on",
-    )
-
-    disable_ssl_parser = subparsers.add_parser("disable-ssl", help="Disable SSL")
-    disable_ssl_parser.add_argument(
-        "--service",
-        "-s",
-        choices=["server", "client", "auto"],
-        default="auto",
-        help="Which service to disable SSL on",
-    )
-
-    share_cert_parser = subparsers.add_parser(
-        "share-cert", help="Share certificate (server only)"
-    )
-    share_cert_parser.add_argument("--host", help="Host address for sharing")
-
-    receive_cert_parser = subparsers.add_parser(
-        "receive-cert", help="Receive certificate (client only)"
-    )
-    receive_cert_parser.add_argument(
-        "--otp", required=True, help="6-digit OTP from server"
-    )
-
-    # Server selection (client only)
-    subparsers.add_parser(
-        "check-server-choice", help="Check if server choice is needed (client)"
-    )
-    subparsers.add_parser(
-        "get-found-servers", help="Get list of found servers (client)"
-    )
-
-    choose_server_parser = subparsers.add_parser(
-        "choose-server", help="Choose a server (client)"
-    )
-    choose_server_parser.add_argument(
-        "--uid", required=True, help="UID of the server to choose"
-    )
-
-    subparsers.add_parser("check-otp", help="Check if OTP is needed (client)")
-
-    set_otp_parser = subparsers.add_parser(
-        "set-otp", help="Set OTP for certificate (client)"
-    )
-    set_otp_parser.add_argument("--otp", required=True, help="6-digit OTP from server")
-
-    # Service discovery
-    discover_parser = subparsers.add_parser(
-        "discover", help="Discover services on network"
-    )
-    discover_parser.add_argument(
-        "--timeout", type=int, default=5, help="Discovery timeout in seconds"
-    )
-
-    # Daemon control
-    subparsers.add_parser("shutdown", help="Shutdown the daemon")
-    subparsers.add_parser("ping", help="Ping the daemon")
-
-    args = parser.parse_args()
-
     # Create client
+    parser = DaemonClient._create_command_parser()
+    args = parser.parse_args()
     client = DaemonClient(socket_path=args.socket)
-
     # Allow interactive mode without specifying a command
     if args.interactive and not args.command:
         try:
@@ -1294,7 +1008,7 @@ Examples:
     params = DaemonClient._build_params_from_args(args)
 
     # Determine if we need persistent connection
-    use_persistent = args.persistent or args.multi_response
+    use_persistent = args.persistent
     use_interactive = args.interactive
 
     try:
