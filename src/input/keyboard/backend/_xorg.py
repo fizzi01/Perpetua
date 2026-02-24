@@ -187,6 +187,74 @@ class Key(enum.Enum):
     scroll_lock = evdev.ecodes.KEY_SCROLLLOCK
 
 
+# Fast lookup tables for common punctuation and dead-key base characters.
+# These provide a lightweight, resilient mapping from kernel `KEY_*`
+# names to visible characters or to the standalone base character used
+# for deriving combining diacritics (dead keys).
+_PUNCT_MAP = {
+    "KEY_COMMA": ",",
+    "KEY_DOT": ".",
+    "KEY_SLASH": "/",
+    "KEY_MINUS": "-",
+    "KEY_EQUAL": "=",
+    "KEY_SEMICOLON": ";",
+    "KEY_APOSTROPHE": "'",
+    "KEY_LEFTBRACE": "[",
+    "KEY_RIGHTBRACE": "]",
+    "KEY_BACKSLASH": "\\",
+    "KEY_GRAVE": "`",
+    "KEY_SPACE": " ",
+    "KEY_TAB": "\t",
+}
+
+# Map a few common keys that often act as dead keys to the visible
+# base character. `KeyCode.from_dead` expects a standalone character
+# (eg '~') so we keep that here.
+_DEAD_BASE_MAP = {
+    "KEY_APOSTROPHE": "'",
+    "KEY_QUOTE": "'",
+    "KEY_GRAVE": "`",
+    "KEY_TILDE": "~",
+    "KEY_CIRCUMFLEX": "^",
+    "KEY_DOUBLEQUOTE": '"',
+}
+
+
+def vk_to_keycode(vk: int) -> KeyCode:
+    """Efficiently map an evdev virtual keycode to a KeyCode.
+
+    Strategy:
+    - If the code matches a known special key in `Key` enum, that should
+      be resolved elsewhere; this helper focuses on translating keycodes
+      into textual `KeyCode` instances (including dead keys and
+      punctuation) without requiring a heavyweight layout library.
+    - Handles punctuation, simple dead keys and ASCII letters/digits.
+    - Falls back to preserving the `KEY_*` name so callers can inspect
+      unknown keys.
+    """
+    key_name = ecodes.KEY[vk] if vk in ecodes.KEY else None
+
+    if key_name in _PUNCT_MAP:
+        return KeyCode.from_char(_PUNCT_MAP[key_name], code=vk)
+
+    if key_name in _DEAD_BASE_MAP:
+        return KeyCode.from_dead(_DEAD_BASE_MAP[key_name], code=vk)
+
+    if isinstance(key_name, tuple):
+        # Some keys have multiple names.
+        # Pick the most descriptive one (the longest) for better char extraction.
+        key_name: str = max(key_name, key=len)  # ty:ignore[invalid-assignment]
+
+    if key_name and key_name.startswith("KEY_"):
+        label = key_name.replace("KEY_", "")
+        if len(label) == 1 and label.isalpha():
+            return KeyCode.from_char(label.lower(), code=vk)
+        if label.isdigit():
+            return KeyCode.from_char(label, code=vk)
+
+    return KeyCode.from_vk(vk, char=key_name)
+
+
 class KeyboardListener(threading.Thread):
     """
     UInput keyboard listener backend. Forwards EV_KEY events from grabbed
@@ -257,13 +325,10 @@ class KeyboardListener(threading.Thread):
             self._cleanup_done.set()
 
     def map_key(self, key_code):
-        # Firstr try to map in Key enum, then fallback to KeyCode
         try:
             return Key(key_code)
         except ValueError:
-            # Get ecodes.KEY_* name for the code
-            key_name = ecodes.KEY[key_code] if key_code in ecodes.KEY else None
-            return KeyCode.from_vk(key_code, char=key_name)
+            return vk_to_keycode(key_code)
 
     async def _forward(self, dev):
         async for event in dev.async_read_loop():
@@ -271,9 +336,10 @@ class KeyboardListener(threading.Thread):
             if event.type == ecodes.EV_KEY:
                 key_code = event.code
                 pressed = event.value == 1
+                hold = event.value == 2
                 key = self.map_key(key_code)
                 try:
-                    if pressed:
+                    if pressed or hold:
                         if self.on_press(key, False) is False:
                             self.stop()
                             break
