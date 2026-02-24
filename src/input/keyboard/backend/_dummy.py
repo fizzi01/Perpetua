@@ -1,8 +1,8 @@
 from pynput.keyboard import Key, KeyCode
 
+
 class KeyboardListener:
-    """Dummy listener
-    """
+    """Dummy listener"""
 
     def __init__(
         self,
@@ -32,5 +32,6 @@ class KeyboardController:
     def release(self, key):
         # No operation
         return None
+
 
 __all__ = ["KeyboardListener", "KeyboardController", "Key", "KeyCode"]

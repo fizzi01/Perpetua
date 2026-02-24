@@ -2240,7 +2240,8 @@ async def main():
     except KeyboardInterrupt:
         print("\nKeyboard interrupt received")
     finally:
-        await daemon.stop()
+        # await daemon.stop()
+        os._exit(0)  # Force exit to avoid lingering tasks or event loops
 
     return 0
 

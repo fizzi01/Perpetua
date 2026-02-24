@@ -58,7 +58,7 @@ def make_uinput(mice: list[evdev.InputDevice]) -> UInput:
         if etype in (ecodes.EV_KEY, ecodes.EV_REL, ecodes.EV_MSC)
     }
     return UInput(
-        name="perpetua-test-mouse",
+        name="perpetua-mouse",
         events=filtered,
     )
 

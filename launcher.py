@@ -134,7 +134,7 @@ class Launcher:
         self._log = get_logger(
             "launcher", is_root=True, verbose=True, log_file=self.log_file
         )
-        
+
         if not self.check_permissions():
             self.log.error("Required permissions not granted, exiting")
             return 1

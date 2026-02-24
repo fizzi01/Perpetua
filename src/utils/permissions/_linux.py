@@ -57,9 +57,17 @@ def _is_in_input_group() -> bool:
 
 
 def _has_input_access() -> bool:
-    """Return True if the process can access /dev/input devices."""
-    return _is_root()
-
+    """Check if the current user has access to /dev/uinput required for keyboard control."""
+    if os.path.exists("/etc/udev/rules.d/01-perpetua-keyboard.rules"):
+        try:
+            with open("/etc/udev/rules.d/01-perpetua-keyboard.rules", "r") as f:
+                content = f.read()
+            if "KERNEL==\"uinput\"" in content and "TAG+=\"uaccess\"" in content:
+                return True
+        except OSError: 
+            pass
+    
+    return False
 
 def _has_display() -> bool:
     """Return True if a display server (X11 or Wayland) is available."""
@@ -99,7 +107,7 @@ class PermissionChecker(_base.PermissionChecker):
                     return PermissionResult(
                         permission_type=permission_type,
                         status=PermissionStatus.DENIED,
-                        message="Must be run by root",
+                        message="Must have access to /dev/uinput",
                         can_request=False,
                     )
                 return PermissionResult(

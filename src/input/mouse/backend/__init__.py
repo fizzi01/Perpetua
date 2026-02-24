@@ -8,7 +8,10 @@ Button = None
 # Import platform-specific mouse backends when available
 if platform.startswith("linux"):
     # Check if we're running under Wayland or Xorg
-    if environ.get("XDG_SESSION_TYPE") == "wayland" or environ.get("WAYLAND_DISPLAY") is not None:
+    if (
+        environ.get("XDG_SESSION_TYPE") == "wayland"
+        or environ.get("WAYLAND_DISPLAY") is not None
+    ):
         # Wayland backend (not implemented yet)
         print("Wayland backend not implemented yet, no mouse control available")
         from ._dummy import MouseListener, MouseController, Button

@@ -38,7 +38,7 @@ def make_uinput(keyboards: list[evdev.InputDevice]) -> UInput:
             if isinstance(code, int) and code <= KEY_MAX:
                 all_keys.add(code)
     return UInput(
-        name="perpetua-test-keyboard",
+        name="perpetua-keyboard",
         events={ecodes.EV_KEY: sorted(all_keys)},
     )
 
@@ -281,7 +281,12 @@ class KeyboardListener(threading.Thread):
         self._running = threading.Event()
         self._running.clear()
         self._devices = find_keyboards(devices) if devices else find_keyboards()
-        self._ui = make_uinput(self._devices) if not suppress else None
+        self._ui = None
+        try:
+            self._ui = make_uinput(self._devices) if not suppress else None
+        except Exception as e:
+            self._logger.error(f"Failed to create UInput device ({e})")
+            raise
         self._loop = None
         self._cleanup_done = threading.Event()
 

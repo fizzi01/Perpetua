@@ -1,8 +1,8 @@
 from pynput.mouse import Button
 
+
 class MouseListener:
-    """Dummy listener
-    """
+    """Dummy listener"""
 
     def __init__(
         self,
@@ -21,8 +21,10 @@ class MouseListener:
     def is_alive(self) -> bool:
         return False
 
+
 class MouseController:
     """Dummy controller"""
+
     def __init__(self):
         self._position = (-1, -1)
 
@@ -49,3 +51,5 @@ class MouseController:
     def scroll(self, *args, **kwargs):
         # No operation
         return None
+
+__all__ = ["MouseListener", "MouseController", "Button"]
