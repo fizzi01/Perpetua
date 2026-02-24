@@ -52,4 +52,5 @@ class MouseController:
         # No operation
         return None
 
+
 __all__ = ["MouseListener", "MouseController", "Button"]

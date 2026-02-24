@@ -62,12 +62,13 @@ def _has_input_access() -> bool:
         try:
             with open("/etc/udev/rules.d/01-perpetua-keyboard.rules", "r") as f:
                 content = f.read()
-            if "KERNEL==\"uinput\"" in content and "TAG+=\"uaccess\"" in content:
+            if 'KERNEL=="uinput"' in content and 'TAG+="uaccess"' in content:
                 return True
-        except OSError: 
+        except OSError:
             pass
-    
+
     return False
+
 
 def _has_display() -> bool:
     """Return True if a display server (X11 or Wayland) is available."""
