@@ -21,8 +21,13 @@ from Xlib import display
 from . import _base
 
 # Check for wayland not supported
-if "WAYLAND_DISPLAY" in os.environ or "XDG_SESSION_TYPE" in os.environ and os.environ["XDG_SESSION_TYPE"] == "wayland":
+if (
+    "WAYLAND_DISPLAY" in os.environ
+    or "XDG_SESSION_TYPE" in os.environ
+    and os.environ["XDG_SESSION_TYPE"] == "wayland"
+):
     raise NotImplementedError("Wayland is not supported yet.")
+
 
 class Screen(_base.Screen):
     @classmethod
