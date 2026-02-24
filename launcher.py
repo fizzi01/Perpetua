@@ -134,6 +134,10 @@ class Launcher:
         self._log = get_logger(
             "launcher", is_root=True, verbose=True, log_file=self.log_file
         )
+        
+        if not self.check_permissions():
+            self.log.error("Required permissions not granted, exiting")
+            return 1
 
         # Write PID file
         self.write_daemon_pid(os.getpid())
@@ -300,9 +304,8 @@ class Launcher:
                 continue
         return None
 
-    def run(self) -> int:
-        """Run the launcher: start daemon and GUI."""
-        # Check permissions
+    def check_permissions(self) -> bool:
+        """Check required permissions and request if missing."""
         permission_checker = PermissionChecker(self.log)
         permissions = permission_checker.get_missing_permissions()
         if len(permissions) > 0:
@@ -313,7 +316,14 @@ class Launcher:
                 )
                 if not result.is_granted:
                     self.log.error("Permission not granted", permission=permission)
-                    return 1
+                    return False
+        return True
+
+    def run(self) -> int:
+        """Run the launcher: start daemon and GUI."""
+        if not self.check_permissions():
+            self.log.error("Required permissions not granted, exiting")
+            return 1
 
         # Determine executable directory based on execution mode
         executable_dir = str(self.project_root)
