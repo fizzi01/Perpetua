@@ -58,7 +58,7 @@ def _is_in_input_group() -> bool:
 
 def _has_input_access() -> bool:
     """Return True if the process can access /dev/input devices."""
-    return _is_root() or _is_in_input_group()
+    return _is_root()
 
 
 def _has_display() -> bool:
@@ -79,7 +79,7 @@ class PermissionChecker(_base.PermissionChecker):
                         permission_type=permission_type,
                         status=PermissionStatus.GRANTED,
                     )
-                reason = "the application must be run by its owner or a member of the 'input' group"
+                reason = "Must be run by root"
                 return PermissionResult(
                     permission_type=permission_type,
                     status=PermissionStatus.DENIED,
@@ -99,7 +99,7 @@ class PermissionChecker(_base.PermissionChecker):
                     return PermissionResult(
                         permission_type=permission_type,
                         status=PermissionStatus.DENIED,
-                        message="the application must be run by its owner or a member of the 'input' group",
+                        message="Must be run by root",
                         can_request=False,
                     )
                 return PermissionResult(
