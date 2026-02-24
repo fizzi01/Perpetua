@@ -15,19 +15,31 @@
 #  along with this program.  If not, see <https://www.gnu.org/licenses/>.
 #
 
-from wx import App, Display
+import os
+from Xlib import display
 
 from . import _base
 
+# Check for wayland not supported
+if "WAYLAND_DISPLAY" in os.environ or "XDG_SESSION_TYPE" in os.environ and os.environ["XDG_SESSION_TYPE"] == "wayland":
+    raise NotImplementedError("Wayland is not supported yet.")
 
 class Screen(_base.Screen):
     @classmethod
     def get_size(cls) -> tuple[int, int]:
-        app = App(False)
-        display = Display()
-        del app
-        geometry = display.GetGeometry()
-        return geometry.width, geometry.height
+        """
+        Get the current screen size on Linux.
+        """
+        try:
+            d = display.Display()
+            screen = d.screen()
+            width = screen.width_in_pixels
+            height = screen.height_in_pixels
+            d.close()
+        except Exception:
+            print("Unable to get screen size. Display may not be available.")
+            return 0, 0  # Return default size if display is not available
+        return width, height
 
     @classmethod
     def is_screen_locked(cls) -> bool:
