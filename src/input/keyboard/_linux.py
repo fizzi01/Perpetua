@@ -19,7 +19,6 @@ from event.bus import EventBus
 from network.stream.handler import StreamHandler
 
 from . import _base
-from ._base import Key, KeyCode, KeyboardController
 
 
 class ServerKeyboardListener(_base.ServerKeyboardListener):
@@ -32,41 +31,11 @@ class ServerKeyboardListener(_base.ServerKeyboardListener):
     ):
         super().__init__(event_bus, stream_handler, command_stream, filtering)
 
-        self._c = KeyboardController()
+    def _xorg_suppress_filter(self, event):
+        if self._listening:
+            return False
 
-    def on_press(self, key: Key | KeyCode | None, inject: bool = False):
-        """
-        Callback for key press events.
-        """
-        if inject or key is None:
-            return
-
-        # Linux suppress logic
-        if not self._listening:
-            try:
-                self._c.press(key.char)
-            except AttributeError:
-                self._c.press(key)
-            return
-
-        super().on_press(key)
-
-    def on_release(self, key: Key | KeyCode | None, inject: bool = False):
-        """
-        Callback for key release events.
-        """
-        if inject or key is None:
-            return
-
-        # Linux suppress logic
-        if not self._listening:
-            try:
-                self._c.release(key.char)
-            except AttributeError:
-                self._c.release(key)
-            return
-
-        super().on_release(key)
+        return event
 
 
 class ClientKeyboardController(_base.ClientKeyboardController):

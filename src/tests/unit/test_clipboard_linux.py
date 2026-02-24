@@ -24,8 +24,6 @@ fallback logic, and _try_get_clip_file resolution.
 import subprocess
 from unittest.mock import MagicMock, patch
 
-import pytest
-
 from input.clipboard._linux import Clipboard
 
 

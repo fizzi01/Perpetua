@@ -7,14 +7,18 @@ from evdev import UInput, ecodes
 import Xlib.display
 from Xlib import display
 
+
 def _check_and_initialize():
     display = Xlib.display.Display()
     display.close()
+
+
 try:
     _check_and_initialize()
 except Exception as e:
-    raise ImportError('failed to acquire X connection: {}'.format(str(e)), e)
+    raise ImportError("failed to acquire X connection: {}".format(str(e)), e)
 del _check_and_initialize
+
 
 def find_mice(devices: list[str] = None) -> list[evdev.InputDevice]:
     """Return all /dev/input/eventX devices that look like mice."""
@@ -25,7 +29,7 @@ def find_mice(devices: list[str] = None) -> list[evdev.InputDevice]:
         try:
             dev = evdev.InputDevice(path)
             caps = dev.capabilities()
-            #print(f"Found device: {dev.path} ({dev.name}) with capabilities: {caps}")
+            # print(f"Found device: {dev.path} ({dev.name}) with capabilities: {caps}")
             has_rel = ecodes.EV_REL in caps
             has_btn = ecodes.EV_KEY in caps and any(
                 btn in caps[ecodes.EV_KEY]
@@ -48,11 +52,16 @@ def make_uinput(mice: list[evdev.InputDevice]) -> UInput:
                 all_events[etype] = set()
             all_events[etype].update(codes)
     # Only keep mouse-relevant event types
-    filtered = {etype: sorted(codes) for etype, codes in all_events.items() if etype in (ecodes.EV_KEY, ecodes.EV_REL, ecodes.EV_MSC)}
+    filtered = {
+        etype: sorted(codes)
+        for etype, codes in all_events.items()
+        if etype in (ecodes.EV_KEY, ecodes.EV_REL, ecodes.EV_MSC)
+    }
     return UInput(
         name="perpetua-test-mouse",
         events=filtered,
     )
+
 
 def _wrap(f, args):
     """Wraps a callable to make it accept ``args`` number of arguments.
@@ -82,23 +91,22 @@ class X11Error(Exception):
     """An error that is thrown at the end of a code block managed by a
     :func:`display_manager` if an *X11* error occurred.
     """
+
     pass
 
+
 Button = enum.Enum(
-    'Button',
+    "Button",
     module=__name__,
-    names=[
-        ('unknown', None),
-        ('left', 1),
-        ('middle', 2),
-        ('right', 3)])
+    names=[("unknown", None), ("left", 1), ("middle", 2), ("right", 3)],
+)
 
 RawButtonMap = {
     ecodes.BTN_LEFT: Button.left,
     ecodes.BTN_MIDDLE: Button.middle,
-    ecodes.BTN_RIGHT: Button.right
+    ecodes.BTN_RIGHT: Button.right,
 }
-    
+
 
 @contextlib.contextmanager
 def display_manager(display):
@@ -116,8 +124,7 @@ def display_manager(display):
     errors = []
 
     def handler(*args):
-        """The *Xlib* error handler.
-        """
+        """The *Xlib* error handler."""
         errors.append(args)
 
     old_handler = display.set_error_handler(handler)
@@ -139,7 +146,15 @@ class MouseListener(threading.Thread):
         on_scroll: callable(x, y, dx, dy, injected)
         suppress: if True, do not forward events to UInput
     """
-    def __init__(self, on_move=None, on_click=None, on_scroll=None, suppress=False, devices: list[str] = None):
+
+    def __init__(
+        self,
+        on_move=None,
+        on_click=None,
+        on_scroll=None,
+        suppress=False,
+        devices: list[str] = None,
+    ):
         super().__init__(daemon=True)
         self.on_move = _wrap(on_move, 3)
         self.on_click = _wrap(on_click, 5)
@@ -176,6 +191,7 @@ class MouseListener(threading.Thread):
 
     def run(self):
         import select
+
         self._running.set()
         self._display = display.Display()
         try:
@@ -209,7 +225,11 @@ class MouseListener(threading.Thread):
 
     def _handle_event(self, dev, event):
         # Check for injected marker
-        if event.type == ecodes.EV_MSC and event.code == ecodes.MSC_SCAN and event.value == 0x1337:
+        if (
+            event.type == ecodes.EV_MSC
+            and event.code == ecodes.MSC_SCAN
+            and event.value == 0x1337
+        ):
             self._injected_flag = True
             self._injected_rel_count = 2
             self._injected_key_count = 1
@@ -243,10 +263,19 @@ class MouseListener(threading.Thread):
                 pressed = event.value == 1
                 if self.on_click:
                     pos = self._get_position()
-                    if self.on_click(pos[0], pos[1], RawButtonMap[event.code], pressed, injected) is False:
+                    if (
+                        self.on_click(
+                            pos[0], pos[1], RawButtonMap[event.code], pressed, injected
+                        )
+                        is False
+                    ):
                         self.stop()
                         return
-        elif event.type == ecodes.EV_REL and event.code in (ecodes.REL_WHEEL, ecodes.REL_HWHEEL, ecodes.REL_WHEEL_HI_RES):
+        elif event.type == ecodes.EV_REL and event.code in (
+            ecodes.REL_WHEEL,
+            ecodes.REL_HWHEEL,
+            ecodes.REL_WHEEL_HI_RES,
+        ):
             dx = event.value if event.code == ecodes.REL_HWHEEL else 0
             dy = event.value if event.code == ecodes.REL_WHEEL else 0
             if self.on_scroll:
@@ -265,9 +294,9 @@ class MouseListener(threading.Thread):
         self._running.clear()
 
     def join(self, timeout=5):
-        #self.stop()
+        # self.stop()
         self._cleanup_done.wait(timeout)
-        
+
     def __enter__(self):
         self.start()
         return self
