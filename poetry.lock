@@ -4466,7 +4466,7 @@ description = "Fast implementation of asyncio event loop on top of libuv"
 optional = false
 python-versions = ">=3.8.1"
 groups = ["main"]
-markers = "sys_platform == \"darwin\""
+markers = "sys_platform == \"darwin\" or sys_platform == \"linux\""
 files = []
 develop = false
 
@@ -4757,4 +4757,4 @@ cffi = ["cffi (>=1.17,<2.0) ; platform_python_implementation != \"PyPy\" and pyt
 [metadata]
 lock-version = "2.1"
 python-versions = ">=3.11,<3.13"
-content-hash = "3714fc412bd40a5d278147fdeecbb997f30f9570405b853d69a89b7e344737e6"
+content-hash = "d1353e1010f7dff0c6bc9ed29ed42378c2a7d5bb13cd5c7c49e2f86db766a2b8"
