@@ -28,6 +28,7 @@ from utils.logging import get_logger
 from config import ApplicationConfig
 
 GUI_EXECUTABLE = ApplicationConfig.app_name.lower()
+DAEMON_EXECUTABLE = f"_{GUI_EXECUTABLE}"
 APP_NAME = ApplicationConfig.app_name
 
 
@@ -309,9 +310,61 @@ class Builder:
                 ]
             )
 
+        if self.is_linux:
+            nuitka_cmd.extend(
+                [
+                    "--standalone",
+                    f"--linux-icon={self.icons_dir / 'icon.png'}",
+                ]
+            )
+
         nuitka_cmd.extend(self.nuitka_args)
         nuitka_cmd.append(str(launcher_py))
         return self._run(nuitka_cmd, cwd=self.src_dir, print_cmd=False).returncode
+
+    def _get_executables_dir(self) -> Path:
+        """Return the directory where both executables must live side-by-side."""
+        if self.is_macos:
+            return self.build_dir / f"{APP_NAME}.app" / "Contents" / "MacOS"
+        else:
+            # Windows/Linux standalone folder produced by Nuitka
+            return self.build_dir / f"{APP_NAME}.dist"
+
+    def _swap_executables(self) -> int:
+        """
+        After Nuitka builds the bundle with the daemon named ``Perpetua``,
+        rename it to ``_perpetua`` and copy the GUI binary as ``Perpetua``.
+        """
+        exe_dir = self._get_executables_dir()
+
+        ext = ".exe" if self.is_windows else ""
+        nuitka_exe = exe_dir / f"{APP_NAME}{ext}"
+        daemon_dst = exe_dir / f"{DAEMON_EXECUTABLE}{ext}"
+        gui_dst = exe_dir / f"{APP_NAME}{ext}"
+
+        # --- Validate ---------------------------------------------------------
+        if not nuitka_exe.exists():
+            self.log.error(
+                f"Nuitka executable not found, cannot swap: {nuitka_exe}"
+            )
+            return 1
+
+        if not self.gui_exe.exists():
+            self.log.error(
+                f"GUI executable not found, build GUI first: {self.gui_exe}"
+            )
+            return 1
+
+        # --- 1. Rename Nuitka output → _perpetua ------------------------------
+        nuitka_exe.rename(daemon_dst)
+        shutil.copy2(self.gui_exe, gui_dst)
+
+        # Ensure executable permission on Unix
+        if not self.is_windows:
+            gui_dst.chmod(gui_dst.stat().st_mode | 0o111)
+            daemon_dst.chmod(daemon_dst.stat().st_mode | 0o111)
+
+        return 0
 
     def _sign_bundle(self):
         if self.is_macos:
@@ -362,6 +415,8 @@ class Builder:
             if self._build_daemon() != 0:
                 raise RuntimeError("Daemon build failed")
             elif not self.skip_daemon:
+                if self._swap_executables() != 0:
+                    raise RuntimeError("Executable swap failed")
                 self._sign_bundle()
             self._summary()
 

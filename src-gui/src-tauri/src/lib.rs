@@ -1,20 +1,20 @@
 /*
- Perpetua - open-source and cross-platform KVM software.
- Copyright (c) 2026 Federico Izzi
+Perpetua - open-source and cross-platform KVM software.
+Copyright (c) 2026 Federico Izzi
 
- This program is free software: you can redistribute it and/or modify
- it under the terms of the GNU General Public License as published by
- the Free Software Foundation, either version 3 of the License, or
- (at your option) any later version.
+This program is free software: you can redistribute it and/or modify
+it under the terms of the GNU General Public License as published by
+the Free Software Foundation, either version 3 of the License, or
+(at your option) any later version.
 
- This program is distributed in the hope that it will be useful,
- but WITHOUT ANY WARRANTY; without even the implied warranty of
- MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE. See the
- GNU General Public License for more details.
+This program is distributed in the hope that it will be useful,
+but WITHOUT ANY WARRANTY; without even the implied warranty of
+MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE. See the
+GNU General Public License for more details.
 
- You should have received a copy of the GNU General Public License
- along with this program. If not, see <https://www.gnu.org/licenses/>.
- */
+You should have received a copy of the GNU General Public License
+along with this program. If not, see <https://www.gnu.org/licenses/>.
+*/
 
 #[cfg(target_os = "macos")]
 use tauri::{PhysicalPosition, Position, TitleBarStyle};
@@ -28,7 +28,6 @@ use tauri::{
     AppHandle, Emitter, Manager, Runtime, WebviewUrl, WebviewWindowBuilder,
 };
 use tauri_plugin_dialog::{DialogExt, MessageDialogKind};
-// use tauri_plugin_positioner::WindowExt;
 
 use handler::{EventHandler, Handable};
 use ipc::{
@@ -40,6 +39,13 @@ use std::{panic, sync::Mutex, time::Duration};
 
 pub mod commands;
 pub mod handler;
+pub mod process;
+
+pub use process::DaemonProcess;
+
+// ---------------------------------------------------------------------------
+// AppState
+// ---------------------------------------------------------------------------
 
 #[derive(Default)]
 struct AppState {
@@ -79,11 +85,6 @@ async fn setup_connection<'a, R>(manager: AppHandle<R>) -> Result<(), Connection
 where
     R: Runtime,
 {
-    // Create the splashscreen window
-    // if let Err(e) = create_splashscreen_window(&manager) {
-    //     println!("Error during window creation {:?}", e);
-    //     handle_critical("Critical error on startup", "", &manager);
-    // }
     show_window(&manager, "splashscreen");
 
     let (r, w) = match connect(Duration::from_millis(100), Duration::from_secs(5)).await {
@@ -200,7 +201,6 @@ where
 
     menu = menu.item(&show);
 
-    // #[cfg(debug_assertions)]
     menu = menu.item(&MenuItem::with_id(
         app,
         "show_log",
@@ -309,11 +309,6 @@ where
     }
 
     splashscreen_win_builder.build()?;
-    // let _ = win
-    //     .as_ref()
-    //     .window()
-    //     .move_window(tauri_plugin_positioner::Position::Center);
-    // win.show()?;
 
     Ok(())
 }
@@ -327,10 +322,6 @@ where
         handle_critical("Critical error occurred", "", app);
         panic!("Critical error occurred");
     });
-    // let _ = window
-    //     .as_ref()
-    //     .window()
-    //     .move_window(tauri_plugin_positioner::Position::Center);
 
     window.show().unwrap_or_else(|_| {
         println!("Error showing window with label {}", label);
@@ -347,7 +338,7 @@ where
 }
 
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
-pub fn run() {
+pub fn run(daemon: DaemonProcess) {
     let mut app = tauri::Builder::default();
 
     #[cfg(desktop)]
@@ -361,7 +352,6 @@ pub fn run() {
     }
 
     app = app
-        // .plugin(tauri_plugin_positioner::init())
         .plugin(tauri_plugin_os::init())
         .plugin(tauri_plugin_dialog::init())
         .plugin(tauri_plugin_opener::init())
@@ -370,6 +360,7 @@ pub fn run() {
             hard_close: false,
             connected: false,
         }))
+        .manage(daemon)
         .invoke_handler(tauri::generate_handler![
             // -- Server Commands --
             commands::start_server,
@@ -442,19 +433,24 @@ pub fn run() {
                 }
             }
         }
-        #[cfg(any(target_os = "macos", debug_assertions))]
         tauri::RunEvent::Exit => {
-            let state = _app_handle.state::<Mutex<AppState>>();
-            let state = state.lock().unwrap();
-            if !state.hard_close && state.connected {
-                // Only if connected
-                // With hard_close, a shutdown command has already been sent
-                let app_handle = _app_handle.clone();
-                tauri::async_runtime::spawn(async move {
-                    let cur_state = app_handle.state::<AtomicAsyncWriter>();
-                    let _ = commands::shutdown(cur_state).await;
-                });
+            // Send IPC shutdown to daemon if we have an active connection
+            // and this wasn't a hard close (which already sent shutdown).
+            {
+                let state = _app_handle.state::<Mutex<AppState>>();
+                let state = state.lock().unwrap();
+                if !state.hard_close && state.connected {
+                    let app_handle = _app_handle.clone();
+                    tauri::async_runtime::spawn(async move {
+                        let cur_state = app_handle.state::<AtomicAsyncWriter>();
+                        let _ = commands::shutdown(cur_state).await;
+                    });
+                }
             }
+
+            // Always terminate the daemon child process.
+            let daemon = _app_handle.state::<DaemonProcess>();
+            daemon.terminate();
         }
         #[cfg(target_os = "macos")]
         tauri::RunEvent::Reopen {
