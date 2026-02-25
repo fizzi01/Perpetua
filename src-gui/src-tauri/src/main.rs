@@ -122,17 +122,6 @@ fn daemon_executable_path() -> PathBuf {
     path
 }
 
-/// Collect CLI arguments that should be forwarded to the daemon.
-///
-/// Skips argv[0] and strips flags consumed by this binary (`-d`, `--daemon`).
-#[cfg(not(debug_assertions))]
-fn forwarded_args() -> Vec<String> {
-    env::args()
-        .skip(1)
-        .filter(|a| a != "-d" && a != "--daemon")
-        .collect()
-}
-
 #[cfg(not(debug_assertions))]
 fn spawn_daemon(cli: &Cli) -> Child {
     let exe = daemon_executable_path();
