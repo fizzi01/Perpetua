@@ -15,14 +15,13 @@
 #  along with this program.  If not, see <https://www.gnu.org/licenses/>.
 #
 
-import unicodedata
-import enum
 from typing import Optional
 import threading
 import asyncio
 import uvloop
 import evdev
-from evdev import UInput, ecodes
+from evdev import UInput, ecodes, KeyEvent
+from pynput.keyboard._uinput import LAYOUT, KeyCode, Key
 
 from input.utils import _wrap
 
@@ -60,218 +59,6 @@ def make_uinput(keyboards: list[evdev.InputDevice]) -> UInput:
     )
 
 
-class KeyCode(object):
-    def __init__(self, code: int, char: Optional[str] = None, is_dead: bool = False):
-        self.vk = code
-        self.char = char
-        if self.char:
-            self.char = self.char.replace(
-                "KEY_", ""
-            ).lower()  # Clean up char if it has "KEY_" prefix
-        self.is_dead = is_dead
-
-        if self.is_dead:
-            try:
-                self.combining = unicodedata.lookup(
-                    "COMBINING " + unicodedata.name(self.char)  # ty:ignore[invalid-argument-type]
-                )
-            except KeyError:
-                self.is_dead = False
-                self.combining = None
-            if self.is_dead and not self.combining:
-                raise KeyError(char)
-        else:
-            self.combining = None
-
-    def __repr__(self):
-        if self.is_dead:
-            return "[%s]" % repr(self.char)
-        if self.char is not None:
-            return repr(self.char)
-        else:
-            return "<%d>" % self.vk
-
-    def __str__(self):
-        return repr(self)
-
-    def __eq__(self, other):
-        if not isinstance(other, self.__class__):
-            return False
-        if self.char is not None and other.char is not None:
-            return self.char == other.char and self.is_dead == other.is_dead
-        return self.vk == other.vk
-
-    def __hash__(self):
-        return hash(repr(self))
-
-    @classmethod
-    def from_vk(cls, vk, **kwargs):
-        """Creates a key from a virtual key code.
-
-        :param vk: The virtual key code.
-
-        :param kwargs: Any other parameters to pass.
-
-        :return: a key code
-        """
-        return cls(code=vk, **kwargs)
-
-    @classmethod
-    def from_char(cls, char, **kwargs):
-        """Creates a key from a character.
-
-        :param str char: The character.
-
-        :return: a key code
-        """
-        return cls(char=char, **kwargs)
-
-    @classmethod
-    def from_dead(cls, char, **kwargs):
-        """Creates a dead key.
-
-        :param char: The dead key. This should be the unicode character
-            representing the stand alone character, such as ``'~'`` for
-            *COMBINING TILDE*.
-
-        :return: a key code
-        """
-        return cls(char=char, is_dead=True, **kwargs)
-
-
-class Key(enum.Enum):
-    alt = evdev.ecodes.KEY_LEFTALT
-    alt_l = evdev.ecodes.KEY_LEFTALT
-    alt_r = evdev.ecodes.KEY_RIGHTALT
-    alt_gr = evdev.ecodes.KEY_RIGHTALT
-    backspace = evdev.ecodes.KEY_BACKSPACE
-    caps_lock = evdev.ecodes.KEY_CAPSLOCK
-    cmd = evdev.ecodes.KEY_LEFTMETA
-    cmd_l = evdev.ecodes.KEY_LEFTMETA
-    cmd_r = evdev.ecodes.KEY_RIGHTMETA
-    ctrl = evdev.ecodes.KEY_LEFTCTRL
-    ctrl_l = evdev.ecodes.KEY_LEFTCTRL
-    ctrl_r = evdev.ecodes.KEY_RIGHTCTRL
-    delete = evdev.ecodes.KEY_DELETE
-    down = evdev.ecodes.KEY_DOWN
-    end = evdev.ecodes.KEY_END
-    enter = evdev.ecodes.KEY_ENTER
-    esc = evdev.ecodes.KEY_ESC
-    f1 = evdev.ecodes.KEY_F1
-    f2 = evdev.ecodes.KEY_F2
-    f3 = evdev.ecodes.KEY_F3
-    f4 = evdev.ecodes.KEY_F4
-    f5 = evdev.ecodes.KEY_F5
-    f6 = evdev.ecodes.KEY_F6
-    f7 = evdev.ecodes.KEY_F7
-    f8 = evdev.ecodes.KEY_F8
-    f9 = evdev.ecodes.KEY_F9
-    f10 = evdev.ecodes.KEY_F10
-    f11 = evdev.ecodes.KEY_F11
-    f12 = evdev.ecodes.KEY_F12
-    f13 = evdev.ecodes.KEY_F13
-    f14 = evdev.ecodes.KEY_F14
-    f15 = evdev.ecodes.KEY_F15
-    f16 = evdev.ecodes.KEY_F16
-    f17 = evdev.ecodes.KEY_F17
-    f18 = evdev.ecodes.KEY_F18
-    f19 = evdev.ecodes.KEY_F19
-    f20 = evdev.ecodes.KEY_F20
-    home = evdev.ecodes.KEY_HOME
-    left = evdev.ecodes.KEY_LEFT
-    page_down = evdev.ecodes.KEY_PAGEDOWN
-    page_up = evdev.ecodes.KEY_PAGEUP
-    right = evdev.ecodes.KEY_RIGHT
-    shift = evdev.ecodes.KEY_LEFTSHIFT
-    shift_l = evdev.ecodes.KEY_LEFTSHIFT
-    shift_r = evdev.ecodes.KEY_RIGHTSHIFT
-    space = evdev.ecodes.KEY_SPACE
-    tab = evdev.ecodes.KEY_TAB
-    up = evdev.ecodes.KEY_UP
-
-    media_play_pause = evdev.ecodes.KEY_PLAYPAUSE
-    media_volume_mute = evdev.ecodes.KEY_MUTE
-    media_volume_down = evdev.ecodes.KEY_VOLUMEDOWN
-    media_volume_up = evdev.ecodes.KEY_VOLUMEUP
-    media_previous = evdev.ecodes.KEY_PREVIOUSSONG
-    media_next = evdev.ecodes.KEY_NEXTSONG
-
-    insert = evdev.ecodes.KEY_INSERT
-    menu = evdev.ecodes.KEY_MENU
-    num_lock = evdev.ecodes.KEY_NUMLOCK
-    pause = evdev.ecodes.KEY_PAUSE
-    print_screen = evdev.ecodes.KEY_SYSRQ
-    scroll_lock = evdev.ecodes.KEY_SCROLLLOCK
-
-
-# Fast lookup tables for common punctuation and dead-key base characters.
-# These provide a lightweight, resilient mapping from kernel `KEY_*`
-# names to visible characters or to the standalone base character used
-# for deriving combining diacritics (dead keys).
-_PUNCT_MAP = {
-    "KEY_COMMA": ",",
-    "KEY_DOT": ".",
-    "KEY_SLASH": "/",
-    "KEY_MINUS": "-",
-    "KEY_EQUAL": "=",
-    "KEY_SEMICOLON": ";",
-    "KEY_APOSTROPHE": "'",
-    "KEY_LEFTBRACE": "[",
-    "KEY_RIGHTBRACE": "]",
-    "KEY_BACKSLASH": "\\",
-    "KEY_GRAVE": "`",
-    "KEY_SPACE": " ",
-    "KEY_TAB": "\t",
-}
-
-# Map a few common keys that often act as dead keys to the visible
-# base character. `KeyCode.from_dead` expects a standalone character
-# (eg '~') so we keep that here.
-_DEAD_BASE_MAP = {
-    "KEY_APOSTROPHE": "'",
-    "KEY_QUOTE": "'",
-    "KEY_GRAVE": "`",
-    "KEY_TILDE": "~",
-    "KEY_CIRCUMFLEX": "^",
-    "KEY_DOUBLEQUOTE": '"',
-}
-
-
-def vk_to_keycode(vk: int) -> KeyCode:
-    """Efficiently map an evdev virtual keycode to a KeyCode.
-
-    Strategy:
-    - If the code matches a known special key in `Key` enum, that should
-      be resolved elsewhere; this helper focuses on translating keycodes
-      into textual `KeyCode` instances (including dead keys and
-      punctuation) without requiring a heavyweight layout library.
-    - Handles punctuation, simple dead keys and ASCII letters/digits.
-    - Falls back to preserving the `KEY_*` name so callers can inspect
-      unknown keys.
-    """
-    key_name = ecodes.KEY[vk] if vk in ecodes.KEY else None
-
-    if key_name in _PUNCT_MAP:
-        return KeyCode.from_char(_PUNCT_MAP[key_name], code=vk)
-
-    if key_name in _DEAD_BASE_MAP:
-        return KeyCode.from_dead(_DEAD_BASE_MAP[key_name], code=vk)
-
-    if isinstance(key_name, tuple):
-        # Some keys have multiple names.
-        # Pick the most descriptive one (the longest) for better char extraction.
-        key_name: str = max(key_name, key=len)  # ty:ignore[invalid-assignment]
-
-    if key_name and key_name.startswith("KEY_"):
-        label = key_name.replace("KEY_", "")
-        if len(label) == 1 and label.isalpha():
-            return KeyCode.from_char(label.lower(), code=vk)
-        if label.isdigit():
-            return KeyCode.from_char(label, code=vk)
-
-    return KeyCode.from_vk(vk, char=key_name)
-
-
 class KeyboardListener(threading.Thread):
     """
     UInput keyboard listener backend. Forwards EV_KEY events from grabbed
@@ -279,6 +66,16 @@ class KeyboardListener(threading.Thread):
     Args:
         suppress: if True, do not forward events to UInput
     """
+
+    _MODIFIERS = {
+        Key.alt.value.vk: Key.alt,
+        Key.alt_l.value.vk: Key.alt,
+        Key.alt_r.value.vk: Key.alt,
+        Key.alt_gr.value.vk: Key.alt_gr,
+        Key.shift.value.vk: Key.shift,
+        Key.shift_l.value.vk: Key.shift,
+        Key.shift_r.value.vk: Key.shift,
+    }
 
     def __init__(
         self,
@@ -299,6 +96,8 @@ class KeyboardListener(threading.Thread):
         self._running.clear()
         self._devices = find_keyboards(devices) if devices else find_keyboards()
         self._ui = None
+        self._layout = LAYOUT
+        self._modifiers = set()
         try:
             self._ui = make_uinput(self._devices) if not suppress else None
         except Exception as e:
@@ -346,22 +145,38 @@ class KeyboardListener(threading.Thread):
                 self._ui.close()
             self._cleanup_done.set()
 
-    def map_key(self, key_code):
+    def map_key(self, vk):
         try:
-            return Key(key_code)
-        except ValueError:
-            return vk_to_keycode(key_code)
+            key = self._layout.for_vk(vk, self._modifiers)
+            # Backspace can be sent as KEY_BACKSPACE or KEY_DELETE, so we normalize it to the former
+            if key == Key.delete and vk == ecodes.KEY_BACKSPACE:
+                key = Key.backspace
+        except KeyError:
+            try:
+                key = next(key for key in Key if key.value.vk == vk)
+            except StopIteration:
+                key = KeyCode.from_vk(vk)
+
+        return key
 
     async def _forward(self, dev):
         async for event in dev.async_read_loop():
             # Print event class name
             if event.type == ecodes.EV_KEY:
-                key_code = event.code
-                pressed = event.value == 1
-                hold = event.value == 2
-                key = self.map_key(key_code)
+                pressed = event.value in (KeyEvent.key_down, KeyEvent.key_hold)
+                vk = event.code
+
+                if vk in self._MODIFIERS:
+                    modifier = self._MODIFIERS[vk]
+                    if pressed:
+                        self._modifiers.add(modifier)
+                    elif modifier in self._modifiers:
+                        self._modifiers.remove(modifier)
+
+                key = self.map_key(vk)
+
                 try:
-                    if pressed or hold:
+                    if pressed:
                         if self.on_press(key, False) is False:
                             self.stop()
                             break
