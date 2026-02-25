@@ -348,8 +348,8 @@ class Builder:
         nuitka_exe = exe_dir / f"{APP_NAME}{ext}"
         daemon_dst = exe_dir / f"{DAEMON_EXECUTABLE}{ext}"
         gui_dst = exe_dir / f"{APP_NAME}{ext}"
+        tmp = exe_dir / f"{APP_NAME}_tmp{ext}"
 
-        # --- Validate ---------------------------------------------------------
         if not nuitka_exe.exists():
             self.log.error(f"Nuitka executable not found, cannot swap: {nuitka_exe}")
             return 1
@@ -358,9 +358,9 @@ class Builder:
             self.log.error(f"GUI executable not found, build GUI first: {self.gui_exe}")
             return 1
 
-        # --- 1. Rename Nuitka output → _perpetua ------------------------------
-        nuitka_exe.rename(daemon_dst)
-        shutil.copy2(self.gui_exe, gui_dst)
+        nuitka_exe.rename(tmp)
+        daemon_dst.rename(nuitka_exe)
+        tmp.rename(daemon_dst)
 
         # Ensure executable permission on Unix
         if not self.is_windows:
