@@ -153,3 +153,4 @@ _test_config/
 logo/**
 **/nuitka-crash-report.xml
 **/node_modules
+.tests/

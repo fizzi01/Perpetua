@@ -351,15 +351,11 @@ class Builder:
 
         # --- Validate ---------------------------------------------------------
         if not nuitka_exe.exists():
-            self.log.error(
-                f"Nuitka executable not found, cannot swap: {nuitka_exe}"
-            )
+            self.log.error(f"Nuitka executable not found, cannot swap: {nuitka_exe}")
             return 1
 
         if not self.gui_exe.exists():
-            self.log.error(
-                f"GUI executable not found, build GUI first: {self.gui_exe}"
-            )
+            self.log.error(f"GUI executable not found, build GUI first: {self.gui_exe}")
             return 1
 
         # --- 1. Rename Nuitka output → _perpetua ------------------------------
