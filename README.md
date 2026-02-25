@@ -1,6 +1,11 @@
 <div align="center">
     <img src="src-gui/src-tauri/icons/icon.png" alt="Perpetua Logo" width="128" height="128">
     <h1>Perpetua</h1>
+
+[![License: GPL v3](https://img.shields.io/badge/License-GPLv3-blue.svg?style=flat-square)](https://www.gnu.org/licenses/gpl-3.0)
+[![GitHub release](https://img.shields.io/github/v/release/fizzi01/Perpetua?style=flat-square&color=%234f47e4)](https://github.com/fizzi01/Perpetua/releases/latest)
+[![GitHub Downloads (all assets, latest release)](https://img.shields.io/github/downloads/fizzi01/Perpetua/latest/total?style=flat-square&logo=github&label=Downloads&color=%234f47e4)](https://github.com/fizzi01/Perpetua/releases/latest)
+
 </div>
 
 Perpetua is an open-source, cross-platform KVM software that lets you share a single keyboard and mouse across multiple devices. Inspired by Apple's Universal Control, it provides seamless cursor movement between devices, keyboard sharing, and automatic clipboard synchronization. All secured with TLS encryption.
@@ -19,13 +24,11 @@ Built with Python, leveraging high-performance uvloop (macOS) and winloop (Windo
 ## Download
 [![GitHub Downloads (all assets, latest release)](https://img.shields.io/github/downloads/fizzi01/Perpetua/latest/total?style=for-the-badge&logo=github&label=DOWNLOAD%20LATEST&color=%234f47e4)](https://github.com/fizzi01/Perpetua/releases/latest)
 
-## Supported Operating Systems
+### Supported Operating Systems
 
 Actually only Windows and MacOS are supported.
 
 ### Known Issues
-
-*This section is reserved for documenting platform-specific issues and workarounds as they are identified.*
 
 > [!Important]
 > - **Windows**: You can't control a Windows client if there is no real mouse connected to the machine.
@@ -45,26 +48,24 @@ The GUI will guide you through choosing server or client mode and the initial co
 > [!TIP]
 > For detailed configuration options, including client-server pairing and security settings, see the [Configuration](#configuration) section below.
 
-#### Background Mode
+### Background Mode
 
 You can run Perpetua as a background service using the daemon mode:
 
 ```bash
-# Run in daemon mode (you'll choose server or client later)
+# Run in daemon mode
 ./Perpetua --daemon
 
 # Automatically start as server
-./Perpetua --daemon -s
+./Perpetua --daemon --server
 
 # Automatically start as client
-./Perpetua --daemon -c
+./Perpetua --daemon --client
 ```
 
 For a full list of available commands and options:
 ```bash
 ./Perpetua --help
-# or
-./Perpetua -h
 ```
 
 
@@ -94,10 +95,7 @@ For a full list of available commands and options:
         ```
     - Dependencies needed to build `uvloop`
         ```bash
-        brew install automake
-        brew install autoconf
-        brew install libtool
-        brew install ccache
+        brew install automake autoconf libtool ccache
         ```
 
 - *Windows:*
@@ -136,39 +134,39 @@ The project includes both a build script and Makefile for convenient building.
 
 ### Development Setup
 
-To work on Perpetua in development mode:
+In development mode the two components run independently — the Rust GUI
+launches via `cargo tauri dev` and the Python daemon is started manually
+in a separate terminal.
 
 1. **Install Python dependencies:**
    ```bash
    poetry install
    ```
 
-2. **Run in development mode:**
+2. **Start the daemon**:
    ```bash
    python launcher.py
    ```
-   
-   The launcher will automatically start the GUI in development mode and the daemon in background.
-
-   To run the *daemon only*:
-   ```bash
-   python src/service/daemon.py
-   ```
-
-> [!NOTE]
-> Make sure all prerequisites and dependencies are installed before running `launcher.py` or `daemon.py`.
 
 3. **Install GUI dependencies (optional, if you need to modify the GUI):**
    ```bash
    cd src-gui
-   npm install
+   npm install   # first time only
+   cargo tauri dev
    ```
+
+   The Tauri dev server supports hot-reload for the frontend. In debug
+   builds the Rust binary does **not** spawn the daemon automatically.
+
+> [!NOTE]
+> Make sure all prerequisites and dependencies are installed before
+> running the daemon or the GUI.
 
 
 <details>
 <summary><b>Advanced Build Options</b></summary>
 
-#### Using Poetry
+##### Using Poetry
 
 ```bash
 # Debug build
@@ -184,7 +182,7 @@ poetry run python build.py --skip-daemon
 poetry run python build.py --clean
 ```
 
-#### Using Make
+##### Using Make
 
 ```bash
 # Debug build
@@ -228,7 +226,7 @@ poetry run python build.py --skip-gui
 
 ## Configuration
 
-Perpetua uses JSON to define client and server settings. Configuration file is automatically generated on first launch with sensible defaults, requiring minimal manual intervention for most use cases.
+Perpetua uses JSON to define client and server settings. The configuration file is automatically generated on first launch with sensible defaults, requiring minimal manual intervention for most use cases.
 
 Configuration File Locations:
 - macOS: `$HOME/Library/Caches/Perpetua`
@@ -256,7 +254,7 @@ Auto Discovery (Default):
 - Works out of the box, no configuration needed
 
 Manual Configuration:
-- Set the server's hostname or IP address directly in the config file (or in the appropiate field in `Client > Options`)
+- Set the server's hostname or IP address directly in the config file (or in the appropriate field in `Client > Options`)
 - Use this when auto-discovery doesn't work or you have a static network setup
 
 </details>
@@ -272,7 +270,7 @@ When a client connects to a new server for the first time, it needs to get the s
 4. If the certificate exchange succeeds and the client is in the server's allowlist, the connection is established
 5. Done!
 
-The OTP is just for the initial certificate exchange. After that, connections (to the same server) authenticate automatically using the saved certificates.
+The OTP is just for the initial certificate exchange. After that, connections to the same server authenticate automatically using the saved certificates.
 
 </details>
 
@@ -369,19 +367,17 @@ These parameters affect the application's internal behavior. Only modify them if
 </details>
 
 > [!NOTE]
-> When multiple Perpetua servers are detected on the network (on auto-discovery mode),
-> the GUI will present a selection dialog allowing the user to 
+> When multiple Perpetua servers are detected on the network (in auto-discovery mode),
+> the GUI will present a selection dialog allowing the user to
 > choose the desired server.
 
 
 ## Roadmap
 
-**Current Development Priorities:**
+- [ ] Linux support
+- [ ] File transfers
+- [ ] Advanced clipboard format support (including proprietary formats)
 
-- **Enhanced Platform Support**
-  - Linux support
+## License
 
-- **Feature Enhancements**
-  - File transfers
-  - Advanced clipboard format support (including proprietary formats)
----
+This project is licensed under the [GNU General Public License v3.0](LICENSE).
