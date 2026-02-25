@@ -310,6 +310,14 @@ class Builder:
                 ]
             )
 
+        if self.is_linux:
+            nuitka_cmd.extend(
+                [
+                    "--standalone",
+                    f"--linux-icon={self.icons_dir / 'icon.png'}",
+                ]
+            )
+
         nuitka_cmd.extend(self.nuitka_args)
         nuitka_cmd.append(str(launcher_py))
         return self._run(nuitka_cmd, cwd=self.src_dir, print_cmd=False).returncode
@@ -320,7 +328,7 @@ class Builder:
             return self.build_dir / f"{APP_NAME}.app" / "Contents" / "MacOS"
         else:
             # Windows/Linux standalone folder produced by Nuitka
-            return self.build_dir / APP_NAME
+            return self.build_dir / f"{APP_NAME}.dist"
 
     def _swap_executables(self) -> int:
         """
@@ -333,8 +341,6 @@ class Builder:
         nuitka_exe = exe_dir / f"{APP_NAME}{ext}"
         daemon_dst = exe_dir / f"{DAEMON_EXECUTABLE}{ext}"
         gui_dst = exe_dir / f"{APP_NAME}{ext}"
-
-        self.log.info(f"Swapping executables: {nuitka_exe} → {daemon_dst}, {self.gui_exe} → {gui_dst}")
 
         # --- Validate ---------------------------------------------------------
         if not nuitka_exe.exists():
