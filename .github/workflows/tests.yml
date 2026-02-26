@@ -22,7 +22,7 @@ jobs:
         python-version:
         - "3.11"
         - "3.12"
-        os: [windows-latest, macos-latest]
+        os: [windows-latest, macos-latest, ubuntu-latest]
 
     steps:
     - uses: actions/checkout@v6
