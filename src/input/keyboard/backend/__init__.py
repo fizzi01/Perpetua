@@ -16,7 +16,6 @@
 #
 
 from sys import platform
-from os import environ
 
 # Import platform-specific mouse backends
 if platform.startswith("linux"):
