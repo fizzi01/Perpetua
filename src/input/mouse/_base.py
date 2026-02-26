@@ -621,8 +621,6 @@ class ClientMouseController(object):
         Async worker task to handle mouse events.
         Replaces the multiprocessing worker.
         """
-        # loop = asyncio.get_running_loop()
-
         while self._running:
             try:
                 # Get message from async queue
@@ -632,24 +630,12 @@ class ClientMouseController(object):
                 if not isinstance(event, MouseEvent):
                     continue
 
-                # TODO: Benchamrk to see if not using run_in_executor for move has a significant impact on performance
-
                 # Execute mouse actions in executor to avoid blocking
                 if event.action == MouseEvent.MOVE_ACTION:
-                    # await loop.run_in_executor(
-                    #     None,
-                    #     self._move_cursor,
-                    #     event.x, event.y, event.dx, event.dy
-                    # )
                     self._move_cursor(event.x, event.y, event.dx, event.dy)
                     # Check for edge crossing after movement
                     await self._check_edge()
                 elif event.action == MouseEvent.POSITION_ACTION:
-                    # await loop.run_in_executor(
-                    #     None,
-                    #     self._position_cursor,
-                    #     event.x, event.y
-                    # )
                     for _ in range(
                         10
                     ):  # We position multiple times to ensure it works across platforms
@@ -660,11 +646,6 @@ class ClientMouseController(object):
                     # Click is fast enough to run directly
                     self._click(event.button, event.is_pressed)
                 elif event.action == MouseEvent.SCROLL_ACTION:
-                    # await loop.run_in_executor(
-                    #     None,
-                    #     self._scroll,
-                    #     event.dx, event.dy
-                    # )
                     self._scroll(event.dx, event.dy)
 
                 await asyncio.sleep(0)
