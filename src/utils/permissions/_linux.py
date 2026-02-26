@@ -58,16 +58,26 @@ def _is_in_input_group() -> bool:
 
 def _has_input_access() -> bool:
     """Check if the current user has access to /dev/uinput required for keyboard control."""
+    err = 0
     if os.path.exists("/etc/udev/rules.d/01-perpetua-keyboard.rules"):
         try:
             with open("/etc/udev/rules.d/01-perpetua-keyboard.rules", "r") as f:
                 content = f.read()
-            if 'KERNEL=="uinput"' in content and 'TAG+="uaccess"' in content:
-                return True
+            if not ('KERNEL=="uinput"' in content and 'TAG+="uaccess"' in content):
+                err += 1
         except OSError:
             pass
 
-    return False
+    if os.path.exists("/etc/udev/rules.d/12-input.rules"):
+        try:
+            with open("/etc/udev/rules.d/12-input.rules", "r") as f:
+                content = f.read()
+            if not ('KERNEL=="uinput"' in content and 'TAG+="uaccess"' in content):
+                err += 1
+        except OSError:
+            pass
+
+    return err == 0 or _is_root()  # Fallback to root check if no custom udev rule is found
 
 
 def _has_display() -> bool:
