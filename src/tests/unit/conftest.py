@@ -44,7 +44,7 @@ from network.protocol.message import MessageType, ProtocolMessage
 sys.modules["pynput._util.xorg"] = MagicMock()
 sys.modules["pynput.keyboard._xorg"] = MagicMock()
 sys.modules["pynput.mouse._xorg"] = MagicMock()
-
+sys.modules['pynput.keyboard._uinput.Layout'] = MagicMock()
 
 # ============================================================================
 # Asyncio Backend Configuration

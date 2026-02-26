@@ -22,6 +22,7 @@ dependencies = [
     "aiofiles (>=25.1.0,<26.0.0)",
     "pylint (>=4.0.4,<5.0.0)",
     "uvloop @ git+https://github.com/fizzi01/uvloop.git@perpetua ; sys_platform == 'darwin' or sys_platform == 'linux'",
+    "python-xlib @ git+https://github.com/fizzi01/python-xlib.git ; sys_platform == 'linux'",
     "winloop (==0.5.0) ; sys_platform == 'win32'",
     "structlog (>=25.5.0,<26.0.0)",
     "psutil (>=7.2.1,<8.0.0)",
