@@ -19,6 +19,8 @@ mkdir -p "$DEB_DIR/usr/share/applications"
 
 DIST_DIR="$BUILD_DIR/${APP_NAME}.dist"
 cp -a "$DIST_DIR/." "$DEB_DIR${INSTALL_PREFIX}/"
+cp "scripts/enable_uinput.sh" "$DEB_DIR/DEBIAN/postinst"
+chmod +x "$DEB_DIR/DEBIAN/postinst"
 
 cat > "$DEB_DIR/DEBIAN/control" <<EOF
 Package: Perpetua

@@ -553,7 +553,8 @@ class TestServerMouseListener:
         mock_stream_handler,
     ):
         """Test that click events are sent when listening."""
-        from pynput.mouse import Button
+        Button = MagicMock()
+        Button.left.name = "left"
 
         listener = ServerMouseListener(
             event_bus,

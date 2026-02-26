@@ -77,7 +77,9 @@ def _has_input_access() -> bool:
         except OSError:
             pass
 
-    return err == 0 or _is_root()  # Fallback to root check if no custom udev rule is found
+    return (
+        err == 0 or _is_root()
+    )  # Fallback to root check if no custom udev rule is found
 
 
 def _has_display() -> bool:
