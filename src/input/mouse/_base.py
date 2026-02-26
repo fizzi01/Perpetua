@@ -528,8 +528,9 @@ class ClientMouseController(object):
 
         self._controller = MouseController()
         self._pressed = False
-        self._last_press_time = -99
-        self._doubleclick_counter = 0
+        self._previous_button: int | None = None
+        self._last_press_time: float = -99
+        self._doubleclick_counter: int = 0
         self._is_dragging = False
 
         self._logger = get_logger(self.__class__.__name__)
@@ -864,14 +865,13 @@ class ClientMouseController(object):
             self._controller.release(btn)
             self._pressed = False
         elif not self._pressed and is_pressed:
-            # If we receive a press event within 100ms of the last press, treat it as a double-click
-            if (current_time - self._last_press_time) < 0.15:
-                self._controller.click(btn, 2 + self._doubleclick_counter)
-                self._doubleclick_counter = (
-                    0
-                    if self._doubleclick_counter == 2
-                    else self._doubleclick_counter + 1
-                )
+            # double-click emulation
+            if (
+                current_time - self._last_press_time
+            ) < 0.4 and self._previous_button == button:
+                self._controller.click(btn, self._doubleclick_counter)
+                if 0 <= self._doubleclick_counter < 10:
+                    self._doubleclick_counter += 1
                 self._pressed = False
             else:
                 self._controller.press(btn)
@@ -879,6 +879,7 @@ class ClientMouseController(object):
                 self._pressed = True
 
             self._last_press_time = current_time
+            self._previous_button = button
 
         self._is_dragging = is_pressed and ButtonMapping(button).value in [
             ButtonMapping.left.value,
