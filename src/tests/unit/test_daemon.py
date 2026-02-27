@@ -12,7 +12,6 @@ Tests cover:
 - Configuration management
 """
 
-
 #  Perpetua - open-source and cross-platform KVM software.
 #  Copyright (c) 2026 Federico Izzi.
 #
@@ -29,6 +28,7 @@ Tests cover:
 #  You should have received a copy of the GNU General Public License
 #  along with this program.  If not, see <https://www.gnu.org/licenses/>.
 #
+from tests.unit import _MOCK_PYNPUT
 
 import asyncio
 from unittest.mock import patch
@@ -39,14 +39,16 @@ from typing import Optional
 
 import pytest
 
-from service.daemon import (
+from event.notification import NotificationEvent, NotificationEventType
+
+_MOCK_PYNPUT()
+
+from service.daemon import (  # noqa: E402
     Daemon,
     DaemonCommand,
     DaemonAlreadyRunningException,
     IS_WINDOWS,
 )
-
-from event.notification import NotificationEvent, NotificationEventType
 
 _encoder = msgspec.json.Encoder()
 _decoder = msgspec.json.Decoder()

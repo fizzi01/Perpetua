@@ -57,7 +57,9 @@ class DaemonRunner:
     def log(self):
         """Lazy initialization of logger."""
         if self._log is None:
-            self._log = get_logger(self.__class__.__name__, verbose=True, log_file=self.log_file)
+            self._log = get_logger(
+                self.__class__.__name__, verbose=True, log_file=self.log_file
+            )
         return self._log
 
     def clean_log_file(self):
@@ -89,7 +91,9 @@ class DaemonRunner:
         if len(permissions) > 0:
             for permission in permissions:
                 if permission.can_request:
-                    self.log.info("Requesting missing permissions", permission=permission)
+                    self.log.info(
+                        "Requesting missing permissions", permission=permission
+                    )
                     result = permission_checker.request_permission(
                         permission.permission_type
                     )

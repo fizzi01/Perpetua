@@ -89,9 +89,7 @@ def _has_display() -> bool:
 class PermissionChecker(_base.PermissionChecker):
     def check_permission(self, permission_type: PermissionType) -> PermissionResult:
         match permission_type:
-            case (
-                PermissionType.KEYBOARD_INPUT
-            ):
+            case PermissionType.KEYBOARD_INPUT:
                 if not _has_input_access():
                     return PermissionResult(
                         permission_type=permission_type,
@@ -135,7 +133,10 @@ class PermissionChecker(_base.PermissionChecker):
     def check_all_permissions(self) -> dict[PermissionType, PermissionResult]:
         return {
             permission: self.check_permission(permission)
-            for permission in [PermissionType.KEYBOARD_INPUT, PermissionType.MOUSE_INPUT]
+            for permission in [
+                PermissionType.KEYBOARD_INPUT,
+                PermissionType.MOUSE_INPUT,
+            ]
         }
 
     def open_settings(self, permission_type: Optional[PermissionType] = None):
