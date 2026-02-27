@@ -59,23 +59,22 @@ def _is_in_input_group() -> bool:
 def _has_input_access() -> bool:
     """Check if the current user has access to /dev/uinput required for keyboard control."""
     err = 0
-    if os.path.exists("/etc/udev/rules.d/01-perpetua-keyboard.rules"):
-        try:
-            with open("/etc/udev/rules.d/01-perpetua-keyboard.rules", "r") as f:
-                content = f.read()
-            if not ('KERNEL=="uinput"' in content and 'TAG+="uaccess"' in content):
-                err += 1
-        except OSError:
-            pass
+    try:
+        with open("/etc/udev/rules.d/01-perpetua-keyboard.rules", "r") as f:
+            content = f.read()
+        if not ('KERNEL=="uinput"' in content and 'TAG+="uaccess"' in content):
+            raise OSError("Custom udev rule does not grant access to /dev/uinput")
+    except OSError:
+        err += 1
 
-    if os.path.exists("/etc/udev/rules.d/12-input.rules"):
-        try:
-            with open("/etc/udev/rules.d/12-input.rules", "r") as f:
-                content = f.read()
-            if not ('KERNEL=="uinput"' in content and 'TAG+="uaccess"' in content):
-                err += 1
-        except OSError:
-            pass
+    try:
+        with open("/etc/udev/rules.d/12-input.rules", "r") as f:
+            content = f.read()
+        if not ('KERNEL=="uinput"' in content and 'TAG+="uaccess"' in content):
+            raise OSError("Custom udev rule does not grant access to /dev/uinput")
+    except OSError as e:
+        err += 1
+        print(f"Warning: {e}")
 
     return (
         err == 0 or _is_root()
@@ -92,35 +91,24 @@ class PermissionChecker(_base.PermissionChecker):
         match permission_type:
             case (
                 PermissionType.KEYBOARD_INPUT
-                | PermissionType.MOUSE_INPUT
-                | PermissionType.ACCESSIBILITY
             ):
-                if _has_input_access():
+                if not _has_input_access():
                     return PermissionResult(
                         permission_type=permission_type,
-                        status=PermissionStatus.GRANTED,
+                        status=PermissionStatus.DENIED,
+                        message="Must have access to /dev/uinput or be root",
+                        can_request=False,
                     )
-                reason = "Must be run by root"
                 return PermissionResult(
                     permission_type=permission_type,
-                    status=PermissionStatus.DENIED,
-                    message=reason,
-                    can_request=False,
+                    status=PermissionStatus.GRANTED,
                 )
-
-            case PermissionType.SCREEN_RECORDING | PermissionType.CLIPBOARD:
+            case PermissionType.MOUSE_INPUT:
                 if not _has_display():
                     return PermissionResult(
                         permission_type=permission_type,
                         status=PermissionStatus.DENIED,
                         message="neither DISPLAY nor WAYLAND_DISPLAY is set",
-                        can_request=False,
-                    )
-                if not _has_input_access():
-                    return PermissionResult(
-                        permission_type=permission_type,
-                        status=PermissionStatus.DENIED,
-                        message="Must have access to /dev/uinput",
                         can_request=False,
                     )
                 return PermissionResult(
@@ -147,7 +135,7 @@ class PermissionChecker(_base.PermissionChecker):
     def check_all_permissions(self) -> dict[PermissionType, PermissionResult]:
         return {
             permission: self.check_permission(permission)
-            for permission in PermissionType
+            for permission in [PermissionType.KEYBOARD_INPUT, PermissionType.MOUSE_INPUT]
         }
 
     def open_settings(self, permission_type: Optional[PermissionType] = None):

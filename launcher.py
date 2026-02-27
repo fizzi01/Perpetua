@@ -48,13 +48,16 @@ class DaemonRunner:
             )
         )
         self._args = args
+        # If --log-terminal, write logs to stdout only (no file)
+        if self._args and self._args.log_terminal:
+            self.log_file = None
         self._log = None
 
     @property
     def log(self):
         """Lazy initialization of logger."""
         if self._log is None:
-            self._log = get_logger(__name__, verbose=True, log_file=self.log_file)
+            self._log = get_logger(self.__class__.__name__, verbose=True, log_file=self.log_file)
         return self._log
 
     def clean_log_file(self):
@@ -84,23 +87,26 @@ class DaemonRunner:
         permission_checker = PermissionChecker(self.log)  # type: ignore
         permissions = permission_checker.get_missing_permissions()
         if len(permissions) > 0:
-            self.log.info("Requesting missing permissions", permissions=permissions)
             for permission in permissions:
-                result = permission_checker.request_permission(
-                    permission.permission_type
-                )
-                if not result.is_granted:
-                    self.log.error("Permission not granted", permission=permission)
+                if permission.can_request:
+                    self.log.info("Requesting missing permissions", permission=permission)
+                    result = permission_checker.request_permission(
+                        permission.permission_type
+                    )
+                    if not result.is_granted:
+                        self.log.error("Permission not granted", permission=permission)
+                        return False
+                else:
+                    self.log.error(
+                        f"Missing permission ({permission.message})",
+                        permission=permission.permission_type.name,
+                    )
                     return False
         return True
 
     def run(self):
         """Run the daemon in this process."""
         from service.daemon import main as daemon_main
-
-        # If --log-terminal, write logs to stdout only (no file)
-        if self._args and self._args.log_terminal:
-            self.log_file = None
 
         self.clean_log_file()
 
