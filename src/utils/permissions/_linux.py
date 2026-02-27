@@ -59,6 +59,14 @@ def _is_in_input_group() -> bool:
 def _has_input_access() -> bool:
     """Check if the current user has access to /dev/uinput required for keyboard control."""
     err = 0
+
+    # Check if dumpkeys is available
+    try:
+        os.system("which dumpkeys > /dev/null 2>&1")
+    except OSError:
+        err += 1
+        print("Warning: 'dumpkeys' command not found; cannot check for uinput access via group membership.")
+
     try:
         with open("/etc/udev/rules.d/01-perpetua-keyboard.rules", "r") as f:
             content = f.read()
