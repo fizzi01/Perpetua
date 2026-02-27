@@ -26,6 +26,7 @@ from typing import Optional
 from config import ApplicationConfig
 from utils.cli import DaemonArguments
 from utils.logging import get_logger
+from utils.permissions import PermissionChecker
 
 IS_WINDOWS = sys.platform in ("win32", "cygwin")
 IS_LINUX = sys.platform.startswith("linux")
@@ -77,6 +78,21 @@ class DaemonRunner:
     def cleanup_pid(self):
         """Remove PID file."""
         self.pid_file.unlink(missing_ok=True)
+
+    def check_permissions(self) -> bool:
+        """Check and request necessary permissions."""
+        permission_checker = PermissionChecker(self.log)  # type: ignore
+        permissions = permission_checker.get_missing_permissions()
+        if len(permissions) > 0:
+            self.log.info("Requesting missing permissions", permissions=permissions)
+            for permission in permissions:
+                result = permission_checker.request_permission(
+                    permission.permission_type
+                )
+                if not result.is_granted:
+                    self.log.error("Permission not granted", permission=permission)
+                    return False
+        return True
 
     def run(self):
         """Run the daemon in this process."""
@@ -134,6 +150,8 @@ def main():
     daemon = None
     try:
         daemon = DaemonRunner(args=args)
+        if not daemon.check_permissions():
+            sys.exit(1)
         daemon.run()
     except KeyboardInterrupt:
         if daemon and daemon._log:
