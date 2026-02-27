@@ -76,7 +76,7 @@ class CursorHandlerWindow(_base.CursorHandlerWindow):
         except Exception as e:
             self._logger.error(f"Error forcing overlay ({e})")
 
-    def HideOverlay(self):
+    def HideOverlay(self, startup: bool = False):
         try:
             self.Iconize(True)
             self.RestorePreviousApp()
