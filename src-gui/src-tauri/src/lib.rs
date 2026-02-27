@@ -144,7 +144,7 @@ where
     });
 
     // Close splashscreen and show the main window
-    if let Err(e) = splash_window.close() {
+    if let Err(e) = splash_window.destroy() {
         println!("Error closing splashscreen window: {:?}", e);
         handle_critical("Critical error on startup", "", &manager_clone);
     }
@@ -323,7 +323,7 @@ where
         handle_critical("Critical error occurred", "", app);
         panic!("Critical error occurred");
     });
-
+    
     window.show().unwrap_or_else(|_| {
         println!("Error showing window with label {}", label);
         handle_critical("Critical error occurred", "", app);
