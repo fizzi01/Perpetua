@@ -41,7 +41,7 @@ pub mod commands;
 pub mod handler;
 pub mod process;
 
-pub use process::DaemonProcess;
+pub use process::{DaemonConfig, DaemonProcess};
 
 // ---------------------------------------------------------------------------
 // AppState
@@ -339,7 +339,7 @@ where
 }
 
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
-pub fn run(daemon: DaemonProcess) {
+pub fn run(daemon_config: Option<DaemonConfig>) {
     let mut app = tauri::Builder::default();
 
     #[cfg(desktop)]
@@ -361,7 +361,6 @@ pub fn run(daemon: DaemonProcess) {
             hard_close: false,
             connected: false,
         }))
-        .manage(daemon)
         .invoke_handler(tauri::generate_handler![
             // -- Server Commands --
             commands::start_server,
@@ -389,7 +388,14 @@ pub fn run(daemon: DaemonProcess) {
             // -- UI Commands --
             commands::switch_tray_icon,
         ])
-        .setup(|app| {
+        .setup(move |app| {
+            // Spawn daemon (release) or create empty handle (debug)
+            let daemon = match daemon_config {
+                Some(config) => DaemonProcess::spawn(&config),
+                None => DaemonProcess::empty(),
+            };
+            app.manage(daemon);
+
             // Initialize connection to the daemon
             tauri::async_runtime::spawn(setup_connection(app.handle().clone()));
             Ok(())
