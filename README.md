@@ -10,7 +10,7 @@
 
 Perpetua is an open-source, cross-platform KVM software that lets you share a single keyboard and mouse across multiple devices. Inspired by Apple's Universal Control, it provides seamless cursor movement between devices, keyboard sharing, and automatic clipboard synchronization. All secured with TLS encryption.
 
-Built with Python, leveraging high-performance uvloop (macOS) and winloop (Windows) for low-latency, responsive input handling.
+Built with Python, leveraging high-performance uvloop (macOS and Linux) and winloop (Windows) for low-latency, responsive input handling.
 
 
 <div align="center">
@@ -26,12 +26,18 @@ Built with Python, leveraging high-performance uvloop (macOS) and winloop (Windo
 
 ### Supported Operating Systems
 
-Actually only Windows and MacOS are supported.
+Desktop environments currently supported:
+
+- MacOS
+- Windows
+- Linux (X11)
 
 ### Known Issues
 
 > [!Important]
 > - **Windows**: You can't control a Windows client if there is no real mouse connected to the machine.
+> 
+> - **Linux (Wayland)**: Full support is currently limited to X11 sessions. Wayland and its various compositors are not fully supported at this time.
 >
 > - **Input Capture Conflicts**: Perpetua cannot control the mouse when other applications have exclusive input capture (e.g., video games). This is an architectural limitation.
 
@@ -42,6 +48,7 @@ Actually only Windows and MacOS are supported.
 
 - **macOS**: Extract the `.zip`, run `xattr -c Perpetua.app` and launch `Perpetua.app`.
 - **Windows**: Extract the archive and run `Perpetua.exe` inside the `Perpetua` folder.
+- **Linux**: Install the .deb package.
 
 The GUI will guide you through choosing server or client mode and the initial configuration.
 
@@ -100,6 +107,26 @@ For a full list of available commands and options:
 
 - *Windows:*
     - Microsoft C++ Build Tools: Install the "Desktop development with C++" workload from [Visual Studio Build Tools](https://visualstudio.microsoft.com/downloads/#build-tools-for-visual-studio-2022)
+
+- *macOS:*
+     ```bash
+        sudo apt-get update
+        sudo apt-get install -y \
+            libtiff-dev \
+            libgtk-3-dev \
+            automake \
+            libtool \
+            libwebkit2gtk-4.1-dev \
+            build-essential \
+            curl \
+            wget \
+            file \
+            libxdo-dev \
+            libssl-dev \
+            libayatana-appindicator3-dev \
+            librsvg2-dev \
+            fakeroot
+      ```
 </details>
 
 > [!NOTE]
@@ -231,6 +258,7 @@ Perpetua uses JSON to define client and server settings. The configuration file 
 Configuration File Locations:
 - macOS: `$HOME/Library/Caches/Perpetua`
 - Windows: `%LOCALAPPDATA%\Perpetua`
+- Linux: `$HOME/.perpetua`
 
 <details>
 <summary><b>Server Configuration</b></summary>
@@ -374,7 +402,7 @@ These parameters affect the application's internal behavior. Only modify them if
 
 ## Roadmap
 
-- [ ] Linux support
+- [X] Linux support
 - [ ] File transfers
 - [ ] Advanced clipboard format support (including proprietary formats)
 
