@@ -26,7 +26,6 @@ from typing import Optional
 from config import ApplicationConfig
 from utils.cli import DaemonArguments
 from utils.logging import get_logger
-from utils.screen import Screen
 
 IS_WINDOWS = sys.platform in ("win32", "cygwin")
 IS_LINUX = sys.platform.startswith("linux")
@@ -83,8 +82,6 @@ class DaemonRunner:
         """Run the daemon in this process."""
         from service.daemon import main as daemon_main
 
-        Screen.hide_icon()
-
         # If --log-terminal, write logs to stdout only (no file)
         if self._args and self._args.log_terminal:
             self.log_file = None
@@ -126,6 +123,10 @@ class DaemonRunner:
 
 
 def main():
+    from utils.screen import Screen
+
+    Screen.hide_icon()
+
     parser = ArgumentParser(description="Perpetua Daemon")
     DaemonArguments(parent=parser)
     args = parser.parse_args()
