@@ -66,7 +66,7 @@ fn default_path() -> Result<DefaultPath, SocketPathError> {
     #[cfg(unix)]
     {
         let home = env::var("HOME").map_err(SocketPathError::HomeDirNotFound)?;
-        
+
         #[cfg(target_os = "macos")]
         return Ok(DefaultPath::Unix(
             Path::new(&home)
@@ -76,14 +76,12 @@ fn default_path() -> Result<DefaultPath, SocketPathError> {
                 .join(DEFAULT_DAEMON_SOCKET),
         ));
 
-
         #[cfg(not(target_os = "macos"))]
         return Ok(DefaultPath::Unix(
             Path::new(&home)
                 .join(DEFAULT_APP_DIR)
                 .join(DEFAULT_DAEMON_SOCKET),
         ));
-
     }
 
     #[cfg(windows)]

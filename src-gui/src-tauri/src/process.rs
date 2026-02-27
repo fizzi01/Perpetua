@@ -23,10 +23,6 @@ use std::process::{Child, Command, Stdio};
 use std::sync::{Arc, Mutex};
 use std::thread;
 
-// ---------------------------------------------------------------------------
-// DaemonConfig
-// ---------------------------------------------------------------------------
-
 /// Arguments forwarded to the daemon executable.
 #[derive(Clone, Debug)]
 pub struct DaemonConfig {
@@ -68,10 +64,6 @@ impl DaemonConfig {
     }
 }
 
-// ---------------------------------------------------------------------------
-// Helpers
-// ---------------------------------------------------------------------------
-
 /// Resolve the path to the `_perpetua` daemon executable, located next to this binary.
 fn daemon_executable_path() -> PathBuf {
     let mut path = env::current_exe()
@@ -109,10 +101,6 @@ fn forward_stream<R: std::io::Read + Send + 'static>(
         }
     })
 }
-
-// ---------------------------------------------------------------------------
-// DaemonProcess
-// ---------------------------------------------------------------------------
 
 /// Handle to the daemon child process, stored as Tauri managed state.
 ///

@@ -23,10 +23,6 @@ use clap::Parser;
 #[cfg(not(debug_assertions))]
 use perpetua_lib::{DaemonConfig, DaemonProcess};
 
-// ---------------------------------------------------------------------------
-// CLI
-// ---------------------------------------------------------------------------
-
 #[derive(Parser, Debug)]
 #[command(name = "Perpetua", version, about, long_about = None)]
 struct Cli {
