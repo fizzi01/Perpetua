@@ -1,5 +1,22 @@
 # Changelog
 
+## [1.3.0](https://github.com/fizzi01/Perpetua/compare/v1.2.4...v1.3.0) (2026-02-28)
+
+
+### Features
+
+* Add Linux support ([#52](https://github.com/fizzi01/Perpetua/issues/52)) ([d251016](https://github.com/fizzi01/Perpetua/commit/d25101647d55f11ac81352d045efaa834832ec82))
+
+
+### Bug Fixes
+
+* **client:** improve abort handling ([#48](https://github.com/fizzi01/Perpetua/issues/48)) ([9823faa](https://github.com/fizzi01/Perpetua/commit/9823faacab10a6fcb93d64709dd57058eaf84141))
+* **config:** Fixed config save error on Windows and Linux ([d251016](https://github.com/fizzi01/Perpetua/commit/d25101647d55f11ac81352d045efaa834832ec82))
+* **gui:** auto-discovery mode info popup not showing correctly ([#50](https://github.com/fizzi01/Perpetua/issues/50)) ([c3b6740](https://github.com/fizzi01/Perpetua/commit/c3b6740944e126e6cd9c3d678fe169ab2b0cf938))
+* **gui:** avoid spamming force stop events with multiple presses ([9823faa](https://github.com/fizzi01/Perpetua/commit/9823faacab10a6fcb93d64709dd57058eaf84141))
+* improve GUI performance on macos ([eafba5b](https://github.com/fizzi01/Perpetua/commit/eafba5bbe19021dc0f1a428d95924fdce1ff5a59))
+* **mouse:** Improve double-click emulation ([d251016](https://github.com/fizzi01/Perpetua/commit/d25101647d55f11ac81352d045efaa834832ec82))
+
 ## [1.2.4](https://github.com/fizzi01/Perpetua/compare/v1.2.3...v1.2.4) (2026-02-18)
 
 
