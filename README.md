@@ -108,8 +108,8 @@ For a full list of available commands and options:
 - *Windows:*
     - Microsoft C++ Build Tools: Install the "Desktop development with C++" workload from [Visual Studio Build Tools](https://visualstudio.microsoft.com/downloads/#build-tools-for-visual-studio-2022)
 
-- *macOS:*
-     ```bash
+- *Linux:*
+    ```bash
         sudo apt-get update
         sudo apt-get install -y \
             libtiff-dev \
@@ -126,7 +126,7 @@ For a full list of available commands and options:
             libayatana-appindicator3-dev \
             librsvg2-dev \
             fakeroot
-      ```
+    ```
 </details>
 
 > [!NOTE]
