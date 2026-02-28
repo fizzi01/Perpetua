@@ -22,7 +22,7 @@ jobs:
         python-version:
         - "3.11"
         - "3.12"
-        os: [windows-latest, macos-latest]
+        os: [windows-latest, macos-latest, ubuntu-latest]
 
     steps:
     - uses: actions/checkout@v6
@@ -39,12 +39,32 @@ jobs:
         python-version: ${{ matrix.python-version }}
         cache: poetry
 
-    - name: Install macOS deps
+    - name: Install macOS dependencies
       if: matrix.os == 'macos-latest'
       env:
         HOMEBREW_NO_AUTO_UPDATE: 1
       run: |
         brew install gnu-sed libtool autoconf automake
+
+    - name: Install Linux dependencies
+      if: runner.os == 'Linux'
+      run: |
+        sudo apt-get update
+        sudo apt-get install -y \
+          libtiff-dev \
+          libgtk-3-dev \
+          automake \
+          libtool \
+          libwebkit2gtk-4.1-dev \
+          build-essential \
+          curl \
+          wget \
+          file \
+          libxdo-dev \
+          libssl-dev \
+          libayatana-appindicator3-dev \
+          librsvg2-dev \
+          fakeroot
 
     - name: Install Python Deps
       run: |

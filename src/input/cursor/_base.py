@@ -157,7 +157,7 @@ class CursorHandlerWindow(wx.Frame):
         """
         self.Centre()
         self.Show()
-        self.HideOverlay()
+        self.HideOverlay(True)
 
     def _process_commands(self):
         """
@@ -324,12 +324,13 @@ class CursorHandlerWindow(wx.Frame):
         except Exception as e:
             self._logger.debug(f"Error forcing overlay: {e}")
 
-    def HideOverlay(self):
+    def HideOverlay(self, startup: bool = False):
         """
         Hide the overlay and restore previous application (if implemented).
         """
         try:
-            self.RestorePreviousApp()
+            if not startup:
+                self.RestorePreviousApp()
             # self.panel.Hide()
             self.Hide()
             # Resize to 0x0 to avoid interaction

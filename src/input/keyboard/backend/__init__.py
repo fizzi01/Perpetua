@@ -15,12 +15,15 @@
 #  along with this program.  If not, see <https://www.gnu.org/licenses/>.
 #
 
-# Mocking pynput to prevent crash on Linux
-def _MOCK_PYNPUT():
-    import sys
-    from unittest.mock import MagicMock
+from sys import platform
 
-    sys.modules["pynput._util.xorg"] = MagicMock()
-    sys.modules["pynput.keyboard._xorg"] = MagicMock()
-    sys.modules["pynput.mouse._xorg"] = MagicMock()
-    sys.modules["pynput.keyboard._uinput"] = MagicMock()
+# Import platform-specific mouse backends
+if platform.startswith("linux"):
+    from ._uinput import KeyboardListener, Key, KeyCode
+    from pynput.keyboard import Controller as KeyboardController
+else:
+    from pynput.keyboard import Listener as KeyboardListener
+    from pynput.keyboard import Controller as KeyboardController
+    from pynput.keyboard import Key, KeyCode
+
+__all__ = ["KeyboardListener", "KeyboardController", "Key", "KeyCode"]

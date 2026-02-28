@@ -1,5 +1,5 @@
 """
-Logic to handle cursor visibility on Windows systems.
+Logic to handle cursor visibility on Linux systems.
 """
 
 
@@ -21,11 +21,11 @@ Logic to handle cursor visibility on Windows systems.
 #
 
 from typing import Optional
+
 import wx
 from wx import Size
-import win32gui
 
-from multiprocessing.connection import PipeConnection
+from multiprocessing.connection import Connection
 
 from event.bus import EventBus
 from input.cursor import _base
@@ -33,14 +33,14 @@ from network.stream.handler import StreamHandler
 
 
 class CursorHandlerWindow(_base.CursorHandlerWindow):
-    BORDER_OFFSET = 1
-    WINDOW_SIZE = Size(200, 200)
+    BORDER_OFFSET = 40
+    WINDOW_SIZE = Size(400, 400)
 
     def __init__(
         self,
-        command_conn: PipeConnection,
-        result_conn: PipeConnection,
-        mouse_conn: PipeConnection,
+        command_conn: Connection,
+        result_conn: Connection,
+        mouse_conn: Connection,
         debug: bool = False,
         log_level: int = _base.Logger.DEBUG,
     ):
@@ -54,54 +54,42 @@ class CursorHandlerWindow(_base.CursorHandlerWindow):
             style=wx.STAY_ON_TOP | wx.FRAME_NO_TASKBAR | wx.NO_BORDER,
         )
         self.__size = self.WINDOW_SIZE
-        # Panel principale
+
         self.panel = None
 
-        # Windows-specific handle
-        self.hwnd = None
-
-        # Prev app track (for reopening)
-        self.previous_window_handle = None
-
-        self._old_style = self.GetWindowStyle()
-        # self.SetWindowStyle(
-        #     self._old_style | wx.STAY_ON_TOP | wx.FRAME_NO_TASKBAR | wx.NO_BORDER  | wx.TRANSPARENT_WINDOW)
-        self.SetTransparent(1)
+        self.SetTransparent(0)
         self._create()
 
     def ForceOverlay(self):
         try:
+            self.SetWindowStyleFlag(self.GetWindowStyleFlag() | wx.STAY_ON_TOP)
+            self.SetSize(self.WINDOW_SIZE)
             self.Iconize(False)
-            self.AcceptsFocusRecursively()
 
             p = self._get_centered_coords()
             self.Show(True)
             self.Move(pt=p)
             self.Raise()
+            self.SetFocus()
+            self.AcceptsFocusRecursively()
 
-            if not self.previous_window_handle:
-                self.previous_window_handle = win32gui.GetForegroundWindow()
         except Exception as e:
             self._logger.error(f"Error forcing overlay ({e})")
 
     def HideOverlay(self, startup: bool = False):
         try:
             self.Iconize(True)
-            super().HideOverlay(startup)
+            self.RestorePreviousApp()
+            self.Hide()
         except Exception as e:
             self._logger.error(f"Error hiding overlay ({e})")
 
     def RestorePreviousApp(self):
-        try:
-            if self.previous_window_handle:
-                win32gui.SetForegroundWindow(self.previous_window_handle)
-            self.previous_window_handle = None
-        except Exception as e:
-            self._logger.error(f"Error restoring previous app ({e})")
+        pass  # Linux does it automatically when the overlay is hidden
 
     def handle_cursor_visibility(self, visible: bool):
         """
-        Handle cursor visibility for Windows.
+        Handle cursor visibility for Linux.
         If visible is False, hide the cursor. If True, show the cursor.
         """
         if not visible:

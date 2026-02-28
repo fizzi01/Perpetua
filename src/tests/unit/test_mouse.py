@@ -19,6 +19,7 @@ Tests EdgeDetector, ServerMouseListener, ServerMouseController, and ClientMouseC
 #  You should have received a copy of the GNU General Public License
 #  along with this program.  If not, see <https://www.gnu.org/licenses/>.
 #
+from tests.unit import _MOCK_PYNPUT
 
 import asyncio
 from unittest.mock import AsyncMock, MagicMock, patch
@@ -32,7 +33,13 @@ from event import (
     ClientDisconnectedEvent,
     ClientActiveEvent,
 )
-from input.mouse._base import (
+
+from model.client import ScreenPosition
+from network.stream import StreamType
+
+_MOCK_PYNPUT()
+
+from input.mouse._base import (  # noqa: E402
     EdgeDetector,
     ScreenEdge,
     ServerMouseListener,
@@ -40,8 +47,6 @@ from input.mouse._base import (
     ClientMouseController,
     ButtonMapping,
 )
-from model.client import ScreenPosition
-from network.stream import StreamType
 
 
 # ============================================================================
@@ -553,7 +558,8 @@ class TestServerMouseListener:
         mock_stream_handler,
     ):
         """Test that click events are sent when listening."""
-        from pynput.mouse import Button
+        Button = MagicMock()
+        Button.left.name = "left"
 
         listener = ServerMouseListener(
             event_bus,

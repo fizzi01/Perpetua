@@ -14,6 +14,7 @@
 #  You should have received a copy of the GNU General Public License
 #  along with this program.  If not, see <https://www.gnu.org/licenses/>.
 #
+from tests.unit import _MOCK_PYNPUT
 import asyncio
 
 import time
@@ -40,6 +41,7 @@ from event import (
 from event.bus import AsyncEventBus, EventBus
 from network.protocol.message import MessageType, ProtocolMessage
 
+_MOCK_PYNPUT()
 
 # ============================================================================
 # Asyncio Backend Configuration
@@ -60,6 +62,13 @@ def anyio_backend(request):
 def disable_command_handler_clear():
     """Disable CommandHandler.clear during tests to preserve handlers."""
     with patch("service.daemon.CommandHandler.clear"):
+        yield
+
+
+@pytest.fixture(autouse=True)
+def disable_uinput():
+    """Disable pynput's uinput to prevent crashes on Linux during tests."""
+    with patch("pynput.keyboard._uinput.Layout"):
         yield
 
 

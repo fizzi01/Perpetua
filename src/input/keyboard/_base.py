@@ -31,89 +31,14 @@ from event import (
 )
 from event.bus import EventBus
 
-from pynput.keyboard import (
-    Key,
-    KeyCode,
-    Listener as KeyboardListener,
-    Controller as KeyboardController,
-)
-# import keyboard as hotkey_controller  # Unused anymore
-
 from network.stream.handler import StreamHandler
 from network.protocol.message import MessageType
 
 from utils.logging import get_logger
 from utils.screen import Screen
 
-
-class KeyUtilities:
-    """
-    This class provides utility functions for keyboard key conversions.
-    Like mapping key names from different OS into a specific os.
-    """
-
-    @staticmethod
-    def map_key(key: str) -> Key | KeyCode | None:
-        """
-        For pynpuy Key are all special keys, and KeyCode are all character keys.
-        """
-        # First check if key is a special key in pynput
-        try:
-            special = Key[key]
-            return special
-        except KeyError:
-            pass
-
-        # Check if it's a vk_ key
-        if key.startswith("vk_"):
-            try:
-                vk_code = int(key[3:])
-                return KeyCode.from_vk(vk_code)
-            except ValueError:
-                pass
-
-        # Next check if it's a single character (KeyCode)
-        try:
-            return KeyCode.from_char(key)
-        except Exception:
-            pass
-
-        # Otherwise return the original string (unmapped)
-        return None
-
-    @staticmethod
-    def map_vk(vk_code: int) -> KeyCode:
-        """
-        Maps a virtual key code to a pynput KeyCode.
-        """
-        return KeyCode.from_vk(vk_code)
-
-    @staticmethod
-    def map_to_key(kc: KeyCode) -> Key | None:
-        """
-        Maps a pynput KeyCode to a Key if possible, otherwise returns None.
-        """
-        try:
-            return Key(kc)
-        except (KeyError, AttributeError, ValueError):
-            return None
-
-    @staticmethod
-    def is_special(
-        key: Key | KeyCode | None, filter_out: Optional[list[Key]] = None
-    ) -> bool:
-        """
-        Check if the given key is a special key (pynput Key) or a character key (KeyCode).
-        Args:
-            key (Key | KeyCode | None): The key to check.
-            filter_out (Optional[list[Key]]): List of keys to filter out from being considered special.
-        Returns:
-            bool: True if the key is a special key and not in filter_out, False otherwise
-        """
-        if filter_out and key in filter_out:
-            return False
-
-        return isinstance(key, Key)
+from input.utils import KeyUtilities
+from .backend import KeyboardListener, Key, KeyCode, KeyboardController
 
 
 class ServerKeyboardListener(object):
@@ -160,6 +85,8 @@ class ServerKeyboardListener(object):
                     self._filter_args["win32_event_filter"] = (
                         self._win32_suppress_filter
                     )
+                elif current_platform == "Linux":
+                    self._filter_args["xorg_filter"] = self._xorg_suppress_filter
             except Exception:
                 pass
 
@@ -322,6 +249,9 @@ class ServerKeyboardListener(object):
         raise NotImplementedError("Mouse suppress filter not implemented yet.")
 
     def _win32_suppress_filter(self, msg, data):
+        raise NotImplementedError("Mouse suppress filter not implemented yet.")
+
+    def _xorg_suppress_filter(self, event):
         raise NotImplementedError("Mouse suppress filter not implemented yet.")
 
     def _schedule_async(self, coro):

@@ -50,7 +50,7 @@ from network.stream.handler import StreamHandler
 
 
 class CursorHandlerWindow(_base.CursorHandlerWindow):
-    BORDER_OFFSET: int = 1
+    BORDER_OFFSET = 1
     WINDOW_SIZE = Size(400, 400)
 
     def __init__(
@@ -72,8 +72,8 @@ class CursorHandlerWindow(_base.CursorHandlerWindow):
         # Panel principale
         self.panel = wx.Panel(self)
 
-        self.previous_app = NSWorkspace.sharedWorkspace().frontmostApplication()
-        self.previous_app_pid = self.previous_app.processIdentifier()
+        self.previous_app = None
+        self.previous_app_pid = None
 
         self._create()
 
@@ -115,20 +115,21 @@ class CursorHandlerWindow(_base.CursorHandlerWindow):
         except Exception as e:
             self._logger.error(f"Error forcing overlay: {e}")
 
-    def HideOverlay(self):
+    def HideOverlay(self, startup: bool = False):
         try:
-            NSApp = NSApplication.sharedApplication()
-            NSApp.setPresentationOptions_(0)
-            NSApp.activateIgnoringOtherApps_(False)
+            if not startup:
+                NSApp = NSApplication.sharedApplication()
+                NSApp.setPresentationOptions_(0)
+                NSApp.activateIgnoringOtherApps_(False)
 
-            window_ptr = self.GetHandle()
-            ns_view = objc.objc_object(c_void_p=window_ptr)  # type: ignore
-            ns_window = ns_view.window()
-            ns_window.setLevel_(NSScreenSaverWindowLevel - 1)
-            ns_window.setIgnoresMouseEvents_(False)
-            ns_window.setCollectionBehavior_(0)
+                window_ptr = self.GetHandle()
+                ns_view = objc.objc_object(c_void_p=window_ptr)  # type: ignore
+                ns_window = ns_view.window()
+                ns_window.setLevel_(NSScreenSaverWindowLevel - 1)
+                ns_window.setIgnoresMouseEvents_(False)
+                ns_window.setCollectionBehavior_(0)
 
-            super().HideOverlay()
+            super().HideOverlay(startup)
         except Exception as e:
             self._logger.error(f"Error hiding overlay: {e}")
 

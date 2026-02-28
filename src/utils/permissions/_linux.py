@@ -1,0 +1,157 @@
+#  Perpetua - open-source and cross-platform KVM software.
+#  Copyright (c) 2026 Federico Izzi.
+#
+#  This program is free software: you can redistribute it and/or modify
+#  it under the terms of the GNU General Public License as published by
+#  the Free Software Foundation, either version 3 of the License, or
+#  (at your option) any later version.
+#
+#  This program is distributed in the hope that it will be useful,
+#  but WITHOUT ANY WARRANTY; without even the implied warranty of
+#  MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
+#  GNU General Public License for more details.
+#
+#  You should have received a copy of the GNU General Public License
+#  along with this program.  If not, see <https://www.gnu.org/licenses/>.
+#
+
+import grp
+import os
+from typing import Optional
+
+from . import _base
+from ._base import PermissionType, PermissionStatus, PermissionResult
+
+
+def _is_executable_owner() -> bool:
+    """Return True if the current user owns the running application source file.
+
+    When the process is launched via sudo, SUDO_UID is used to recover the
+    original user's UID so that ownership is checked against the real user
+    rather than root.
+    """
+    try:
+        # Under sudo, os.getuid() returns 0; SUDO_UID carries the real user.
+        uid = int(os.environ.get("SUDO_UID", os.getuid()))
+        file_uid = os.stat(__file__).st_uid
+        return file_uid == uid
+    except (OSError, ValueError):
+        return False
+
+
+def _is_root() -> bool:
+    """Return True if the current user is root."""
+    return os.geteuid() == 0
+
+
+def _is_in_input_group() -> bool:
+    """Return True if the current user belongs to the 'input' or 'plugdev' group."""
+    user_groups = os.getgroups()
+    for group_name in ("input", "plugdev"):
+        try:
+            if grp.getgrnam(group_name).gr_gid in user_groups:
+                return True
+        except KeyError:
+            continue
+    return False
+
+
+def _has_input_access() -> bool:
+    """Check if the current user has access to /dev/uinput required for keyboard control."""
+    err = 0
+
+    # Check if dumpkeys is available
+    try:
+        os.system("which dumpkeys > /dev/null 2>&1")
+    except OSError:
+        err += 1
+        print(
+            "Warning: 'dumpkeys' command not found. Keyboard input may not work without it."
+        )
+
+    try:
+        with open("/etc/udev/rules.d/01-perpetua-keyboard.rules", "r") as f:
+            content = f.read()
+        if not ('KERNEL=="uinput"' in content and 'TAG+="uaccess"' in content):
+            print(
+                "Warning: perpetua-keyboard.rules does not grant access to /dev/uinput"
+            )
+            raise OSError("Custom udev rule does not grant access to /dev/uinput")
+    except OSError:
+        err += 1
+
+    try:
+        with open("/etc/udev/rules.d/12-input.rules", "r") as f:
+            content = f.read()
+        if not ('SUBSYSTEM=="tty"' in content and 'TAG+="uaccess"' in content):
+            print("Warning: input.rules does not grant access to dumpkeys")
+            raise OSError("Custom udev rule does not grant access to dumpkeys")
+    except OSError as e:
+        err += 1
+        print(f"Warning: {e}")
+
+    return (
+        err == 0 or _is_root()
+    )  # Fallback to root check if no custom udev rule is found
+
+
+def _has_display() -> bool:
+    """Return True if a display server (X11 or Wayland) is available."""
+    return bool(os.environ.get("DISPLAY") or os.environ.get("WAYLAND_DISPLAY"))
+
+
+class PermissionChecker(_base.PermissionChecker):
+    def check_permission(self, permission_type: PermissionType) -> PermissionResult:
+        match permission_type:
+            case PermissionType.KEYBOARD_INPUT:
+                if not _has_input_access():
+                    return PermissionResult(
+                        permission_type=permission_type,
+                        status=PermissionStatus.DENIED,
+                        message="Must have access to /dev/uinput or be root",
+                        can_request=False,
+                    )
+                return PermissionResult(
+                    permission_type=permission_type,
+                    status=PermissionStatus.GRANTED,
+                )
+            case PermissionType.MOUSE_INPUT:
+                if not _has_display():
+                    return PermissionResult(
+                        permission_type=permission_type,
+                        status=PermissionStatus.DENIED,
+                        message="neither DISPLAY nor WAYLAND_DISPLAY is set",
+                        can_request=False,
+                    )
+                return PermissionResult(
+                    permission_type=permission_type,
+                    status=PermissionStatus.GRANTED,
+                )
+
+            case PermissionType.NONE:
+                return PermissionResult(
+                    permission_type=permission_type,
+                    status=PermissionStatus.NOT_REQUIRED,
+                )
+
+            case _:
+                return PermissionResult(
+                    permission_type=permission_type,
+                    status=PermissionStatus.UNKNOWN,
+                )
+
+    def request_permission(self, permission_type: PermissionType) -> PermissionResult:
+        # On Linux permissions cannot be requested interactively; re-check current state.
+        return self.check_permission(permission_type)
+
+    def check_all_permissions(self) -> dict[PermissionType, PermissionResult]:
+        return {
+            permission: self.check_permission(permission)
+            for permission in [
+                PermissionType.KEYBOARD_INPUT,
+                PermissionType.MOUSE_INPUT,
+            ]
+        }
+
+    def open_settings(self, permission_type: Optional[PermissionType] = None):
+        pass

@@ -168,8 +168,7 @@ class ApplicationConfig:
         # Write default config
         try:
             with open(config_file, "w") as f:
-                encoded = _encoder.encode(default_config)
-                json.dump(encoded, f, indent=2)
+                json.dump(default_config, f, indent=2)
             return True
         except Exception as e:
             print(f"Error creating config file {config_file}: {e}")

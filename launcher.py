@@ -26,9 +26,10 @@ from typing import Optional
 from config import ApplicationConfig
 from utils.cli import DaemonArguments
 from utils.logging import get_logger
-from utils.screen import Screen
+from utils.permissions import PermissionChecker
 
 IS_WINDOWS = sys.platform in ("win32", "cygwin")
+IS_LINUX = sys.platform.startswith("linux")
 COMPILED = "__compiled__" in globals()
 
 
@@ -47,13 +48,18 @@ class DaemonRunner:
             )
         )
         self._args = args
+        # If --log-terminal, write logs to stdout only (no file)
+        if self._args and self._args.log_terminal:
+            self.log_file = None
         self._log = None
 
     @property
     def log(self):
         """Lazy initialization of logger."""
         if self._log is None:
-            self._log = get_logger(__name__, verbose=True, log_file=self.log_file)
+            self._log = get_logger(
+                self.__class__.__name__, verbose=True, log_file=self.log_file
+            )
         return self._log
 
     def clean_log_file(self):
@@ -78,15 +84,33 @@ class DaemonRunner:
         """Remove PID file."""
         self.pid_file.unlink(missing_ok=True)
 
+    def check_permissions(self) -> bool:
+        """Check and request necessary permissions."""
+        permission_checker = PermissionChecker(self.log)  # type: ignore
+        permissions = permission_checker.get_missing_permissions()
+        if len(permissions) > 0:
+            for permission in permissions:
+                if permission.can_request:
+                    self.log.info(
+                        "Requesting missing permissions", permission=permission
+                    )
+                    result = permission_checker.request_permission(
+                        permission.permission_type
+                    )
+                    if not result.is_granted:
+                        self.log.error("Permission not granted", permission=permission)
+                        return False
+                else:
+                    self.log.error(
+                        f"Missing permission ({permission.message})",
+                        permission=permission.permission_type.name,
+                    )
+                    return False
+        return True
+
     def run(self):
         """Run the daemon in this process."""
         from service.daemon import main as daemon_main
-
-        Screen.hide_icon()
-
-        # If --log-terminal, write logs to stdout only (no file)
-        if self._args and self._args.log_terminal:
-            self.log_file = None
 
         self.clean_log_file()
 
@@ -125,6 +149,10 @@ class DaemonRunner:
 
 
 def main():
+    from utils.screen import Screen
+
+    Screen.hide_icon()
+
     parser = ArgumentParser(description="Perpetua Daemon")
     DaemonArguments(parent=parser)
     args = parser.parse_args()
@@ -132,6 +160,8 @@ def main():
     daemon = None
     try:
         daemon = DaemonRunner(args=args)
+        if not daemon.check_permissions():
+            sys.exit(1)
         daemon.run()
     except KeyboardInterrupt:
         if daemon and daemon._log:

@@ -16,14 +16,10 @@
 #
 
 import asyncio
-import enum
 from collections import deque
-from typing import Callable, Optional
+from typing import Optional
 from time import time, sleep
 from threading import Event
-
-from pynput.mouse import Button, Controller as MouseController
-from pynput.mouse import Listener as MouseListener
 
 from event import (
     BusEventType,
@@ -43,195 +39,9 @@ from network.stream.handler import StreamHandler
 
 from utils.logging import get_logger, Logger
 from utils.screen import Screen
+from input.utils import ScreenEdge, EdgeDetector, ButtonMapping
 
-
-class ButtonMapping(enum.Enum):
-    """The various buttons.
-
-    The actual values for these items differ between platforms. Some
-    platforms may have additional buttons, but these are guaranteed to be
-    present everywhere and we remap them to these values.
-    """
-
-    #: An unknown button was pressed
-    unknown = 0
-
-    #: The left button
-    left = 1
-
-    #: The middle button
-    middle = 2
-
-    #: The right button
-    right = 3
-
-
-class ScreenEdge(enum.Enum):
-    LEFT = 1
-    RIGHT = 2
-    TOP = 3
-    BOTTOM = 4
-
-
-class EdgeDetector:
-    """
-    A utility class for detecting when the mouse cursor reaches the edges of the screen.
-    """
-
-    @staticmethod
-    def clamp_to_screen(
-        x: float | int, y: float | int, screen_size: tuple
-    ) -> tuple[float, float]:
-        """
-        Clamps the given (x, y) coordinates to be within the bounds of the screen.
-
-        Args:
-            x (float | int): The x coordinate to clamp.
-            y (float | int): The y coordinate to clamp.
-            screen_size (tuple): A tuple representing the screen size (width, height).
-        Returns:
-            tuple[float, float]: The clamped (x, y) coordinates.
-        """
-        clamped_x = max(0, min(x, screen_size[0] - 1))
-        clamped_y = max(0, min(y, screen_size[1] - 1))
-        return clamped_x, clamped_y
-
-    @staticmethod
-    def is_at_edge(
-        movement_history: deque | list,
-        x: float | int,
-        y: float | int,
-        screen_size: tuple,
-        is_dragging: bool,
-        direction_ratio: float = 0.85,
-    ) -> Optional[ScreenEdge]:
-        """
-        Determines if the cursor is moving towards and has reached any edge of the screen.
-
-        Args:
-            movement_history (deque | list): A deque or list of recent (x, y) positions of the cursor.
-            x (float | int): Current x position of the cursor.
-            y (float | int): Current y position of the cursor.
-            screen_size (tuple): A tuple representing the screen size (width, height).
-            is_dragging (bool): Whether the user is currently dragging (holding a button).
-        Returns:
-            Optional[ScreenEdge]: The edge the cursor is at, or None if not at any
-        """
-        if is_dragging:
-            return None
-
-        size = len(movement_history)
-        if size < 2:
-            return None
-
-        w, h = screen_size
-
-        x_edge = None
-        x_axis_sign = 0
-        if x <= 0:
-            x_edge = ScreenEdge.LEFT
-            x_axis_sign = -1
-        elif x >= w - 1:
-            x_edge = ScreenEdge.RIGHT
-            x_axis_sign = 1
-
-        y_edge = None
-        y_axis_sign = 0
-        if y <= 0:
-            y_edge = ScreenEdge.TOP
-            y_axis_sign = -1
-        elif y >= h - 1:
-            y_edge = ScreenEdge.BOTTOM
-            y_axis_sign = 1
-
-        if x_edge is None and y_edge is None:
-            return None
-
-        # Direction check with jitter tolerance
-        pairs = size - 1
-        min_agreements = int(pairs * direction_ratio)
-        hist = movement_history
-
-        # Check x-axis edge first (LEFT/RIGHT)
-        if x_edge is not None:
-            agreements = 0
-            for i in range(pairs):
-                if (hist[i + 1][0] - hist[i][0]) * x_axis_sign > 0:
-                    agreements += 1
-            if agreements >= min_agreements:
-                return x_edge
-
-        # Check y-axis edge (TOP/BOTTOM)
-        if y_edge is not None:
-            agreements = 0
-            for i in range(pairs):
-                if (hist[i + 1][1] - hist[i][1]) * y_axis_sign > 0:
-                    agreements += 1
-            if agreements >= min_agreements:
-                return y_edge
-
-        return None
-
-    def detect_edge(
-        self,
-        movement_history: deque | list,
-        x: float | int,
-        y: float | int,
-        screen_size: tuple,
-        is_dragging: bool,
-        callbacks: dict[ScreenEdge, Callable],
-    ):
-        """
-        Detects if the cursor is at the edge and invokes the appropriate callback.
-
-        Args:
-            movement_history (deque | list): A deque or list of recent (x, y) positions of the cursor.
-            x (float | int): Current x position of the cursor.
-            y (float | int): Current y position of the cursor.
-            screen_size (tuple): A tuple representing the screen size (width, height).
-            is_dragging (bool): Whether the user is currently dragging (holding a button).
-        """
-        edge = self.is_at_edge(movement_history, x, y, screen_size, is_dragging)
-        if edge and edge in callbacks:
-            callbacks[edge]()
-
-    @staticmethod
-    def get_crossing_coords(
-        x: float | int,
-        y: float | int,
-        screen_size: tuple,
-        edge: ScreenEdge,
-        screen: str | None,
-    ) -> tuple[float, float]:
-        """
-        Get the coordinates when crossing back from client to server.
-        Coords will be the opposite of the real one (so opposite to the edge reached).
-
-        Args:
-            x (float | int): Current x position of the cursor.
-            y (float | int): Current y position of the cursor.
-            screen_size (tuple): A tuple representing the screen size (width, height).
-            edge (ScreenEdge): The edge that was reached.
-        Returns:
-            tuple[float, float]: The normalized crossing coordinates.
-        """
-        if screen == "" or screen is None:
-            return -1, -1
-
-        # If we reach the bottom edge, we need to set y to 1 (top of the server screen)
-        if edge == ScreenEdge.BOTTOM and screen == ScreenPosition.TOP:
-            return x / screen_size[0], 0.0
-        # If we reach the top edge, we need to set y to 0 (bottom of the server screen)
-        elif edge == ScreenEdge.TOP and screen == ScreenPosition.BOTTOM:
-            return x / screen_size[0], 1.0
-        # If we reach the left edge, we need to set x to 1 (right of the server screen)
-        elif edge == ScreenEdge.LEFT and screen == ScreenPosition.RIGHT:
-            return 1.0, y / screen_size[1]
-        # If we reach the right edge, we need to set x to 0 (left of the server screen)
-        elif edge == ScreenEdge.RIGHT and screen == ScreenPosition.LEFT:
-            return 0.0, y / screen_size[1]
-        else:
-            return -1, -1
+from .backend import MouseListener, MouseController, Button
 
 
 class ServerMouseListener(object):
@@ -718,8 +528,9 @@ class ClientMouseController(object):
 
         self._controller = MouseController()
         self._pressed = False
-        self._last_press_time = -99
-        self._doubleclick_counter = 0
+        self._previous_button: int | None = None
+        self._last_press_time: float = -99
+        self._doubleclick_counter: int = 0
         self._is_dragging = False
 
         self._logger = get_logger(self.__class__.__name__)
@@ -811,8 +622,6 @@ class ClientMouseController(object):
         Async worker task to handle mouse events.
         Replaces the multiprocessing worker.
         """
-        # loop = asyncio.get_running_loop()
-
         while self._running:
             try:
                 # Get message from async queue
@@ -822,24 +631,12 @@ class ClientMouseController(object):
                 if not isinstance(event, MouseEvent):
                     continue
 
-                # TODO: Benchamrk to see if not using run_in_executor for move has a significant impact on performance
-
                 # Execute mouse actions in executor to avoid blocking
                 if event.action == MouseEvent.MOVE_ACTION:
-                    # await loop.run_in_executor(
-                    #     None,
-                    #     self._move_cursor,
-                    #     event.x, event.y, event.dx, event.dy
-                    # )
                     self._move_cursor(event.x, event.y, event.dx, event.dy)
                     # Check for edge crossing after movement
                     await self._check_edge()
                 elif event.action == MouseEvent.POSITION_ACTION:
-                    # await loop.run_in_executor(
-                    #     None,
-                    #     self._position_cursor,
-                    #     event.x, event.y
-                    # )
                     for _ in range(
                         10
                     ):  # We position multiple times to ensure it works across platforms
@@ -850,11 +647,6 @@ class ClientMouseController(object):
                     # Click is fast enough to run directly
                     self._click(event.button, event.is_pressed)
                 elif event.action == MouseEvent.SCROLL_ACTION:
-                    # await loop.run_in_executor(
-                    #     None,
-                    #     self._scroll,
-                    #     event.dx, event.dy
-                    # )
                     self._scroll(event.dx, event.dy)
 
                 await asyncio.sleep(0)
@@ -1073,14 +865,13 @@ class ClientMouseController(object):
             self._controller.release(btn)
             self._pressed = False
         elif not self._pressed and is_pressed:
-            # If we receive a press event within 100ms of the last press, treat it as a double-click
-            if (current_time - self._last_press_time) < 0.15:
-                self._controller.click(btn, 2 + self._doubleclick_counter)
-                self._doubleclick_counter = (
-                    0
-                    if self._doubleclick_counter == 2
-                    else self._doubleclick_counter + 1
-                )
+            # double-click emulation
+            if (
+                current_time - self._last_press_time
+            ) < 0.4 and self._previous_button == button:
+                self._controller.click(btn, self._doubleclick_counter)
+                if 0 <= self._doubleclick_counter < 10:
+                    self._doubleclick_counter += 1
                 self._pressed = False
             else:
                 self._controller.press(btn)
@@ -1088,6 +879,7 @@ class ClientMouseController(object):
                 self._pressed = True
 
             self._last_press_time = current_time
+            self._previous_button = button
 
         self._is_dragging = is_pressed and ButtonMapping(button).value in [
             ButtonMapping.left.value,

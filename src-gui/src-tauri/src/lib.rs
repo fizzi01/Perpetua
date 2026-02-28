@@ -41,11 +41,7 @@ pub mod commands;
 pub mod handler;
 pub mod process;
 
-pub use process::DaemonProcess;
-
-// ---------------------------------------------------------------------------
-// AppState
-// ---------------------------------------------------------------------------
+pub use process::{DaemonConfig, DaemonProcess};
 
 #[derive(Default)]
 struct AppState {
@@ -144,7 +140,7 @@ where
     });
 
     // Close splashscreen and show the main window
-    if let Err(e) = splash_window.close() {
+    if let Err(e) = splash_window.destroy() {
         println!("Error closing splashscreen window: {:?}", e);
         handle_critical("Critical error on startup", "", &manager_clone);
     }
@@ -191,6 +187,11 @@ where
     #[cfg(target_os = "windows")]
     {
         win_builder = win_builder.decorations(false).transparent(true);
+    }
+
+    #[cfg(target_os = "linux")]
+    {
+        win_builder = win_builder.decorations(true).transparent(true);
     }
 
     win_builder.build().unwrap();
@@ -253,6 +254,7 @@ where
             tauri::image::Image::from_bytes(include_bytes!("../icons/macos/32x32_idle.png"))?;
     }
 
+    #[allow(unused_mut)]
     let mut tray = tray.icon(icon_data);
 
     #[cfg(target_os = "macos")]
@@ -301,7 +303,7 @@ where
             .title_bar_style(TitleBarStyle::Transparent);
     }
 
-    #[cfg(target_os = "windows")]
+    #[cfg(not(target_os = "macos"))]
     {
         splashscreen_win_builder = splashscreen_win_builder
             .decorations(false)
@@ -338,7 +340,7 @@ where
 }
 
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
-pub fn run(daemon: DaemonProcess) {
+pub fn run(daemon_config: Option<DaemonConfig>) {
     let mut app = tauri::Builder::default();
 
     #[cfg(desktop)]
@@ -360,7 +362,6 @@ pub fn run(daemon: DaemonProcess) {
             hard_close: false,
             connected: false,
         }))
-        .manage(daemon)
         .invoke_handler(tauri::generate_handler![
             // -- Server Commands --
             commands::start_server,
@@ -388,7 +389,14 @@ pub fn run(daemon: DaemonProcess) {
             // -- UI Commands --
             commands::switch_tray_icon,
         ])
-        .setup(|app| {
+        .setup(move |app| {
+            // Spawn daemon (release) or create empty handle (debug)
+            let daemon = match daemon_config {
+                Some(config) => DaemonProcess::spawn(&config),
+                None => DaemonProcess::empty(),
+            };
+            app.manage(daemon);
+
             // Initialize connection to the daemon
             tauri::async_runtime::spawn(setup_connection(app.handle().clone()));
             Ok(())

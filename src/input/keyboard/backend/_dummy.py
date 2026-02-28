@@ -15,12 +15,40 @@
 #  along with this program.  If not, see <https://www.gnu.org/licenses/>.
 #
 
-# Mocking pynput to prevent crash on Linux
-def _MOCK_PYNPUT():
-    import sys
-    from unittest.mock import MagicMock
+from pynput.keyboard import Key, KeyCode
 
-    sys.modules["pynput._util.xorg"] = MagicMock()
-    sys.modules["pynput.keyboard._xorg"] = MagicMock()
-    sys.modules["pynput.mouse._xorg"] = MagicMock()
-    sys.modules["pynput.keyboard._uinput"] = MagicMock()
+
+class KeyboardListener:
+    """Dummy listener"""
+
+    def __init__(
+        self,
+        *args,
+        **kwargs,
+    ):
+        self._running = False
+
+    def start(self):
+        # Dummy: do not spawn threads, keep not running
+        self._running = False
+
+    def stop(self):
+        self._running = False
+
+    def is_alive(self) -> bool:
+        return False
+
+
+class KeyboardController:
+    """Dummy controller"""
+
+    def press(self, key):
+        # No operation
+        return None
+
+    def release(self, key):
+        # No operation
+        return None
+
+
+__all__ = ["KeyboardListener", "KeyboardController", "Key", "KeyCode"]

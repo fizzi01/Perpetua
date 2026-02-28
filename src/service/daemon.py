@@ -2212,7 +2212,7 @@ async def _send_tcp_command(
 async def main():
     """Main entry point for daemon"""
     parser = DaemonArguments(socket_default=Daemon.DEFAULT_SOCKET_PATH)
-    args = parser.parse_args(None)  # ty:ignore[possibly-missing-attribute]
+    args = parser.parse_args(None)  # ty:ignore[possibly-missing-attribute, unresolved-attribute]
 
     # Setup application config
     app_config = ApplicationConfig()
@@ -2240,7 +2240,8 @@ async def main():
     except KeyboardInterrupt:
         print("\nKeyboard interrupt received")
     finally:
-        await daemon.stop()
+        # await daemon.stop()
+        os._exit(0)  # Force exit to avoid lingering tasks or event loops
 
     return 0
 
@@ -2248,9 +2249,9 @@ async def main():
 if __name__ == "__main__":
     try:
         if IS_WINDOWS:
-            import winloop as asyncloop  # ty:ignore[unresolved-import]
+            import winloop as asyncloop  # ty:ignore[unresolved-import, unused-ignore-comment]
         else:
-            import uvloop as asyncloop  # ty:ignore[unresolved-import]
+            import uvloop as asyncloop  # ty:ignore[unresolved-import, unused-ignore-comment]
 
         asyncloop.run(main())
     except ImportError:
