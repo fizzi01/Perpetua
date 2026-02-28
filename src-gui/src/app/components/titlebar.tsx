@@ -93,7 +93,7 @@ export function Titlebar({disabled, mode, onModeChange}: TitlebarProps) {
     const currentPlatform = platform();
 
     return (
-        currentPlatform !== "macos" ? (
+        currentPlatform == "windows" ? (
             <WindowTitlebar className='titlebar w-full' windowControlsProps={{
                 platform: "windows",
                 className: 'titlebar-system-group h-full border-b backdrop-blur-md',

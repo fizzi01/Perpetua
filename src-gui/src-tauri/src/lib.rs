@@ -184,9 +184,14 @@ where
             .traffic_light_position(Position::Physical(PhysicalPosition { x: 30, y: 50 }));
     }
 
-    #[cfg(not(target_os = "macos"))]
+    #[cfg(target_os = "windows")]
     {
         win_builder = win_builder.decorations(false).transparent(true);
+    }
+
+    #[cfg(target_os = "linux")]
+    {
+        win_builder = win_builder.decorations(true).transparent(true);
     }
 
     win_builder.build().unwrap();
