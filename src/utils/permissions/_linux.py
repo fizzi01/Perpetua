@@ -66,13 +66,16 @@ def _has_input_access() -> bool:
     except OSError:
         err += 1
         print(
-            "Warning: 'dumpkeys' command not found; cannot check for uinput access via group membership."
+            "Warning: 'dumpkeys' command not found. Keyboard input may not work without it."
         )
 
     try:
         with open("/etc/udev/rules.d/01-perpetua-keyboard.rules", "r") as f:
             content = f.read()
         if not ('KERNEL=="uinput"' in content and 'TAG+="uaccess"' in content):
+            print(
+                "Warning: perpetua-keyboard.rules does not grant access to /dev/uinput"
+            )
             raise OSError("Custom udev rule does not grant access to /dev/uinput")
     except OSError:
         err += 1
@@ -80,8 +83,9 @@ def _has_input_access() -> bool:
     try:
         with open("/etc/udev/rules.d/12-input.rules", "r") as f:
             content = f.read()
-        if not ('KERNEL=="uinput"' in content and 'TAG+="uaccess"' in content):
-            raise OSError("Custom udev rule does not grant access to /dev/uinput")
+        if not ('SUBSYSTEM=="tty"' in content and 'TAG+="uaccess"' in content):
+            print("Warning: input.rules does not grant access to dumpkeys")
+            raise OSError("Custom udev rule does not grant access to dumpkeys")
     except OSError as e:
         err += 1
         print(f"Warning: {e}")
