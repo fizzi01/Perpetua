@@ -114,7 +114,7 @@ pub async fn add_client(
         ip_addresses
             .iter()
             .filter(|ip| !ip.is_empty())
-            .map(|ip| format!("\"{}\"" , ip))
+            .map(|ip| format!("\"{}\"", ip))
             .collect::<Vec<_>>()
             .join(", ")
     );
