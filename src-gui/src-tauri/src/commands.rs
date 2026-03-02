@@ -19,6 +19,7 @@ along with this program. If not, see <https://www.gnu.org/licenses/>.
 use ipc::event::{CommandEvent, CommandType, EventParser, Parser};
 use ipc::log_reader::{get_log_file_path, read_all_lines, read_last_n_lines, LogResponse};
 use ipc::AtomicAsyncWriter;
+use local_ip_address::local_ip;
 
 /**
  * Helper function to handle optional string parameters
@@ -466,4 +467,11 @@ pub async fn switch_tray_icon(app: tauri::AppHandle, active: bool) -> Result<(),
         }
     }
     Ok(())
+}
+
+#[tauri::command]
+pub async fn get_local_ip() -> Result<String, String> {
+    local_ip()
+        .map(|ip| ip.to_string())
+        .map_err(|e| format!("Failed to get local IP address: {}", e))
 }

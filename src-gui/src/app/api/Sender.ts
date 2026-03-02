@@ -105,3 +105,7 @@ export function switchTrayIcon(active: boolean): void {
         console.error("Failed to switch tray icon:", error);
     }
 }
+
+export function getLocalIpAddress(): Promise<string> {
+    return invoke("get_local_ip");
+}
