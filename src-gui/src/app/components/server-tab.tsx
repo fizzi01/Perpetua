@@ -25,7 +25,7 @@ import {Switch} from "./ui/switch";
 
 import {ScrollArea} from './ui/scrollbar';
 
-import {Activity, Key, Lock, Plus, Settings, Shield, Trash2, Users, X} from 'lucide-react';
+import {Activity, Info, Key, Lock, Plus, Settings, Shield, Trash2, Users, X} from 'lucide-react';
 import {AnimatePresence, motion} from 'motion/react';
 import {InlineNotification, Notification} from './ui/inline-notification';
 import {PowerButton} from './ui/power-button';
@@ -674,20 +674,29 @@ export function ServerTab({onStatusChange, state}: ServerTabProps) {
                             </h3>
 
                             <div className="space-y-2">
-                                {/* <input
-                  type="text"
-                  placeholder="Client name"
-                  value={newClientName}
-                  onChange={(e) => setNewClientName(e.target.value)}
-                  className="w-full p-3 rounded-lg focus:outline-none transition-colors"
-                  style={{
-                    backgroundColor: 'var(--app-input-bg)',
-                    border: '2px solid var(--app-input-border)',
-                    color: 'var(--app-text-primary)'
-                  }}
-                  onFocus={(e) => e.currentTarget.style.borderColor = 'var(--app-primary)'}
-                  onBlur={(e) => e.currentTarget.style.borderColor = 'var(--app-input-border)'}
-                /> */}
+                                <AnimatePresence mode="wait">
+                                    {clientIpTags.length === 0 && clientIpInput === '' && (
+                                        <motion.div
+                                            initial={{opacity: 0, height: 0, scale: 0.95}}
+                                            animate={{opacity: 1, height: 'auto', scale: 1}}
+                                            exit={{opacity: 0, height: 0, scale: 0.95}}
+                                            transition={{duration: 0.2, ease: 'easeOut'}}
+                                            className="flex items-start gap-3 p-3 rounded-lg border overflow-hidden"
+                                            style={{
+                                                backgroundColor: 'var(--app-bg-secondary)',
+                                                borderColor: 'var(--app-primary)',
+                                                borderWidth: '1px'
+                                            }}
+                                        >
+                                            <Info size={18}
+                                                  style={{color: 'var(--app-primary)', marginTop: '2px', flexShrink: 0}}/>
+                                            <p className="text-xs leading-relaxed"
+                                               style={{color: 'var(--app-text-secondary)'}}>
+                                                Enter one or more <strong style={{color: 'var(--app-text-primary)'}}>IP addresses</strong> and optionally one <strong style={{color: 'var(--app-text-primary)'}}>hostname</strong> to identify this client. Confirm each entry with <kbd className="px-1 py-0.5 rounded font-mono" style={{backgroundColor: 'var(--app-bg-tertiary)', border: '1px solid var(--app-border)'}}>Enter</kbd>, <kbd className="px-1 py-0.5 rounded font-mono" style={{backgroundColor: 'var(--app-bg-tertiary)', border: '1px solid var(--app-border)'}}>Space</kbd> or <kbd className="px-1 py-0.5 rounded font-mono" style={{backgroundColor: 'var(--app-bg-tertiary)', border: '1px solid var(--app-border)'}}>,</kbd>
+                                            </p>
+                                        </motion.div>
+                                    )}
+                                </AnimatePresence>
                                 <div
                                     className="flex flex-wrap items-center gap-1.5 cursor-text app-input"
                                     onClick={() => ipInputRef.current?.focus()}
