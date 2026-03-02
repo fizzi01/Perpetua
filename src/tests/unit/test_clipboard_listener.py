@@ -1155,3 +1155,312 @@ class TestSpecialCharacters:
 
         if changes:
             assert any(rtl_text in c[0] for c in changes)
+
+
+# ============================================================================
+# Test File List Detection
+# ============================================================================
+
+
+@pytest.mark.anyio
+class TestFileListDetection:
+    """Test clipboard file list detection via paste_file_list."""
+
+    async def test_is_file_returns_true_when_content_in_file_list(self):
+        """Test _is_file returns True when content matches a file in the list."""
+        with patch("input.clipboard._base.paste_file_list") as mock_pfl:
+            mock_pfl.return_value = ["/tmp/file1.txt", "/tmp/file2.txt"]
+
+            assert Clipboard._is_file("/tmp/file1.txt") is True
+            assert Clipboard._is_file("/tmp/file2.txt") is True
+            mock_pfl.assert_called()
+
+    async def test_is_file_returns_false_when_content_not_in_file_list(self):
+        """Test _is_file returns False when content is not in the file list."""
+        with patch("input.clipboard._base.paste_file_list") as mock_pfl:
+            mock_pfl.return_value = ["/tmp/file1.txt"]
+
+            assert Clipboard._is_file("/tmp/other.txt") is False
+
+    async def test_is_file_returns_false_on_exception(self):
+        """Test _is_file returns False when paste_file_list raises."""
+        with patch("input.clipboard._base.paste_file_list") as mock_pfl:
+            mock_pfl.side_effect = Exception("Clipboard unavailable")
+
+            assert Clipboard._is_file("anything") is False
+
+    async def test_try_get_clip_files_returns_files(self):
+        """Test _try_get_clip_files returns file list on success."""
+        with patch("input.clipboard._base.paste_file_list") as mock_pfl:
+            mock_pfl.return_value = ["/tmp/a.txt", "/tmp/b.txt"]
+
+            result = Clipboard._try_get_clip_files()
+            assert result == ["/tmp/a.txt", "/tmp/b.txt"]
+
+    async def test_try_get_clip_files_returns_empty_on_exception(self):
+        """Test _try_get_clip_files returns empty list on exception."""
+        with patch("input.clipboard._base.paste_file_list") as mock_pfl:
+            mock_pfl.side_effect = Exception("No files")
+
+            result = Clipboard._try_get_clip_files()
+            assert result == []
+
+    async def test_try_get_clip_files_returns_empty_list(self):
+        """Test _try_get_clip_files when clipboard has no files."""
+        with patch("input.clipboard._base.paste_file_list") as mock_pfl:
+            mock_pfl.return_value = []
+
+            result = Clipboard._try_get_clip_files()
+            assert result == []
+
+    async def test_file_type_detected_via_polling(self):
+        """Test that file content type is detected during polling with mocked paste_file_list."""
+        changes: List[Tuple[str, ClipboardType]] = []
+
+        async def on_change(content: str, content_type: ClipboardType):
+            changes.append((content, content_type))
+
+        call_count = 0
+
+        def dynamic_paste():
+            nonlocal call_count
+            call_count += 1
+            # First call is the initial baseline poll
+            if call_count <= 1:
+                return INIT_CONTENT
+            return "/tmp/document.pdf"
+
+        def dynamic_file_list():
+            if call_count <= 1:
+                return []
+            return ["/tmp/document.pdf"]
+
+        with (
+            patch("input.clipboard._base.paste", side_effect=dynamic_paste),
+            patch(
+                "input.clipboard._base.paste_file_list", side_effect=dynamic_file_list
+            ),
+        ):
+            listener = Clipboard(
+                on_change=on_change,
+                poll_interval=0.1,
+                content_types=[ClipboardType.TEXT, ClipboardType.FILE],
+            )
+
+            await listener.start()
+            await asyncio.sleep(0.35)
+            await listener.stop()
+
+            # Should detect content as FILE type
+            file_changes = [c for c in changes if c[1] == ClipboardType.FILE]
+            assert len(file_changes) >= 1
+            assert file_changes[0][0] == "/tmp/document.pdf"
+
+    async def test_multiple_files_joined_with_newlines(self):
+        """Test that multiple files in the clipboard are joined with newlines."""
+        changes: List[Tuple[str, ClipboardType]] = []
+
+        async def on_change(content: str, content_type: ClipboardType):
+            changes.append((content, content_type))
+
+        files = ["/tmp/file1.txt", "/tmp/file2.txt", "/tmp/file3.txt"]
+        call_count = 0
+
+        def dynamic_paste():
+            nonlocal call_count
+            call_count += 1
+            if call_count <= 1:
+                return INIT_CONTENT
+            return "/tmp/file1.txt"
+
+        def dynamic_file_list():
+            if call_count <= 1:
+                return []
+            return files
+
+        with (
+            patch("input.clipboard._base.paste", side_effect=dynamic_paste),
+            patch(
+                "input.clipboard._base.paste_file_list", side_effect=dynamic_file_list
+            ),
+        ):
+            listener = Clipboard(
+                on_change=on_change,
+                poll_interval=0.1,
+                content_types=[ClipboardType.FILE],
+            )
+
+            await listener.start()
+            await asyncio.sleep(0.35)
+            await listener.stop()
+
+            file_changes = [c for c in changes if c[1] == ClipboardType.FILE]
+            assert len(file_changes) >= 1
+            # Content should be all files joined by newlines
+            assert file_changes[0][0] == "\n".join(files)
+
+    async def test_empty_file_list_falls_back_to_text(self):
+        """Test that an empty file list causes fallback to TEXT content type."""
+        changes: List[Tuple[str, ClipboardType]] = []
+
+        async def on_change(content: str, content_type: ClipboardType):
+            changes.append((content, content_type))
+
+        call_count = 0
+
+        def dynamic_paste():
+            nonlocal call_count
+            call_count += 1
+            if call_count <= 1:
+                return INIT_CONTENT
+            return "just plain text"
+
+        with (
+            patch("input.clipboard._base.paste", side_effect=dynamic_paste),
+            patch("input.clipboard._base.paste_file_list", return_value=[]),
+        ):
+            listener = Clipboard(
+                on_change=on_change,
+                poll_interval=0.1,
+                content_types=[ClipboardType.TEXT, ClipboardType.FILE],
+            )
+
+            await listener.start()
+            await asyncio.sleep(0.35)
+            await listener.stop()
+
+            # Should detect as TEXT, not FILE
+            text_changes = [c for c in changes if c[1] == ClipboardType.TEXT]
+            file_changes = [c for c in changes if c[1] == ClipboardType.FILE]
+            assert len(text_changes) >= 1
+            assert len(file_changes) == 0
+
+    async def test_file_type_filtered_when_not_in_content_types(self):
+        """Test that FILE type is filtered out when not in monitored content_types."""
+        changes: List[Tuple[str, ClipboardType]] = []
+
+        async def on_change(content: str, content_type: ClipboardType):
+            changes.append((content, content_type))
+
+        call_count = 0
+
+        def dynamic_paste():
+            nonlocal call_count
+            call_count += 1
+            if call_count <= 1:
+                return INIT_CONTENT
+            return "/tmp/secret.pdf"
+
+        def dynamic_file_list():
+            if call_count <= 1:
+                return []
+            return ["/tmp/secret.pdf"]
+
+        with (
+            patch("input.clipboard._base.paste", side_effect=dynamic_paste),
+            patch(
+                "input.clipboard._base.paste_file_list", side_effect=dynamic_file_list
+            ),
+        ):
+            # Listener that only monitors TEXT — FILE should be ignored
+            listener = Clipboard(
+                on_change=on_change,
+                poll_interval=0.1,
+                content_types=[ClipboardType.TEXT],
+            )
+
+            await listener.start()
+            await asyncio.sleep(0.35)
+            await listener.stop()
+
+            # No changes should be reported since FILE is not monitored
+            assert len(changes) == 0
+
+    async def test_file_list_exception_during_polling(self):
+        """Test that an exception in paste_file_list during polling is handled gracefully."""
+        changes: List[Tuple[str, ClipboardType]] = []
+
+        async def on_change(content: str, content_type: ClipboardType):
+            changes.append((content, content_type))
+
+        call_count = 0
+
+        def dynamic_paste():
+            nonlocal call_count
+            call_count += 1
+            if call_count <= 1:
+                return INIT_CONTENT
+            return "normal text"
+
+        with (
+            patch("input.clipboard._base.paste", side_effect=dynamic_paste),
+            patch(
+                "input.clipboard._base.paste_file_list",
+                side_effect=Exception("paste_file_list crash"),
+            ),
+        ):
+            listener = Clipboard(
+                on_change=on_change,
+                poll_interval=0.1,
+                content_types=[ClipboardType.TEXT, ClipboardType.FILE],
+            )
+
+            await listener.start()
+            await asyncio.sleep(0.35)
+
+            # Listener should still be running despite the exception
+            assert listener.is_listening()
+            await listener.stop()
+
+            # _try_get_clip_files catches exception and returns [], so fallback to TEXT
+            text_changes = [c for c in changes if c[1] == ClipboardType.TEXT]
+            assert len(text_changes) >= 1
+
+    async def test_file_change_detection_between_polls(self):
+        """Test detecting a change from text to file content across polls."""
+        changes: List[Tuple[str, ClipboardType]] = []
+
+        async def on_change(content: str, content_type: ClipboardType):
+            changes.append((content, content_type))
+
+        call_count = 0
+
+        def dynamic_paste():
+            nonlocal call_count
+            call_count += 1
+            # call 1: initial baseline, call 2: first poll -> text change detected
+            # call 3+: file content
+            if call_count <= 1:
+                return INIT_CONTENT
+            if call_count <= 3:
+                return "plain text"
+            return "/home/user/doc.pdf"
+
+        def dynamic_file_list():
+            if call_count <= 3:
+                return []
+            return ["/home/user/doc.pdf"]
+
+        with (
+            patch("input.clipboard._base.paste", side_effect=dynamic_paste),
+            patch(
+                "input.clipboard._base.paste_file_list", side_effect=dynamic_file_list
+            ),
+        ):
+            listener = Clipboard(
+                on_change=on_change,
+                poll_interval=0.1,
+                content_types=[ClipboardType.TEXT, ClipboardType.FILE],
+            )
+
+            await listener.start()
+            # Wait enough for multiple polls
+            await asyncio.sleep(0.8)
+            await listener.stop()
+
+            # Should have captured both TEXT and FILE changes
+            text_changes = [c for c in changes if c[1] == ClipboardType.TEXT]
+            file_changes = [c for c in changes if c[1] == ClipboardType.FILE]
+            assert len(text_changes) >= 1
+            assert len(file_changes) >= 1
+            assert file_changes[0][0] == "/home/user/doc.pdf"

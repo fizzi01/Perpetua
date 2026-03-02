@@ -27,7 +27,6 @@ from . import _base
 from ._base import ClipboardType
 
 
-# TODO: Extend copykitten to support get_files natively (already done in rust side)
 class Clipboard(_base.Clipboard):
     __logger = get_logger(__name__)
 
