@@ -190,7 +190,7 @@ export enum StreamType {
 export interface ClientObj {
     uid: string;
     host_name: string;
-    ip_address: string;
+    ip_addresses: string[];
     screen_position: string;
     ssl: boolean;
     streams_enabled: number[];
@@ -201,7 +201,7 @@ export interface ClientObj {
 
 export interface ClientEditObj {
     hostname?: string;
-    ip_address?: string;
+    ip_addresses?: string[];
     screen_position?: string;
 }
 

@@ -421,7 +421,7 @@ class Server:
 
     async def add_client(
         self,
-        ip_address: Optional[str] = None,
+        ip_addresses: Optional[list[str] | str] = None,
         hostname: Optional[str] = None,
         screen_position: str = "top",
         auto_save: bool = True,
@@ -430,7 +430,7 @@ class Server:
         Add a client to the authorized list.
 
         Args:
-            ip_address: IP address of the client
+            ip_addresses: IP address(es) of the client (single str or list)
             hostname: Hostname of the client
             screen_position: Screen position relative to server
             auto_save: If True, automatically saves configuration after adding
@@ -440,7 +440,7 @@ class Server:
         """
         try:
             client = self.config.add_client(
-                ip_address=ip_address,
+                ip_addresses=ip_addresses,
                 hostname=hostname,
                 screen_position=screen_position,
             )
@@ -449,7 +449,7 @@ class Server:
                 await self.save_config()
 
             self._logger.info(
-                f"Added client {ip_address if ip_address else hostname} at position {screen_position}"
+                f"Added client {ip_addresses if ip_addresses else hostname} at position {screen_position}"
             )
             return client
         except ValueError as ve:
@@ -467,7 +467,7 @@ class Server:
         Remove a client from the authorized list.
 
         Args:
-            ip_address: IP address of the client
+            ip_address: One of the client's known IP addresses (used for lookup)
             hostname: Hostname of the client
             screen_position: Screen position of the client
             auto_save: If True, automatically saves configuration after removal
@@ -489,9 +489,8 @@ class Server:
             if auto_save:
                 await self.save_config()
 
-            self._logger.info(
-                f"Removed client {ip_address or hostname or screen_position}"
-            )
+            net_id = ip_address or hostname or screen_position
+            self._logger.info(f"Removed client {net_id}")
             return True
         return False
 
@@ -516,15 +515,18 @@ class Server:
         hostname: Optional[str] = None,
         old_screen_position: Optional[str] = None,
         new_screen_position: Optional[str] = None,
+        new_ip_addresses: Optional[list[str] | str] = None,
         auto_save: bool = True,
     ) -> ClientObj:
         """
         Edit a client's properties.
 
         Args:
-            ip_address: IP address of the client to edit
+            ip_address: One of the client's known IP addresses (used for lookup)
             hostname: Hostname of the client to edit
+            old_screen_position: Current screen position (used for lookup)
             new_screen_position: New screen position
+            new_ip_addresses: New IP address(es) to set (replaces existing list)
             auto_save: If True, automatically saves configuration after editing
 
         Returns:
@@ -545,13 +547,19 @@ class Server:
         if new_screen_position:
             client.screen_position = new_screen_position
 
+        if new_ip_addresses is not None:
+            if isinstance(new_ip_addresses, str):
+                new_ip_addresses = [new_ip_addresses]
+            client.ip_addresses = new_ip_addresses
+
         self.clients_manager.update_client(client)
 
         if auto_save:
             await self.save_config()
 
+        net_id = ip_address or hostname
         self._logger.info(
-            f"Edited client {ip_address}: screen_position={new_screen_position}"
+            f"Edited client {net_id}: screen_position={new_screen_position}"
         )
         return client
 

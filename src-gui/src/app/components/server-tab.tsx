@@ -25,7 +25,7 @@ import {Switch} from "./ui/switch";
 
 import {ScrollArea} from './ui/scrollbar';
 
-import {Activity, Key, Lock, Plus, Settings, Shield, Trash2, Users} from 'lucide-react';
+import {Activity, Key, Lock, Plus, Settings, Shield, Trash2, Users, X} from 'lucide-react';
 import {AnimatePresence, motion} from 'motion/react';
 import {InlineNotification, Notification} from './ui/inline-notification';
 import {PowerButton} from './ui/power-button';
@@ -70,7 +70,8 @@ export function ServerTab({onStatusChange, state}: ServerTabProps) {
     const [otpRequested, setOtpRequested] = useState(false);
     const [otpTimeout, setOtpTimeout] = useState(30);
     const [firstInit, setFirstInit] = useState(true);
-    const [newClientIp, setNewClientIp] = useState('');
+    const [clientIpTags, setClientIpTags] = useState<string[]>([]);
+    const [clientIpInput, setClientIpInput] = useState('');
     const [newClientPosition, setNewClientPosition] = useState<'top' | 'bottom' | 'left' | 'right'>('top');
     const [isAddingClient, setIsAddingClient] = useState(false);
 
@@ -90,6 +91,7 @@ export function ServerTab({onStatusChange, state}: ServerTabProps) {
 
     const otpFocus = useRef<HTMLDivElement>(null);
     const saveOptionsTimeoutRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+    const ipInputRef = useRef<HTMLInputElement>(null);
 
     const addNotification = (type: Notification['type'], message: string, description?: string) => {
         const newNotification: Notification = {
@@ -179,7 +181,7 @@ export function ServerTab({onStatusChange, state}: ServerTabProps) {
             addNotification(
                 connected ? 'success' : 'warning',
                 connected ? 'Client Connected' : 'Client Disconnected',
-                `${clientData.host_name ? clientData.host_name : clientData.ip_address} (${clientData.screen_position.toUpperCase()})`
+                `${clientData.host_name ? clientData.host_name : clientData.ip_addresses.join(', ')} (${clientData.screen_position.toUpperCase()})`
             );
         }
         clientManager.updateClientStatus(clientData, connected);
@@ -339,6 +341,54 @@ export function ServerTab({onStatusChange, state}: ServerTabProps) {
         setOtpRequested(true);
     };
 
+    /**
+     * Try to confirm the current input as a tag (IP or hostname).
+     * Returns true if a tag was added.
+     */
+    const confirmIpTag = (value?: string): boolean => {
+        const raw = (value ?? clientIpInput).trim();
+        if (!raw) return false;
+
+        // Accept valid IPs directly
+        if (isValidIpAddress(raw)) {
+            if (clientIpTags.includes(raw)) {
+                addNotification('warning', 'IP already added');
+                setClientIpInput('');
+                return false;
+            }
+            setClientIpTags(prev => [...prev, raw]);
+            setClientIpInput('');
+            return true;
+        }
+
+        // Non-IP entry → treat as hostname (allow max 1)
+        const existingHostname = clientIpTags.find(t => !isValidIpAddress(t));
+        if (existingHostname) {
+            addNotification('warning', 'Hostname already set');
+            setClientIpInput('');
+            return false;
+        }
+
+        setClientIpTags(prev => [...prev, raw]);
+        setClientIpInput('');
+        return true;
+    };
+
+    const removeIpTag = (index: number) => {
+        setClientIpTags(prev => prev.filter((_, i) => i !== index));
+    };
+
+    const handleIpInputKeyDown = (e: React.KeyboardEvent<HTMLInputElement>) => {
+        if (e.key === 'Enter' || e.key === ',' || e.key === 'Tab') {
+            e.preventDefault();
+            confirmIpTag();
+        }
+        // Backspace on empty input removes last tag
+        if (e.key === 'Backspace' && clientIpInput === '' && clientIpTags.length > 0) {
+            setClientIpTags(prev => prev.slice(0, -1));
+        }
+    };
+
     const addClient = () => {
         if (isAddingClient) {
             return;
@@ -349,16 +399,33 @@ export function ServerTab({onStatusChange, state}: ServerTabProps) {
             return;
         }
 
-        if (!newClientIp || !newClientPosition) {
+        // Confirm any pending input before submitting
+        let tags = [...clientIpTags];
+        const pendingRaw = clientIpInput.trim();
+        if (pendingRaw) {
+            if (isValidIpAddress(pendingRaw)) {
+                if (!tags.includes(pendingRaw)) tags.push(pendingRaw);
+            } else if (!tags.some(t => !isValidIpAddress(t))) {
+                // Add as hostname only if no hostname tag exists yet
+                tags.push(pendingRaw);
+            }
+        }
+
+        if (tags.length === 0 || !newClientPosition) {
             addNotification('error', 'Missing information');
             return;
         }
 
-        let ip = isValidIpAddress(newClientIp) ? newClientIp : '';
-        let hostname = ip === '' ? newClientIp : '';
+        // Separate hostname (first non-IP tag) from IPs
+        const ips = tags.filter(isValidIpAddress);
+        const hostname = tags.find(t => !isValidIpAddress(t)) || '';
 
-        // Check if a client with the same IP or hostname already exists
-        let existing = clientManager.clients.find(c => ip !== '' ? c.ip === ip : hostname !== '' ? c.name === hostname : null);
+        // Check if a client with any of the same IPs or hostname already exists
+        let existing = clientManager.clients.find(c =>
+            ips.length > 0
+                ? ips.some(ip => c.ips?.includes(ip))
+                : hostname !== '' ? c.name === hostname : false
+        );
         if (existing) {
             addNotification('error', 'Client already exists');
             return;
@@ -370,12 +437,13 @@ export function ServerTab({onStatusChange, state}: ServerTabProps) {
             console.log(`Client added successfully: ${event.message}`);
             let result = event.data?.result as ClientEditObj;
             if (result) {
-                addNotification('info', 'Client added', `${hostname || ip} (${newClientPosition.toUpperCase()})`);
-                setNewClientIp('');
+                addNotification('info', 'Client added', `${hostname || ips.join(', ')} (${newClientPosition.toUpperCase()})`);
+                setClientIpTags([]);
+                setClientIpInput('');
                 setNewClientPosition('top');
                 setFirstInit(true);
 
-                clientManager.addClient(hostname, ip, newClientPosition);
+                clientManager.addClient(hostname, ips, newClientPosition);
 
                 listeners.removeListener('add-client');
                 listeners.removeListener('add-client-error');
@@ -395,7 +463,7 @@ export function ServerTab({onStatusChange, state}: ServerTabProps) {
             listeners.addListenerOnce('add-client-error', unlisten);
         });
 
-        addClientCommand(hostname, ip, newClientPosition).catch((err) => {
+        addClientCommand(hostname, ips.length > 0 ? ips : [], newClientPosition).catch((err) => {
             console.error('Error adding client:', err);
             addNotification('error', err.toString());
             setIsAddingClient(false);
@@ -411,7 +479,7 @@ export function ServerTab({onStatusChange, state}: ServerTabProps) {
         listenCommand(EventType.CommandSuccess, CommandType.RemoveClient, (event) => {
             console.log(`Client removed successfully: ${event.message}`);
             clientManager.removeClient(id);
-            addNotification('info', `${client?.name || client?.ip} removed`);
+            addNotification('info', `${client?.name || client?.ips?.join(', ')} removed`);
             listeners.removeListener('remove-client');
             listeners.removeListener('remove-client-error');
         }).then(unlisten => {
@@ -426,7 +494,7 @@ export function ServerTab({onStatusChange, state}: ServerTabProps) {
             listeners.addListener('remove-client-error', unlisten);
         });
 
-        removeClientCommand(client?.name || '', client?.ip || '').catch((err) => {
+        removeClientCommand(client?.name || '', client?.ips?.[0] || '').catch((err) => {
             console.error('Error removing client:', err);
             addNotification('error', err.toString());
             listeners.forceRemoveListener('remove-client');
@@ -620,13 +688,67 @@ export function ServerTab({onStatusChange, state}: ServerTabProps) {
                   onFocus={(e) => e.currentTarget.style.borderColor = 'var(--app-primary)'}
                   onBlur={(e) => e.currentTarget.style.borderColor = 'var(--app-input-border)'}
                 /> */}
-                                <input
-                                    type="text"
-                                    placeholder="IP Address or Hostname"
-                                    value={newClientIp}
-                                    onChange={(e) => setNewClientIp(e.target.value)}
-                                    className="app-input"
-                                />
+                                <div
+                                    className="flex flex-wrap items-center gap-1.5 cursor-text app-input"
+                                    onClick={() => ipInputRef.current?.focus()}
+                                >
+                                    <AnimatePresence mode="popLayout">
+                                        {clientIpTags.map((tag, index) => (
+                                            <motion.span
+                                                key={tag}
+                                                initial={{opacity: 0, scale: 0.8}}
+                                                animate={{opacity: 1, scale: 1}}
+                                                exit={{opacity: 0, scale: 0.8}}
+                                                transition={{duration: 0.15}}
+                                                className="inline-flex items-center gap-1 px-2 py-0.5 rounded-md text-sm"
+                                                style={{
+                                                    backgroundColor: isValidIpAddress(tag) ? 'var(--app-primary)' : 'var(--app-bg-tertiary)',
+                                                    color: isValidIpAddress(tag) ? 'white' : 'var(--app-text-primary)',
+                                                    border: isValidIpAddress(tag) ? 'none' : '1px solid var(--app-border)',
+                                                }}
+                                            >
+                                                {tag}
+                                                <button
+                                                    type="button"
+                                                    onClick={(e) => {
+                                                        e.stopPropagation();
+                                                        removeIpTag(index);
+                                                    }}
+                                                    className="cursor-pointer p-0 leading-none rounded-full transition-opacity hover:opacity-70"
+                                                    style={{color: 'inherit'}}
+                                                >
+                                                    <X size={12}/>
+                                                </button>
+                                            </motion.span>
+                                        ))}
+                                    </AnimatePresence>
+                                    <input
+                                        ref={ipInputRef}
+                                        type="text"
+                                        placeholder={clientIpTags.length === 0 ? 'IP address(es) or hostname' : clientIpTags.some(t => !isValidIpAddress(t)) ? 'Add IP...' : 'Add IP or hostname...'}
+                                        value={clientIpInput}
+                                        onChange={(e) => {
+                                            // Auto-confirm on comma or space after a valid IP
+                                            const val = e.target.value;
+                                            if (val.endsWith(',') || val.endsWith(' ')) {
+                                                const cleaned = val.slice(0, -1).trim();
+                                                if (cleaned && isValidIpAddress(cleaned)) {
+                                                    confirmIpTag(cleaned);
+                                                    return;
+                                                }
+                                            }
+                                            setClientIpInput(val);
+                                        }}
+                                        onKeyDown={handleIpInputKeyDown}
+                                        onBlur={() => {
+                                            // On blur, try to confirm pending input
+                                            if (clientIpInput.trim()) {
+                                                confirmIpTag();
+                                            }
+                                        }}
+                                        className="flex-1 min-w-[120px] bg-transparent border-none outline-none"
+                                    />
+                                </div>
                                 {/* Position Selector */}
                                 <Select value={firstInit ? '' : newClientPosition} onValueChange={(v) => {
                                     if (firstInit) setFirstInit(false);
@@ -701,8 +823,8 @@ export function ServerTab({onStatusChange, state}: ServerTabProps) {
                                             >{client.name}</p>
                                             <p className="text-sm truncate cursor-help"
                                                style={{color: 'var(--app-text-muted)'}}
-                                               title={client.ip}
-                                            >{client.ip}</p>
+                                               title={client.ips?.join(', ')}
+                                            >{client.ips?.join(', ')}</p>
                                         </div>
 
                                         {/* Badges Section */}

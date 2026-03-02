@@ -353,7 +353,7 @@ class ServerConfig:
     def add_client(
         self,
         client: Optional[ClientObj] = None,
-        ip_address: Optional[str] = None,
+        ip_addresses: Optional[list[str] | str] = None,
         hostname: Optional[str] = None,
         screen_position: str = "top",
     ) -> ClientObj:
@@ -362,7 +362,7 @@ class ServerConfig:
 
         Args:
             client: ClientObj instance to add (if provided, other params are ignored)
-            ip_address: IP address of the client
+            ip_addresses: IP address(es) of the client (single str or list)
             hostname: Hostname of the client
             screen_position: Screen position relative to server
 
@@ -371,7 +371,7 @@ class ServerConfig:
         """
         if client is None:
             client = ClientObj(
-                ip_address=ip_address,
+                ip_addresses=ip_addresses,
                 hostname=hostname,
                 screen_position=screen_position,
             )

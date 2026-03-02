@@ -31,10 +31,10 @@ export function stopServer(): Promise<void> {
     return invoke(getType(CommandType, CommandType.StopServer));
 }
 
-export function addClient(hostname: string, ip_address: string, screen_position: string): Promise<void> {
+export function addClient(hostname: string, ip_addresses: string[], screen_position: string): Promise<void> {
     return invoke(getType(CommandType, CommandType.AddClient), {
         hostname,
-        ipAddress: ip_address,
+        ipAddresses: ip_addresses,
         screenPosition: screen_position
     });
 }

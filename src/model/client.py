@@ -61,12 +61,16 @@ class ScreenPosition(StrEnum):
 class ClientObj:
     """
     Represents a client with its metadata.
+
+    A client can have multiple known IP addresses (e.g. due to DHCP or multi-homed hosts)
+    under the same uid and hostname. The ``ip_addresses`` list stores all known IPs,
+    while ``ip_address`` (property) returns the current/active IP used in the connection.
     """
 
     def __init__(
         self,
         uid: Optional[str] = None,
-        ip_address: Optional[str] = None,
+        ip_addresses: Optional[list[str] | str] = None,
         hostname: Optional[str] = None,
         ports: Optional[dict[int, int]] = None,
         first_connection_date: Optional[str] = None,
@@ -84,14 +88,19 @@ class ClientObj:
             raise ValueError(f"Invalid hostname: {hostname}")
         self.host_name = hostname
 
-        # We prioritize hostname validation over IP address validation
-        if (
-            ip_address is not None
-            and not self._check_ip(ip_address)
-            and not self.host_name
-        ):
-            raise ValueError(f"Invalid IP address: {ip_address}")
-        self.ip_address = ip_address
+        # Normalize ip_addresses: accept a single str (backward compat) or a list
+        if isinstance(ip_addresses, str):
+            ip_addresses = [ip_addresses]
+        self.ip_addresses: list[str] = list(ip_addresses) if ip_addresses else []
+
+        # Validate all IPs (only when hostname is not set as fallback)
+        if not self.host_name:
+            for ip in self.ip_addresses:
+                if not self._check_ip(ip):
+                    raise ValueError(f"Invalid IP address in ip_addresses: {ip}")
+
+        # Current/active IP used in the connection (None when not connected)
+        self._current_ip: Optional[str] = None
 
         self.open_streams = ports if ports is not None else {}
         self.first_connection_date = first_connection_date
@@ -108,6 +117,33 @@ class ClientObj:
         self.additional_params = (
             additional_params if additional_params is not None else {}
         )
+
+    # --- IP address helpers ---
+
+    @property
+    def ip_address(self) -> Optional[str]:
+        """Returns the current/active IP, falling back to the first known IP."""
+        if self._current_ip is not None:
+            return self._current_ip
+        return self.ip_addresses[0] if self.ip_addresses else None
+
+    @ip_address.setter
+    def ip_address(self, value: Optional[str]) -> None:
+        """Sets the current/active IP and ensures it is in the known list."""
+        self._current_ip = value
+        if value is not None and value not in self.ip_addresses:
+            self.ip_addresses.append(value)
+
+    def has_ip(self, ip: str) -> bool:
+        """Check if the given IP is among the known addresses for this client."""
+        return ip in self.ip_addresses
+
+    def add_ip(self, ip: str) -> None:
+        """Add a new IP to the list of known addresses (no duplicates)."""
+        if ip not in self.ip_addresses:
+            if not self._check_ip(ip):
+                raise ValueError(f"Invalid IP address: {ip}")
+            self.ip_addresses.append(ip)
 
     def set_connection_status(self, status: bool) -> None:
         """
@@ -228,10 +264,18 @@ class ClientObj:
 
     @staticmethod
     def from_dict(data: dict) -> "ClientObj":
+        # Backward compat: support both legacy "ip_address" (str) and "ip_addresses" (list)
+        ip_addresses = data.get("ip_addresses", None)
+        if ip_addresses is None:
+            # Fallback to legacy single-IP field
+            legacy_ip = data.get("ip_address", None)
+            if isinstance(legacy_ip, str):
+                ip_addresses = [legacy_ip]
+
         return ClientObj(
             uid=data.get("uid"),
             hostname=data.get("host_name", None),
-            ip_address=data.get("ip_address", None),
+            ip_addresses=ip_addresses,
             first_connection_date=data.get("first_connection_date", None),
             last_connection_date=data.get("last_connection_date", None),
             screen_position=data.get("screen_position", ScreenPosition.CENTER),
@@ -244,7 +288,7 @@ class ClientObj:
         return {
             "uid": self.uid,
             "host_name": self.host_name,
-            "ip_address": self.ip_address,
+            "ip_addresses": list(self.ip_addresses),
             "first_connection_date": self.first_connection_date,
             "last_connection_date": self.last_connection_date,
             "screen_position": self.screen_position,
@@ -257,7 +301,8 @@ class ClientObj:
     def __repr__(self):
         return (
             f"ClientObj(uid={self.uid}, "
-            f"host_name={self.host_name}, ip_address={self.ip_address}, port={self.open_streams}, "
+            f"host_name={self.host_name}, ip_addresses={self.ip_addresses}, "
+            f"current_ip={self.ip_address}, port={self.open_streams}, "
             f"screen_position={self.screen_position}, "
             f"screen_resolution={self.screen_resolution}, "
             f"additional_params={self.additional_params})"
@@ -278,9 +323,25 @@ class ClientsManager:
         self._is_client_main = client_mode
 
     def update_client(self, client: "ClientObj") -> "ClientsManager":
-        # Update existing client info based on IP and port
+        """
+        Update existing client info. Matches by uid first, then hostname,
+        then by overlapping IP addresses.
+        """
         for idx, existing_client in enumerate(self.clients):
-            if existing_client.ip_address == client.ip_address:
+            # Match by uid (strongest identity)
+            if client.uid and existing_client.uid and existing_client.uid == client.uid:
+                self.clients[idx] = client
+                return self
+            # Match by hostname
+            if (
+                client.host_name
+                and existing_client.host_name
+                and existing_client.host_name == client.host_name
+            ):
+                self.clients[idx] = client
+                return self
+            # Match by any overlapping IP
+            if any(ip in existing_client.ip_addresses for ip in client.ip_addresses):
                 self.clients[idx] = client
                 return self
         raise ValueError("Client not found to update.")
@@ -353,7 +414,8 @@ class ClientsManager:
                     return client
 
             if ip_address:
-                if client.ip_address == ip_address:
+                # Check against the list of known IP addresses
+                if client.has_ip(ip_address):
                     return client
             elif screen_position:
                 if client.screen_position == screen_position:

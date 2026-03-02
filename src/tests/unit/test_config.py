@@ -179,7 +179,7 @@ class TestServerConfigClientManagement:
     def test_add_and_remove_client(self, server_config):
         """Test adding and removing clients."""
         client = server_config.add_client(
-            ip_address="192.168.1.100", hostname="test-client", screen_position="top"
+            ip_addresses="192.168.1.100", hostname="test-client", screen_position="top"
         )
         assert len(server_config.get_clients()) == 1
 
@@ -190,7 +190,7 @@ class TestServerConfigClientManagement:
     def test_get_client_by_ip(self, server_config):
         """Test getting a client by IP address."""
         server_config.add_client(
-            ip_address="192.168.1.100", hostname="test-client", screen_position="top"
+            ip_addresses="192.168.1.100", hostname="test-client", screen_position="top"
         )
 
         client = server_config.get_client(ip_address="192.168.1.100")

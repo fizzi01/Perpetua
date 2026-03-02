@@ -24,7 +24,7 @@ interface Client {
     id: string;
     uid?: string;
     name: string;
-    ip: string;
+    ips?: string[];
     status: 'online' | 'offline';
     position: 'top' | 'bottom' | 'left' | 'right';
     connectedAt?: Date;
@@ -53,9 +53,9 @@ export function useClientManagement() {
             if (byUid) return byUid;
         }
 
-        // Then try by IP if present
-        if (clientData.ip_address) {
-            const byIp = clientList.find(c => c.ip === clientData.ip_address);
+        // Then try by IP if present (check any IP overlap)
+        if (clientData.ip_addresses && clientData.ip_addresses.length > 0) {
+            const byIp = clientList.find(c => c.ips && clientData.ip_addresses.some(ip => c.ips!.includes(ip)));
             if (byIp) return byIp;
         }
 
@@ -75,7 +75,7 @@ export function useClientManagement() {
         // Prefer UID if available
         if (clientData.uid) return clientData.uid;
         // Otherwise use IP
-        if (clientData.ip_address) return `ip:${clientData.ip_address}`;
+        if (clientData.ip_addresses && clientData.ip_addresses.length > 0) return `ip:${clientData.ip_addresses[0]}`;
         // Lastly use hostname
         return `host:${clientData.host_name}`;
     }, []);
@@ -88,7 +88,7 @@ export function useClientManagement() {
             id: generateClientId(clientData),
             uid: clientData.uid || undefined,
             name: clientData.host_name,
-            ip: clientData.ip_address,
+            ips: clientData.ip_addresses,
             status: connected ? 'online' : 'offline' as const,
             position: clientData.screen_position as 'top' | 'bottom' | 'left' | 'right',
             connectedAt: connected
@@ -116,7 +116,7 @@ export function useClientManagement() {
                             ...c,
                             uid: clientData.uid || c.uid, // Update UID if now available
                             name: clientData.host_name || c.name,
-                            ip: clientData.ip_address || c.ip,
+                            ips: clientData.ip_addresses || c.ips,
                             status: connected ? 'online' as const : 'offline' as const,
                             connectedAt: connected
                                 ? new Date(clientData.last_connection_date || clientData.first_connection_date)
@@ -141,11 +141,11 @@ export function useClientManagement() {
     /**
      * Add a client manually (for authorization)
      */
-    const addClient = useCallback((hostname: string, ip: string, position: 'top' | 'bottom' | 'left' | 'right') => {
+    const addClient = useCallback((hostname: string, ips: string[], position: 'top' | 'bottom' | 'left' | 'right') => {
         const newClient: Client = {
-            id: ip || hostname,
+            id: ips[0] || hostname,
             name: hostname,
-            ip: ip,
+            ips: ips,
             status: 'offline' as const,
             position,
         };
@@ -153,12 +153,12 @@ export function useClientManagement() {
         setClients(prev => {
             // Check if it doesn't already exist
             const exists = prev.some(c =>
-                (ip && c.ip === ip) ||
+                (ips.length > 0 && c.ips && ips.some(ip => c.ips!.includes(ip))) ||
                 (hostname && c.name === hostname)
             );
 
             if (exists) {
-                console.warn(`[ClientManagement] Client already exists:`, hostname || ip);
+                console.warn(`[ClientManagement] Client already exists:`, hostname || ips[0]);
                 return prev;
             }
 
