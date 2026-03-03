@@ -130,10 +130,13 @@ export const DaemonLogViewer: React.FC<LogViewerProps> = ({
 
     // Parse log line to extract level and color
     const parseLogLine = (line: string) => {
-        const match = line.match(/^\[([^\]]+)\]\s+\[([^\]]+)\]\s+(.*?)\s*\[([^\]]+)\](.*)$/);
+        // Logger always starts with an uppercase letter and may contain word chars, parens and dots
+        // e.g. "Daemon", "ConnectionHandler", "MessageExchange(Handshake_192.168.1.77)".
+        // Using [A-Z][\w().]* prevents false matches on ['192.168.1.23'] or "Errno 54".
+        const match = line.match(/^\[([^\]]+)\]\s+\[([^\]]+)\]\s+(.*)\s*\[([A-Za-z][\w().]*)\](.*)$/);
         if (match) {
             const [, timestamp, level, message, logger, extra] = match;
-            return {timestamp, level: level.trim().toUpperCase(), logger, message, extra: extra.trim()};
+            return {timestamp, level: level.trim().toUpperCase(), logger, message: message.trimEnd(), extra: extra.trim()};
         }
         return {timestamp: '', level: 'INFO', logger: '', message: line, extra: ''};
     };
