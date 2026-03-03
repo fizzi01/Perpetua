@@ -1572,12 +1572,14 @@ class Daemon:
 
         try:
             hostname = params.get("hostname")
-            ip_address = params.get("ip_address")
+            ip_addresses = params.get(
+                "ip_addresses", params.get("ip_address")
+            )  # backward compat
             screen_position = params.get("screen_position")
 
-            if not hostname and not ip_address:
+            if not hostname and not ip_addresses:
                 await self._notification_manager.notify_command_error(
-                    command, "Must provide either hostname or ip_address"
+                    command, "Must provide either hostname or ip_addresses"
                 )
                 return
 
@@ -1589,7 +1591,7 @@ class Daemon:
 
             await self._server.add_client(
                 hostname=hostname,
-                ip_address=ip_address,
+                ip_addresses=ip_addresses,
                 screen_position=screen_position,
             )
 
@@ -1598,7 +1600,7 @@ class Daemon:
                 f"Client added at position {screen_position}",
                 result_data={
                     "hostname": hostname,
-                    "ip_address": ip_address,
+                    "ip_addresses": ip_addresses,
                     "screen_position": screen_position,
                 },
             )
@@ -1618,7 +1620,7 @@ class Daemon:
 
         try:
             hostname = params.get("hostname")
-            ip_address = params.get("ip_address")
+            ip_address = params.get("ip_address")  # lookup by any known IP
 
             if not hostname and not ip_address:
                 await self._notification_manager.notify_command_error(
@@ -1649,8 +1651,9 @@ class Daemon:
 
         try:
             hostname = params.get("hostname")
-            ip_address = params.get("ip_address")
+            ip_address = params.get("ip_address")  # lookup by any known IP
             new_screen_position = params.get("new_screen_position")
+            new_ip_addresses = params.get("new_ip_addresses")
 
             if not hostname and not ip_address:
                 await self._notification_manager.notify_command_error(
@@ -1658,9 +1661,9 @@ class Daemon:
                 )
                 return
 
-            if not new_screen_position:
+            if not new_screen_position and new_ip_addresses is None:
                 await self._notification_manager.notify_command_error(
-                    command, "Must provide new_screen_position"
+                    command, "Must provide new_screen_position or new_ip_addresses"
                 )
                 return
 
@@ -1668,15 +1671,17 @@ class Daemon:
                 hostname=hostname,
                 ip_address=ip_address,
                 new_screen_position=new_screen_position,
+                new_ip_addresses=new_ip_addresses,
             )
 
             await self._notification_manager.notify_command_success(
                 command,
-                f"Client updated to position {new_screen_position}",
+                "Client updated",
                 result_data={
                     "hostname": hostname,
                     "ip_address": ip_address,
                     "new_screen_position": new_screen_position,
+                    "new_ip_addresses": new_ip_addresses,
                 },
             )
         except Exception as e:
@@ -1702,7 +1707,7 @@ class Daemon:
                     {
                         "net_id": client.get_net_id(),
                         "hostname": client.host_name,
-                        "ip_address": client.ip_address,
+                        "ip_addresses": list(client.ip_addresses),
                         "screen_position": client.screen_position,
                         "is_connected": client.is_connected,
                     }

@@ -325,9 +325,10 @@ class ConnectionHandler(BaseConnectionHandler):
     @staticmethod
     def _check_client(client_obj: ClientObj, address: str) -> bool:
         """
-        Check if client_obj is allowed to connect by matching IP address.
+        Check if client_obj is allowed to connect by matching IP address
+        against the list of known IP addresses.
         """
-        return client_obj.ip_address == address
+        return client_obj.has_ip(address)
 
     async def _handshake(
         self,
@@ -393,19 +394,13 @@ class ConnectionHandler(BaseConnectionHandler):
                 tmp_host_name = response.source  # Client will provide its hostname
                 tmp_uid = response.payload.get("client_name", None)
 
+                # --- Client resolution with allowlist verification ---
+
                 if tmp_host_name is not None and client is None:
                     # Get client obj by hostname if not found by IP
                     client = self.clients.get_client(hostname=tmp_host_name)
-                    if client:
-                        client.ip_address = (
-                            client_addr  # Update IP address based on connection
-                        )
                 elif tmp_uid is not None and client is None:  # Fallback to UID
                     client = self.clients.get_client(uid=tmp_uid)
-                    if client:
-                        client.ip_address = (
-                            client_addr  # Update IP address based on connection
-                        )
                 elif client is None:
                     # Try again to get client by IP if hostname not provided
                     client = self.clients.get_client(ip_address=client_addr)
@@ -429,17 +424,47 @@ class ConnectionHandler(BaseConnectionHandler):
                     await cur_stream.close()
                     return False
 
-                if not self._check_client(
-                    client_obj=client, address=client_addr
-                ):  # Client is not allowed
-                    # Stop handshake if client not allowed
+                # --- UID consistency check ---
+                # If the client already has a saved uid, verify it matches the received one
+                if (
+                    client.uid is not None
+                    and tmp_uid is not None
+                    and client.uid != tmp_uid
+                ):
                     self._logger.log(
-                        f"Client {client.get_net_id()} not allowed to connect.",
+                        f"UID mismatch for client {client.get_net_id()}: "
+                        f"expected '{client.uid}', received '{tmp_uid}'. "
+                        f"Rejecting handshake.",
                         Logger.WARNING,
                     )
                     await client_msg_exchange.stop()
                     await cur_stream.close()
                     return False
+
+                # --- IP presence check ---
+                # Verify that the connecting IP is among the client's known addresses
+                if not self._check_client(client, client_addr):
+                    if client.ip_addresses:
+                        # Client has known IPs but the connecting one is not among them
+                        self._logger.log(
+                            f"IP {client_addr} not in known addresses for client "
+                            f"{client.get_net_id()} (known: {client.ip_addresses}). "
+                            f"Rejecting handshake.",
+                            Logger.WARNING,
+                        )
+                        await client_msg_exchange.stop()
+                        await cur_stream.close()
+                        return False
+                    else:
+                        # Client has no known IPs yet (hostname-only config) — register this IP
+                        self._logger.log(
+                            f"Registering new IP {client_addr} for client {client.get_net_id()}",
+                            Logger.INFO,
+                        )
+                        client.add_ip(client_addr)
+
+                # Set current active IP for this connection
+                client.ip_address = client_addr
 
                 # Normal flow: update client info
                 client.uid = response.payload.get("client_name", client.uid)

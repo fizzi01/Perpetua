@@ -46,6 +46,7 @@ import {abbreviateText, CopyableBadge} from './ui/copyable-badge';
 import {ServerSelectionPanel} from './ui/server-selection-panel';
 import {OtpInputPanel} from './ui/otp-input-panel';
 import {ActionButton} from './ui/action-button';
+import { getLocalIpAddress } from '../api/Sender';
 
 export function ClientTab({onStatusChange, state}: ClientTabProps) {
     let previousState = useRef<ClientStatus | null>(null);
@@ -91,6 +92,12 @@ export function ClientTab({onStatusChange, state}: ClientTabProps) {
     const listeners = useEventListeners('client-tab');
     const connectionListeners = handleConnectionListeners();
     const saveOptionsTimeoutRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+
+    const [ipAddr, setIpAddr] = useState<string | null>(null);
+
+    useEffect(() => {
+        getLocalIpAddress().then(ip => setIpAddr(ip));
+    }, []);
 
     const addNotification = (type: Notification['type'], message: string, description?: string) => {
         const newNotification: Notification = {
@@ -549,15 +556,36 @@ export function ClientTab({onStatusChange, state}: ClientTabProps) {
                                 borderColor: 'var(--app-card-border)'
                             }}
                         >
-                            <div className="w-10 h-10 rounded-lg flex items-center justify-center"
+                            <div className="w-10 h-10 rounded-lg flex items-center justify-center flex-shrink-0"
                                  style={{backgroundColor: 'var(--app-bg-tertiary)'}}>
                                 <User size={20} style={{color: 'var(--app-primary)'}}/>
                             </div>
-                            <div className="flex-1">
-                                <div className="text-sm font-bold" style={{color: 'var(--app-text-primary)'}}>
-                                    {clientHostname}
+                            <div className="flex-1 min-w-0 flex items-center gap-2">
+                                <div className="flex-1 min-w-0">
+                                    <div
+                                        className="text-sm font-bold overflow-hidden"
+                                        style={{
+                                            color: 'var(--app-text-primary)',
+                                            whiteSpace: 'nowrap',
+                                            textOverflow: 'ellipsis',
+                                            overflow: 'hidden'
+                                        }}
+                                        title={clientHostname}
+                                    >
+                                        {clientHostname}
+                                    </div>
+                                    <div className="text-xs" style={{color: 'var(--app-text-muted)'}}>Your Hostname</div>
                                 </div>
-                                <div className="text-xs" style={{color: 'var(--app-text-muted)'}}>Your Hostname</div>
+                                {ipAddr && (
+                                    <div className="flex-shrink-0 flex items-center">
+                                        <CopyableBadge
+                                            fullText={ipAddr}
+                                            displayText={abbreviateText(ipAddr, 3, 3)}
+                                            label=""
+                                            titleText={`Your IP: ${ipAddr}`}
+                                        />
+                                    </div>
+                                )}
                             </div>
                         </motion.div>
                     )}

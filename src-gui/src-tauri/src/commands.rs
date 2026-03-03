@@ -19,6 +19,7 @@ along with this program. If not, see <https://www.gnu.org/licenses/>.
 use ipc::event::{CommandEvent, CommandType, EventParser, Parser};
 use ipc::log_reader::{get_log_file_path, read_all_lines, read_last_n_lines, LogResponse};
 use ipc::AtomicAsyncWriter;
+use local_ip_address::local_ip;
 
 /**
  * Helper function to handle optional string parameters
@@ -96,11 +97,11 @@ pub async fn stop_server(s: tauri::State<'_, AtomicAsyncWriter>) -> Result<(), S
 #[tauri::command]
 pub async fn add_client(
     hostname: String,
-    ip_address: String,
+    ip_addresses: Vec<String>,
     screen_position: String,
     s: tauri::State<'_, AtomicAsyncWriter>,
 ) -> Result<(), String> {
-    if hostname.is_empty() && ip_address.is_empty() {
+    if hostname.is_empty() && ip_addresses.iter().all(|ip| ip.is_empty()) {
         return Err("Either hostname or ip address must be provided".to_string());
     }
 
@@ -108,12 +109,22 @@ pub async fn add_client(
         return Err("Screen position must be provided".to_string());
     }
 
+    let ip_addresses_json = format!(
+        "[{}]",
+        ip_addresses
+            .iter()
+            .filter(|ip| !ip.is_empty())
+            .map(|ip| format!("\"{}\"", ip))
+            .collect::<Vec<_>>()
+            .join(", ")
+    );
+
     let command = CommandEvent::build(
         CommandType::AddClient,
         &format!(
-            r#"{{ "hostname": {}, "ip_address": {}, "screen_position": {} }}"#,
+            r#"{{ "hostname": {}, "ip_addresses": {}, "screen_position": {} }}"#,
             handle_string_param(hostname),
-            handle_string_param(ip_address),
+            ip_addresses_json,
             handle_string_param(screen_position)
         ),
     );
@@ -456,4 +467,11 @@ pub async fn switch_tray_icon(app: tauri::AppHandle, active: bool) -> Result<(),
         }
     }
     Ok(())
+}
+
+#[tauri::command]
+pub async fn get_local_ip() -> Result<String, String> {
+    local_ip()
+        .map(|ip| ip.to_string())
+        .map_err(|e| format!("Failed to get local IP address: {}", e))
 }

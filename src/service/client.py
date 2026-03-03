@@ -204,7 +204,7 @@ class Client:
         # Add main client to clients manager
         self.main_client = ClientObj(
             uid=self.config.get_uid(),
-            ip_address="0.0.0.0",  # Dummy, we don't need it
+            ip_addresses="0.0.0.0",  # Dummy, we don't need it
             hostname=self.config.get_hostname(),
             screen_resolution=Screen.get_size_str(),
         )

@@ -388,6 +388,7 @@ pub fn run(daemon_config: Option<DaemonConfig>) {
             commands::get_log_file_path_cmd,
             // -- UI Commands --
             commands::switch_tray_icon,
+            commands::get_local_ip,
         ])
         .setup(move |app| {
             // Spawn daemon (release) or create empty handle (debug)

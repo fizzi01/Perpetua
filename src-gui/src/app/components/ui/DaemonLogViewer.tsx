@@ -52,6 +52,8 @@ export const DaemonLogViewer: React.FC<LogViewerProps> = ({
     const [wrapLines, setWrapLines] = useState<boolean>(true);
     const [searchQuery, setSearchQuery] = useState<string>('');
     const logEndRef = useRef<HTMLDivElement>(null);
+    const scrollContainerRef = useRef<HTMLDivElement>(null);
+    const isAtBottomRef = useRef<boolean>(true);
 
     // Function to fetch logs from daemon log file
     const fetchLogs = async (lines: number = numLines) => {
@@ -93,7 +95,16 @@ export const DaemonLogViewer: React.FC<LogViewerProps> = ({
 
     // Auto-scroll to bottom when new logs arrive
     const scrollToBottom = () => {
-        logEndRef.current?.scrollIntoView({behavior: 'smooth'});
+        if (isAtBottomRef.current) {
+            logEndRef.current?.scrollIntoView({behavior: 'smooth'});
+        }
+    };
+
+    const handleScroll = () => {
+        const el = scrollContainerRef.current;
+        if (!el) return;
+        const threshold = 40; // px from bottom to consider "at bottom"
+        isAtBottomRef.current = el.scrollHeight - el.scrollTop - el.clientHeight <= threshold;
     };
 
     // Initial load
@@ -119,12 +130,15 @@ export const DaemonLogViewer: React.FC<LogViewerProps> = ({
 
     // Parse log line to extract level and color
     const parseLogLine = (line: string) => {
-        const match = line.match(/\[(.*?)\]\[(.*?)\]\[(.*?)\](.*)/);
+        // Logger should start with a letter and may contain word chars, parens and dots
+        // e.g. "Daemon", "ConnectionHandler", "MessageExchange(Handshake_192.168.1.77)".
+        // Using [A-Za-z][\w().]* prevents false matches.
+        const match = line.match(/^\[([^\]]+)\]\s+\[([^\]]+)\]\s+(.*)\s*\[([A-Za-z][\w().]*)\](.*)$/);
         if (match) {
-            const [, timestamp, level, logger, message] = match;
-            return {timestamp, level, logger, message};
+            const [, timestamp, level, message, logger, extra] = match;
+            return {timestamp, level: level.trim().toUpperCase(), logger, message: message.trimEnd(), extra: extra.trim()};
         }
-        return {timestamp: '', level: 'INFO', logger: '', message: line};
+        return {timestamp: '', level: 'INFO', logger: '', message: line, extra: ''};
     };
 
     const getLevelColor = (level: string): string => {
@@ -333,6 +347,8 @@ export const DaemonLogViewer: React.FC<LogViewerProps> = ({
 
             {/* Log content */}
             <div
+                ref={scrollContainerRef}
+                onScroll={handleScroll}
                 className="flex-1 p-3 font-mono text-xs leading-relaxed"
                 style={{
                     backgroundColor: '#0d0d0d',
@@ -375,6 +391,9 @@ export const DaemonLogViewer: React.FC<LogViewerProps> = ({
                                         className="opacity-50 text-[11px]">[{highlightMatch(parsed.logger, searchQuery)}]</span>
                                     <span
                                         className="ml-2 text-[11px]">{highlightMatch(parsed.message, searchQuery)}</span>
+                                    {parsed.extra && (
+                                        <span className="ml-2 text-[11px] text-cyan-400/70">{highlightMatch(parsed.extra, searchQuery)}</span>
+                                    )}
                                 </div>
                             );
                         })}
