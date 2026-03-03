@@ -17,9 +17,8 @@
 
 import asyncio
 import enum
-import os
 from typing import Optional, Callable, Any
-from copykitten import copy, paste, CopykittenError
+from copykitten import copy, paste, paste_file_list, CopykittenError
 import hashlib
 
 from event import (
@@ -98,11 +97,21 @@ class Clipboard:
         return hashlib.md5(content_bytes).hexdigest()
 
     @staticmethod
-    def _try_get_clip_file(file: str) -> str:
-        """
-        Os-specific logic to get a complete file path from clipboard content.
-        """
-        return file
+    def _is_file(content: str) -> bool:
+        try:
+            file_list = paste_file_list()
+            if content in file_list:
+                return True
+        except Exception:
+            pass
+        return False
+
+    @staticmethod
+    def _try_get_clip_files() -> list[str]:
+        try:
+            return paste_file_list()
+        except Exception:
+            return []
 
     async def _get_clipboard_content(self) -> tuple[Optional[str], ClipboardType]:
         """
@@ -122,19 +131,20 @@ class Clipboard:
                 self._logger.warning(f"Failed to access clipboard -> {e}")
                 return None, ClipboardType.ERROR
 
-            # Determine the content type (simplified - can be extended)
+            # Determine the content type
             content_type = ClipboardType.TEXT
-            content = await loop.run_in_executor(None, self._try_get_clip_file, content)
-            if isinstance(content, str):
-                # Could check for URLs, file paths, etc.
-                if content.startswith(
-                    ("http://", "https://")
-                ):  # TODO: improve URL detection
-                    content_type = ClipboardType.URL
-                elif os.path.isfile(content):
-                    content_type = ClipboardType.FILE
-            elif content is None:
-                return None, ClipboardType.EMPTY
+
+            # First check if we have empty file list
+            files = await loop.run_in_executor(None, self._try_get_clip_files)
+            if len(files) > 0:
+                content_type = ClipboardType.FILE
+                content = "\n".join(files)  # Join multiple files with newlines
+            elif content and content.strip() == "":
+                content_type = ClipboardType.EMPTY
+            elif content and (
+                content.startswith("http://") or content.startswith("https://")
+            ):
+                content_type = ClipboardType.URL
 
             # Filter based on monitored types
             if content_type not in self.content_types:

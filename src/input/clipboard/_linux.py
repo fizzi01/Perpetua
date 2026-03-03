@@ -27,7 +27,6 @@ from . import _base
 from ._base import ClipboardType
 
 
-# TODO: Extend copykitten to support get_files natively (already done in rust side)
 class Clipboard(_base.Clipboard):
     __logger = get_logger(__name__)
 
@@ -40,8 +39,9 @@ class Clipboard(_base.Clipboard):
         super().__init__(on_change, poll_interval, content_types)
 
     @staticmethod
-    def _try_get_clip_file(file: str) -> str:
+    def __try_get_clip_file(file: str) -> str:
         """
+        (Deprecated)
         Os-specific logic to get a complete file path from clipboard content.
         """
         try:

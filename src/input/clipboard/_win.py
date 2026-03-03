@@ -42,8 +42,9 @@ class Clipboard(_base.Clipboard):
         super().__init__(on_change, poll_interval, content_types)
 
     @staticmethod
-    def _try_get_clip_file(file: str) -> str:
+    def __try_get_clip_file(file: str) -> str:
         """
+        (Deprecated)
         Os-specific logic to get a complete file path from clipboard content.
         """
         try:

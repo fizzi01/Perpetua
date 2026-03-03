@@ -186,14 +186,14 @@ description = "A robust, dependency-free way to use the system clipboard in Pyth
 optional = false
 python-versions = ">=3.8"
 groups = ["main"]
-files = [
-    {file = "copykitten-2.0.0-cp38-abi3-macosx_10_12_x86_64.whl", hash = "sha256:191c202d19962fa5dbed5296d83bfa844b36609e30f0fb19cf1706b136f170e8"},
-    {file = "copykitten-2.0.0-cp38-abi3-macosx_11_0_arm64.whl", hash = "sha256:1fb3118f5b3d9bc70442ae62f5d0b5fdd22243f2b4f2811e0680cbb4dfca112a"},
-    {file = "copykitten-2.0.0-cp38-abi3-manylinux_2_17_aarch64.manylinux2014_aarch64.whl", hash = "sha256:6be53c8c45bb85bda1679ea2d890e24303096d2a9d9a1022e159b7cfd350b2c0"},
-    {file = "copykitten-2.0.0-cp38-abi3-manylinux_2_17_x86_64.manylinux2014_x86_64.whl", hash = "sha256:65b799e46da487e3380248065e5684d39e9f8f0f53b1124edba5e4fd2dc5a273"},
-    {file = "copykitten-2.0.0-cp38-abi3-win_amd64.whl", hash = "sha256:00d09e79fe8031dbdfaefd843d60e48f2b63e6ea9a823d25e07a17469f25017e"},
-    {file = "copykitten-2.0.0.tar.gz", hash = "sha256:bda13d614ffb38147d4fce5217d4f2397967514f5ea09fb8d5c5cf5d16028e58"},
-]
+files = []
+develop = false
+
+[package.source]
+type = "git"
+url = "https://github.com/fizzi01/copykitten.git"
+reference = "add_file_list"
+resolved_reference = "59e440252221ac24fb303a08c05a3ad4299572c7"
 
 [[package]]
 name = "cryptography"
@@ -4761,4 +4761,4 @@ cffi = ["cffi (>=1.17,<2.0) ; platform_python_implementation != \"PyPy\" and pyt
 [metadata]
 lock-version = "2.1"
 python-versions = ">=3.11,<3.13"
-content-hash = "eaa35536c855bcf2ae8a5b28e87dd3975edecc17d66c53713c31bd14bd5b1f27"
+content-hash = "353d572090f0445493af50c7d8dc17cad7821fa065cf1bcdc8e91b16e5e2baea"
