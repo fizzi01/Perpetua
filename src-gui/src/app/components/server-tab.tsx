@@ -35,6 +35,7 @@ import {useEventListeners} from '../hooks/useEventListeners';
 import {useClientManagement} from '../hooks/useClientManagement';
 import {
     addClient as addClientCommand,
+    getLocalIpAddress,
     removeClient as removeClientCommand,
     saveServerConfig,
     shareCertificate,
@@ -92,6 +93,12 @@ export function ServerTab({onStatusChange, state}: ServerTabProps) {
     const otpFocus = useRef<HTMLDivElement>(null);
     const saveOptionsTimeoutRef = useRef<ReturnType<typeof setTimeout> | null>(null);
     const ipInputRef = useRef<HTMLInputElement>(null);
+
+    useEffect(() => {
+        if (state.host === '' || state.host === '0.0.0.0') {
+            getLocalIpAddress().then(ip => setHost(ip));
+        }
+    }, []);
 
     const addNotification = (type: Notification['type'], message: string, description?: string) => {
         const newNotification: Notification = {
