@@ -1572,7 +1572,9 @@ class Daemon:
 
         try:
             hostname = params.get("hostname")
-            ip_addresses = params.get("ip_addresses", params.get("ip_address"))  # backward compat
+            ip_addresses = params.get(
+                "ip_addresses", params.get("ip_address")
+            )  # backward compat
             screen_position = params.get("screen_position")
 
             if not hostname and not ip_addresses:
