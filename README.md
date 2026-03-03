@@ -265,7 +265,7 @@ Configuration File Locations:
 
 The server configuration is managed automatically for basic setup (certificate generation, network binding). However, to accept client connections, you must manually add each client to the server configuration (or in `Server > Clients` section), specifying:
 
-- Client IP or Hostname
+- Client IPs and/or Hostname
 - Screen Position: The spatial arrangement relative to the server (left, right, top, bottom)
 
 This configuration defines how devices are arranged in your workspace for a seamless cursor transition between them.
@@ -320,7 +320,7 @@ The configuration [json file](#file-structure) is split into three sections: `se
 
 `authorized_clients` lists the clients that can connect. To add a new client, you only need to specify:
 - `uid`: Unique identifier
-- `host_name` or `ip_address`: Client's network address
+- `host_name` and/or `ip_addresses`: Client's network identity
 - `screen_position`: Where the client is positioned relative to the server (`left`, `right`, `top`, `bottom`)
 
 Other fields are automatically populated by the system.
@@ -352,7 +352,9 @@ These parameters affect the application's internal behavior. Only modify them if
             {
                 "uid": "...",
                 "host_name": "MYCLIENT",
-                "ip_address": "192.168.1.66",
+                "ip_addresses": [
+                    "192.168.1.66"
+                ],
                 "first_connection_date": "2026-02-02 19:09:00",
                 "last_connection_date": "2026-02-02 19:16:12",
                 "screen_position": "top",
