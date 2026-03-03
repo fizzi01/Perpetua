@@ -1674,7 +1674,7 @@ class Daemon:
 
             await self._notification_manager.notify_command_success(
                 command,
-                f"Client updated",
+                "Client updated",
                 result_data={
                     "hostname": hostname,
                     "ip_address": ip_address,
