@@ -167,7 +167,7 @@ class MessageExchange:
             return
 
         try:
-            # Ricevi nuovi dati in modo non bloccante
+            # Receive new data in a non-blocking way
             # async with self._lock:
             try:
                 new_data = await asyncio.wait_for(
@@ -189,7 +189,7 @@ class MessageExchange:
             buffer_len = len(persistent_buffer)
             offset = 0
 
-            # Processa tutti i messaggi completi nel buffer
+            # Process all complete messages in the buffer
             while offset + prefix_len <= buffer_len:
                 try:
                     # If prefix is invalid, this will raise ValueError and we will skip 1 byte
@@ -201,23 +201,23 @@ class MessageExchange:
                         self._logger.debug(
                             f"Received message length {msg_length} exceeds maximum allowed {max_msg_size}. Skipping."
                         )
-                        # Messaggio troppo grande, cerca prossimo marker
+                        # Message too large, seek next marker
                         offset += 1
                         # await asyncio.sleep(0)
                         continue
 
                     total_length = prefix_len + msg_length
 
-                    # Verifica se abbiamo il messaggio completo
+                    # Check if we have the complete message
                     if offset + total_length > buffer_len:
-                        # Messaggio incompleto, mantieni da offset in poi
+                        # Incomplete message, keep from offset onwards
                         # await asyncio.sleep(0)
                         self._logger.debug(
                             f"Incomplete message received. Expected length: {total_length}, current buffer length: {buffer_len - offset}. Waiting for more data."
                         )
                         break
 
-                    # Estrai e processa il messaggio completo
+                    # Extract and process the complete message
                     message_data = bytes(
                         persistent_buffer[offset : offset + total_length]
                     )
@@ -231,22 +231,22 @@ class MessageExchange:
                             self._metrics.record_latency(receive_latency)
 
                     if message.is_heartbeat():
-                        # Ignora messaggi di heartbeat
+                        # Ignore heartbeat messages
                         offset += total_length
                         continue
 
-                    # Gestione chunk/messaggio normale
+                    # Handle chunk/normal message
                     if message.is_chunk:
                         reconstructed = await self._handle_chunk(message)
                         if reconstructed:
                             if self.config.auto_dispatch:
                                 await self.dispatch_message(reconstructed)
-                            else:
+                            elif self._message_queue:
                                 await self._message_queue.put(reconstructed)  # ty:ignore[possibly-missing-attribute]
                     else:
                         if self.config.auto_dispatch:
                             await self.dispatch_message(message)
-                        else:
+                        elif self._message_queue:
                             await self._message_queue.put(message)  # ty:ignore[possibly-missing-attribute]
 
                     offset += total_length
@@ -257,14 +257,14 @@ class MessageExchange:
                     # return
 
                 except ValueError:
-                    # Prefisso invalido, avanza di 1 byte
+                    # Invalid prefix, advance by 1 byte
                     offset += 1
                     if self._metrics:
                         self._metrics.connection_errors += 1
                     await asyncio.sleep(0)
                     continue
 
-            # Rimuovi dati processati dal buffer
+            # Remove processed data from buffer
             if offset > 0:
                 del persistent_buffer[:offset]
 
@@ -595,14 +595,11 @@ class MessageExchange:
 
     async def get_received_message(self) -> Optional[ProtocolMessage]:
         """
-        Preleva un messaggio dalla coda di ricezione se disponibile.
-        I chunk sono già gestiti nel processo di ricezione.
-
-        Args:
-            timeout: Tempo di attesa in secondi (0 = non bloccante)
+        Retrieve a message from the receive queue if available.
+        Chunks are already handled during the receive process.
 
         Returns:
-            Messaggio ricevuto o None se la coda è vuota
+            Received message, or None if the queue is empty
         """
         if not self._message_queue:
             return None
@@ -640,7 +637,7 @@ class MessageExchange:
         return None
 
     async def dispatch_message(self, message: ProtocolMessage):
-        """Dispatch message to registered handler in modo asyncio."""
+        """Dispatch message to the registered handler using asyncio."""
         handler = self._handlers.get(message.message_type)
         if handler:
             try:

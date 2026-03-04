@@ -112,7 +112,7 @@ class ConnectionHandler(BaseConnectionHandler):
 
             self._logger.log(f"Started on {self.host}:{self.port}", Logger.INFO)
 
-            # Avvia heartbeat task
+            # Start heartbeat task
             self._heartbeat_task = asyncio.create_task(self._heartbeat_loop())
 
             return True
@@ -369,10 +369,10 @@ class ConnectionHandler(BaseConnectionHandler):
                 # target=client.screen_position
             )
 
-            # Avvia ricezione per processare la risposta
+            # Start receiving to process the response
             await client_msg_exchange.start()
 
-            # Attendi risposta con timeout
+            # Wait for response with timeout
             try:
                 response = await asyncio.wait_for(
                     client_msg_exchange.get_received_message(),
@@ -385,7 +385,7 @@ class ConnectionHandler(BaseConnectionHandler):
                 await client_msg_exchange.stop()
                 return False
 
-            # Verifica risposta
+            # Verify response
             if (
                 response
                 and response.message_type == MessageType.EXCHANGE
@@ -627,11 +627,11 @@ class ConnectionHandler(BaseConnectionHandler):
                 continue
 
             try:
-                # Crea un future per questo stream
+                # Create a future for this stream
                 stream_future = asyncio.Future()
                 self._pending_streams[client.ip_address][stream_type] = stream_future
 
-                # Attendi che il client si connetta per questo stream
+                # Wait for the client to connect for this stream
                 stream_reader, stream_writer = await asyncio.wait_for(
                     stream_future, timeout=self.CONNECTION_ATTEMPT_TIMEOUT
                 )

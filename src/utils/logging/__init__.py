@@ -253,13 +253,13 @@ class Logger(BaseLogger):
 
     def log(self, message, level: int = 0, **kw: Any):
         """
-        Log un messaggio con la priorità specificata.
+        Log a message with the specified priority level.
 
         Args:
-            message: Messaggio da loggare
+            message: Message to log
             level: Priority level (DEBUG=0, INFO=1, ERROR=2, WARNING=3)
         """
-        # Mappa custom priority ai livelli logging
+        # Map custom priority to logging levels
         if level == self.DEBUG:
             self._logger.debug(message)
         elif level == self.INFO:

@@ -374,7 +374,7 @@ class ServerMouseListener(object):
                     data=ActiveScreenChangedEvent(active_screen=screen),
                 )
 
-                # Attendi il completamento dell'invio dei messaggi
+                # Wait for message dispatch to complete
                 await self.command_stream.send(CrossScreenCommandEvent(target=screen))
                 await self.stream.send(mouse_event)
                 await asyncio.sleep(0)

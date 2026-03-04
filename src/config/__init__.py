@@ -526,10 +526,10 @@ class ServerConfig:
             try:
                 await asyncio.wait_for(_write(temp_file, json_content), timeout=1)
 
-                # Rinomina atomicamente (sovrascrive il file originale)
+                # Atomically rename (overwrites the original file)
                 os.replace(temp_file, file_path)
             except Exception as e:
-                # Rimuovi il file temporaneo in caso di errore
+                # Remove the temporary file in case of error
                 if os.path.exists(temp_file):
                     os.remove(temp_file)
                 raise IOError(f"Failed to save configuration: {e}")
@@ -827,10 +827,10 @@ class ClientConfig:
             try:
                 await asyncio.wait_for(_write(temp_file, json_content), timeout=1)
 
-                # Rinomina atomicamente (sovrascrive il file originale)
+                # Atomically rename (overwrites the original file)
                 os.replace(temp_file, file_path)
             except Exception as e:
-                # Rimuovi il file temporaneo in caso di errore
+                # Remove the temporary file in case of error
                 if os.path.exists(temp_file):
                     os.remove(temp_file)
                 raise IOError(f"Failed to save configuration: {e}")

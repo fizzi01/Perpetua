@@ -94,7 +94,7 @@ async def __main():
     controller = CursorHandlerWorker(eb, stream=mock_stream, debug=False)  # ty: ignore[invalid-argument-type]
 
     try:
-        # Avvia la window
+        # Start the window
         await controller.start()
         print("✓ Window avviata e pronta\n")
 
