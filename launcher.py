@@ -113,14 +113,8 @@ class DaemonRunner:
         from service.daemon import main as daemon_main
 
         self.clean_log_file()
-
-        # Reinitialize logger as root logger with final settings
-        self._log = get_logger(
-            "daemon", is_root=True, verbose=True, log_file=self.log_file
-        )
-
         self.write_pid()
-        self.log.info("Daemon process started", pid=os.getpid())
+        self.log.info("Daemon loop started", pid=os.getpid())
 
         # Graceful shutdown on signals
         def on_shutdown(signum, _frame):
@@ -144,7 +138,7 @@ class DaemonRunner:
             self.cleanup_pid()
             sys.exit(1)
         finally:
-            self.log.info("Daemon stopped", pid=os.getpid())
+            self.log.info("Daemon loop stopped", pid=os.getpid())
             self.cleanup_pid()
 
 
@@ -178,6 +172,8 @@ def main():
         else:
             print(f"Fatal error: {traceback.format_exc()}")
         sys.exit(1)
+
+    sys.exit(0)
 
 
 if __name__ == "__main__":

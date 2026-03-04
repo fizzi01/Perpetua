@@ -2244,9 +2244,9 @@ async def main():
         await daemon.wait_for_shutdown()
     except KeyboardInterrupt:
         print("\nKeyboard interrupt received")
-    finally:
-        # await daemon.stop()
-        os._exit(0)  # Force exit to avoid lingering tasks or event loops
+    # finally:  Launcher will handle cleanup
+    # await daemon.stop()
+    # os._exit(0)  # Force exit to avoid lingering tasks or event loops
 
     return 0
 
