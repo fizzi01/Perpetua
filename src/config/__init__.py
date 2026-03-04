@@ -21,6 +21,7 @@ Handles server and client configurations with persistent storage support.
 #  along with this program.  If not, see <https://www.gnu.org/licenses/>.
 #
 
+import time
 import asyncio
 import json
 import sys
@@ -522,7 +523,7 @@ class ServerConfig:
             if not existing_config or not json_content.strip():
                 raise ValueError("Configuration data is empty, aborting save")
 
-            temp_file = f"{file_path}.tmp"
+            temp_file = f"{file_path}_{int(time.time())}.tmp"
             try:
                 await asyncio.wait_for(_write(temp_file, json_content), timeout=1)
 
@@ -823,7 +824,7 @@ class ClientConfig:
             if not existing_config or not json_content.strip():
                 raise ValueError("Configuration data is empty, aborting save")
 
-            temp_file = f"{file_path}.tmp"
+            temp_file = f"{file_path}_{int(time.time())}.tmp"
             try:
                 await asyncio.wait_for(_write(temp_file, json_content), timeout=1)
 
