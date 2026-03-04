@@ -27,12 +27,13 @@ import ssl
 from typing import Optional, Callable, Any
 
 from model.client import ClientsManager, ClientObj
+from model.connection import StreamWrapper, ClientConnection
+
 from network.data.exchange import MessageExchange, MessageExchangeConfig
 from network.protocol.message import MessageType, ProtocolMessage
 from network.stream import StreamType
 from utils.logging import Logger, get_logger
 
-from . import ClientConnection, StreamWrapper
 from .handler import CallbackError, BaseConnectionHandler
 
 
@@ -405,8 +406,9 @@ class ConnectionHandler(BaseConnectionHandler):
                     # Try again to get client by IP if hostname not provided
                     client = self.clients.get_client(ip_address=client_addr)
                 elif client and tmp_host_name:
-                    # Update hostname if needed
-                    client.host_name = tmp_host_name
+                    if not client.host_name:
+                        # Update hostname if needed
+                        client.host_name = tmp_host_name
 
                 if (
                     client is None
@@ -434,6 +436,23 @@ class ConnectionHandler(BaseConnectionHandler):
                     self._logger.log(
                         f"UID mismatch for client {client.get_net_id()}: "
                         f"expected '{client.uid}', received '{tmp_uid}'. "
+                        f"Rejecting handshake.",
+                        Logger.WARNING,
+                    )
+                    await client_msg_exchange.stop()
+                    await cur_stream.close()
+                    return False
+
+                # --- Hostname consistency check ---
+                # If the client already has a saved hostname, verify it matches the received one
+                if (
+                    client.host_name is not None
+                    and tmp_host_name is not None
+                    and client.host_name != tmp_host_name
+                ):
+                    self._logger.log(
+                        f"Hostname mismatch for client {client.get_net_id()}: "
+                        f"expected '{client.host_name}', received '{tmp_host_name}'. "
                         f"Rejecting handshake.",
                         Logger.WARNING,
                     )

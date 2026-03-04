@@ -26,6 +26,8 @@ import ssl
 from typing import Optional, Callable, Any
 
 from model.client import ClientsManager, ClientObj
+from model.connection import StreamWrapper, ClientConnection
+
 from network.data.exchange import MessageExchange, MessageExchangeConfig
 from network.protocol.message import MessageType, ProtocolMessage
 from network.stream import StreamType
@@ -33,7 +35,6 @@ from network.stream import StreamType
 from utils.logging import Logger, get_logger
 from utils import ExponentialBackoff
 
-from . import ClientConnection, StreamWrapper
 from .handler import CallbackError, BaseConnectionHandler
 
 

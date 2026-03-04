@@ -27,7 +27,7 @@ from enum import StrEnum
 
 from typing import Optional
 
-from network.connection import ClientConnection
+from model.connection import ClientConnection
 
 
 class ScreenPosition(StrEnum):
@@ -79,7 +79,7 @@ class ClientObj:
         screen_position: str = ScreenPosition.CENTER,
         screen_resolution: str = "1x1",
         ssl: bool = False,
-        conn_socket: Optional["ClientConnection"] = None,
+        conn_socket: Optional[ClientConnection] = None,
         additional_params: Optional[dict] = None,
     ):
         self.uid = uid
