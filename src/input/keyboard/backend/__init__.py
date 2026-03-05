@@ -15,8 +15,10 @@
 #  along with this program.  If not, see <https://www.gnu.org/licenses/>.
 #
 import os
-
 from sys import platform
+
+from pynput.keyboard import HotKey
+
 
 # Import platform-specific mouse backends
 if platform.startswith("linux"):
@@ -36,7 +38,5 @@ else:
     from pynput.keyboard import Listener as KeyboardListener
     from pynput.keyboard import Controller as KeyboardController
     from pynput.keyboard import Key, KeyCode
-
-from pynput.keyboard import HotKey
 
 __all__ = ["KeyboardListener", "KeyboardController", "Key", "KeyCode", "HotKey"]
