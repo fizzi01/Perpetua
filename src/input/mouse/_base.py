@@ -41,7 +41,7 @@ from utils.logging import get_logger, Logger
 from utils.screen import Screen
 from input.utils import ScreenEdge, EdgeDetector, ButtonMapping
 
-from .backend import MouseListener, MouseController, Button
+from .backend import MouseListener, MouseController, Button, BACKEND
 
 
 class ServerMouseListener(object):
@@ -106,6 +106,10 @@ class ServerMouseListener(object):
         self._is_dragging = False
 
         self._logger = get_logger(self.__class__.__name__)
+
+        self._logger.info(
+            f"Mouse listener backend: {BACKEND.get('mouse_listener', 'unknown')}"
+        )
 
         # Store event loop reference for thread-safe async scheduling
         try:
@@ -441,6 +445,10 @@ class ServerMouseController(object):
         self._controller = MouseController()
         self._logger = get_logger(self.__class__.__name__)
 
+        self._logger.info(
+            f"Mouse controller backend: {BACKEND.get('mouse_controller', 'unknown')}"
+        )
+
         # Register for active screen changed events to reposition the cursor
         self.event_bus.subscribe(
             event_type=BusEventType.ACTIVE_SCREEN_CHANGED,
@@ -534,6 +542,10 @@ class ClientMouseController(object):
         self._is_dragging = False
 
         self._logger = get_logger(self.__class__.__name__)
+
+        self._logger.info(
+            f"Mouse controller backend: {BACKEND.get('mouse_controller', 'unknown')}"
+        )
 
         # Check for cursor validity
         if not self.check_cursor_validity():

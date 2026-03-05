@@ -44,7 +44,7 @@ from utils.logging import get_logger
 from utils.screen import Screen
 
 from input.utils import KeyUtilities
-from .backend import KeyboardListener, Key, KeyCode, HotKey, KeyboardController
+from .backend import KeyboardListener, Key, KeyCode, HotKey, KeyboardController, BACKEND
 
 
 class ServerKeyboardListener(object):
@@ -102,6 +102,10 @@ class ServerKeyboardListener(object):
         self._hotkeys: list[HotKey] = self._build_hotkeys()
 
         self._logger = get_logger(self.__class__.__name__)
+
+        self._logger.info(
+            f"Keyboard listener backend: {BACKEND.get('keyboard_listener', 'unknown')}"
+        )
 
         # Store event loop reference for thread-safe async scheduling
         try:
@@ -217,7 +221,7 @@ class ServerKeyboardListener(object):
         otherwise falls back to manual normalization.
         """
         if self._listener is not None and hasattr(self._listener, "canonical"):
-            return self._listener.canonical(key)
+            return self._listener.canonical(key)  # ty:ignore[call-non-callable]
         # Fallback
         if isinstance(key, Key):
             if key in self._MOD_MAP:
@@ -533,6 +537,10 @@ class ClientKeyboardController(object):
         self._caps_lock_state = False
 
         self._logger = get_logger(self.__class__.__name__)
+
+        self._logger.info(
+            f"Keyboard controller backend: {BACKEND.get('keyboard_controller', 'unknown')}"
+        )
 
         # Async queue instead of multiprocessing queue
         self._queue: asyncio.Queue = asyncio.Queue(maxsize=1000)

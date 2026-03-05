@@ -19,10 +19,12 @@ from sys import platform
 
 from pynput.keyboard import HotKey
 
-
+BACKEND: dict[str, str] = {}
 # Import platform-specific mouse backends
 if platform.startswith("linux"):
     from ._uinput import KeyboardListener, Key, KeyCode
+
+    BACKEND["keyboard_listener"] = "uinput"
 
     # Check for wayland
     if (
@@ -31,12 +33,26 @@ if platform.startswith("linux"):
         and os.environ["XDG_SESSION_TYPE"] == "wayland"
     ):
         from ._uinput import KeyboardController
+
+        BACKEND["keyboard_controller"] = "uinput"
     else:
         # Fallback to xorg backend
         from pynput.keyboard import Controller as KeyboardController
+
+        BACKEND["keyboard_controller"] = "xorg"
 else:
     from pynput.keyboard import Listener as KeyboardListener
     from pynput.keyboard import Controller as KeyboardController
     from pynput.keyboard import Key, KeyCode
 
-__all__ = ["KeyboardListener", "KeyboardController", "Key", "KeyCode", "HotKey"]
+    BACKEND["keyboard_listener"] = "pynput"
+    BACKEND["keyboard_controller"] = "pynput"
+
+__all__ = [
+    "KeyboardListener",
+    "KeyboardController",
+    "Key",
+    "KeyCode",
+    "HotKey",
+    "BACKEND",
+]

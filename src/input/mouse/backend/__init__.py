@@ -22,6 +22,7 @@ MouseListener = None
 MouseController = None
 Button = None
 
+BACKEND: dict[str, str] = {}
 # Import platform-specific mouse backends when available
 if platform.startswith("linux"):
     # Check if we're running under Wayland or Xorg
@@ -33,9 +34,15 @@ if platform.startswith("linux"):
         print("Wayland backend not implemented yet, no mouse control available")
         from ._dummy import MouseListener, MouseController, Button
 
+        BACKEND["mouse_listener"] = "dummy"
+        BACKEND["mouse_controller"] = "dummy"
+
 if not MouseListener or not MouseController or not Button:
     from pynput.mouse import Listener as MouseListener
     from pynput.mouse import Controller as MouseController
     from pynput.mouse import Button
 
-__all__ = ["MouseListener", "MouseController", "Button"]
+    BACKEND["mouse_listener"] = "pynput"
+    BACKEND["mouse_controller"] = "pynput"
+
+__all__ = ["MouseListener", "MouseController", "Button", "BACKEND"]
