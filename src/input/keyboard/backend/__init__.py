@@ -20,7 +20,7 @@ from sys import platform
 # Import platform-specific mouse backends
 if platform.startswith("linux"):
     from ._uinput import KeyboardListener, Key, KeyCode
-    from pynput.keyboard import Controller as KeyboardController
+    from pynput.keyboard._uinput import Controller as KeyboardController
 else:
     from pynput.keyboard import Listener as KeyboardListener
     from pynput.keyboard import Controller as KeyboardController
