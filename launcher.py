@@ -17,7 +17,6 @@
 
 import asyncio
 import os
-import signal
 import sys
 from argparse import ArgumentParser, Namespace
 from pathlib import Path
