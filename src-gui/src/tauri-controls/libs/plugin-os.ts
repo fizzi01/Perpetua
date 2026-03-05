@@ -17,14 +17,19 @@
  *
  */
 
-import type { OsType } from "@tauri-apps/plugin-os"
+import type { OsType, Platform } from "@tauri-apps/plugin-os"
 
 let osType: OsType | undefined = undefined
 let osTypePromise: Promise<OsType> | null = null
+let platform: Platform | undefined = undefined 
+let platformPromise: Promise<Platform> | null = null
 
 if (typeof window !== "undefined") {
   osTypePromise = import("@tauri-apps/plugin-os").then((module) => {
     return module.type()
+  })
+  platformPromise = import("@tauri-apps/plugin-os").then((module) => {
+    return module.platform()
   })
 }
 
@@ -37,4 +42,14 @@ export function getOsType(): Promise<OsType> {
 
   // If the module is still loading, wait for it to finish and return the result
   return osTypePromise
+}
+
+export function getPlatform(): Promise<Platform> {
+  if (!platformPromise) {
+    // If the module was already loaded, just return the result
+    return Promise.resolve(platform!) // Use non-null assertion
+  }
+
+  // If the module is still loading, wait for it to finish and return the result
+  return platformPromise
 }

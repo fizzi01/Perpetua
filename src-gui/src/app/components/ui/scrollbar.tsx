@@ -18,8 +18,9 @@
  */
 
 import * as React from "react";
-import {platform} from '@tauri-apps/plugin-os';
 import {classNames} from '../../commons/utils';
+import { getPlatform } from "../../../tauri-controls/libs/plugin-os";
+import { useEffect, useState } from "react";
 
 export interface ScrollAreaProps extends React.HTMLAttributes<HTMLDivElement> {
     extraPadding?: string;
@@ -27,10 +28,17 @@ export interface ScrollAreaProps extends React.HTMLAttributes<HTMLDivElement> {
 }
 
 const ScrollArea = React.forwardRef<HTMLDivElement, ScrollAreaProps>(
-    ({className, children, extraPadding, ...props}, ref) => {
-        const currentPlatform = platform();
-        const isWindows = currentPlatform === 'windows';
-        const platformExtraPadding = isWindows ? extraPadding : '';
+  ({ className, children, extraPadding, ...props }, ref) => {
+
+    const [currentPlatform, setCurrentPlatform] = useState<string>('unknown');
+    useEffect(() => {
+      getPlatform().then((platform) => {
+        setCurrentPlatform(platform);
+      });
+    }, []);
+
+    const isWindows = currentPlatform === 'windows';
+    const platformExtraPadding = isWindows ? extraPadding : '';
 
         return (
             <div

@@ -17,9 +17,10 @@
  *
  */
 
-import {motion} from 'motion/react';
-import {WindowTitlebar} from '../../tauri-controls/window-titlebar';
-import {platform} from '@tauri-apps/plugin-os';
+import { motion } from 'motion/react';
+import { WindowTitlebar } from '../../tauri-controls/window-titlebar';
+import { getPlatform } from '../../tauri-controls/libs/plugin-os';
+import { useEffect, useState } from 'react';
 
 interface TitlebarProps {
     disabled?: boolean;
@@ -90,7 +91,13 @@ export function InnerBar({disabled, mode, justify_mode, onModeChange}: InnerBarP
 
 export function Titlebar({disabled, mode, onModeChange}: TitlebarProps) {
 
-    const currentPlatform = platform();
+  const [currentPlatform, setCurrentPlatform] = useState<string>('unknown');
+  useEffect(() => {
+    getPlatform().then((platform) => {
+      setCurrentPlatform(platform);
+    });
+  }, []);
+
 
     return (
         currentPlatform == "windows" ? (
