@@ -111,7 +111,8 @@ class CommandHandler:
         """
         # If we are client we just dispatch CLIENT_INACTIVE event
         f_ev = ForceScreenChangeCommandEvent().from_command_event(event)
-        if event.target == "client" and f_ev.params.get("force", False):
+        if event.source == "server" and f_ev.params.get("force", False):
             await self.event_bus.dispatch(
                 event_type=BusEventType.CLIENT_INACTIVE,
+                data=None
             )

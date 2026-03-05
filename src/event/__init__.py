@@ -300,7 +300,9 @@ class ForceScreenChangeCommandEvent(CommandEvent):
 
     @classmethod
     def from_command_event(cls, event: CommandEvent) -> Self:
-        return cls(source=event.source, target=event.target)
+        return cls(
+            source=event.source,
+            target=event.target)
 
     def to_dict(self) -> dict:
         return {
