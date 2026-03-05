@@ -26,4 +26,6 @@ else:
     from pynput.keyboard import Controller as KeyboardController
     from pynput.keyboard import Key, KeyCode
 
-__all__ = ["KeyboardListener", "KeyboardController", "Key", "KeyCode"]
+from pynput.keyboard import HotKey
+
+__all__ = ["KeyboardListener", "KeyboardController", "Key", "KeyCode", "HotKey"]
