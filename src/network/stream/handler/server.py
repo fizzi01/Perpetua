@@ -401,7 +401,7 @@ class MulticastStreamHandler(_ServerStreamHandler):
                     )
         except Exception as e:
             self._logger.error(
-                f"Error configuring transport for reconnected stream -> {e}"
+                f"Error configuring transport for reconnected stream ({e})"
             )
 
     async def _on_client_connected(self, data: Optional[ClientConnectedEvent]):

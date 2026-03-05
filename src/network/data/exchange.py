@@ -281,9 +281,7 @@ class MessageExchange:
             self._running = False
             raise
         except RuntimeError as e:
-            self._logger.log(
-                f"Error in receive loop {self._id} -> {e}", Logger.CRITICAL
-            )
+            self._logger.log(f"Error in receive loop {self._id} ({e})", Logger.CRITICAL)
             self._running = False
             raise e
         except Exception as e:
@@ -298,7 +296,7 @@ class MessageExchange:
                 ),
             ):
                 self._logger.log(
-                    f"Connection error in receive loop -> {e}", Logger.ERROR
+                    f"Connection error in receive loop ({e})", Logger.ERROR
                 )
                 self._running = False
                 raise e
@@ -311,7 +309,7 @@ class MessageExchange:
                 self._running = False
                 raise e
 
-            self._logger.log(f"Error in receive loop {self._id} -> {e}", Logger.ERROR)
+            self._logger.log(f"Error in receive loop {self._id} ({e})", Logger.ERROR)
             await asyncio.sleep(0)
             return
 

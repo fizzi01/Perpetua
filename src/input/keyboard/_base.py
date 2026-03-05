@@ -167,28 +167,46 @@ class ServerKeyboardListener(object):
         Build HotKey instances for all registered combinations.
         Uses Ctrl+Shift+P+<action> to avoid Option/Alt issues on macOS.
         """
+
         def make_cb(coro_fn, *args):
             def cb():
                 self._hotkey_consumed = True
                 self._schedule_async(coro_fn(*args))
+
             return cb
 
         entries = [
-            ("<ctrl>+<shift>+p+<left>",  make_cb(self._hotkey_switch_screen, ScreenPosition.LEFT)),
-            ("<ctrl>+<shift>+p+<right>", make_cb(self._hotkey_switch_screen, ScreenPosition.RIGHT)),
-            ("<ctrl>+<shift>+p+<up>",    make_cb(self._hotkey_switch_screen, ScreenPosition.TOP)),
-            ("<ctrl>+<shift>+p+<down>",  make_cb(self._hotkey_switch_screen, ScreenPosition.BOTTOM)),
-            ("<ctrl>+<shift>+p+<esc>",   make_cb(self._hotkey_switch_to_server)),
-            ("<ctrl>+<shift>+q",         make_cb(self._hotkey_panic)),
+            (
+                "<ctrl>+<shift>+p+<left>",
+                make_cb(self._hotkey_switch_screen, ScreenPosition.LEFT),
+            ),
+            (
+                "<ctrl>+<shift>+p+<right>",
+                make_cb(self._hotkey_switch_screen, ScreenPosition.RIGHT),
+            ),
+            (
+                "<ctrl>+<shift>+p+<up>",
+                make_cb(self._hotkey_switch_screen, ScreenPosition.TOP),
+            ),
+            (
+                "<ctrl>+<shift>+p+<down>",
+                make_cb(self._hotkey_switch_screen, ScreenPosition.BOTTOM),
+            ),
+            ("<ctrl>+<shift>+p+<esc>", make_cb(self._hotkey_switch_to_server)),
+            ("<ctrl>+<shift>+q", make_cb(self._hotkey_panic)),
         ]
         return [HotKey(HotKey.parse(combo), cb) for combo, cb in entries]
 
     # Modifier normalization map
     _MOD_MAP: dict = {
-        Key.ctrl_l: Key.ctrl,   Key.ctrl_r: Key.ctrl,
-        Key.shift_l: Key.shift, Key.shift_r: Key.shift,
-        Key.alt_l: Key.alt,     Key.alt_r: Key.alt,
-        Key.cmd_l: Key.cmd,     Key.cmd_r: Key.cmd,
+        Key.ctrl_l: Key.ctrl,
+        Key.ctrl_r: Key.ctrl,
+        Key.shift_l: Key.shift,
+        Key.shift_r: Key.shift,
+        Key.alt_l: Key.alt,
+        Key.alt_r: Key.alt,
+        Key.cmd_l: Key.cmd,
+        Key.cmd_r: Key.cmd,
     }
 
     def _canonical(self, key: Key | KeyCode) -> Key | KeyCode:

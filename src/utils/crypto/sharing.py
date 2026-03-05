@@ -218,7 +218,7 @@ class CertificateSharing:
             self._logger.log(f"Certificate sent to client {addr}", Logger.INFO)
 
         except Exception as e:
-            self._logger.log(f"Error handling client {addr} -> {e}", Logger.ERROR)
+            self._logger.log(f"Error handling client {addr} ({e})", Logger.ERROR)
         finally:
             writer.close()
             await writer.wait_closed()
@@ -266,7 +266,7 @@ class CertificateSharing:
             return True, self._otp
 
         except Exception as e:
-            self._logger.log(f"Failed to start sharing server -> {e}", Logger.ERROR)
+            self._logger.log(f"Failed to start sharing server ({e})", Logger.ERROR)
             self._otp = None
             self._otp_expiry = None
             return False, None
@@ -466,7 +466,7 @@ class CertificateReceiver:
             )
             return False, None
         except Exception as e:
-            self._logger.log(f"Error receiving certificate -> {e}", Logger.ERROR)
+            self._logger.log(f"Error receiving certificate ({e})", Logger.ERROR)
             import traceback
 
             self._logger.log(traceback.format_exc(), Logger.ERROR)

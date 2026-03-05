@@ -128,7 +128,7 @@ class Clipboard:
             except CopykittenError:
                 return None, ClipboardType.EMPTY
             except Exception as e:
-                self._logger.warning(f"Failed to access clipboard -> {e}")
+                self._logger.warning(f"Failed to access clipboard ({e})")
                 return None, ClipboardType.ERROR
 
             # Determine the content type
@@ -153,7 +153,7 @@ class Clipboard:
             return content, content_type
 
         except Exception as e:
-            self._logger.error(f"Error reading clipboard -> {e}")
+            self._logger.error(f"Error reading clipboard ({e})")
             return None, ClipboardType.ERROR
 
     async def _set_clipboard_content(self, content: str) -> bool:
@@ -176,7 +176,7 @@ class Clipboard:
 
             return True
         except Exception as e:
-            self._logger.error(f"Error writing to clipboard -> {e}")
+            self._logger.error(f"Error writing to clipboard ({e})")
             return False
 
     async def _poll_loop(self):
@@ -216,7 +216,7 @@ class Clipboard:
                                         None, self.on_change, content, content_type
                                     )
                             except Exception as e:
-                                self._logger.error(f"Error in callback -> {e}")
+                                self._logger.error(f"Error in callback ({e})")
 
                 # Sleep until next poll
                 await asyncio.sleep(self.poll_interval)
@@ -226,7 +226,7 @@ class Clipboard:
                 self._running = False
                 break
             except Exception as e:
-                self._logger.debug(f"Error in poll loop -> {e}")
+                self._logger.debug(f"Error in poll loop ({e})")
                 # Continue polling even on error
                 await asyncio.sleep(self.poll_interval)
 
@@ -323,7 +323,7 @@ class Clipboard:
             # so the polling loop will detect this as a change
             return True
         except Exception as e:
-            self._logger.error(f"Error writing to clipboard (debug) -> {e}")
+            self._logger.error(f"Error writing to clipboard (debug) ({e})")
             return False
 
 

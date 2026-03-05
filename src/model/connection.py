@@ -293,4 +293,4 @@ class ClientConnection:
         except asyncio.CancelledError:
             pass
         except Exception as e:
-            raise Exception(f"Error while closing connection -> {e}") from e
+            raise Exception(f"Error while closing connection ({e})") from e

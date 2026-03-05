@@ -148,7 +148,7 @@ class AsyncEventBus(EventBus):
         except Exception as e:
             # import traceback
 
-            self._logger.error(f"Exception raised while dispatching event -> {e}")
+            self._logger.error(f"Exception raised while dispatching event ({e})")
             # self._logger.error(traceback.format_exc())
 
 
