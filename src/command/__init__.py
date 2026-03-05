@@ -28,6 +28,7 @@ from event import (
     ActiveScreenChangedEvent,
     CrossScreenCommandEvent,
     ClientActiveEvent,
+    ForceScreenChangeCommandEvent,
 )
 from event.bus import EventBus
 from network.stream.handler import StreamHandler
@@ -66,6 +67,8 @@ class CommandHandler:
             if event.command == CommandEvent.CROSS_SCREEN:
                 # Create task to handle in background
                 await asyncio.create_task(self.handle_cross_screen(event))
+            elif event.command == CommandEvent.FORCE_SCREEN_CHANGE:
+                await asyncio.create_task(self.handle_force_screen_change(event))
             else:
                 self._logger.warning(f"Unknown command received -> {event.command}")
                 return
@@ -100,4 +103,15 @@ class CommandHandler:
                 data=ClientActiveEvent(
                     client_screen=event.target,
                 ),
+            )
+
+    async def handle_force_screen_change(self, event: CommandEvent):
+        """
+        Async handler for force screen change command by dispatching a client inactive event if we are client.
+        """
+        # If we are client we just dispatch CLIENT_INACTIVE event
+        f_ev = ForceScreenChangeCommandEvent().from_command_event(event)
+        if event.target == "client" and f_ev.params.get("force", False):
+            await self.event_bus.dispatch(
+                event_type=BusEventType.CLIENT_INACTIVE,
             )

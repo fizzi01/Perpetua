@@ -222,6 +222,7 @@ class CommandEvent(Event):
     """
 
     CROSS_SCREEN = "cross_screen"
+    FORCE_SCREEN_CHANGE = "force_screen_change"
     KEYBOARD_STATE_SYNC = "keyboard_state_sync"
 
     def __init__(
@@ -281,6 +282,30 @@ class CrossScreenCommandEvent(CommandEvent):
         return {
             "command": self.command,
             "params": {"x": self.params.get("x", -1), "y": self.params.get("y", -1)},
+        }
+
+
+class ForceScreenChangeCommandEvent(CommandEvent):
+    """
+    Force screen change command event data structure.
+    """
+
+    def __init__(self, source: str = "", target: str = ""):
+        super().__init__(
+            command=CommandEvent.FORCE_SCREEN_CHANGE,
+            source=source,
+            target=target,
+            params={"force": True},
+        )
+
+    @classmethod
+    def from_command_event(cls, event: CommandEvent) -> Self:
+        return cls(source=event.source, target=event.target)
+
+    def to_dict(self) -> dict:
+        return {
+            "command": self.command,
+            "params": {"force": True},
         }
 
 

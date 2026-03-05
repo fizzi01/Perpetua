@@ -31,6 +31,7 @@ from event import (
     CommandEvent,
     KeyboardStateSyncCommandEvent,
     CrossScreenCommandEvent,
+    ForceScreenChangeCommandEvent,
 )
 from event.bus import EventBus
 
@@ -451,6 +452,8 @@ class ServerKeyboardListener(object):
                 event_type=BusEventType.SCREEN_CHANGE_GUARD,
                 data=ActiveScreenChangedEvent(active_screen=None),
             )
+            # Notify clients of forced screen change to server
+            await self.command_stream.send(ForceScreenChangeCommandEvent())
         except Exception as e:
             self._logger.error(f"Error during hotkey switch-to-server ({e})")
 
