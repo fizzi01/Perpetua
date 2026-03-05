@@ -316,14 +316,13 @@ class Daemon:
 
     def _setup_signal_handlers(self):
         """Setup signal handlers for graceful shutdown"""
-        if not IS_WINDOWS:  # Unix signals
-            for sig in (signal.SIGTERM, signal.SIGINT):
-                try:
-                    asyncio.get_event_loop().add_signal_handler(
-                        sig, lambda: asyncio.create_task(self._signal_shutdown())
-                    )
-                except NotImplementedError:
-                    pass
+        for sig in (signal.SIGTERM, signal.SIGINT):
+            try:
+                asyncio.get_event_loop().add_signal_handler(
+                    sig, lambda: asyncio.create_task(self._signal_shutdown())
+                )
+            except NotImplementedError:
+                pass
 
     async def _signal_shutdown(self):
         """Handle shutdown signals"""

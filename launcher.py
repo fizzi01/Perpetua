@@ -116,15 +116,6 @@ class DaemonRunner:
         self.write_pid()
         self.log.info("Daemon loop started", pid=os.getpid())
 
-        # Graceful shutdown on signals
-        def on_shutdown(signum, _frame):
-            self.log.info("Daemon received shutdown signal", signal=signum)
-            self.cleanup_pid()
-            sys.exit(0)
-
-        signal.signal(signal.SIGTERM, on_shutdown)
-        signal.signal(signal.SIGINT, on_shutdown)
-
         try:
             if IS_WINDOWS:
                 import winloop as asyncloop  # ty:ignore[unresolved-import]
