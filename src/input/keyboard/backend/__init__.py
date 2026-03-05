@@ -14,13 +14,24 @@
 #  You should have received a copy of the GNU General Public License
 #  along with this program.  If not, see <https://www.gnu.org/licenses/>.
 #
+import os
 
 from sys import platform
 
 # Import platform-specific mouse backends
 if platform.startswith("linux"):
     from ._uinput import KeyboardListener, Key, KeyCode
-    from pynput.keyboard import Controller as KeyboardController
+
+    # Check for wayland
+    if (
+        "WAYLAND_DISPLAY" in os.environ
+        or "XDG_SESSION_TYPE" in os.environ
+        and os.environ["XDG_SESSION_TYPE"] == "wayland"
+    ):
+        from ._uinput import KeyboardController
+    else:
+        # Fallback to xorg backend
+        from pynput.keyboard import Controller as KeyboardController
 else:
     from pynput.keyboard import Listener as KeyboardListener
     from pynput.keyboard import Controller as KeyboardController

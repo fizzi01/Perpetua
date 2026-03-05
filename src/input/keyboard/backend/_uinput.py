@@ -28,6 +28,149 @@ from input.utils import _wrap
 KEY_MAX = 767  # kernel KEY_MAX; codes above this are rejected by uinput
 
 
+class KeyboardController:
+    """
+    UInput keyboard controller for Linux.
+
+    Injects keyboard events via a virtual uinput device.
+    Borrows and updates key-mapping and modifier-handling logic from pynput's uinput Controller.
+    """
+
+    _MAP_MODIFIERS: dict[str, int] = {
+        k.name: k.value.vk for k in Key if k.value.vk is not None
+    }
+
+    # Modifier keys that need state tracking for character->vk resolution
+    _MODIFIER_KEYS = frozenset(
+        {
+            Key.shift,
+            Key.shift_l,
+            Key.shift_r,
+            Key.ctrl,
+            Key.ctrl_l,
+            Key.ctrl_r,
+            Key.alt,
+            Key.alt_l,
+            Key.alt_r,
+            Key.alt_gr,
+            Key.cmd,
+            Key.cmd_l,
+            Key.cmd_r,
+        }
+    )
+
+    # Only these modifiers are relevant to character production (Shift/AltGr).
+    # Ctrl, Alt, Cmd are intentional and must never be auto-released when
+    # adjusting modifiers for a character key.
+    _LAYOUT_MODIFIERS: frozenset[Key] = frozenset(
+        {
+            Key.shift,
+            Key.shift_l,
+            Key.shift_r,
+            Key.alt_gr,
+        }
+    )
+
+    class InvalidKeyException(Exception):
+        pass
+
+    def __init__(self):
+        self._dev = evdev.UInput(name="perpetua-keyboard")
+        self._modifiers: set[Key] = set()
+        self._layout = LAYOUT
+
+    def __del__(self):
+        if hasattr(self, "_dev"):
+            self._dev.close()
+
+    def press(self, key):
+        """Press a key (Key enum or KeyCode)."""
+        self._handle(self._resolve(key), True)
+
+    def release(self, key):
+        """Release a key (Key enum or KeyCode)."""
+        self._handle(self._resolve(key), False)
+
+    def _resolve(self, key) -> KeyCode | Key:
+        """Normalize a Key enum to its underlying KeyCode."""
+        if isinstance(key, Key):
+            return key.value
+        return key
+
+    def _handle(self, key: KeyCode | Key, is_press: bool):
+        try:
+            vk, required_modifiers = self._to_vk_and_modifiers(key)
+        except ValueError:
+            raise self.InvalidKeyException(key)
+
+        # For character keys: temporarily adjust only layout-relevant modifiers
+        # (Shift, AltGr) so the correct character is produced.
+        # Ctrl/Alt/Cmd are intentional and must never be auto-released.
+        if is_press and required_modifiers is not None:
+            layout_held = self._modifiers & self._LAYOUT_MODIFIERS
+            to_press = {
+                getattr(ecodes, k.value._kernel_name)
+                for k in (required_modifiers - layout_held)
+            }
+            to_release = {
+                getattr(ecodes, k.value._kernel_name)
+                for k in (layout_held - required_modifiers)
+            }
+        else:
+            to_press = set()
+            to_release = set()
+
+        # Update modifier-key tracking before sending
+        self._update_modifiers(vk, is_press)
+
+        cleanup = []
+        try:
+            for k in to_release:
+                self._send(k, False)
+                cleanup.append((k, True))
+            for k in to_press:
+                self._send(k, True)
+                cleanup.append((k, False))
+            self._send(vk, is_press)
+        finally:
+            for e in reversed(cleanup):
+                try:
+                    self._send(*e)
+                except Exception:
+                    pass
+            self._dev.syn()
+
+    def _to_vk_and_modifiers(
+        self, key: KeyCode | Key
+    ) -> tuple[int, Optional[set[Key]]]:
+        """Resolve a KeyCode to (vk, required_modifiers).
+
+        Returns required_modifiers=None for keys with an explicit vk (special keys),
+        or the modifier set from the layout for character keys.
+        """
+        if hasattr(key, "vk") and key.vk is not None:
+            return (key.vk, None)
+        elif hasattr(key, "char") and key.char is not None:
+            return self._layout.for_char(key.char)
+        elif hasattr(key, "name") and key.name in self._MAP_MODIFIERS:
+            return self._MAP_MODIFIERS.get(key.name), None  # ty:ignore[invalid-argument-type]
+        raise ValueError(key)
+
+    def _update_modifiers(self, vk: int, is_press: bool):
+        """Keep _modifiers in sync when a modifier key is pressed/released."""
+        for mod in self._MODIFIER_KEYS:
+            if mod.value.vk == vk:
+                if is_press:
+                    self._modifiers.add(mod)
+                else:
+                    self._modifiers.discard(mod)
+                break
+
+    def _send(self, vk: int, is_press: bool):
+        """Write a single EV_KEY event to uinput (no SYN)."""
+        self._dev.write(ecodes.EV_KEY, vk, int(is_press))
+
+
 def find_keyboards(devices: Optional[list[str]] = None) -> list[evdev.InputDevice]:
     """Return all /dev/input/eventX devices that look like keyboards."""
     result = []
@@ -61,10 +204,8 @@ def make_uinput(keyboards: list[evdev.InputDevice]) -> UInput:
 
 class KeyboardListener(threading.Thread):
     """
-    UInput keyboard listener backend. Forwards EV_KEY events from grabbed
-    physical keyboards to a virtual UInput device.
-    Args:
-        suppress: if True, do not forward events to UInput
+    UInput keyboard listener backend.
+    Forwards EV_KEY events from grabbed physical keyboards to a virtual UInput device.
     """
 
     _MODIFIERS = {
