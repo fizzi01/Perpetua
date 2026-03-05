@@ -54,8 +54,12 @@ class StreamWrapper:
             await self._writer.drain()
 
         async def close(self):
-            self._writer.close()
-            await self._writer.wait_closed()
+            try:
+                self._writer.close()
+                await self._writer.wait_closed()
+            except BrokenPipeError:
+                # If the connection is already closed, we can ignore the error
+                pass
 
         async def _try_writer_close(self):
             """
