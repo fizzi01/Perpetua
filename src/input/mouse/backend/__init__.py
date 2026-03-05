@@ -22,6 +22,10 @@ MouseListener = None
 MouseController = None
 Button = None
 
+# Unset environment variable to prevent pynput from loading the wrong backend
+environ.pop("PYNPUT_BACKEND_MOUSE", None)
+environ.pop("PYNPUT_BACKEND", None)
+
 BACKEND: dict[str, str] = {}
 # Import platform-specific mouse backends when available
 if platform.startswith("linux"):
@@ -36,12 +40,18 @@ if platform.startswith("linux"):
 
         BACKEND["mouse_listener"] = "dummy"
         BACKEND["mouse_controller"] = "dummy"
+    else:
+        # Fallback to xorg backend
+        environ["PYNPUT_BACKEND_MOUSE"] = "xorg"
+        BACKEND["mouse_listener"] = "xorg"
+        BACKEND["mouse_controller"] = "xorg"
 
 if not MouseListener or not MouseController or not Button:
     from pynput.mouse import Listener as MouseListener
     from pynput.mouse import Controller as MouseController
     from pynput.mouse import Button
 
+if not BACKEND.get("mouse_listener") or not BACKEND.get("mouse_controller"):
     BACKEND["mouse_listener"] = "pynput"
     BACKEND["mouse_controller"] = "pynput"
 

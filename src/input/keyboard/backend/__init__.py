@@ -14,10 +14,14 @@
 #  You should have received a copy of the GNU General Public License
 #  along with this program.  If not, see <https://www.gnu.org/licenses/>.
 #
-import os
+from os import environ
 from sys import platform
 
 from pynput.keyboard import HotKey
+
+# Unset environment variable to prevent pynput from loading the wrong backend
+environ.pop("PYNPUT_BACKEND_MOUSE", None)
+environ.pop("PYNPUT_BACKEND", None)
 
 BACKEND: dict[str, str] = {}
 # Import platform-specific mouse backends
@@ -28,15 +32,16 @@ if platform.startswith("linux"):
 
     # Check for wayland
     if (
-        "WAYLAND_DISPLAY" in os.environ
-        or "XDG_SESSION_TYPE" in os.environ
-        and os.environ["XDG_SESSION_TYPE"] == "wayland"
+        "WAYLAND_DISPLAY" in environ
+        or "XDG_SESSION_TYPE" in environ
+        and environ["XDG_SESSION_TYPE"] == "wayland"
     ):
         from ._uinput import KeyboardController
 
         BACKEND["keyboard_controller"] = "uinput"
     else:
-        # Fallback to xorg backend
+        # Fallback to xorg backend by forcing environment variable for pynput
+        environ["PYNPUT_BACKEND_KEYBOARD"] = "xorg"
         from pynput.keyboard import Controller as KeyboardController
 
         BACKEND["keyboard_controller"] = "xorg"
