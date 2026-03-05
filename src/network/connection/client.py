@@ -167,7 +167,7 @@ class ConnectionHandler(BaseConnectionHandler):
             return True
 
         except Exception as e:
-            self._logger.log(f"Failed to start -> {e}", Logger.ERROR)
+            self._logger.log(f"Failed to start ({e})", Logger.ERROR)
             import traceback
 
             self._logger.log(traceback.format_exc(), Logger.ERROR)
@@ -273,7 +273,7 @@ class ConnectionHandler(BaseConnectionHandler):
                                     )
                                 except CallbackError as e:
                                     self._logger.log(
-                                        f"Error in connected callback -> {e}",
+                                        f"Error in connected callback ({e})",
                                         Logger.ERROR,
                                     )
 
@@ -316,7 +316,7 @@ class ConnectionHandler(BaseConnectionHandler):
                 await self.stop()
                 break
             except Exception as e:
-                self._logger.exception(f"Error in core loop -> {e}")
+                self._logger.exception(f"Error in core loop ({e})")
 
                 # Handle disconnection
                 if self._connected:
@@ -362,7 +362,7 @@ class ConnectionHandler(BaseConnectionHandler):
             )
             return False
         except Exception as e:
-            self._logger.log(f"Connection error -> {e}", Logger.ERROR)
+            self._logger.log(f"Connection error ({e})", Logger.ERROR)
             return False
 
     async def _handshake(self) -> bool:
@@ -470,7 +470,7 @@ class ConnectionHandler(BaseConnectionHandler):
         except asyncio.CancelledError:
             raise
         except Exception as e:
-            self._logger.log(f"Handshake error -> {e}", Logger.ERROR)
+            self._logger.log(f"Handshake error ({e})", Logger.ERROR)
             import traceback
 
             self._logger.log(traceback.format_exc(), Logger.ERROR)
@@ -532,7 +532,7 @@ class ConnectionHandler(BaseConnectionHandler):
                 return False
             except Exception as e:
                 self._logger.log(
-                    f"Failed to connect stream {stream_type} -> {e}", Logger.ERROR
+                    f"Failed to connect stream {stream_type} ({e})", Logger.ERROR
                 )
                 return False
 
@@ -592,7 +592,7 @@ class ConnectionHandler(BaseConnectionHandler):
                                 await stream_writer.send(hb_msg.to_bytes())
                             except Exception as e:
                                 self._logger.warning(
-                                    f"Heartbeat send failed on stream {stream_type} -> {e}"
+                                    f"Heartbeat send failed on stream {stream_type} ({e})"
                                 )
                                 closed_streams.append(stream_type)
 
@@ -615,7 +615,7 @@ class ConnectionHandler(BaseConnectionHandler):
                             )
                         except CallbackError as e:
                             self._logger.log(
-                                f"Error in reconnected callback -> {e}", Logger.ERROR
+                                f"Error in reconnected callback ({e})", Logger.ERROR
                             )
 
             except asyncio.CancelledError:
@@ -633,7 +633,7 @@ class ConnectionHandler(BaseConnectionHandler):
                     await self._handle_disconnection(err=e)
                     break
             except Exception as e:
-                self._logger.log(f"Heartbeat error -> {e}", Logger.ERROR)
+                self._logger.log(f"Heartbeat error ({e})", Logger.ERROR)
                 await self._handle_disconnection(err=e)
                 break
 
@@ -660,7 +660,7 @@ class ConnectionHandler(BaseConnectionHandler):
                 callback=self.disconnected_callback, client=self._client_obj
             )
         except CallbackError as e:
-            self._logger.log(f"Error in disconnected callback -> {e}", Logger.ERROR)
+            self._logger.log(f"Error in disconnected callback ({e})", Logger.ERROR)
 
         self._logger.warning(f"Client disconnected from server ({err})")
 
@@ -674,7 +674,7 @@ class ConnectionHandler(BaseConnectionHandler):
                     await conn.wait_closed()
 
         except Exception as e:
-            self._logger.warning(f"Error closing streams -> {e}")
+            self._logger.warning(f"Error closing streams ({e})")
 
     def is_connected(self) -> bool:
         """Check if client is connected"""

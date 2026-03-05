@@ -322,4 +322,4 @@ class PerformanceMonitor:
             except asyncio.CancelledError:
                 break
             except Exception as e:
-                self._logger.error(f"Error in monitor loop -> {e}")
+                self._logger.error(f"Error in monitor loop ({e})")

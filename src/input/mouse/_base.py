@@ -314,7 +314,7 @@ class ServerMouseListener(object):
                             )
                         )
                 except Exception as e:
-                    self._logger.error(f"Failed to dispatch mouse event -> {e}")
+                    self._logger.error(f"Failed to dispatch mouse event ({e})")
                 finally:
                     self._cross_screen_event.clear()
 
@@ -331,7 +331,7 @@ class ServerMouseListener(object):
                 asyncio.run_coroutine_threadsafe(coro, self._loop)
                 return
             except Exception as e:
-                self._logger.error(f"Error scheduling coroutine -> {e}")
+                self._logger.error(f"Error scheduling coroutine ({e})")
 
         # Fallback: try to get running loop
         try:
@@ -349,7 +349,7 @@ class ServerMouseListener(object):
                     )
             except Exception as e:
                 self._logger.warning(
-                    f"No event loop available for async operation -> {e}"
+                    f"No event loop available for async operation ({e})"
                 )
 
     async def _handle_cross_screen(
@@ -380,7 +380,7 @@ class ServerMouseListener(object):
                 await asyncio.sleep(0)
 
         except Exception as e:
-            self._logger.error(f"Error handling cross-screen -> {e}")
+            self._logger.error(f"Error handling cross-screen ({e})")
         finally:
             # Resetta gli stati solo dopo il completamento di tutte le operazioni async
             self._handling_cross_screen = False
@@ -399,7 +399,7 @@ class ServerMouseListener(object):
                 # Schedule async send
                 self._schedule_async(self.stream.send(mouse_event))
             except Exception as e:
-                self._logger.error(f"Failed to dispatch mouse click event -> {e}")
+                self._logger.error(f"Failed to dispatch mouse click event ({e})")
         else:
             # Track dragging state to avoid edge crossing
             self._is_dragging = pressed and ButtonMapping[button.name].value in [
@@ -415,7 +415,7 @@ class ServerMouseListener(object):
                 # Schedule async send
                 self._schedule_async(self.stream.send(mouse_event))
             except Exception as e:
-                self._logger.error(f"Failed to dispatch mouse scroll event -> {e}")
+                self._logger.error(f"Failed to dispatch mouse scroll event ({e})")
         return True
 
 
@@ -482,7 +482,7 @@ class ServerMouseController(object):
             self._controller.position = (x, y)
         except Exception as e:
             # On some platforms, positioning may fail when cursor misses
-            self._logger.log(f"Failed to position cursor -> {e}", Logger.ERROR)
+            self._logger.log(f"Failed to position cursor ({e})", Logger.ERROR)
 
 
 # TODO: Optimize edge detection to avoid false positives during crossing
@@ -655,7 +655,7 @@ class ClientMouseController(object):
             except asyncio.CancelledError:
                 break
             except Exception as e:
-                self._logger.log(f"Error in worker -> {e}", Logger.ERROR)
+                self._logger.log(f"Error in worker ({e})", Logger.ERROR)
                 await asyncio.sleep(0.01)
 
     async def _on_client_active(self, data: Optional[ClientActiveEvent]):
@@ -700,7 +700,7 @@ class ClientMouseController(object):
             await self._queue.put(message)
             return None
         except Exception as e:
-            self._logger.log(f"Failed to process mouse event -> {e}", Logger.ERROR)
+            self._logger.log(f"Failed to process mouse event ({e})", Logger.ERROR)
             return None
 
     async def _check_edge(self):
@@ -754,7 +754,7 @@ class ClientMouseController(object):
                             x, y = cx, cy
                         except Exception as e:
                             self._logger.log(
-                                f"Failed to clamp cursor to screen -> {e}", Logger.ERROR
+                                f"Failed to clamp cursor to screen ({e})", Logger.ERROR
                             )
 
                 # If we reach an edge, dispatch event to deactivate client and send cross screen message to server
@@ -790,7 +790,7 @@ class ClientMouseController(object):
                     return await asyncio.sleep(0)
 
         except Exception as e:
-            self._logger.log(f"Failed to dispatch screen event -> {e}", Logger.ERROR)
+            self._logger.log(f"Failed to dispatch screen event ({e})", Logger.ERROR)
         finally:
             self._checking_edge = False
 
@@ -814,7 +814,7 @@ class ClientMouseController(object):
             await asyncio.sleep(0)
         except Exception as e:
             # On some platforms, positioning may fail when cursor misses
-            self._logger.log(f"Failed to position cursor -> {e}", Logger.ERROR)
+            self._logger.log(f"Failed to position cursor ({e})", Logger.ERROR)
 
     def _move_cursor(
         self, x: float | int, y: float | int, dx: float | int, dy: float | int
@@ -847,7 +847,7 @@ class ClientMouseController(object):
                 self._controller.position = (x, y)
             except Exception as e:
                 # On some platforms, positioning may fail when cursor misses
-                self._logger.log(f"Failed to position cursor -> {e}", Logger.ERROR)
+                self._logger.log(f"Failed to position cursor ({e})", Logger.ERROR)
 
     def _click(self, button: int | None, is_pressed: bool):
         """

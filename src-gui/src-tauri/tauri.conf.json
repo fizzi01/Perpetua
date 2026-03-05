@@ -13,6 +13,7 @@
     "windows": [
       {
         "label": "splashscreen",
+        "title": "Perpetua",
         "transparent": true,
         "width": 300,
         "height": 200,

@@ -55,7 +55,7 @@ class Clipboard(_base.Clipboard):
             return file
         except Exception as e:
             Clipboard.__logger.critical(
-                f"Could not retrieve files from clipboard -> {e}"
+                f"Could not retrieve files from clipboard ({e})"
             )
             return file
 

@@ -402,6 +402,23 @@ These parameters affect the application's internal behavior. Only modify them if
 > choose the desired server.
 
 
+## Keyboard Shortcuts
+
+The following hotkeys are available on the **server** machine to control input focus without moving the mouse to a screen edge.
+
+> [!NOTE]
+> Client switch hotkeys require the server to be running and at least one client to be connected.
+
+| Shortcut | Action |
+|---|---|
+| `Ctrl + Shift + P + ←` | Switch focus to the **left** client |
+| `Ctrl + Shift + P + →` | Switch focus to the **right** client |
+| `Ctrl + Shift + P + ↑` | Switch focus to the **top** client |
+| `Ctrl + Shift + P + ↓` | Switch focus to the **bottom** client |
+| `Ctrl + Shift + P + Esc` | Return focus to the **server** |
+| `Ctrl + Shift + Q` | **Panic** — force-quit Perpetua |
+
+
 ## Roadmap
 
 - [X] Linux support

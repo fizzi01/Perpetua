@@ -938,7 +938,7 @@ class CursorHandlerWorker(object):
                     )
 
             except Exception as e:
-                self._logger.warning(f"Error stopping process -> {e}")
+                self._logger.warning(f"Error stopping process ({e})")
 
         # Clean up resources
         try:
@@ -946,7 +946,7 @@ class CursorHandlerWorker(object):
             await loop.run_in_executor(None, self._drain_pipe, self.command_conn_send)
             await loop.run_in_executor(None, self._drain_pipe, self.result_conn_rec)
         except Exception as e:
-            self._logger.warning(f"Error draining pipes -> {e}")
+            self._logger.warning(f"Error draining pipes ({e})")
 
         # Close handles
         try:
@@ -957,7 +957,7 @@ class CursorHandlerWorker(object):
             self.mouse_conn_send.close()
             self.mouse_conn_rec.close()
         except Exception as e:
-            self._logger.warning(f"Error closing connections -> {e}")
+            self._logger.warning(f"Error closing connections ({e})")
 
         self._logger.debug("Stopped")
 
