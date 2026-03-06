@@ -21,7 +21,7 @@ _RULES = [
     # Linux + Wayland: dummy backend (not implemented yet)
     BackendRule(
         condition=lambda: is_linux() and is_wayland(),
-        module=".._dummy",
+        module="._dummy",
         symbols={
             "MouseListener": "MouseListener",
             "MouseController": "MouseController",

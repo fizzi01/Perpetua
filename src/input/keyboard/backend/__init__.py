@@ -23,7 +23,7 @@ _RULES = [
     # Linux: listener + Key/KeyCode always from uinput
     BackendRule(
         condition=is_linux,
-        module=".._uinput",
+        module="._uinput",
         symbols={
             "KeyboardListener": "KeyboardListener",
             "Key": "Key",
@@ -34,7 +34,7 @@ _RULES = [
     # Linux + Wayland: controller from uinput
     BackendRule(
         condition=lambda: is_linux() and is_wayland(),
-        module=".._uinput",
+        module="._uinput",
         symbols={"KeyboardController": "KeyboardController"},
         names={"keyboard_controller": "uinput"},
     ),
