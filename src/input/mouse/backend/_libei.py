@@ -18,14 +18,11 @@
 """
 Mouse controller backend using libei (via snegg) for compositors that support
 the XDG Desktop Portal input-emulation interface (GNOME, etc.).
-
-Provides absolute pointer positioning, button events, and relative movement
-through the portal's POINTER_ABSOLUTE capability.  Scroll events are delegated
-to a uinput fallback device since libei's Device API does not expose scroll
-methods.
 """
 
 import os
+import time
+import threading
 import select as _select
 
 from snegg.ei import Sender, EventType, DeviceCapability
@@ -35,88 +32,180 @@ from evdev import UInput, ecodes
 from ._uinput import Button, ButtonToEcodeMap
 
 # ---------------------------------------------------------------------------
-# libei connection singleton
+# Helpers
 # ---------------------------------------------------------------------------
 
-_ei_device = None
-_ei_sender = None  # Must stay alive to keep the libei connection open
-_oeffis_ctx = None
+_CAPABILITIES = (
+    DeviceCapability.POINTER,
+    DeviceCapability.POINTER_ABSOLUTE,
+    DeviceCapability.BUTTON,
+    DeviceCapability.SCROLL,
+)
 
 
-def _connect():
-    """Connect to the compositor via XDG Desktop Portal and return a libei Device.
+def _now_us() -> int:
+    """Current wall-clock time in microseconds (for libei frame timestamps)."""
+    return int(time.monotonic() * 1_000_000)
 
-    The connection objects are cached as module-level singletons so that a
-    single portal session is reused for the lifetime of the process.
+
+# ---------------------------------------------------------------------------
+# Connection manager (singleton)
+# ---------------------------------------------------------------------------
+
+
+class _EiConnection:
+    """Manages the libei connection lifecycle.
+
+    Handles the XDG Desktop Portal handshake, keeps the Sender alive, and
+    runs a background thread that dispatches compositor events so that
+    DEVICE_PAUSED / DEVICE_RESUMED / DISCONNECTED are processed promptly.
     """
-    global _ei_device, _ei_sender, _oeffis_ctx
 
-    if _ei_device is not None:
-        return _ei_device
+    def __init__(self):
+        self._device = None
+        self._sender: Sender | None = None
+        self._oeffis: Oeffis | None = None
+        self._eis_file = None
 
-    poller = _select.poll()
+        self._paused = threading.Event()  # set = paused
+        self._error: Exception | None = None
+        self._dispatch_thread: threading.Thread | None = None
 
-    # 1. Open a portal session for pointer emulation
-    _oeffis_ctx = Oeffis.create(devices=DeviceType.POINTER)
-    poller.register(_oeffis_ctx.fd, _select.POLLIN)
+    @property
+    def device(self):
+        if self._error is not None:
+            raise self._error
+        return self._device
 
-    # 2. Wait until the portal hands us an EIS file descriptor
-    eis_fd = None
-    for _ in range(50):
-        if poller.poll(200):
+    @property
+    def paused(self) -> bool:
+        return self._paused.is_set()
+
+    def connect(self):
+        """Run the full portal >EIS >seat >device handshake."""
+        if self._device is not None:
+            return
+
+        poller = _select.poll()
+
+        # 1. Portal session
+        self._oeffis = Oeffis.create(devices=DeviceType.POINTER)
+        poller.register(self._oeffis.fd, _select.POLLIN)
+
+        # 2. Obtain EIS fd
+        eis_fd = None
+        for _ in range(50):
+            if poller.poll(200):
+                try:
+                    self._oeffis.dispatch()
+                except (DisconnectedError, SessionClosedError) as exc:
+                    raise RuntimeError(
+                        f"libei: portal rejected connection: {exc}"
+                    ) from exc
+                try:
+                    eis_fd = self._oeffis.eis_fd
+                    if eis_fd is not None:
+                        break
+                except (DisconnectedError, SessionClosedError) as exc:
+                    raise RuntimeError(f"libei: portal disconnected: {exc}") from exc
+                except AttributeError:
+                    continue
+
+        if eis_fd is None:
+            raise RuntimeError("libei: failed to obtain EIS fd from portal")
+
+        poller.unregister(self._oeffis.fd)
+
+        # 3. Sender
+        self._eis_file = os.fdopen(eis_fd, "rb", closefd=False)
+        self._sender = Sender.create_for_fd(
+            self._eis_file, name="perpetua-mouse-controller"
+        )
+        poller.register(self._sender.fd, _select.POLLIN)
+
+        # 4. Seat bind >device
+        seat_bound = False
+        device = None
+        for _ in range(100):
+            if poller.poll(100):
+                self._sender.dispatch()
+            for event in self._sender.events:
+                if event.event_type == EventType.SEAT_ADDED and not seat_bound:
+                    event.seat.bind(_CAPABILITIES)
+                    seat_bound = True
+                elif event.event_type == EventType.DEVICE_ADDED and device is None:
+                    device = event.device
+                    device.start_emulating(0)
+                elif (
+                    event.event_type == EventType.DEVICE_RESUMED and device is not None
+                ):
+                    self._device = device
+                    self._start_dispatch()
+                    return
+
+        raise RuntimeError("libei: no device received after seat bind")
+
+    # background event dispatch
+
+    def _start_dispatch(self):
+        """Spawn a daemon thread that processes compositor lifecycle events."""
+        self._dispatch_thread = threading.Thread(
+            target=self._dispatch_loop, daemon=True
+        )
+        self._dispatch_thread.start()
+
+    def _dispatch_loop(self):
+        poller = _select.poll()
+        poller.register(self._sender.fd, _select.POLLIN)
+
+        while self._error is None:
             try:
-                _oeffis_ctx.dispatch()
-            except (DisconnectedError, SessionClosedError) as e:
-                raise RuntimeError(f"libei: portal rejected connection: {e}") from e
-            try:
-                eis_fd = _oeffis_ctx.eis_fd
-                if eis_fd is not None:
-                    break
-            except (DisconnectedError, SessionClosedError) as e:
-                raise RuntimeError(f"libei: portal disconnected: {e}") from e
-            except AttributeError:
+                ready = poller.poll(500)
+            except Exception:
+                break
+
+            if not ready:
                 continue
 
-    if eis_fd is None:
-        raise RuntimeError("libei: failed to obtain EIS fd from portal")
+            try:
+                self._sender.dispatch()
+            except Exception as exc:
+                self._error = RuntimeError(f"libei: dispatch error: {exc}")
+                break
 
-    poller.unregister(_oeffis_ctx.fd)
+            for event in self._sender.events:
+                etype = event.event_type
 
-    # 3. Create a Sender from the portal fd
-    eis_file = os.fdopen(eis_fd, "rb", closefd=False)
-    _ei_sender = Sender.create_for_fd(eis_file, name="perpetua-mouse-controller")
-    poller.register(_ei_sender.fd, _select.POLLIN)
+                if etype == EventType.DEVICE_PAUSED:
+                    self._paused.set()
 
-    # 4. Bind capabilities and wait for device
-    caps = (
-        DeviceCapability.POINTER,
-        DeviceCapability.POINTER_ABSOLUTE,
-        DeviceCapability.BUTTON,
-        DeviceCapability.SCROLL,
-    )
+                elif etype == EventType.DEVICE_RESUMED:
+                    self._paused.clear()
+                    if self._device is not None:
+                        self._device.start_emulating(0)
 
-    seat_bound = False
-    device = None
-    for _ in range(100):
-        if poller.poll(100):
-            _ei_sender.dispatch()
-        for event in _ei_sender.events:
-            if event.event_type == EventType.SEAT_ADDED and not seat_bound:
-                event.seat.bind(caps)
-                seat_bound = True
-            elif event.event_type == EventType.DEVICE_ADDED and device is None:
-                device = event.device
-                device.start_emulating()
-            elif event.event_type == EventType.DEVICE_RESUMED and device is not None:
-                _ei_device = device
-                return device
+                elif etype == EventType.DEVICE_REMOVED:
+                    self._error = RuntimeError("libei: device removed by compositor")
+                    self._device = None
+                    return
 
-    raise RuntimeError("libei: no device received after seat bind")
+                elif etype == EventType.DISCONNECTED:
+                    self._error = RuntimeError("libei: disconnected by compositor")
+                    self._device = None
+                    return
 
 
-# ---------------------------------------------------------------------------
-# uinput fallback events (scroll only)
-# ---------------------------------------------------------------------------
+# Module-level singleton
+_conn: _EiConnection | None = None
+
+
+def _get_connection() -> _EiConnection:
+    global _conn
+    if _conn is None:
+        _conn = _EiConnection()
+        _conn.connect()
+    return _conn
+
 
 _SCROLL_EVENTS = {
     ecodes.EV_REL: [
@@ -128,25 +217,23 @@ _SCROLL_EVENTS = {
 }
 
 
-# ---------------------------------------------------------------------------
-# Controller
-# ---------------------------------------------------------------------------
-
 class MouseController:
     """Mouse controller for compositors with libei/XDG Portal support (GNOME).
 
     Uses the portal's POINTER_ABSOLUTE capability for cursor positioning and
     button events.  Scroll is handled via a uinput EV_REL device since the
-    libei Device API has no scroll methods.
+    snegg Device API has no scroll methods.
     """
 
     def __init__(self):
         self._x = 0
         self._y = 0
-        self._device = _connect()
-        self._scroll_ui = UInput(name="perpetua-mouse-scroll", events=_SCROLL_EVENTS)
+        self._conn = _get_connection()
+        self._scroll_ui = UInput(name="perpetua-mouse", events=_SCROLL_EVENTS)
 
-    # -- position ----------------------------------------------------------
+    @property
+    def _device(self):
+        return self._conn.device
 
     @property
     def position(self) -> tuple[int, int]:
@@ -155,7 +242,8 @@ class MouseController:
     @position.setter
     def position(self, value: tuple[int, int]):
         x, y = int(value[0]), int(value[1])
-        self._device.pointer_motion_absolute(float(x), float(y)).frame()
+        if not self._conn.paused:
+            self._device.pointer_motion_absolute(float(x), float(y)).frame(_now_us())
         self._x = x
         self._y = y
 
@@ -163,31 +251,32 @@ class MouseController:
         dx, dy = int(dx), int(dy)
         self._x += dx
         self._y += dy
-        self._device.pointer_motion_absolute(float(self._x), float(self._y)).frame()
-
-    # -- buttons -----------------------------------------------------------
+        if not self._conn.paused:
+            self._device.pointer_motion_absolute(float(self._x), float(self._y)).frame(
+                _now_us()
+            )
 
     def press(self, button: Button):
         code = ButtonToEcodeMap.get(button.name)
-        if code is not None:
-            self._device.button_button(code, True).frame()
+        if code is not None and not self._conn.paused:
+            self._device.button_button(code, True).frame(_now_us())
 
     def release(self, button: Button):
         code = ButtonToEcodeMap.get(button.name)
-        if code is not None:
-            self._device.button_button(code, False).frame()
+        if code is not None and not self._conn.paused:
+            self._device.button_button(code, False).frame(_now_us())
 
     def click(self, button: Button, count: int = 1):
         for _ in range(count):
             self.press(button)
             self.release(button)
 
-    # -- scroll ------------------------------------------------------------
-
     def scroll(self, dx: int, dy: int):
         if dx:
             self._scroll_ui.write(ecodes.EV_REL, ecodes.REL_HWHEEL, int(dx))
-            self._scroll_ui.write(ecodes.EV_REL, ecodes.REL_HWHEEL_HI_RES, int(dx) * 120)
+            self._scroll_ui.write(
+                ecodes.EV_REL, ecodes.REL_HWHEEL_HI_RES, int(dx) * 120
+            )
         if dy:
             self._scroll_ui.write(ecodes.EV_REL, ecodes.REL_WHEEL, int(dy))
             self._scroll_ui.write(ecodes.EV_REL, ecodes.REL_WHEEL_HI_RES, int(dy) * 120)
