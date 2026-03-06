@@ -14,44 +14,58 @@
 #  You should have received a copy of the GNU General Public License
 #  along with this program.  If not, see <https://www.gnu.org/licenses/>.
 #
-from os import environ
-from sys import platform
 
 from pynput.keyboard import HotKey
 
-# Unset environment variable to prevent pynput from loading the wrong backend
-environ.pop("PYNPUT_BACKEND_MOUSE", None)
-environ.pop("PYNPUT_BACKEND", None)
+from src.input._platform import BackendRule, is_linux, is_wayland, resolve_backend
 
-BACKEND: dict[str, str] = {}
-# Import platform-specific mouse backends
-if platform.startswith("linux"):
-    from ._uinput import KeyboardListener, Key, KeyCode
+_RULES = [
+    # Linux: listener + Key/KeyCode always from uinput
+    BackendRule(
+        condition=is_linux,
+        module=".._uinput",
+        symbols={
+            "KeyboardListener": "KeyboardListener",
+            "Key": "Key",
+            "KeyCode": "KeyCode",
+        },
+        names={"keyboard_listener": "uinput"},
+    ),
+    # Linux + Wayland: controller from uinput
+    BackendRule(
+        condition=lambda: is_linux() and is_wayland(),
+        module=".._uinput",
+        symbols={"KeyboardController": "KeyboardController"},
+        names={"keyboard_controller": "uinput"},
+    ),
+    # Linux + Xorg: controller from pynput forced to xorg
+    BackendRule(
+        condition=lambda: is_linux() and not is_wayland(),
+        module="pynput.keyboard",
+        symbols={"KeyboardController": "Controller"},
+        names={"keyboard_controller": "xorg"},
+        pynput_force=("keyboard", "xorg"),
+    ),
+    # Default fallback: everything from pynput
+    BackendRule(
+        condition=None,
+        module="pynput.keyboard",
+        symbols={
+            "KeyboardListener": "Listener",
+            "KeyboardController": "Controller",
+            "Key": "Key",
+            "KeyCode": "KeyCode",
+        },
+        names={"keyboard_listener": "pynput", "keyboard_controller": "pynput"},
+    ),
+]
 
-    BACKEND["keyboard_listener"] = "uinput"
+BACKEND, _symbols = resolve_backend(__name__, _RULES)
 
-    # Check for wayland
-    if (
-        "WAYLAND_DISPLAY" in environ
-        or "XDG_SESSION_TYPE" in environ
-        and environ["XDG_SESSION_TYPE"] == "wayland"
-    ):
-        from ._uinput import KeyboardController
-
-        BACKEND["keyboard_controller"] = "uinput"
-    else:
-        # Fallback to xorg backend by forcing environment variable for pynput
-        environ["PYNPUT_BACKEND_KEYBOARD"] = "xorg"
-        from pynput.keyboard import Controller as KeyboardController
-
-        BACKEND["keyboard_controller"] = "xorg"
-else:
-    from pynput.keyboard import Listener as KeyboardListener
-    from pynput.keyboard import Controller as KeyboardController
-    from pynput.keyboard import Key, KeyCode
-
-    BACKEND["keyboard_listener"] = "pynput"
-    BACKEND["keyboard_controller"] = "pynput"
+KeyboardListener = _symbols["KeyboardListener"]
+KeyboardController = _symbols["KeyboardController"]
+Key = _symbols["Key"]
+KeyCode = _symbols["KeyCode"]
 
 __all__ = [
     "KeyboardListener",

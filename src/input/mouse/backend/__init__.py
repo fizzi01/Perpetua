@@ -15,44 +15,49 @@
 #  along with this program.  If not, see <https://www.gnu.org/licenses/>.
 #
 
-from sys import platform
-from os import environ
+from src.input._platform import BackendRule, is_linux, is_wayland, resolve_backend
 
-MouseListener = None
-MouseController = None
-Button = None
+_RULES = [
+    # Linux + Wayland: dummy backend (not implemented yet)
+    BackendRule(
+        condition=lambda: is_linux() and is_wayland(),
+        module=".._dummy",
+        symbols={
+            "MouseListener": "MouseListener",
+            "MouseController": "MouseController",
+            "Button": "Button",
+        },
+        names={"mouse_listener": "dummy", "mouse_controller": "dummy"},
+    ),
+    # Linux + Xorg: pynput forced to xorg
+    BackendRule(
+        condition=lambda: is_linux() and not is_wayland(),
+        module="pynput.mouse",
+        symbols={
+            "MouseListener": "Listener",
+            "MouseController": "Controller",
+            "Button": "Button",
+        },
+        names={"mouse_listener": "xorg", "mouse_controller": "xorg"},
+        pynput_force=("mouse", "xorg"),
+    ),
+    # Default fallback: pynput
+    BackendRule(
+        condition=None,
+        module="pynput.mouse",
+        symbols={
+            "MouseListener": "Listener",
+            "MouseController": "Controller",
+            "Button": "Button",
+        },
+        names={"mouse_listener": "pynput", "mouse_controller": "pynput"},
+    ),
+]
 
-# Unset environment variable to prevent pynput from loading the wrong backend
-environ.pop("PYNPUT_BACKEND_MOUSE", None)
-environ.pop("PYNPUT_BACKEND", None)
+BACKEND, _symbols = resolve_backend(__name__, _RULES)
 
-BACKEND: dict[str, str] = {}
-# Import platform-specific mouse backends when available
-if platform.startswith("linux"):
-    # Check if we're running under Wayland or Xorg
-    if (
-        environ.get("XDG_SESSION_TYPE") == "wayland"
-        or environ.get("WAYLAND_DISPLAY") is not None
-    ):
-        # Wayland backend (not implemented yet)
-        print("Wayland backend not implemented yet, no mouse control available")
-        from ._dummy import MouseListener, MouseController, Button
-
-        BACKEND["mouse_listener"] = "dummy"
-        BACKEND["mouse_controller"] = "dummy"
-    else:
-        # Fallback to xorg backend
-        environ["PYNPUT_BACKEND_MOUSE"] = "xorg"
-        BACKEND["mouse_listener"] = "xorg"
-        BACKEND["mouse_controller"] = "xorg"
-
-if not MouseListener or not MouseController or not Button:
-    from pynput.mouse import Listener as MouseListener
-    from pynput.mouse import Controller as MouseController
-    from pynput.mouse import Button
-
-if not BACKEND.get("mouse_listener") or not BACKEND.get("mouse_controller"):
-    BACKEND["mouse_listener"] = "pynput"
-    BACKEND["mouse_controller"] = "pynput"
+MouseListener = _symbols["MouseListener"]
+MouseController = _symbols["MouseController"]
+Button = _symbols["Button"]
 
 __all__ = ["MouseListener", "MouseController", "Button", "BACKEND"]
