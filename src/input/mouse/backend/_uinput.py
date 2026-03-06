@@ -15,28 +15,29 @@
 #  along with this program.  If not, see <https://www.gnu.org/licenses/>.
 #
 
-"""
-Pure uinput mouse backend for Linux.
-
-Provides:
-- MouseListener  – grabs physical mice, forwards events through a virtual
-                   uinput device, and fires callbacks.
-- MouseController – injects relative mouse events via uinput (EV_REL/EV_KEY).
-                    No absolute positioning (use the libei backend for that).
-- Button / mapping constants shared across backends.
-"""
-
 import threading
 import enum
+import contextlib
 
 import evdev
 from evdev import UInput, ecodes
 
+import Xlib.display
+from Xlib import display
+
 from input.utils import _wrap
 
-# ---------------------------------------------------------------------------
-# Button enum & mapping tables (shared with other backends)
-# ---------------------------------------------------------------------------
+
+def _check_and_initialize():
+    display = Xlib.display.Display()
+    display.close()
+
+
+try:
+    _check_and_initialize()
+except Exception as e:
+    raise ImportError("failed to acquire X connection: {}".format(str(e)), e)
+del _check_and_initialize
 
 Button = enum.Enum(
     "Button",
@@ -49,16 +50,6 @@ RawButtonMap = {
     ecodes.BTN_MIDDLE: Button.middle,
     ecodes.BTN_RIGHT: Button.right,
 }
-
-ButtonToEcodeMap = {
-    Button.left.name: ecodes.BTN_LEFT,
-    Button.middle.name: ecodes.BTN_MIDDLE,
-    Button.right.name: ecodes.BTN_RIGHT,
-}
-
-# ---------------------------------------------------------------------------
-# Device discovery helpers
-# ---------------------------------------------------------------------------
 
 
 def find_mice(devices: list[str] = None) -> list[evdev.InputDevice]:
@@ -99,10 +90,6 @@ def make_uinput(mice: list[evdev.InputDevice]) -> UInput:
     return UInput(name="perpetua-mouse", events=filtered)
 
 
-# ---------------------------------------------------------------------------
-# Controller (uinput-only, relative movement)
-# ---------------------------------------------------------------------------
-
 _CONTROLLER_EVENTS = {
     ecodes.EV_KEY: [ecodes.BTN_LEFT, ecodes.BTN_MIDDLE, ecodes.BTN_RIGHT],
     ecodes.EV_REL: [
@@ -116,82 +103,44 @@ _CONTROLLER_EVENTS = {
 }
 
 
-class MouseController:
-    """Uinput-only mouse controller (relative movement, no absolute positioning)."""
+class X11Error(Exception):
+    """An error that is thrown at the end of a code block managed by a
+    :func:`display_manager` if an *X11* error occurred.
+    """
 
-    def __init__(self):
-        self._x = 0
-        self._y = 0
-        self._ui = UInput(name="perpetua-mouse-controller", events=_CONTROLLER_EVENTS)
-
-    @property
-    def position(self) -> tuple[int, int]:
-        return (self._x, self._y)
-
-    @position.setter
-    def position(self, value: tuple[int, int]):
-        x, y = int(value[0]), int(value[1])
-        dx, dy = x - self._x, y - self._y
-        if dx or dy:
-            self._ui.write(ecodes.EV_REL, ecodes.REL_X, dx)
-            self._ui.write(ecodes.EV_REL, ecodes.REL_Y, dy)
-            self._ui.syn()
-        self._x = x
-        self._y = y
-
-    def move(self, dx: int, dy: int):
-        dx, dy = int(dx), int(dy)
-        self._ui.write(ecodes.EV_REL, ecodes.REL_X, dx)
-        self._ui.write(ecodes.EV_REL, ecodes.REL_Y, dy)
-        self._ui.syn()
-        self._x += dx
-        self._y += dy
-
-    def press(self, button: Button):
-        code = ButtonToEcodeMap.get(button.name)
-        if code is not None:
-            self._ui.write(ecodes.EV_KEY, code, 1)
-            self._ui.syn()
-
-    def release(self, button: Button):
-        code = ButtonToEcodeMap.get(button.name)
-        if code is not None:
-            self._ui.write(ecodes.EV_KEY, code, 0)
-            self._ui.syn()
-
-    def click(self, button: Button, count: int = 1):
-        for _ in range(count):
-            self.press(button)
-            self.release(button)
-
-    def scroll(self, dx: int, dy: int):
-        if dx:
-            self._ui.write(ecodes.EV_REL, ecodes.REL_HWHEEL, int(dx))
-            self._ui.write(ecodes.EV_REL, ecodes.REL_HWHEEL_HI_RES, int(dx) * 120)
-        if dy:
-            self._ui.write(ecodes.EV_REL, ecodes.REL_WHEEL, int(dy))
-            self._ui.write(ecodes.EV_REL, ecodes.REL_WHEEL_HI_RES, int(dy) * 120)
-        self._ui.syn()
+    pass
 
 
-# ---------------------------------------------------------------------------
-# Listener
-# ---------------------------------------------------------------------------
+@contextlib.contextmanager
+def display_manager(display):
+    """Traps *X* errors and raises an :class:``X11Error`` at the end if any
+    error occurred.
+
+    This handler also ensures that the :class:`Xlib.display.Display` being
+    managed is sync'd.
+
+    :param Xlib.display.Display display: The *X* display.
+
+    :return: the display
+    :rtype: Xlib.display.Display
+    """
+    errors = []
+
+    def handler(*args):
+        """The *Xlib* error handler."""
+        errors.append(args)
+
+    old_handler = display.set_error_handler(handler)
+    try:
+        yield display
+        display.sync()
+    finally:
+        display.set_error_handler(old_handler)
+    if errors:
+        raise X11Error(errors)
 
 
 class MouseListener(threading.Thread):
-    """Uinput mouse listener backend.
-
-    Grabs physical mouse devices, fires callbacks, and optionally forwards
-    events through a virtual uinput device.
-
-    Args:
-        on_move:   callable(x, y, injected)
-        on_click:  callable(x, y, button, pressed, injected)
-        on_scroll: callable(x, y, dx, dy, injected)
-        suppress:  if True, do not forward events to UInput
-    """
-
     def __init__(
         self,
         on_move=None,
@@ -346,9 +295,7 @@ class MouseListener(threading.Thread):
 
 
 __all__ = [
-    "MouseListener",
-    "MouseController",
-    "Button",
-    "ButtonToEcodeMap",
     "RawButtonMap",
+    "Button",
+    "MouseListener",
 ]

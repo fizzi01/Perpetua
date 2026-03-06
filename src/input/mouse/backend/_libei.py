@@ -29,8 +29,9 @@ is called directly through the C bindings.
 import os
 import time
 import threading
+import enum
 import select as _select
-
+from evdev import ecodes
 from snegg.ei import Sender, EventType, DeviceCapability
 from snegg.c.libei import libei
 from snegg.oeffis import Oeffis, DeviceType, DisconnectedError, SessionClosedError
