@@ -321,6 +321,7 @@ class Builder:
             nuitka_cmd.extend(
                 [
                     "--standalone",
+                    "--include-package-data=wayland",
                     f"--linux-icon={self.icons_dir / 'icon.png'}",
                 ]
             )
