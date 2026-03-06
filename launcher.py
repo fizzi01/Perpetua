@@ -155,6 +155,7 @@ def main():
         sys.exit(130)
     except Exception:
         import traceback
+
         print(f"Fatal error: {traceback.format_exc()}")
         sys.exit(1)
 

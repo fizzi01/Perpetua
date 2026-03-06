@@ -53,7 +53,7 @@ _RULES = [
         },
         names={"mouse_listener": "uinput", "mouse_controller": "uinput"},
     ),
-    # Linux + Xorg: pynput forced to xorg 
+    # Linux + Xorg: pynput forced to xorg
     BackendRule(
         condition=lambda: is_linux() and not is_wayland(),
         module="pynput.mouse",

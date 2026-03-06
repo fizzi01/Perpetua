@@ -345,4 +345,10 @@ class MouseListener(threading.Thread):
         self.join()
 
 
-__all__ = ["MouseListener", "MouseController", "Button", "ButtonToEcodeMap", "RawButtonMap"]
+__all__ = [
+    "MouseListener",
+    "MouseController",
+    "Button",
+    "ButtonToEcodeMap",
+    "RawButtonMap",
+]

@@ -208,9 +208,7 @@ class KeyboardListener(threading.Thread):
     Forwards EV_KEY events from grabbed physical keyboards to a virtual UInput device.
     """
 
-    _MODIFIERS = {
-        k.value.vk: k for k in Key if k.value.vk is not None
-    }
+    _MODIFIERS = {k.value.vk: k for k in Key if k.value.vk is not None}
 
     def __init__(
         self,
