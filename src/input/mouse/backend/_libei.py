@@ -35,7 +35,17 @@ from snegg.ei import Sender, EventType, DeviceCapability
 from snegg.c.libei import libei
 from snegg.oeffis import Oeffis, DeviceType, DisconnectedError, SessionClosedError
 
-from ._uinput import Button, ButtonToEcodeMap
+Button = enum.Enum(
+    "Button",
+    module=__name__,
+    names=[("unknown", None), ("left", 1), ("middle", 2), ("right", 3)],
+)
+
+ButtonToEcodeMap = {
+    Button.left.name: ecodes.BTN_LEFT,
+    Button.middle.name: ecodes.BTN_MIDDLE,
+    Button.right.name: ecodes.BTN_RIGHT,
+}
 
 _CAPABILITIES = (
     DeviceCapability.POINTER,
