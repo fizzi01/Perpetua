@@ -16,8 +16,14 @@
 #
 
 """
-Mouse controller backend using libei (via snegg) for compositors that support
-the XDG Desktop Portal input-emulation interface (GNOME, etc.).
+libei mouse controller backend for Wayland compositors (GNOME >= 45, KDE Plasma >= 6.1).
+
+liboeffis opens a RemoteDesktop session on the XDG Desktop Portal D-Bus interface
+and returns an EIS file descriptor.  That fd is handed to a libei Sender (snegg)
+which negotiates seat capabilities and obtains a Device for input emulation.
+
+snegg does not expose scroll methods on Device, so ei_device_scroll_discrete
+is called directly through the C bindings.
 """
 
 import os
@@ -26,14 +32,10 @@ import threading
 import select as _select
 
 from snegg.ei import Sender, EventType, DeviceCapability
+from snegg.c.libei import libei
 from snegg.oeffis import Oeffis, DeviceType, DisconnectedError, SessionClosedError
-from evdev import UInput, ecodes
 
 from ._uinput import Button, ButtonToEcodeMap
-
-# ---------------------------------------------------------------------------
-# Helpers
-# ---------------------------------------------------------------------------
 
 _CAPABILITIES = (
     DeviceCapability.POINTER,
@@ -44,30 +46,23 @@ _CAPABILITIES = (
 
 
 def _now_us() -> int:
-    """Current wall-clock time in microseconds (for libei frame timestamps)."""
     return int(time.monotonic() * 1_000_000)
 
 
-# ---------------------------------------------------------------------------
-# Connection manager (singleton)
-# ---------------------------------------------------------------------------
-
-
 class _EiConnection:
-    """Manages the libei connection lifecycle.
-
-    Handles the XDG Desktop Portal handshake, keeps the Sender alive, and
-    runs a background thread that dispatches compositor events so that
-    DEVICE_PAUSED / DEVICE_RESUMED / DISCONNECTED are processed promptly.
-    """
+    """Singleton that owns the portal session, the libei Sender, and the
+    background dispatch thread.  Reconnects transparently when the
+    compositor drops the device (e.g. after idle timeout)."""
 
     def __init__(self):
+        self._reset()
+
+    def _reset(self):
         self._device = None
         self._sender: Sender | None = None
         self._oeffis: Oeffis | None = None
         self._eis_file = None
-
-        self._paused = threading.Event()  # set = paused
+        self._paused = threading.Event()
         self._error: Exception | None = None
         self._dispatch_thread: threading.Thread | None = None
 
@@ -81,18 +76,21 @@ class _EiConnection:
     def paused(self) -> bool:
         return self._paused.is_set()
 
+    def reconnect(self):
+        self._reset()
+        self.connect()
+
     def connect(self):
-        """Run the full portal >EIS >seat >device handshake."""
         if self._device is not None:
             return
 
         poller = _select.poll()
 
-        # 1. Portal session
+        # Portal session
         self._oeffis = Oeffis.create(devices=DeviceType.POINTER)
         poller.register(self._oeffis.fd, _select.POLLIN)
 
-        # 2. Obtain EIS fd
+        # Obtain EIS fd
         eis_fd = None
         for _ in range(50):
             if poller.poll(200):
@@ -116,14 +114,14 @@ class _EiConnection:
 
         poller.unregister(self._oeffis.fd)
 
-        # 3. Sender
+        # Libei Sender
         self._eis_file = os.fdopen(eis_fd, "rb", closefd=False)
         self._sender = Sender.create_for_fd(
             self._eis_file, name="perpetua-mouse-controller"
         )
         poller.register(self._sender.fd, _select.POLLIN)
 
-        # 4. Seat bind >device
+        # Seat bind and device acquisition loop
         seat_bound = False
         device = None
         for _ in range(100):
@@ -145,10 +143,7 @@ class _EiConnection:
 
         raise RuntimeError("libei: no device received after seat bind")
 
-    # background event dispatch
-
     def _start_dispatch(self):
-        """Spawn a daemon thread that processes compositor lifecycle events."""
         self._dispatch_thread = threading.Thread(
             target=self._dispatch_loop, daemon=True
         )
@@ -189,50 +184,50 @@ class _EiConnection:
                     self._device = None
                     return
 
-                elif etype == EventType.DISCONNECTED:
+                elif etype == EventType.DISCONNECT:
                     self._error = RuntimeError("libei: disconnected by compositor")
                     self._device = None
                     return
 
 
-# Module-level singleton
 _conn: _EiConnection | None = None
+_conn_lock = threading.Lock()
 
 
 def _get_connection() -> _EiConnection:
     global _conn
-    if _conn is None:
+    with _conn_lock:
+        if _conn is None:
+            _conn = _EiConnection()
+            _conn.connect()
+        return _conn
+
+
+def _reconnect() -> _EiConnection:
+    global _conn
+    with _conn_lock:
         _conn = _EiConnection()
         _conn.connect()
-    return _conn
+        return _conn
 
 
-_SCROLL_EVENTS = {
-    ecodes.EV_REL: [
-        ecodes.REL_WHEEL,
-        ecodes.REL_HWHEEL,
-        ecodes.REL_WHEEL_HI_RES,
-        ecodes.REL_HWHEEL_HI_RES,
-    ],
-}
+def _scroll_delta(device, dx: float, dy: float):
+    libei.device_scroll_delta(device._cobject, dx, dy)
+
+
+def _scroll_discrete(device, dx: int, dy: int):
+    libei.device_scroll_discrete(device._cobject, dx, dy)
 
 
 class MouseController:
-    """Mouse controller for compositors with libei/XDG Portal support (GNOME).
-
-    Uses the portal's POINTER_ABSOLUTE capability for cursor positioning and
-    button events.  Scroll is handled via a uinput EV_REL device since the
-    snegg Device API has no scroll methods.
-    """
-
     def __init__(self):
         self._x = 0
         self._y = 0
         self._conn = _get_connection()
-        self._scroll_ui = UInput(name="perpetua-mouse", events=_SCROLL_EVENTS)
 
-    @property
-    def _device(self):
+    def _ensure_device(self):
+        if self._conn._error is not None:
+            self._conn = _reconnect()
         return self._conn.device
 
     @property
@@ -243,7 +238,9 @@ class MouseController:
     def position(self, value: tuple[int, int]):
         x, y = int(value[0]), int(value[1])
         if not self._conn.paused:
-            self._device.pointer_motion_absolute(float(x), float(y)).frame(_now_us())
+            self._ensure_device().pointer_motion_absolute(float(x), float(y)).frame(
+                _now_us()
+            )
         self._x = x
         self._y = y
 
@@ -252,19 +249,19 @@ class MouseController:
         self._x += dx
         self._y += dy
         if not self._conn.paused:
-            self._device.pointer_motion_absolute(float(self._x), float(self._y)).frame(
-                _now_us()
-            )
+            self._ensure_device().pointer_motion_absolute(
+                float(self._x), float(self._y)
+            ).frame(_now_us())
 
     def press(self, button: Button):
         code = ButtonToEcodeMap.get(button.name)
         if code is not None and not self._conn.paused:
-            self._device.button_button(code, True).frame(_now_us())
+            self._ensure_device().button_button(code, True).frame(_now_us())
 
     def release(self, button: Button):
         code = ButtonToEcodeMap.get(button.name)
         if code is not None and not self._conn.paused:
-            self._device.button_button(code, False).frame(_now_us())
+            self._ensure_device().button_button(code, False).frame(_now_us())
 
     def click(self, button: Button, count: int = 1):
         for _ in range(count):
@@ -272,15 +269,11 @@ class MouseController:
             self.release(button)
 
     def scroll(self, dx: int, dy: int):
-        if dx:
-            self._scroll_ui.write(ecodes.EV_REL, ecodes.REL_HWHEEL, int(dx))
-            self._scroll_ui.write(
-                ecodes.EV_REL, ecodes.REL_HWHEEL_HI_RES, int(dx) * 120
-            )
-        if dy:
-            self._scroll_ui.write(ecodes.EV_REL, ecodes.REL_WHEEL, int(dy))
-            self._scroll_ui.write(ecodes.EV_REL, ecodes.REL_WHEEL_HI_RES, int(dy) * 120)
-        self._scroll_ui.syn()
+        if not self._conn.paused and (dx or dy):
+            # 1 wheel click = 120 hi-res units
+            device = self._ensure_device()
+            _scroll_discrete(device, int(dx) * 120, int(dy) * 120)
+            device.frame(_now_us())
 
 
 __all__ = ["MouseController", "Button"]
