@@ -705,11 +705,11 @@ class ClientKeyboardController(object):
         if event.action == KeyboardEvent.PRESS_ACTION:
             # Handle Caps Lock toggle
             if key == Key.caps_lock:
-                if self.is_caps_locked:
+                if self._caps_lock_state:
                     self._controller.release(key)
                 else:
                     self._controller.press(key)
-                self.is_caps_locked = not self.is_caps_locked
+                self._caps_lock_state = not self._caps_lock_state
             elif KeyUtilities.is_special(
                 key, filter_out=self._SPECIAL_KEYS_FILTER
             ):  # General special key handling
@@ -721,11 +721,11 @@ class ClientKeyboardController(object):
                 self._pressed_general_keys.add(key)
         elif event.action == KeyboardEvent.RELEASE_ACTION:
             if key == Key.caps_lock:
-                if self.is_caps_locked:
+                if self._caps_lock_state:
                     self._controller.release(key)
                 else:
                     self._controller.press(key)
-                self.is_caps_locked = not self.is_caps_locked
+                self._caps_lock_state = not self._caps_lock_state
             elif KeyUtilities.is_special(
                 key, filter_out=self._SPECIAL_KEYS_FILTER
             ):  # General special key handling
