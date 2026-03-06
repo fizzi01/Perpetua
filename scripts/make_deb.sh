@@ -197,6 +197,7 @@ Installed-Size: ${INSTALLED_SIZE}
 Maintainer: ${MAINTAINER}
 Homepage: ${HOMEPAGE}
 Depends: libc6
+Recommends: liboeffis1
 Description: ${DESCRIPTION_SHORT}
 ${DESCRIPTION_LONG}
 EOF
