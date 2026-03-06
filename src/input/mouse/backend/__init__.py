@@ -20,6 +20,7 @@ from src.input._platform import (
     is_linux,
     is_wayland,
     is_gnome,
+    is_kde,
     resolve_backend,
 )
 
@@ -27,13 +28,13 @@ _RULES = [
     # Wayland: GNOME (libei via XDG Desktop Portal)
     # Listener dummy (not implemented yet), controller from libei.
     BackendRule(
-        condition=lambda: is_linux() and is_wayland() and is_gnome(),
+        condition=lambda: is_linux() and is_wayland() and (is_gnome() or is_kde()),
         module="._libei",
         symbols={"MouseController": "MouseController"},
         names={"mouse_controller": "libei"},
     ),
     BackendRule(
-        condition=lambda: is_linux() and is_wayland() and is_gnome(),
+        condition=lambda: is_linux() and is_wayland() and (is_gnome() or is_kde()),
         module="._dummy",
         symbols={
             "MouseListener": "MouseListener",
