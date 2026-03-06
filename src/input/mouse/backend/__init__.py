@@ -15,21 +15,45 @@
 #  along with this program.  If not, see <https://www.gnu.org/licenses/>.
 #
 
-from src.input._platform import BackendRule, is_linux, is_wayland, resolve_backend
+from src.input._platform import (
+    BackendRule,
+    is_linux,
+    is_wayland,
+    is_gnome,
+    resolve_backend,
+)
 
 _RULES = [
-    # Linux + Wayland: dummy backend (not implemented yet)
+    # Wayland: GNOME (libei via XDG Desktop Portal)
+    # Listener dummy (not implemented yet), controller from libei.
+    BackendRule(
+        condition=lambda: is_linux() and is_wayland() and is_gnome(),
+        module="._libei",
+        symbols={"MouseController": "MouseController"},
+        names={"mouse_controller": "libei"},
+    ),
+    BackendRule(
+        condition=lambda: is_linux() and is_wayland() and is_gnome(),
+        module="._dummy",
+        symbols={
+            "MouseListener": "MouseListener",
+            "Button": "Button",
+        },
+        names={"mouse_listener": "dummy"},
+    ),
+    # Wayland: other compositors (uinput fallback)
+    # TODO: add wlroots (zwlr_virtual_pointer) / KDE backends here.
     BackendRule(
         condition=lambda: is_linux() and is_wayland(),
-        module="._dummy",
+        module="._uinput",
         symbols={
             "MouseListener": "MouseListener",
             "MouseController": "MouseController",
             "Button": "Button",
         },
-        names={"mouse_listener": "dummy", "mouse_controller": "dummy"},
+        names={"mouse_listener": "uinput", "mouse_controller": "uinput"},
     ),
-    # Linux + Xorg: pynput forced to xorg
+    # Linux + Xorg: pynput forced to xorg 
     BackendRule(
         condition=lambda: is_linux() and not is_wayland(),
         module="pynput.mouse",

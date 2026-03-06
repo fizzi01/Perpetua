@@ -32,6 +32,25 @@ def is_wayland() -> bool:
     )
 
 
+def _current_desktop() -> str:
+    """Return the lowercase XDG_CURRENT_DESKTOP value (first entry)."""
+    raw = environ.get("XDG_CURRENT_DESKTOP", "")
+    return raw.split(":")[0].strip().lower()
+
+
+def is_gnome() -> bool:
+    return _current_desktop() in ("gnome", "ubuntu", "pop")
+
+
+def is_wlroots() -> bool:
+    """Compositors based on wlroots (Sway, Hyprland, etc.)."""
+    return _current_desktop() in ("sway", "hyprland", "wayfire", "river", "wlroots")
+
+
+def is_kde() -> bool:
+    return _current_desktop() in ("kde", "plasma")
+
+
 class BackendRule(NamedTuple):
     """Declarative rule for backend resolution.
 

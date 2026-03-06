@@ -15,26 +15,50 @@
 #  along with this program.  If not, see <https://www.gnu.org/licenses/>.
 #
 
+"""
+Pure uinput mouse backend for Linux.
+
+Provides:
+- MouseListener  – grabs physical mice, forwards events through a virtual
+                   uinput device, and fires callbacks.
+- MouseController – injects relative mouse events via uinput (EV_REL/EV_KEY).
+                    No absolute positioning (use the libei backend for that).
+- Button / mapping constants shared across backends.
+"""
+
 import threading
-import contextlib
-import evdev
 import enum
-import inspect
+
+import evdev
 from evdev import UInput, ecodes
-import Xlib.display
-from Xlib import display
 
+from input.utils import _wrap
 
-def _check_and_initialize():
-    display = Xlib.display.Display()
-    display.close()
+# ---------------------------------------------------------------------------
+# Button enum & mapping tables (shared with other backends)
+# ---------------------------------------------------------------------------
 
+Button = enum.Enum(
+    "Button",
+    module=__name__,
+    names=[("unknown", None), ("left", 1), ("middle", 2), ("right", 3)],
+)
 
-try:
-    _check_and_initialize()
-except Exception as e:
-    raise ImportError("failed to acquire X connection: {}".format(str(e)), e)
-del _check_and_initialize
+RawButtonMap = {
+    ecodes.BTN_LEFT: Button.left,
+    ecodes.BTN_MIDDLE: Button.middle,
+    ecodes.BTN_RIGHT: Button.right,
+}
+
+ButtonToEcodeMap = {
+    Button.left.name: ecodes.BTN_LEFT,
+    Button.middle.name: ecodes.BTN_MIDDLE,
+    Button.right.name: ecodes.BTN_RIGHT,
+}
+
+# ---------------------------------------------------------------------------
+# Device discovery helpers
+# ---------------------------------------------------------------------------
 
 
 def find_mice(devices: list[str] = None) -> list[evdev.InputDevice]:
@@ -46,7 +70,6 @@ def find_mice(devices: list[str] = None) -> list[evdev.InputDevice]:
         try:
             dev = evdev.InputDevice(path)
             caps = dev.capabilities()
-            # print(f"Found device: {dev.path} ({dev.name}) with capabilities: {caps}")
             has_rel = ecodes.EV_REL in caps
             has_btn = ecodes.EV_KEY in caps and any(
                 btn in caps[ecodes.EV_KEY]
@@ -61,107 +84,112 @@ def find_mice(devices: list[str] = None) -> list[evdev.InputDevice]:
 
 def make_uinput(mice: list[evdev.InputDevice]) -> UInput:
     """Create a UInput device that mirrors the union of all mouse caps."""
-    all_events = {}
+    all_events: dict[int, set[int]] = {}
     for dev in mice:
         caps = dev.capabilities()
         for etype, codes in caps.items():
             if etype not in all_events:
                 all_events[etype] = set()
             all_events[etype].update(codes)
-    # Only keep mouse-relevant event types
     filtered = {
         etype: sorted(codes)
         for etype, codes in all_events.items()
         if etype in (ecodes.EV_KEY, ecodes.EV_REL, ecodes.EV_MSC)
     }
-    return UInput(
-        name="perpetua-mouse",
-        events=filtered,
-    )
+    return UInput(name="perpetua-mouse", events=filtered)
 
 
-def _wrap(f, args):
-    """Wraps a callable to make it accept ``args`` number of arguments.
+# ---------------------------------------------------------------------------
+# Controller (uinput-only, relative movement)
+# ---------------------------------------------------------------------------
 
-    :param f: The callable to wrap. If this is ``None`` a no-op wrapper is
-        returned.
-
-    :param int args: The number of arguments to accept.
-
-    :raises ValueError: if f requires more than ``args`` arguments
-    """
-    if f is None:
-        return lambda *a: None
-    else:
-        argspec = inspect.getfullargspec(f)
-        actual = len(inspect.signature(f).parameters)
-        defaults = len(argspec.defaults) if argspec.defaults else 0
-        if actual - defaults > args:
-            raise ValueError(f)
-        elif actual >= args or argspec.varargs is not None:
-            return f
-        else:
-            return lambda *a: f(*a[:actual])
-
-
-class X11Error(Exception):
-    """An error that is thrown at the end of a code block managed by a
-    :func:`display_manager` if an *X11* error occurred.
-    """
-
-    pass
-
-
-Button = enum.Enum(
-    "Button",
-    module=__name__,
-    names=[("unknown", None), ("left", 1), ("middle", 2), ("right", 3)],
-)
-
-RawButtonMap = {
-    ecodes.BTN_LEFT: Button.left,
-    ecodes.BTN_MIDDLE: Button.middle,
-    ecodes.BTN_RIGHT: Button.right,
+_CONTROLLER_EVENTS = {
+    ecodes.EV_KEY: [ecodes.BTN_LEFT, ecodes.BTN_MIDDLE, ecodes.BTN_RIGHT],
+    ecodes.EV_REL: [
+        ecodes.REL_X,
+        ecodes.REL_Y,
+        ecodes.REL_WHEEL,
+        ecodes.REL_HWHEEL,
+        ecodes.REL_WHEEL_HI_RES,
+        ecodes.REL_HWHEEL_HI_RES,
+    ],
 }
 
 
-@contextlib.contextmanager
-def display_manager(display):
-    """Traps *X* errors and raises an :class:``X11Error`` at the end if any
-    error occurred.
+class MouseController:
+    """Uinput-only mouse controller (relative movement, no absolute positioning)."""
 
-    This handler also ensures that the :class:`Xlib.display.Display` being
-    managed is sync'd.
+    def __init__(self):
+        self._x = 0
+        self._y = 0
+        self._ui = UInput(name="perpetua-mouse-controller", events=_CONTROLLER_EVENTS)
 
-    :param Xlib.display.Display display: The *X* display.
+    @property
+    def position(self) -> tuple[int, int]:
+        return (self._x, self._y)
 
-    :return: the display
-    :rtype: Xlib.display.Display
-    """
-    errors = []
+    @position.setter
+    def position(self, value: tuple[int, int]):
+        x, y = int(value[0]), int(value[1])
+        dx, dy = x - self._x, y - self._y
+        if dx or dy:
+            self._ui.write(ecodes.EV_REL, ecodes.REL_X, dx)
+            self._ui.write(ecodes.EV_REL, ecodes.REL_Y, dy)
+            self._ui.syn()
+        self._x = x
+        self._y = y
 
-    def handler(*args):
-        """The *Xlib* error handler."""
-        errors.append(args)
+    def move(self, dx: int, dy: int):
+        dx, dy = int(dx), int(dy)
+        self._ui.write(ecodes.EV_REL, ecodes.REL_X, dx)
+        self._ui.write(ecodes.EV_REL, ecodes.REL_Y, dy)
+        self._ui.syn()
+        self._x += dx
+        self._y += dy
 
-    old_handler = display.set_error_handler(handler)
-    try:
-        yield display
-        display.sync()
-    finally:
-        display.set_error_handler(old_handler)
-    if errors:
-        raise X11Error(errors)
+    def press(self, button: Button):
+        code = ButtonToEcodeMap.get(button.name)
+        if code is not None:
+            self._ui.write(ecodes.EV_KEY, code, 1)
+            self._ui.syn()
+
+    def release(self, button: Button):
+        code = ButtonToEcodeMap.get(button.name)
+        if code is not None:
+            self._ui.write(ecodes.EV_KEY, code, 0)
+            self._ui.syn()
+
+    def click(self, button: Button, count: int = 1):
+        for _ in range(count):
+            self.press(button)
+            self.release(button)
+
+    def scroll(self, dx: int, dy: int):
+        if dx:
+            self._ui.write(ecodes.EV_REL, ecodes.REL_HWHEEL, int(dx))
+            self._ui.write(ecodes.EV_REL, ecodes.REL_HWHEEL_HI_RES, int(dx) * 120)
+        if dy:
+            self._ui.write(ecodes.EV_REL, ecodes.REL_WHEEL, int(dy))
+            self._ui.write(ecodes.EV_REL, ecodes.REL_WHEEL_HI_RES, int(dy) * 120)
+        self._ui.syn()
+
+
+# ---------------------------------------------------------------------------
+# Listener
+# ---------------------------------------------------------------------------
 
 
 class MouseListener(threading.Thread):
-    """
-    Uinput mouse listener backend.
+    """Uinput mouse listener backend.
+
+    Grabs physical mouse devices, fires callbacks, and optionally forwards
+    events through a virtual uinput device.
+
     Args:
-        on_move: callable(x, y, injected)
-        on_click: callable(x, y, button, pressed, injected)
+        on_move:   callable(x, y, injected)
+        on_click:  callable(x, y, button, pressed, injected)
         on_scroll: callable(x, y, dx, dy, injected)
-        suppress: if True, do not forward events to UInput
+        suppress:  if True, do not forward events to UInput
     """
 
     def __init__(
@@ -241,7 +269,6 @@ class MouseListener(threading.Thread):
             self._cleanup_done.set()
 
     def _handle_event(self, dev, event):
-        # Check for injected marker
         if (
             event.type == ecodes.EV_MSC
             and event.code == ecodes.MSC_SCAN
@@ -251,8 +278,9 @@ class MouseListener(threading.Thread):
             self._injected_rel_count = 2
             self._injected_key_count = 1
             return
+
         injected = self._injected_flag
-        # Handle injected counters
+
         if self._injected_flag:
             if event.type == ecodes.EV_REL:
                 self._injected_rel_count -= 1
@@ -262,14 +290,8 @@ class MouseListener(threading.Thread):
                 self._injected_key_count -= 1
                 if self._injected_key_count <= 0:
                     self._injected_flag = False
+
         if event.type == ecodes.EV_REL and event.code in (ecodes.REL_X, ecodes.REL_Y):
-            pos = []
-            if event.code == ecodes.REL_X:
-                pos.append(event.value)
-                pos.append(0)
-            elif event.code == ecodes.REL_Y:
-                pos.append(0)
-                pos.append(event.value)
             if self.on_move:
                 pos = self._get_position()
                 if self.on_move(pos[0], pos[1], injected) is False:
@@ -300,6 +322,7 @@ class MouseListener(threading.Thread):
                 if self.on_scroll(pos[0], pos[1], dx, dy, injected) is False:
                     self.stop()
                     return
+
         if not self._suppress and self._ui:
             self._ui.write_event(event)
             self._ui.syn()
@@ -311,7 +334,6 @@ class MouseListener(threading.Thread):
         self._running.clear()
 
     def join(self, timeout=5):
-        # self.stop()
         self._cleanup_done.wait(timeout)
 
     def __enter__(self):
@@ -321,3 +343,6 @@ class MouseListener(threading.Thread):
     def __exit__(self, exc_type, value, traceback):
         self.stop()
         self.join()
+
+
+__all__ = ["MouseListener", "MouseController", "Button", "ButtonToEcodeMap", "RawButtonMap"]

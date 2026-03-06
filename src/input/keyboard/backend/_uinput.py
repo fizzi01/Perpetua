@@ -209,13 +209,7 @@ class KeyboardListener(threading.Thread):
     """
 
     _MODIFIERS = {
-        Key.alt.value.vk: Key.alt,
-        Key.alt_l.value.vk: Key.alt,
-        Key.alt_r.value.vk: Key.alt,
-        Key.alt_gr.value.vk: Key.alt_gr,
-        Key.shift.value.vk: Key.shift,
-        Key.shift_l.value.vk: Key.shift,
-        Key.shift_r.value.vk: Key.shift,
+        k.value.vk: k for k in Key if k.value.vk is not None
     }
 
     def __init__(
