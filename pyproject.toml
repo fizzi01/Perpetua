@@ -1,6 +1,6 @@
 [project]
 name = "Perpetua"
-version = "1.3.0"
+version = "1.4.0"
 description = "Cross-platform Mouse, keyboard, and clipboard sharing"
 authors = [
     {name = "fizzi01"}
