@@ -76,6 +76,8 @@ class _EiConnection:
         self._paused = threading.Event()
         self._error: Exception | None = None
         self._dispatch_thread: threading.Thread | None = None
+        self._has_pointer = False
+        self._has_pointer_abs = False
 
     @property
     def device(self):
@@ -148,6 +150,9 @@ class _EiConnection:
                 elif (
                     event.event_type == EventType.DEVICE_RESUMED and device is not None
                 ):
+                    caps = device.capabilities
+                    self._has_pointer = DeviceCapability.POINTER in caps
+                    self._has_pointer_abs = DeviceCapability.POINTER_ABSOLUTE in caps
                     self._device = device
                     self._start_dispatch()
                     return
@@ -249,9 +254,12 @@ class MouseController:
     def position(self, value: tuple[int, int]):
         x, y = int(value[0]), int(value[1])
         if not self._conn.paused:
-            self._ensure_device().pointer_motion_absolute(float(x), float(y)).frame(
-                _now_us()
-            )
+            device = self._ensure_device()
+            if self._conn._has_pointer and not self._conn._has_pointer_abs:
+                device.pointer_motion(float(x - self._x), float(y - self._y))
+            else:
+                device.pointer_motion_absolute(float(x), float(y))
+            device.frame(_now_us())
         self._x = x
         self._y = y
 
@@ -260,9 +268,12 @@ class MouseController:
         self._x += dx
         self._y += dy
         if not self._conn.paused:
-            self._ensure_device().pointer_motion_absolute(
-                float(self._x), float(self._y)
-            ).frame(_now_us())
+            device = self._ensure_device()
+            if self._conn._has_pointer:
+                device.pointer_motion(float(dx), float(dy))
+            else:
+                device.pointer_motion_absolute(float(self._x), float(self._y))
+            device.frame(_now_us())
 
     def press(self, button: Button):
         code = ButtonToEcodeMap.get(button.name)
