@@ -28,7 +28,7 @@ Built with Python, leveraging high-performance uvloop (macOS and Linux) and winl
 
 #### Server (controls other machines)
 
-| Feature | macOS | Windows | Linux (X11) | Linux (Wayland) |
+| Feature | macOS | Windows | X11 | Wayland |
 |---|:---:|:---:|:---:|:---:|
 | Mouse capture | :heavy_check_mark: | :heavy_check_mark: | :heavy_check_mark: | :x: |
 | Keyboard capture | :heavy_check_mark: | :heavy_check_mark: | :heavy_check_mark: | :heavy_check_mark: |
@@ -36,7 +36,7 @@ Built with Python, leveraging high-performance uvloop (macOS and Linux) and winl
 
 #### Client (controlled by a server)
 
-| Feature | macOS | Windows | Linux (X11) | Wayland (GNOME) | Wayland (KDE) | Wayland (Others) |
+| Feature | macOS | Windows | X11 | Wayland (GNOME) | Wayland (KDE) | Wayland (Others) |
 |---|:---:|:---:|:---:|:---:|:---:|:---:|
 | Mouse control | :heavy_check_mark: | :heavy_check_mark: | :heavy_check_mark: | :heavy_check_mark: | :heavy_check_mark: | :x: |
 | Keyboard control | :heavy_check_mark: | :heavy_check_mark: | :heavy_check_mark: | :heavy_check_mark: | :heavy_check_mark: | :heavy_check_mark: |
