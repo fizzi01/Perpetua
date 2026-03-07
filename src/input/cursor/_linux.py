@@ -30,6 +30,7 @@ from multiprocessing.connection import Connection
 from typing import Optional
 
 from Xlib import X, display as xdisplay, Xatom
+from Xlib.xobject import cursor as xcursor
 
 from event.bus import EventBus
 from input.cursor._worker import CursorHandlerWorker as _WorkerBase
@@ -40,8 +41,8 @@ from utils.logging import get_logger, Logger
 class _XlibCursorHandler:
     """Xlib-based cursor handler running in a child process."""
 
-    WINDOW_SIZE = 400
-    BORDER_OFFSET = 40
+    WINDOW_SIZE = 100
+    BORDER_OFFSET = 0
 
     def __init__(
         self,
@@ -59,6 +60,7 @@ class _XlibCursorHandler:
         self._captured = False
         self._center_x = 0
         self._center_y = 0
+        self._skip_motion = False
 
         self._logger = get_logger(
             "XlibCursorHandler", level=log_level, is_root=True
@@ -87,19 +89,44 @@ class _XlibCursorHandler:
         self._window = self._create_window()
 
     def _create_blank_cursor(self):
-        """Create a cursor that appears invisible.
-        Uses the cursor font with all-black colours so the shape is
-        barely visible (serves as fallback when XFixes is not available).
-        """
+        """Create a truly invisible cursor from an empty 1x1 pixmap."""
         try:
-            font = self._display.open_font("cursor")
-            cursor = font.create_glyph_cursor(
-                font, 0, 1, (0, 0, 0), (0, 0, 0)
+            from Xlib.protocol import request
+
+            pixmap = self._root.create_pixmap(1, 1, 1)
+            gc = pixmap.create_gc(foreground=0)
+            pixmap.fill_rectangle(gc, 0, 0, 1, 1)
+            gc.free()
+
+            cid = self._display.display.allocate_resource_id()
+            request.CreateCursor(
+                display=self._display.display,
+                cid=cid,
+                source=pixmap.id,
+                mask=pixmap.id,
+                fore_red=0,
+                fore_green=0,
+                fore_blue=0,
+                back_red=0,
+                back_green=0,
+                back_blue=0,
+                x=0,
+                y=0,
             )
-            font.close()
-            return cursor
-        except Exception:
-            return X.NONE
+            pixmap.free()
+            return xcursor.Cursor(self._display.display, cid, owner=1)
+        except Exception as e:
+            self._logger.warning(f"Failed to create blank pixmap cursor: {e}")
+            # Fallback: glyph cursor with all-black colours
+            try:
+                font = self._display.open_font("cursor")
+                cursor = font.create_glyph_cursor(
+                    font, 0, 1, (0, 0, 0), (0, 0, 0)
+                )
+                font.close()
+                return cursor
+            except Exception:
+                return X.NONE
 
     def _create_window(self):
         """Create an override-redirect window for mouse capture."""
@@ -173,6 +200,11 @@ class _XlibCursorHandler:
         if not self._captured:
             return
 
+        # Skip stale motion events generated during grab/warp setup
+        if self._skip_motion:
+            self._skip_motion = False
+            return
+
         dx = event.root_x - self._center_x
         dy = event.root_y - self._center_y
 
@@ -183,9 +215,7 @@ class _XlibCursorHandler:
                 pass
 
             # Warp pointer back to center
-            self._root.warp_pointer(
-                0, 0, 0, 0, self._center_x, self._center_y
-            )
+            self._root.warp_pointer(self._center_x, self._center_y)
             self._display.flush()
 
     def _process_commands(self):
@@ -261,10 +291,13 @@ class _XlibCursorHandler:
             self._captured = True
 
             # Warp to center
-            self._root.warp_pointer(
-                0, 0, 0, 0, self._center_x, self._center_y
-            )
-            self._display.flush()
+            self._root.warp_pointer(self._center_x, self._center_y)
+            self._display.sync()
+
+            # Drain stale motion events queued during grab/warp
+            while self._display.pending_events():
+                self._display.next_event()
+            self._skip_motion = True
 
             self._result_conn.send(
                 {"type": "capture_enabled", "success": True}
@@ -301,7 +334,7 @@ class _XlibCursorHandler:
             sh = self._screen.height_in_pixels
             abs_x = int(x * sw)
             abs_y = int(y * sh)
-            self._root.warp_pointer(0, 0, 0, 0, abs_x, abs_y)
+            self._root.warp_pointer(abs_x, abs_y)
 
         # Hide window
         self._window.unmap()
