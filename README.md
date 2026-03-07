@@ -420,9 +420,6 @@ These parameters affect the application's internal behavior. Only modify them if
 
 The following hotkeys are available on the **server** machine to control input focus without moving the mouse to a screen edge.
 
-> [!NOTE]
-> Client switch hotkeys require the server to be running and at least one client to be connected.
-
 | Shortcut | Action |
 |---|---|
 | `Ctrl + Shift + P + ←` | Switch focus to the **left** client |
@@ -431,6 +428,9 @@ The following hotkeys are available on the **server** machine to control input f
 | `Ctrl + Shift + P + ↓` | Switch focus to the **bottom** client |
 | `Ctrl + Shift + P + Esc` | Return focus to the **server** |
 | `Ctrl + Shift + Q` | **Panic** — force-quit Perpetua |
+
+> [!NOTE]
+> Client switch hotkeys require the server to be running and at least one client to be connected.
 
 
 ## Roadmap
