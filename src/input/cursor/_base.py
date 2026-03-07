@@ -35,8 +35,6 @@ from typing import Optional
 from utils.logging import get_logger, Logger
 from utils.screen import Screen
 
-from ._worker import CursorHandlerWorker
-
 wxEVT_SCREEN_UNLOCKED = wx.NewEventType()
 EVT_SCREEN_UNLOCKED = wx.PyEventBinder(wxEVT_SCREEN_UNLOCKED, 1)
 
@@ -671,20 +669,3 @@ class _CursorHandlerProcess:
             )
 
             _logger.debug("Process exiting")
-
-
-class _WxCursorHandlerWorker(CursorHandlerWorker):
-    """wx-based worker that uses _CursorHandlerProcess as the process target."""
-
-    def _get_process_target(self):
-        return _CursorHandlerProcess.run
-
-    def _get_process_args(self):
-        return (
-            self.command_conn_rec,
-            self.result_conn_send,
-            self.mouse_conn_send,
-            self._debug,
-            self.window_class,
-            self._logger.level,
-        )
