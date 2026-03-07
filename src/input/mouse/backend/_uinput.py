@@ -16,13 +16,16 @@
 #
 
 import threading
-import contextlib
-import evdev
 import enum
-import inspect
+import contextlib
+
+import evdev
 from evdev import UInput, ecodes
+
 import Xlib.display
 from Xlib import display
+
+from input.utils import _wrap
 
 
 def _check_and_initialize():
@@ -36,6 +39,18 @@ except Exception as e:
     raise ImportError("failed to acquire X connection: {}".format(str(e)), e)
 del _check_and_initialize
 
+Button = enum.Enum(
+    "Button",
+    module=__name__,
+    names=[("unknown", None), ("left", 1), ("middle", 2), ("right", 3)],
+)
+
+RawButtonMap = {
+    ecodes.BTN_LEFT: Button.left,
+    ecodes.BTN_MIDDLE: Button.middle,
+    ecodes.BTN_RIGHT: Button.right,
+}
+
 
 def find_mice(devices: list[str] = None) -> list[evdev.InputDevice]:
     """Return all /dev/input/eventX devices that look like mice."""
@@ -46,7 +61,6 @@ def find_mice(devices: list[str] = None) -> list[evdev.InputDevice]:
         try:
             dev = evdev.InputDevice(path)
             caps = dev.capabilities()
-            # print(f"Found device: {dev.path} ({dev.name}) with capabilities: {caps}")
             has_rel = ecodes.EV_REL in caps
             has_btn = ecodes.EV_KEY in caps and any(
                 btn in caps[ecodes.EV_KEY]
@@ -61,47 +75,32 @@ def find_mice(devices: list[str] = None) -> list[evdev.InputDevice]:
 
 def make_uinput(mice: list[evdev.InputDevice]) -> UInput:
     """Create a UInput device that mirrors the union of all mouse caps."""
-    all_events = {}
+    all_events: dict[int, set[int]] = {}
     for dev in mice:
         caps = dev.capabilities()
         for etype, codes in caps.items():
             if etype not in all_events:
                 all_events[etype] = set()
             all_events[etype].update(codes)
-    # Only keep mouse-relevant event types
     filtered = {
         etype: sorted(codes)
         for etype, codes in all_events.items()
         if etype in (ecodes.EV_KEY, ecodes.EV_REL, ecodes.EV_MSC)
     }
-    return UInput(
-        name="perpetua-mouse",
-        events=filtered,
-    )
+    return UInput(name="perpetua-mouse", events=filtered)
 
 
-def _wrap(f, args):
-    """Wraps a callable to make it accept ``args`` number of arguments.
-
-    :param f: The callable to wrap. If this is ``None`` a no-op wrapper is
-        returned.
-
-    :param int args: The number of arguments to accept.
-
-    :raises ValueError: if f requires more than ``args`` arguments
-    """
-    if f is None:
-        return lambda *a: None
-    else:
-        argspec = inspect.getfullargspec(f)
-        actual = len(inspect.signature(f).parameters)
-        defaults = len(argspec.defaults) if argspec.defaults else 0
-        if actual - defaults > args:
-            raise ValueError(f)
-        elif actual >= args or argspec.varargs is not None:
-            return f
-        else:
-            return lambda *a: f(*a[:actual])
+_CONTROLLER_EVENTS = {
+    ecodes.EV_KEY: [ecodes.BTN_LEFT, ecodes.BTN_MIDDLE, ecodes.BTN_RIGHT],
+    ecodes.EV_REL: [
+        ecodes.REL_X,
+        ecodes.REL_Y,
+        ecodes.REL_WHEEL,
+        ecodes.REL_HWHEEL,
+        ecodes.REL_WHEEL_HI_RES,
+        ecodes.REL_HWHEEL_HI_RES,
+    ],
+}
 
 
 class X11Error(Exception):
@@ -110,19 +109,6 @@ class X11Error(Exception):
     """
 
     pass
-
-
-Button = enum.Enum(
-    "Button",
-    module=__name__,
-    names=[("unknown", None), ("left", 1), ("middle", 2), ("right", 3)],
-)
-
-RawButtonMap = {
-    ecodes.BTN_LEFT: Button.left,
-    ecodes.BTN_MIDDLE: Button.middle,
-    ecodes.BTN_RIGHT: Button.right,
-}
 
 
 @contextlib.contextmanager
@@ -155,15 +141,6 @@ def display_manager(display):
 
 
 class MouseListener(threading.Thread):
-    """
-    Uinput mouse listener backend.
-    Args:
-        on_move: callable(x, y, injected)
-        on_click: callable(x, y, button, pressed, injected)
-        on_scroll: callable(x, y, dx, dy, injected)
-        suppress: if True, do not forward events to UInput
-    """
-
     def __init__(
         self,
         on_move=None,
@@ -241,7 +218,6 @@ class MouseListener(threading.Thread):
             self._cleanup_done.set()
 
     def _handle_event(self, dev, event):
-        # Check for injected marker
         if (
             event.type == ecodes.EV_MSC
             and event.code == ecodes.MSC_SCAN
@@ -251,8 +227,9 @@ class MouseListener(threading.Thread):
             self._injected_rel_count = 2
             self._injected_key_count = 1
             return
+
         injected = self._injected_flag
-        # Handle injected counters
+
         if self._injected_flag:
             if event.type == ecodes.EV_REL:
                 self._injected_rel_count -= 1
@@ -262,14 +239,8 @@ class MouseListener(threading.Thread):
                 self._injected_key_count -= 1
                 if self._injected_key_count <= 0:
                     self._injected_flag = False
+
         if event.type == ecodes.EV_REL and event.code in (ecodes.REL_X, ecodes.REL_Y):
-            pos = []
-            if event.code == ecodes.REL_X:
-                pos.append(event.value)
-                pos.append(0)
-            elif event.code == ecodes.REL_Y:
-                pos.append(0)
-                pos.append(event.value)
             if self.on_move:
                 pos = self._get_position()
                 if self.on_move(pos[0], pos[1], injected) is False:
@@ -300,6 +271,7 @@ class MouseListener(threading.Thread):
                 if self.on_scroll(pos[0], pos[1], dx, dy, injected) is False:
                     self.stop()
                     return
+
         if not self._suppress and self._ui:
             self._ui.write_event(event)
             self._ui.syn()
@@ -311,7 +283,6 @@ class MouseListener(threading.Thread):
         self._running.clear()
 
     def join(self, timeout=5):
-        # self.stop()
         self._cleanup_done.wait(timeout)
 
     def __enter__(self):
@@ -321,3 +292,10 @@ class MouseListener(threading.Thread):
     def __exit__(self, exc_type, value, traceback):
         self.stop()
         self.join()
+
+
+__all__ = [
+    "RawButtonMap",
+    "Button",
+    "MouseListener",
+]

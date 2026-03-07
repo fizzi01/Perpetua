@@ -128,8 +128,11 @@ class DaemonRunner:
             self.cleanup_pid()
             sys.exit(1)
         finally:
-            self.log.info("Daemon loop stopped", pid=os.getpid())
-            self.cleanup_pid()
+            try:
+                self.log.info("Daemon loop stopped", pid=os.getpid())
+                self.cleanup_pid()
+            except Exception as e:
+                print(e)
 
 
 def main():
@@ -148,19 +151,12 @@ def main():
             sys.exit(1)
         daemon.run()
     except KeyboardInterrupt:
-        if daemon and daemon._log:
-            daemon.log.info("Interrupted")
-        else:
-            print("Interrupted")
+        print("Interrupted")
         sys.exit(130)
     except Exception:
         import traceback
 
-        if daemon and daemon._log:
-            daemon.log.exception("Fatal error")
-            daemon.log.exception(traceback.format_exc())
-        else:
-            print(f"Fatal error: {traceback.format_exc()}")
+        print(f"Fatal error: {traceback.format_exc()}")
         sys.exit(1)
 
     sys.exit(0)

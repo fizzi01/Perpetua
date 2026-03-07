@@ -4309,6 +4309,22 @@ files = [
 pytest = ">=7.0.0"
 
 [[package]]
+name = "python-wayland"
+version = "1.0.0"
+description = "An implementation of the Wayland protocol built from the ground up with no runtime dependencies - no libwayland, no C libraries, just Python."
+optional = false
+python-versions = ">=3.8"
+groups = ["main"]
+markers = "sys_platform == \"linux\""
+files = [
+    {file = "python_wayland-1.0.0-py3-none-any.whl", hash = "sha256:23b4d4b713e72d4b69eaff114f536c171c725561ac10de0ee285be19b60be541"},
+    {file = "python_wayland-1.0.0.tar.gz", hash = "sha256:25faf9f24bbd142894762e136c2d72cd478e746651ad0eebe9a6a6af5794ebe0"},
+]
+
+[package.extras]
+dev = ["opencv-python", "textual"]
+
+[[package]]
 name = "python-xlib"
 version = "0.33"
 description = "Python X Library"
@@ -4399,6 +4415,23 @@ files = [
     {file = "six-1.17.0-py2.py3-none-any.whl", hash = "sha256:4721f391ed90541fddacab5acf947aa0d3dc7d27b2e1e8eda2be8970586c3274"},
     {file = "six-1.17.0.tar.gz", hash = "sha256:ff70335d468e7eb6ec65b95b99d3a2836546063f63acc5171de367e834932a81"},
 ]
+
+[[package]]
+name = "snegg"
+version = "0.1.0"
+description = "Python bindings to libei, libeis and liboeffis"
+optional = false
+python-versions = ">= 3.9"
+groups = ["main"]
+markers = "sys_platform == \"linux\""
+files = []
+develop = false
+
+[package.source]
+type = "git"
+url = "https://gitlab.freedesktop.org/libinput/snegg"
+reference = "HEAD"
+resolved_reference = "796f80b9ff11b38e51ff0cee8ce28bbb48caba02"
 
 [[package]]
 name = "structlog"
@@ -4761,4 +4794,4 @@ cffi = ["cffi (>=1.17,<2.0) ; platform_python_implementation != \"PyPy\" and pyt
 [metadata]
 lock-version = "2.1"
 python-versions = ">=3.11,<3.13"
-content-hash = "353d572090f0445493af50c7d8dc17cad7821fa065cf1bcdc8e91b16e5e2baea"
+content-hash = "fbffc877996aa5cb4e6f3fe12a940990f68484956ed630a5c97f256ce2a8202b"
