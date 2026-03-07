@@ -678,7 +678,9 @@ class Daemon:
                         "Connection reset while sending rejection message", address=addr
                     )
                 except Exception as e:
-                    self._logger.error(f"Error sending rejection message ({e})", address=addr)
+                    self._logger.error(
+                        f"Error sending rejection message ({e})", address=addr
+                    )
                 finally:
                     if writer:
                         try:

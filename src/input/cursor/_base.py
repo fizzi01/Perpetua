@@ -17,7 +17,6 @@
 
 import sys
 import os
-import asyncio
 
 import wx
 from wx.core import Point, Size
@@ -25,7 +24,6 @@ from wx.core import Point, Size
 import time
 import threading
 
-from multiprocessing import Pipe, Process
 
 if sys.platform == "win32":
     from multiprocessing.connection import PipeConnection as Connection
@@ -33,19 +31,11 @@ else:
     from multiprocessing.connection import Connection
 from typing import Optional
 
-from event import (
-    BusEventType,
-    MouseEvent,
-    ActiveScreenChangedEvent,
-    ClientDisconnectedEvent,
-    BusEvent,
-)
-from event.bus import EventBus
-
-from network.stream.handler import StreamHandler
 
 from utils.logging import get_logger, Logger
 from utils.screen import Screen
+
+from ._worker import CursorHandlerWorker
 
 wxEVT_SCREEN_UNLOCKED = wx.NewEventType()
 EVT_SCREEN_UNLOCKED = wx.PyEventBinder(wxEVT_SCREEN_UNLOCKED, 1)
@@ -681,9 +671,6 @@ class _CursorHandlerProcess:
             )
 
             _logger.debug("Process exiting")
-
-
-from ._worker import CursorHandlerWorker  # noqa: F401
 
 
 class _WxCursorHandlerWorker(CursorHandlerWorker):

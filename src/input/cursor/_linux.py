@@ -23,7 +23,6 @@ compatibility issues across different Ubuntu/distro releases.
 #
 
 import os
-import time
 import select
 
 from multiprocessing.connection import Connection
@@ -62,9 +61,7 @@ class _XlibCursorHandler:
         self._center_y = 0
         self._skip_motion = False
 
-        self._logger = get_logger(
-            "XlibCursorHandler", level=log_level, is_root=True
-        )
+        self._logger = get_logger("XlibCursorHandler", level=log_level, is_root=True)
 
         # Open X display
         self._display = xdisplay.Display()
@@ -120,9 +117,7 @@ class _XlibCursorHandler:
             # Fallback: glyph cursor with all-black colours
             try:
                 font = self._display.open_font("cursor")
-                cursor = font.create_glyph_cursor(
-                    font, 0, 1, (0, 0, 0), (0, 0, 0)
-                )
+                cursor = font.create_glyph_cursor(font, 0, 1, (0, 0, 0), (0, 0, 0))
                 font.close()
                 return cursor
             except Exception:
@@ -168,9 +163,7 @@ class _XlibCursorHandler:
 
         while self._running:
             try:
-                readable, _, _ = select.select(
-                    [x_fd, cmd_fd], [], [], 0.01
-                )
+                readable, _, _ = select.select([x_fd, cmd_fd], [], [], 0.01)
             except (ValueError, OSError):
                 break
 
@@ -299,16 +292,12 @@ class _XlibCursorHandler:
                 self._display.next_event()
             self._skip_motion = True
 
-            self._result_conn.send(
-                {"type": "capture_enabled", "success": True}
-            )
+            self._result_conn.send({"type": "capture_enabled", "success": True})
         else:
             self._logger.error(f"Failed to grab pointer, status={status}")
             self._window.unmap()
             self._display.sync()
-            self._result_conn.send(
-                {"type": "capture_enabled", "success": False}
-            )
+            self._result_conn.send({"type": "capture_enabled", "success": False})
 
     def _disable_capture(self, x: int = -1, y: int = -1):
         if not self._captured:
@@ -340,9 +329,7 @@ class _XlibCursorHandler:
         self._window.unmap()
         self._display.sync()
 
-        self._result_conn.send(
-            {"type": "capture_disabled", "success": True}
-        )
+        self._result_conn.send({"type": "capture_disabled", "success": True})
 
     def _attempt_recapture(self):
         if not self._captured:
@@ -354,9 +341,7 @@ class _XlibCursorHandler:
 
             self._window.grab_pointer(
                 True,
-                X.PointerMotionMask
-                | X.ButtonPressMask
-                | X.ButtonReleaseMask,
+                X.PointerMotionMask | X.ButtonPressMask | X.ButtonReleaseMask,
                 X.GrabModeAsync,
                 X.GrabModeAsync,
                 X.NONE,
