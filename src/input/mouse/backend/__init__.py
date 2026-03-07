@@ -75,7 +75,7 @@ _RULES = [
             "MouseController": "Controller",
             "Button": "Button",
         },
-        names={"mouse_listener": "pynput", "mouse_controller": "pynput"},
+        names={"mouse_listener": "os-specific", "mouse_controller": "os-specific"},
     ),
 ]
 

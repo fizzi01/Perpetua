@@ -56,7 +56,7 @@ _RULES = [
             "Key": "Key",
             "KeyCode": "KeyCode",
         },
-        names={"keyboard_listener": "pynput", "keyboard_controller": "pynput"},
+        names={"keyboard_listener": "os-specific", "keyboard_controller": "os-specific"},
     ),
 ]
 
