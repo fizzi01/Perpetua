@@ -56,7 +56,10 @@ _RULES = [
             "Key": "Key",
             "KeyCode": "KeyCode",
         },
-        names={"keyboard_listener": "os-specific", "keyboard_controller": "os-specific"},
+        names={
+            "keyboard_listener": "os-specific",
+            "keyboard_controller": "os-specific",
+        },
     ),
 ]
 
