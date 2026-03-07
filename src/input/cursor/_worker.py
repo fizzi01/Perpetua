@@ -38,7 +38,7 @@ from event.bus import EventBus
 
 from network.stream.handler import StreamHandler
 
-from utils.logging import get_logger, Logger
+from utils.logging import get_logger
 
 
 class CursorHandlerWorker(object):
@@ -103,9 +103,7 @@ class CursorHandlerWorker(object):
         """Return the callable used as the Process target.
         Platform-specific subclasses must override this.
         """
-        raise NotImplementedError(
-            "Subclasses must override _get_process_target"
-        )
+        raise NotImplementedError("Subclasses must override _get_process_target")
 
     def _get_process_args(self):
         """Return the args tuple passed to the Process target.

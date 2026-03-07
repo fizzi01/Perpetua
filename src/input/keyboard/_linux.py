@@ -68,10 +68,22 @@ class ServerKeyboardListener(_base.ServerKeyboardListener):
         esc = KeyCode.from_vk(Key.esc.value.vk)
 
         entries = [
-            (frozenset({ctrl, shift, p, left}), make_cb(self._hotkey_switch_screen, ScreenPosition.LEFT)),
-            (frozenset({ctrl, shift, p, right}), make_cb(self._hotkey_switch_screen, ScreenPosition.RIGHT)),
-            (frozenset({ctrl, shift, p, up}), make_cb(self._hotkey_switch_screen, ScreenPosition.TOP)),
-            (frozenset({ctrl, shift, p, down}), make_cb(self._hotkey_switch_screen, ScreenPosition.BOTTOM)),
+            (
+                frozenset({ctrl, shift, p, left}),
+                make_cb(self._hotkey_switch_screen, ScreenPosition.LEFT),
+            ),
+            (
+                frozenset({ctrl, shift, p, right}),
+                make_cb(self._hotkey_switch_screen, ScreenPosition.RIGHT),
+            ),
+            (
+                frozenset({ctrl, shift, p, up}),
+                make_cb(self._hotkey_switch_screen, ScreenPosition.TOP),
+            ),
+            (
+                frozenset({ctrl, shift, p, down}),
+                make_cb(self._hotkey_switch_screen, ScreenPosition.BOTTOM),
+            ),
             (frozenset({ctrl, shift, p, esc}), make_cb(self._hotkey_switch_to_server)),
             (frozenset({ctrl, shift, q}), make_cb(self._hotkey_panic)),
         ]
