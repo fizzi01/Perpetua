@@ -369,6 +369,8 @@ class _XlibCursorHandler:
             self._logger.error(f"Recapture failed: {e}")
 
     def _cleanup(self):
+        if self._display is None:
+            return
         try:
             if self._captured:
                 self._display.ungrab_pointer(X.CurrentTime)
@@ -379,11 +381,14 @@ class _XlibCursorHandler:
                         xfixes.show_cursor(self._display)
                     except Exception:
                         pass
+                self._captured = False
             self._window.destroy()
             self._display.flush()
             self._display.close()
         except Exception as e:
             self._logger.error(f"Cleanup error: {e}")
+        finally:
+            self._display = None
 
 
 def _run_xlib_process(
