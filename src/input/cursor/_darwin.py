@@ -188,7 +188,7 @@ class CursorHandlerWindow(_base.CursorHandlerWindow):
             Quartz.CGDisplayShowCursor(Quartz.CGMainDisplayID())  # ty:ignore[unresolved-attribute]
 
 
-class CursorHandlerWorker(_base.CursorHandlerWorker):
+class CursorHandlerWorker(_base._WxCursorHandlerWorker):
     RESULT_POLL_TIMEOUT = 1  # sec
 
     def __init__(
