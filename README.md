@@ -31,7 +31,7 @@ Built with Python, leveraging high-performance uvloop (macOS and Linux) and winl
 | Feature | macOS | Windows | Linux (X11) | Linux (Wayland) |
 |---|:---:|:---:|:---:|:---:|
 | Mouse capture | :heavy_check_mark: | :heavy_check_mark: | :heavy_check_mark: | :x: |
-| Keyboard capture | :heavy_check_mark: | :heavy_check_mark: | :heavy_check_mark: | :x: |
+| Keyboard capture | :heavy_check_mark: | :heavy_check_mark: | :heavy_check_mark: | :heavy_check_mark: |
 | Clipboard sync | :heavy_check_mark: | :heavy_check_mark: | :heavy_check_mark: | :heavy_check_mark: |
 
 #### Client (controlled by a server)
@@ -39,7 +39,7 @@ Built with Python, leveraging high-performance uvloop (macOS and Linux) and winl
 | Feature | macOS | Windows | Linux (X11) | Wayland (GNOME) | Wayland (KDE) | Wayland (Others) |
 |---|:---:|:---:|:---:|:---:|:---:|:---:|
 | Mouse control | :heavy_check_mark: | :heavy_check_mark: | :heavy_check_mark: | :heavy_check_mark: | :heavy_check_mark: | :x: |
-| Keyboard control | :heavy_check_mark: | :heavy_check_mark: | :heavy_check_mark: | :heavy_check_mark: | :heavy_check_mark: | :x: |
+| Keyboard control | :heavy_check_mark: | :heavy_check_mark: | :heavy_check_mark: | :heavy_check_mark: | :heavy_check_mark: | :heavy_check_mark: |
 | Clipboard sync | :heavy_check_mark: | :heavy_check_mark: | :heavy_check_mark: | :heavy_check_mark: | :heavy_check_mark: | :heavy_check_mark: |
 
 > [!NOTE]
