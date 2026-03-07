@@ -61,6 +61,7 @@ rm -rf "$DEB_ROOT" "$DEB_OUT"
 mkdir -p \
   "$DEB_ROOT/DEBIAN" \
   "$DEB_ROOT${INSTALL_PREFIX}" \
+  "$DEB_ROOT/usr/bin" \
   "$DEB_ROOT/usr/share/applications" \
   "$DEB_ROOT/usr/share/pixmaps" \
   "$DEB_ROOT/usr/share/icons/hicolor/256x256/apps" \
@@ -75,6 +76,9 @@ find "$DEB_ROOT" -type d -exec chmod 755 {} +
 find "$DEB_ROOT" -type f -exec chmod 644 {} +
 find "$DEB_ROOT${INSTALL_PREFIX}" -type f \( -name "$BINARY_NAME" -o -name "_perpetua" \) \
   -exec chmod 755 {} +
+
+# ── Symlink in PATH ─────────────────────────────────────────────────────────
+ln -sf "${INSTALL_PREFIX}/${BINARY_NAME}" "$DEB_ROOT/usr/bin/${APP_NAME}"
 
 # ── Maintainer scripts ────────────────────────────────────────────────────────
 install -m 0775 "scripts/enable_uinput.sh" "$DEB_ROOT/DEBIAN/postinst"
@@ -227,7 +231,7 @@ EOF
 fakeroot dpkg-deb --build --root-owner-group "$DEB_ROOT"
 
 echo ""
-echo "✓ Package ready: $DEB_OUT"
+echo "  Package ready: $DEB_OUT"
 echo "  Size:        $(du -sh "$DEB_OUT" | cut -f1)"
 echo "  Inspect with: dpkg-deb -I $DEB_OUT"
 echo "  Lint    with: lintian --tag-display-limit 0 $DEB_OUT"
