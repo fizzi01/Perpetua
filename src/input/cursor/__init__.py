@@ -20,7 +20,7 @@ from typing import TYPE_CHECKING
 
 # Load platform-specific mouse module
 if TYPE_CHECKING:
-    from ._base import CursorHandlerWorker
+    from ._worker import CursorHandlerWorker
 else:
     _backend = backend_module(__name__)
     CursorHandlerWorker = _backend.CursorHandlerWorker
