@@ -113,7 +113,7 @@ class CursorHandlerWindow(_base.CursorHandlerWindow):
             self.SetCursor(wx.NullCursor)
 
 
-class CursorHandlerWorker(_base.CursorHandlerWorker):
+class CursorHandlerWorker(_base._WxCursorHandlerWorker):
     RESULT_POLL_TIMEOUT = 1  # sec
     DATA_POLL_TIMEOUT = 0.01
 
