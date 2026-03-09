@@ -1,7 +1,8 @@
 """
-Xlib-based cursor capture for Linux.
-Replaces the wxPython-based implementation to avoid dynamic library
-compatibility issues across different Ubuntu/distro releases.
+Cursor capture for Linux (X11 and Wayland).
+
+X11: Xlib-based pointer grab with XFixes cursor hiding.
+Wayland: libei InputCapture portal with snegg Receiver (GNOME >= 45, KDE >= 6.1).
 """
 
 
@@ -32,6 +33,7 @@ from Xlib import X, display as xdisplay, Xatom
 from Xlib.xobject import cursor as xcursor
 
 from event.bus import EventBus
+from input._platform import is_wayland, is_gnome, is_kde
 from input.cursor._worker import CursorHandlerWorker as _WorkerBase
 from network.stream.handler import StreamHandler
 from utils.logging import get_logger, Logger
@@ -86,7 +88,7 @@ class _XlibCursorHandler:
         self._window = self._create_window()
 
     def _create_blank_cursor(self):
-        """Create a truly invisible cursor from an empty 1x1 pixmap."""
+        """Create an invisible 1x1 pixmap cursor."""
         try:
             from Xlib.protocol import request
 
@@ -417,6 +419,12 @@ def _run_xlib_process(
 
 
 class CursorHandlerWorker(_WorkerBase):
+    """Linux cursor handler worker.
+
+    No-op on Wayland (capture is handled by ServerMouseListener).
+    On X11 the Xlib-based handler is spawned as a child process.
+    """
+
     RESULT_POLL_TIMEOUT = 1  # sec
     DATA_POLL_TIMEOUT = 0.01
 
@@ -427,8 +435,33 @@ class CursorHandlerWorker(_WorkerBase):
         debug: bool = False,
         window_class=None,
     ):
-        # window_class is unused — Xlib replaces the wx window entirely
+        self._use_wayland = is_wayland() and (is_gnome() or is_kde())
+
+        if self._use_wayland:
+            # ServerMouseListener handles everything
+            self._is_running = False
+            return
+
         super().__init__(event_bus, stream, debug, window_class=None)
+
+    async def start(self, wait_ready=True, timeout=None) -> bool:
+        if self._use_wayland:
+            self._is_running = True
+            return True
+        if timeout is None:
+            timeout = 1
+        return await super().start(wait_ready=wait_ready, timeout=timeout)
+
+    async def stop(self, timeout=2):
+        if self._use_wayland:
+            self._is_running = False
+            return
+        return await super().stop(timeout=timeout)
+
+    def is_alive(self) -> bool:
+        if self._use_wayland:
+            return self._is_running
+        return super().is_alive()
 
     def _get_process_target(self):
         return _run_xlib_process

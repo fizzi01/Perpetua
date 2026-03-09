@@ -25,6 +25,7 @@ dependencies = [
     "python-xlib @ git+https://github.com/fizzi01/python-xlib.git ; sys_platform == 'linux'",
     "python-wayland (== 1.0.0) ; sys_platform == 'linux'",
     "snegg @ git+https://gitlab.freedesktop.org/libinput/snegg ; sys_platform == 'linux'",
+    "pyinputcapture ; sys_platform == 'linux'",
     "winloop (==0.5.0) ; sys_platform == 'win32'",
     "structlog (>=25.5.0,<26.0.0)",
     "psutil (>=7.2.1,<8.0.0)",
