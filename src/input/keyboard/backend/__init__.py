@@ -15,17 +15,66 @@
 #  along with this program.  If not, see <https://www.gnu.org/licenses/>.
 #
 
-from sys import platform
-
-# Import platform-specific mouse backends
-if platform.startswith("linux"):
-    from ._uinput import KeyboardListener, Key, KeyCode
-    from pynput.keyboard import Controller as KeyboardController
-else:
-    from pynput.keyboard import Listener as KeyboardListener
-    from pynput.keyboard import Controller as KeyboardController
-    from pynput.keyboard import Key, KeyCode
-
 from pynput.keyboard import HotKey
 
-__all__ = ["KeyboardListener", "KeyboardController", "Key", "KeyCode", "HotKey"]
+from src.input._platform import BackendRule, is_linux, is_wayland, resolve_backend
+
+_RULES = [
+    # Linux: listener + Key/KeyCode always from uinput
+    BackendRule(
+        condition=is_linux,
+        module="._uinput",
+        symbols={
+            "KeyboardListener": "KeyboardListener",
+            "Key": "Key",
+            "KeyCode": "KeyCode",
+        },
+        names={"keyboard_listener": "uinput"},
+    ),
+    # Linux + Wayland: controller from uinput
+    BackendRule(
+        condition=lambda: is_linux() and is_wayland(),
+        module="._uinput",
+        symbols={"KeyboardController": "KeyboardController"},
+        names={"keyboard_controller": "uinput"},
+    ),
+    # Linux + Xorg: controller from pynput forced to xorg
+    BackendRule(
+        condition=lambda: is_linux() and not is_wayland(),
+        module="pynput.keyboard",
+        symbols={"KeyboardController": "Controller"},
+        names={"keyboard_controller": "xorg"},
+        pynput_force=("keyboard", "xorg"),
+    ),
+    # Default fallback: everything from pynput
+    BackendRule(
+        condition=None,
+        module="pynput.keyboard",
+        symbols={
+            "KeyboardListener": "Listener",
+            "KeyboardController": "Controller",
+            "Key": "Key",
+            "KeyCode": "KeyCode",
+        },
+        names={
+            "keyboard_listener": "os-specific",
+            "keyboard_controller": "os-specific",
+        },
+    ),
+]
+
+BACKEND, _symbols = resolve_backend(__name__, _RULES)
+
+KeyboardListener = _symbols["KeyboardListener"]
+KeyboardController = _symbols["KeyboardController"]
+Key = _symbols["Key"]
+KeyCode = _symbols["KeyCode"]
+
+__all__ = [
+    "KeyboardListener",
+    "KeyboardController",
+    "Key",
+    "KeyCode",
+    "HotKey",
+    "BACKEND",
+]

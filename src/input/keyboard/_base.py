@@ -44,7 +44,7 @@ from utils.logging import get_logger
 from utils.screen import Screen
 
 from input.utils import KeyUtilities
-from .backend import KeyboardListener, Key, KeyCode, HotKey, KeyboardController
+from .backend import KeyboardListener, Key, KeyCode, HotKey, KeyboardController, BACKEND
 
 
 class ServerKeyboardListener(object):
@@ -102,6 +102,10 @@ class ServerKeyboardListener(object):
         self._hotkeys: list[HotKey] = self._build_hotkeys()
 
         self._logger = get_logger(self.__class__.__name__)
+
+        self._logger.info(
+            f"Keyboard listener backend: {BACKEND.get('keyboard_listener', 'unknown')}"
+        )
 
         # Store event loop reference for thread-safe async scheduling
         try:
@@ -217,7 +221,7 @@ class ServerKeyboardListener(object):
         otherwise falls back to manual normalization.
         """
         if self._listener is not None and hasattr(self._listener, "canonical"):
-            return self._listener.canonical(key)
+            return self._listener.canonical(key)  # ty:ignore[call-non-callable]
         # Fallback
         if isinstance(key, Key):
             if key in self._MOD_MAP:
@@ -534,6 +538,10 @@ class ClientKeyboardController(object):
 
         self._logger = get_logger(self.__class__.__name__)
 
+        self._logger.info(
+            f"Keyboard controller backend: {BACKEND.get('keyboard_controller', 'unknown')}"
+        )
+
         # Async queue instead of multiprocessing queue
         self._queue: asyncio.Queue = asyncio.Queue(maxsize=1000)
         self._worker_task: Optional[asyncio.Task] = None
@@ -697,11 +705,11 @@ class ClientKeyboardController(object):
         if event.action == KeyboardEvent.PRESS_ACTION:
             # Handle Caps Lock toggle
             if key == Key.caps_lock:
-                if self.is_caps_locked:
+                if self._caps_lock_state:
                     self._controller.release(key)
                 else:
                     self._controller.press(key)
-                self.is_caps_locked = not self.is_caps_locked
+                self._caps_lock_state = not self._caps_lock_state
             elif KeyUtilities.is_special(
                 key, filter_out=self._SPECIAL_KEYS_FILTER
             ):  # General special key handling
@@ -713,11 +721,11 @@ class ClientKeyboardController(object):
                 self._pressed_general_keys.add(key)
         elif event.action == KeyboardEvent.RELEASE_ACTION:
             if key == Key.caps_lock:
-                if self.is_caps_locked:
+                if self._caps_lock_state:
                     self._controller.release(key)
                 else:
                     self._controller.press(key)
-                self.is_caps_locked = not self.is_caps_locked
+                self._caps_lock_state = not self._caps_lock_state
             elif KeyUtilities.is_special(
                 key, filter_out=self._SPECIAL_KEYS_FILTER
             ):  # General special key handling

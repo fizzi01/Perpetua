@@ -28,6 +28,69 @@ from input.utils import _wrap
 KEY_MAX = 767  # kernel KEY_MAX; codes above this are rejected by uinput
 
 
+class KeyboardController:
+    """
+    UInput keyboard controller for Linux.
+
+    Injects keyboard events via a virtual uinput device
+    """
+
+    _MAP_MODIFIERS: dict[str, int] = {
+        k.name: k.value.vk for k in Key if k.value.vk is not None
+    }
+
+    class InvalidKeyException(Exception):
+        pass
+
+    def __init__(self):
+        self._dev = evdev.UInput(name="perpetua-keyboard")
+        self._layout = LAYOUT
+
+    def __del__(self):
+        if hasattr(self, "_dev"):
+            self._dev.close()
+
+    def press(self, key):
+        """Press a key (Key enum or KeyCode)."""
+        self._handle(self._resolve(key), True)
+
+    def release(self, key):
+        """Release a key (Key enum or KeyCode)."""
+        self._handle(self._resolve(key), False)
+
+    def _resolve(self, key) -> KeyCode | Key:
+        """Normalize a Key enum to its underlying KeyCode."""
+        if isinstance(key, Key):
+            return key.value
+        return key
+
+    def _handle(self, key: KeyCode | Key, is_press: bool):
+        try:
+            vk = self._to_vk(key)
+        except ValueError:
+            raise self.InvalidKeyException(key)
+
+        try:
+            self._dev.write(ecodes.EV_KEY, vk, int(is_press))
+        finally:
+            self._dev.syn()
+
+    def _to_vk(self, key: KeyCode | Key) -> int:
+        """Resolve a key to its virtual key code.
+
+        Character keys are mapped via the layout to their base vk code.
+        Modifier keys are mapped to their canonical vk code.
+        """
+        if hasattr(key, "vk") and key.vk is not None:
+            return key.vk
+        elif hasattr(key, "char") and key.char is not None:
+            vk, _ = self._layout.for_char(key.char)
+            return vk
+        elif hasattr(key, "name") and key.name in self._MAP_MODIFIERS:
+            return self._MAP_MODIFIERS[key.name]
+        raise ValueError(key)
+
+
 def find_keyboards(devices: Optional[list[str]] = None) -> list[evdev.InputDevice]:
     """Return all /dev/input/eventX devices that look like keyboards."""
     result = []
@@ -61,20 +124,18 @@ def make_uinput(keyboards: list[evdev.InputDevice]) -> UInput:
 
 class KeyboardListener(threading.Thread):
     """
-    UInput keyboard listener backend. Forwards EV_KEY events from grabbed
-    physical keyboards to a virtual UInput device.
-    Args:
-        suppress: if True, do not forward events to UInput
+    UInput keyboard listener backend.
+    Forwards EV_KEY events from grabbed physical keyboards to a virtual UInput device.
     """
 
     _MODIFIERS = {
+        Key.shift.value.vk: Key.shift,
+        Key.shift_l.value.vk: Key.shift,
+        Key.shift_r.value.vk: Key.shift,
         Key.alt.value.vk: Key.alt,
         Key.alt_l.value.vk: Key.alt,
         Key.alt_r.value.vk: Key.alt,
         Key.alt_gr.value.vk: Key.alt_gr,
-        Key.shift.value.vk: Key.shift,
-        Key.shift_l.value.vk: Key.shift,
-        Key.shift_r.value.vk: Key.shift,
     }
 
     def __init__(

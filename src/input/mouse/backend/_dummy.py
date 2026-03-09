@@ -45,13 +45,18 @@ class MouseController:
     def __init__(self):
         self._position = (-1, -1)
 
-    def move(self, *args, **kwargs):
-        # No operation
-        return None
+    def move(self, dx, dy):
+        self.position = tuple(sum(i) for i in zip(self.position, (dx, dy)))
 
-    def position(self, *args, **kwargs):
+    @property
+    def position(self, *args, **kwargs) -> tuple[int, int]:
         # Return dummy position
-        return None
+        return self._position
+
+    @position.setter
+    def position(self, value: tuple[int, int]):
+        # No operation, just store the value
+        self._position = value
 
     def press(self, *args, **kwargs):
         # No operation

@@ -24,20 +24,34 @@ Built with Python, leveraging high-performance uvloop (macOS and Linux) and winl
 ## Download
 [![GitHub Downloads (all assets, latest release)](https://img.shields.io/github/downloads/fizzi01/Perpetua/latest/total?style=for-the-badge&logo=github&label=DOWNLOAD%20LATEST&color=%234f47e4)](https://github.com/fizzi01/Perpetua/releases/latest)
 
-### Supported Operating Systems
+### Platform Support
 
-Desktop environments currently supported:
+#### Server (controls other machines)
 
-- MacOS
-- Windows
-- Linux (X11)
+| Feature | macOS | Windows | X11 | Wayland |
+|---|:---:|:---:|:---:|:---:|
+| Mouse capture | :heavy_check_mark: | :heavy_check_mark: | :heavy_check_mark: | :x: |
+| Keyboard capture | :heavy_check_mark: | :heavy_check_mark: | :heavy_check_mark: | :heavy_check_mark: |
+| Clipboard sync | :heavy_check_mark: | :heavy_check_mark: | :heavy_check_mark: | :heavy_check_mark: |
+
+#### Client (controlled by a server)
+
+| Feature | macOS | Windows | X11 | Wayland (GNOME) | Wayland (KDE) | Wayland (Others) |
+|---|:---:|:---:|:---:|:---:|:---:|:---:|
+| Mouse control | :heavy_check_mark: | :heavy_check_mark: | :heavy_check_mark: | :heavy_check_mark: | :heavy_check_mark: | :x: |
+| Keyboard control | :heavy_check_mark: | :heavy_check_mark: | :heavy_check_mark: | :heavy_check_mark: | :heavy_check_mark: | :heavy_check_mark: |
+| Clipboard sync | :heavy_check_mark: | :heavy_check_mark: | :heavy_check_mark: | :heavy_check_mark: | :heavy_check_mark: | :heavy_check_mark: |
+
+> [!NOTE]
+> Wayland client support requires **GNOME >= 45** or **KDE Plasma >= 6.1** (via libei & liboeffis).
+> Other Wayland compositors (wlroots-based, Hyprland, Sway, etc.) are not yet supported.
 
 ### Known Issues
 
 > [!Important]
 > - **Windows**: You can't control a Windows client if there is no real mouse connected to the machine.
-> 
-> - **Linux (Wayland)**: Full support is currently limited to X11 sessions. Wayland and its various compositors are not fully supported at this time.
+>
+> - **Linux (Wayland) Server**: Input capture is not supported. Server mode requires an X11 session.
 >
 > - **Input Capture Conflicts**: Perpetua cannot control the mouse when other applications have exclusive input capture (e.g., video games). This is an architectural limitation.
 
@@ -406,9 +420,6 @@ These parameters affect the application's internal behavior. Only modify them if
 
 The following hotkeys are available on the **server** machine to control input focus without moving the mouse to a screen edge.
 
-> [!NOTE]
-> Client switch hotkeys require the server to be running and at least one client to be connected.
-
 | Shortcut | Action |
 |---|---|
 | `Ctrl + Shift + P + ←` | Switch focus to the **left** client |
@@ -417,6 +428,9 @@ The following hotkeys are available on the **server** machine to control input f
 | `Ctrl + Shift + P + ↓` | Switch focus to the **bottom** client |
 | `Ctrl + Shift + P + Esc` | Return focus to the **server** |
 | `Ctrl + Shift + Q` | **Panic** — force-quit Perpetua |
+
+> [!NOTE]
+> Client switch hotkeys require the server to be running and at least one client to be connected.
 
 
 ## Roadmap
