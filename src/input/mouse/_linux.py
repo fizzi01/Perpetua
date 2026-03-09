@@ -74,8 +74,6 @@ class ServerMouseListener(_base.ServerMouseListener):
             )
         return super()._create_listener()
 
-    # -- start / stop / is_alive -------------------------------------------
-
     def start(self) -> bool:
         if self._barrier_mode:
             return self._start_barrier()
@@ -121,8 +119,6 @@ class ServerMouseListener(_base.ServerMouseListener):
             return self._listener.is_alive() if self._listener else False
         return super().is_alive()
 
-    # -- Client tracking -> update backend barriers ------------------------
-
     async def _on_client_connected(self, data: Optional[ClientConnectedEvent]):
         await super()._on_client_connected(data)
         if self._barrier_mode and data is not None and self._listener:
@@ -148,8 +144,6 @@ class ServerMouseListener(_base.ServerMouseListener):
 
         if self._barrier_mode and data is not None and self._listener:
             self._listener.update_clients(dict(self._active_screens))
-
-    # -- SCREEN_CHANGE_GUARD handler ---------------------------------------
 
     async def _on_screen_change_guard_wayland(self, data):
         """Handle SCREEN_CHANGE_GUARD on Wayland."""
