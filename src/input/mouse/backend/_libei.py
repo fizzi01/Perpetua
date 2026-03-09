@@ -40,6 +40,38 @@ from snegg.oeffis import Oeffis, DeviceType, DisconnectedError, SessionClosedErr
 from input.utils import ButtonMapping
 from utils.logging import get_logger
 
+
+def _ei_from_fd(cls, fd: int, name: str):
+    """Create a snegg Sender/Receiver, handling both API variants."""
+    try:
+        f = os.fdopen(fd, "rb", closefd=False)
+        return cls.create_for_fd(f, name=name)
+    except TypeError:
+        return cls.create_for_fd(fd, name=name)
+
+
+def _suppress_libei_stderr():
+    """Redirect stderr fd to /dev/null to silence libei C-level debug spam."""
+    try:
+        devnull = os.open(os.devnull, os.O_WRONLY)
+        saved = os.dup(2)
+        os.dup2(devnull, 2)
+        os.close(devnull)
+        return saved
+    except OSError:
+        return None
+
+
+def _restore_stderr(saved_fd):
+    """Restore stderr from a saved fd."""
+    if saved_fd is not None:
+        try:
+            os.dup2(saved_fd, 2)
+            os.close(saved_fd)
+        except OSError:
+            pass
+
+
 Button = enum.Enum(
     "Button",
     module=__name__,
@@ -86,7 +118,6 @@ class _EiConnection:
         self._device = None
         self._sender: Sender | None = None
         self._oeffis: Oeffis | None = None
-        self._eis_file = None
         self._paused = threading.Event()
         self._error: Exception | None = None
         self._dispatch_thread: threading.Thread | None = None
@@ -142,10 +173,7 @@ class _EiConnection:
         poller.unregister(self._oeffis.fd)
 
         # Libei Sender
-        self._eis_file = os.fdopen(eis_fd, "rb", closefd=False)
-        self._sender = Sender.create_for_fd(
-            self._eis_file, name="perpetua-mouse-controller"
-        )
+        self._sender = _ei_from_fd(Sender, eis_fd, "perpetua-mouse-controller")
         poller.register(self._sender.fd, _select.POLLIN)
 
         # Seat bind and device acquisition loop
@@ -180,44 +208,50 @@ class _EiConnection:
         self._dispatch_thread.start()
 
     def _dispatch_loop(self):
+        saved_stderr = _suppress_libei_stderr()
         poller = _select.poll()
         poller.register(self._sender.fd, _select.POLLIN)
 
-        while self._error is None:
-            try:
-                ready = poller.poll(500)
-            except Exception:
-                break
+        try:
+            while self._error is None:
+                try:
+                    ready = poller.poll(500)
+                except Exception:
+                    break
 
-            if not ready:
-                continue
+                if not ready:
+                    continue
 
-            try:
-                self._sender.dispatch()
-            except Exception as exc:
-                self._error = RuntimeError(f"libei: dispatch error: {exc}")
-                break
+                try:
+                    self._sender.dispatch()
+                except Exception as exc:
+                    self._error = RuntimeError(f"libei: dispatch error: {exc}")
+                    break
 
-            for event in self._sender.events:
-                etype = event.event_type
+                for event in self._sender.events:
+                    etype = event.event_type
 
-                if etype == EventType.DEVICE_PAUSED:
-                    self._paused.set()
+                    if etype == EventType.DEVICE_PAUSED:
+                        self._paused.set()
 
-                elif etype == EventType.DEVICE_RESUMED:
-                    self._paused.clear()
-                    if self._device is not None:
-                        self._device.start_emulating(0)
+                    elif etype == EventType.DEVICE_RESUMED:
+                        self._paused.clear()
+                        if self._device is not None:
+                            self._device.start_emulating(0)
 
-                elif etype == EventType.DEVICE_REMOVED:
-                    self._error = RuntimeError("libei: device removed by compositor")
-                    self._device = None
-                    return
+                    elif etype == EventType.DEVICE_REMOVED:
+                        self._error = RuntimeError(
+                            "libei: device removed by compositor"
+                        )
+                        self._device = None
+                        return
 
-                elif etype == EventType.DISCONNECT:
-                    self._error = RuntimeError("libei: disconnected by compositor")
-                    self._device = None
-                    return
+                    elif etype == EventType.DISCONNECT:
+                        self._error = RuntimeError("libei: disconnected by compositor")
+                        self._device = None
+                        return
+        finally:
+            _restore_stderr(saved_stderr)
 
 
 _conn: _EiConnection | None = None
@@ -355,8 +389,7 @@ class _CaptureSession:
             zones, eis_fd, bmap_list = portal.setup(active_edges)
             logger.debug(f"Session created: zones={zones} edges={active_edges}")
 
-            eis_file = os.fdopen(eis_fd, "rb", closefd=False)
-            receiver = Receiver.create_for_fd(eis_file, name="perpetua-cursor-capture")
+            receiver = _ei_from_fd(Receiver, eis_fd, "perpetua-cursor-capture")
 
             portal.enable()
             _wait_for_seat(receiver, logger)
@@ -518,6 +551,7 @@ class MouseListener:
         logger = self._logger
         session: _CaptureSession | None = None
         first_session = True
+        saved_stderr = _suppress_libei_stderr()
 
         try:
             while self._is_running:
@@ -546,6 +580,7 @@ class MouseListener:
         finally:
             if session is not None:
                 session.teardown()
+            _restore_stderr(saved_stderr)
             logger.debug("Thread exiting")
 
     _MAX_SESSION_RETRIES = 3
