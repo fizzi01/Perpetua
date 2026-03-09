@@ -573,6 +573,15 @@ class MouseListener:
                     break
                 elif action == "disconnected":
                     session = None
+                    self._clients_active = False
+                    # Auto-reconnect if there are active edges
+                    if self._active_edges:
+                        time.sleep(1.0)
+                        session = self._create_session_with_retry(
+                            _ALL_EDGES, logger
+                        )
+                        if session is not None:
+                            self._clients_active = True
 
         except Exception as exc:
             logger.error(f"InputCapture thread fatal: {exc}")
