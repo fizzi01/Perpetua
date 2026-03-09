@@ -329,6 +329,8 @@ class _CaptureSession:
         "poller",
         "captured",
         "pending_activation",
+        "scroll_accum_x",
+        "scroll_accum_y",
     )
 
     def __init__(self, portal, receiver, barrier_map, poller):
@@ -338,6 +340,8 @@ class _CaptureSession:
         self.poller = poller
         self.captured: bool = False
         self.pending_activation: bool = False
+        self.scroll_accum_x: float = 0.0
+        self.scroll_accum_y: float = 0.0
 
     @classmethod
     def create(cls, active_edges, logger) -> "_CaptureSession | None":
@@ -671,11 +675,24 @@ class MouseListener:
                     if btn is not None:
                         self.event_queue.put(("button", btn, be.is_press))
 
+            elif etype == EventType.SCROLL_DISCRETE:
+                if session.captured:
+                    # snegg's scroll_event accessor calls ei_event_scroll_get_dx()
+                    # which is invalid for SCROLL_DISCRETE (type 603).
+                    # Go through the C bindings directly.
+                    raw = event._cobject
+                    raw_dx = libei.event_scroll_get_discrete_dx(raw)
+                    raw_dy = libei.event_scroll_get_discrete_dy(raw)
+                    # 120 hi-res units = 1 wheel notch
+                    dx = int(raw_dx) // 120
+                    dy = int(raw_dy) // 120
+                    if dx or dy:
+                        self.event_queue.put(("scroll", dx, dy))
+
             elif etype == EventType.SCROLL_DELTA:
                 if session.captured:
                     se = event.scroll_event
-                    self.event_queue.put(("scroll", se.dx, se.dy))
-
+                    self._accumulate_scroll(session, se.dx, se.dy)
             elif etype == EventType.SEAT_ADDED:
                 event.seat.bind(_LISTENER_CAPABILITIES)
                 session.receiver.dispatch()
@@ -696,6 +713,25 @@ class MouseListener:
             logger.error(f"EI event error: {exc}")
 
         return None
+
+    # Pixels-per-click threshold for SCROLL_DELTA (touchpad / smooth scroll).
+    _SCROLL_PX_PER_CLICK = 15.0
+
+    def _accumulate_scroll(self, session: _CaptureSession, dx: float, dy: float):
+        """Convert pixel-based SCROLL_DELTA into discrete click counts."""
+        session.scroll_accum_x += dx
+        session.scroll_accum_y += dy
+
+        threshold = self._SCROLL_PX_PER_CLICK
+        clicks_x = int(session.scroll_accum_x / threshold)
+        clicks_y = int(session.scroll_accum_y / threshold)
+
+        if clicks_x:
+            session.scroll_accum_x -= clicks_x * threshold
+        if clicks_y:
+            session.scroll_accum_y -= clicks_y * threshold
+        if clicks_x or clicks_y:
+            self.event_queue.put(("scroll", clicks_x, clicks_y))
 
     def _handle_start_emulating(self, session: _CaptureSession, logger):
         """Resolve barrier activation on DEVICE_START_EMULATING."""
