@@ -349,6 +349,7 @@ class _CaptureSession:
         from pyinputcapture import InputCapturePortal
         from snegg.ei import Receiver
 
+        portal = None
         try:
             portal = InputCapturePortal()
             zones, eis_fd, bmap_list = portal.setup(active_edges)
@@ -368,6 +369,11 @@ class _CaptureSession:
 
         except Exception as exc:
             logger.error(f"Session setup failed: {exc}")
+            if portal is not None:
+                try:
+                    portal.close()
+                except Exception:
+                    pass
             return None
 
     def teardown(self):
@@ -443,23 +449,34 @@ def _wait_for_seat(receiver, logger):
         logger.warning("EIS seat bound but no DEVICE_RESUMED (continuing)")
 
 
+_ALL_EDGES = ["bottom", "left", "right", "top"]
+_NO_SESSION = object()  # sentinel: no session yet (distinct from None = quit)
+
+
 class MouseListener:
     """InputCapture portal listener (daemon thread).
 
-    Events are placed in `event_queue` as tuples:
-    ("motion", dx, dy), ("button", mapping, pressed),
-    ("scroll", dx, dy), ("barrier", edge, cx, cy).
+    Events are delivered via callbacks (on_move, on_click, on_scroll,
+    on_barrier) called from the daemon thread.
 
-    The session is recreated when the active edges change
-    (workaround for a GNOME Activated signal bug).
+    The session is created once with barriers on all four edges.
+    Active edges are tracked separately so the session never needs
+    to be torn down and recreated (avoids GNOME portal hang).
     """
 
-    def __init__(self, **kwargs):
+    def __init__(
+        self, on_move=None, on_click=None, on_scroll=None, on_barrier=None, **kwargs
+    ):
+        self._on_move = on_move
+        self._on_click = on_click
+        self._on_scroll = on_scroll
+        self._on_barrier = on_barrier
         self._thread: threading.Thread | None = None
         self._is_running = False
+        self._clients_active = False
+        self._active_edges: set[str] = set()
         self._ready_event = threading.Event()
         self._cmd_queue: queue.Queue = queue.Queue()
-        self.event_queue: queue.Queue = queue.Queue()
         self._logger = get_logger(self.__class__.__name__)
 
     def start(self):
@@ -489,7 +506,7 @@ class MouseListener:
         return self._is_running and self._thread is not None and self._thread.is_alive()
 
     def update_clients(self, clients):
-        """Update active client edges.  Recreates session if edges changed."""
+        """Update which edges have active clients."""
         self._cmd_queue.put({"type": "update_clients", "clients": clients})
 
     def disable_capture(self, x=-1, y=-1):
@@ -499,38 +516,27 @@ class MouseListener:
     def _thread_main(self):
         """Session lifecycle loop: idle (no session) or active (poll EIS)."""
         logger = self._logger
-        active_edges: list[str] = []
         session: _CaptureSession | None = None
         first_session = True
 
         try:
             while self._is_running:
                 if session is None:
-                    result = self._idle_wait(active_edges, logger)
+                    result = self._idle_wait(logger)
                     if result is None:
                         break  # quit
-                    active_edges, session = result
-                    if session is not None and first_session:
+                    if result is _NO_SESSION:
+                        continue
+                    session = result
+                    if first_session:
                         self._ready_event.set()
                         first_session = False
                     continue
 
-                action, active_edges = self._active_tick(
-                    session,
-                    active_edges,
-                    logger,
-                )
-
+                action = self._active_tick(session, logger)
                 if action == "quit":
                     session.teardown()
                     break
-                elif action == "rebuild":
-                    session.teardown()
-                    session = (
-                        _CaptureSession.create(active_edges, logger)
-                        if active_edges
-                        else None
-                    )
                 elif action == "disconnected":
                     session = None
 
@@ -542,60 +548,75 @@ class MouseListener:
                 session.teardown()
             logger.debug("Thread exiting")
 
+    _MAX_SESSION_RETRIES = 3
+    _SESSION_RETRY_DELAY = 1.0  # seconds
+
     # idle phase (no session)
-    def _idle_wait(self, active_edges, logger):
+    def _idle_wait(self, logger):
         """Wait for commands while no session exists."""
         try:
             cmd = self._cmd_queue.get(timeout=0.1)
         except queue.Empty:
-            return active_edges, None
+            return _NO_SESSION
 
         cmd_type = cmd.get("type")
 
         if cmd_type == "update_clients":
-            new_edges = sorted(k for k, v in cmd.get("clients", {}).items() if v)
+            new_edges = set(k for k, v in cmd.get("clients", {}).items() if v)
             if new_edges:
-                active_edges = new_edges
-                session = _CaptureSession.create(active_edges, logger)
-                return active_edges, session
-            return active_edges, None
+                self._active_edges = new_edges
+                session = self._create_session_with_retry(_ALL_EDGES, logger)
+                if session is not None:
+                    self._clients_active = True
+                return session
+            return _NO_SESSION
 
         if cmd_type == "quit":
             return None
 
-        return active_edges, None
+        return _NO_SESSION
+
+    def _create_session_with_retry(self, active_edges, logger):
+        """Try to create a session, retrying a few times on failure."""
+        for attempt in range(self._MAX_SESSION_RETRIES):
+            if not self._is_running:
+                return None
+            if attempt > 0:
+                logger.debug(f"Session retry {attempt}/{self._MAX_SESSION_RETRIES}")
+                time.sleep(self._SESSION_RETRY_DELAY)
+            session = _CaptureSession.create(active_edges, logger)
+            if session is not None:
+                return session
+        logger.warning("Session creation failed after retries")
+        return None
 
     # active phase (session exists)
-    def _active_tick(self, session, active_edges, logger):
+    def _active_tick(self, session, logger):
         """Single iteration of the active session loop."""
         self._dispatch_pending_activation(session)
 
         # Drain commands
-        action, active_edges = self._process_commands(
-            session,
-            active_edges,
-            logger,
-        )
+        action = self._process_commands(session, logger)
         if action != "continue":
-            return action, active_edges
+            return action
 
         # Poll EIS events (10ms timeout)
         events = session.poller.poll(10)
         if not events:
-            return "continue", active_edges
+            return "continue"
 
         try:
             session.receiver.dispatch()
         except Exception as exc:
             logger.error(f"Receiver dispatch error: {exc}")
-            return "continue", active_edges
+            return "continue"
 
         for event in session.receiver.events:
             result = self._handle_ei_event(event, session, logger)
             if result == "disconnected":
-                return "disconnected", active_edges
+                return "disconnected"
 
-        return "continue", active_edges
+        return "continue"
 
     def _dispatch_pending_activation(self, session: _CaptureSession):
         """Resolve a pending Activated signal from the D-Bus queue."""
@@ -605,25 +626,33 @@ class MouseListener:
         activation = session.poll_activated()
         if activation:
             bid, cx, cy = activation
-            edge = session.barrier_map.get(bid)
-            if edge:
-                self.event_queue.put(("barrier", edge, cx, cy))
             session.pending_activation = False
+            edge = session.barrier_map.get(bid)
 
-    def _process_commands(self, session, active_edges, logger):
+            if not self._clients_active or edge not in self._active_edges:
+                try:
+                    session.release_cursor(None, None)
+                except RuntimeError:
+                    pass
+                return
+
+            if edge and self._on_barrier:
+                self._on_barrier(edge, cx, cy)
+
+    def _process_commands(self, session, logger):
         """Drain the command queue (non-blocking)."""
         while True:
             try:
                 cmd = self._cmd_queue.get_nowait()
             except queue.Empty:
-                return "continue", active_edges
+                return "continue"
 
             cmd_type = cmd.get("type")
 
             if cmd_type == "update_clients":
-                new_edges = sorted(k for k, v in cmd.get("clients", {}).items() if v)
-                if new_edges != sorted(active_edges):
-                    return "rebuild", list(new_edges)
+                new_edges = set(k for k, v in cmd.get("clients", {}).items() if v)
+                self._active_edges = new_edges
+                self._clients_active = bool(new_edges)
 
             elif cmd_type == "disable_capture":
                 if session.captured:
@@ -638,9 +667,9 @@ class MouseListener:
 
             elif cmd_type == "quit":
                 self._is_running = False
-                return "quit", active_edges
+                return "quit"
 
-        return "continue", active_edges
+        return "continue"
 
     def _handle_ei_event(self, event, session: _CaptureSession, logger):
         """Process a single EIS event."""
@@ -658,8 +687,8 @@ class MouseListener:
                         return None
                     dx = int(round(raw_dx))
                     dy = int(round(raw_dy))
-                    if dx or dy:
-                        self.event_queue.put(("motion", dx, dy))
+                    if (dx or dy) and self._on_move:
+                        self._on_move(dx, dy)
 
             elif etype == EventType.DEVICE_START_EMULATING:
                 self._handle_start_emulating(session, logger)
@@ -672,8 +701,8 @@ class MouseListener:
                 if session.captured:
                     be = event.button_event
                     btn = _LINUX_BTN_TO_MAPPING.get(be.button)
-                    if btn is not None:
-                        self.event_queue.put(("button", btn, be.is_press))
+                    if btn is not None and self._on_click:
+                        self._on_click(btn, be.is_press)
 
             elif etype == EventType.SCROLL_DISCRETE:
                 if session.captured:
@@ -686,8 +715,8 @@ class MouseListener:
                     # 120 hi-res units = 1 wheel notch
                     dx = int(raw_dx) // 120
                     dy = int(raw_dy) // 120
-                    if dx or dy:
-                        self.event_queue.put(("scroll", dx, dy))
+                    if (dx or dy) and self._on_scroll:
+                        self._on_scroll(dx, dy)
 
             elif etype == EventType.SCROLL_DELTA:
                 if session.captured:
@@ -730,8 +759,8 @@ class MouseListener:
             session.scroll_accum_x -= clicks_x * threshold
         if clicks_y:
             session.scroll_accum_y -= clicks_y * threshold
-        if clicks_x or clicks_y:
-            self.event_queue.put(("scroll", clicks_x, clicks_y))
+        if (clicks_x or clicks_y) and self._on_scroll:
+            self._on_scroll(clicks_x, clicks_y)
 
     def _handle_start_emulating(self, session: _CaptureSession, logger):
         """Resolve barrier activation on DEVICE_START_EMULATING."""
@@ -741,12 +770,16 @@ class MouseListener:
         if activation:
             bid, cx, cy = activation
             edge = session.barrier_map.get(bid)
-            logger.debug(f"START_EMULATING: bid={bid} edge={edge} pos=({cx}, {cy})")
-            if edge:
-                self.event_queue.put(("barrier", edge, cx, cy))
+            if not self._clients_active or edge not in self._active_edges:
+                try:
+                    session.release_cursor(None, None)
+                except RuntimeError as exc:
+                    logger.error(str(exc))
+                return
+
+            if edge and self._on_barrier:
+                self._on_barrier(edge, cx, cy)
         else:
-            # D-Bus Activated not yet received, will be picked up next tick.
-            logger.debug("START_EMULATING: awaiting Activated")
             session.pending_activation = True
 
 

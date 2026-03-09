@@ -23,7 +23,7 @@ portal backend; on X11 the base implementation is used.
 #
 
 import asyncio
-import queue
+from collections import deque
 
 from typing import Optional
 
@@ -52,14 +52,27 @@ class ServerMouseListener(_base.ServerMouseListener):
         super().__init__(*args, **kwargs)
 
         if self._barrier_mode:
-            self._mouse_task: Optional[asyncio.Task] = None
             self._active_client_barrier: Optional[str] = None
             self._barrier_screen_size: tuple[int, int] = Screen.get_size()
+            self._pending_events: deque = deque(maxlen=10000)
+            self._drain_task: Optional[asyncio.Task] = None
 
             self.event_bus.subscribe(
                 event_type=BusEventType.SCREEN_CHANGE_GUARD,
                 callback=self._on_screen_change_guard_wayland,
             )
+
+    def _create_listener(self):
+        if self._barrier_mode:
+            from .backend import MouseListener
+
+            return MouseListener(
+                on_move=self._on_barrier_move,
+                on_click=self._on_barrier_click,
+                on_scroll=self._on_barrier_scroll,
+                on_barrier=self._on_barrier_hit,
+            )
+        return super()._create_listener()
 
     # -- start / stop / is_alive -------------------------------------------
 
@@ -83,11 +96,9 @@ class ServerMouseListener(_base.ServerMouseListener):
             self._listener = self._create_listener()
 
         self._listener.start()
-
-        self._mouse_task = self._loop.create_task(self._event_drain())
-
-        # Send current client state
         self._listener.update_clients(dict(self._active_screens))
+
+        self._drain_task = self._loop.create_task(self._event_drain())
 
         self._logger.debug("Wayland barrier mode started")
         return True
@@ -98,8 +109,8 @@ class ServerMouseListener(_base.ServerMouseListener):
         return super().stop()
 
     def _stop_barrier(self) -> bool:
-        if self._mouse_task and not self._mouse_task.done():
-            self._mouse_task.cancel()
+        if self._drain_task and not self._drain_task.done():
+            self._drain_task.cancel()
         if self._listener:
             self._listener.stop()
         self._logger.debug("Wayland barrier mode stopped")
@@ -116,6 +127,10 @@ class ServerMouseListener(_base.ServerMouseListener):
         await super()._on_client_connected(data)
         if self._barrier_mode and data is not None and self._listener:
             self._listener.update_clients(dict(self._active_screens))
+
+            if self._drain_task is None or self._drain_task.done():
+                if self._loop:
+                    self._drain_task = self._loop.create_task(self._event_drain())
 
     async def _on_client_disconnected(self, data: Optional[ClientDisconnectedEvent]):
         if self._barrier_mode and data is not None:
@@ -166,54 +181,59 @@ class ServerMouseListener(_base.ServerMouseListener):
 
         await asyncio.sleep(0)
 
-    # -- Event drain (async, reads backend queue) --------------------------
+    def _on_barrier_move(self, dx, dy):
+        self._pending_events.append(("move", dx, dy))
+
+    def _on_barrier_click(self, button, pressed):
+        self._pending_events.append(("click", button, pressed))
+
+    def _on_barrier_scroll(self, dx, dy):
+        self._pending_events.append(("scroll", dx, dy))
+
+    def _on_barrier_hit(self, edge, cx, cy):
+        self._pending_events.append(("barrier", edge, cx, cy))
 
     async def _event_drain(self):
-        """Read backend events and forward them to the stream."""
+        """Read pending events from the deque and forward to streams."""
         move_event = MouseEvent(action=MouseEvent.MOVE_ACTION)
 
         while self._listener and self._listener.is_alive():
-            try:
-                msg = self._listener.event_queue.get_nowait()
-            except queue.Empty:
-                await asyncio.sleep(0)
+            if not self._pending_events:
+                await asyncio.sleep(0.001)
                 continue
-            except asyncio.CancelledError:
-                break
 
             try:
-                kind = msg[0]
-                if kind == "motion":
-                    move_event.dx = msg[1]
-                    move_event.dy = msg[2]
+                kind, *args = self._pending_events.popleft()
+
+                if kind == "move":
+                    move_event.dx = args[0]
+                    move_event.dy = args[1]
                     await self.stream.send(move_event)
 
-                elif kind == "button":
+                elif kind == "click":
                     btn_event = MouseEvent(
-                        button=msg[1],
+                        button=args[0],
                         action=MouseEvent.CLICK_ACTION,
-                        is_presed=msg[2],
+                        is_presed=args[1],
                     )
                     await self.stream.send(btn_event)
 
                 elif kind == "scroll":
                     scroll_event = MouseEvent(
-                        dx=msg[1],
-                        dy=msg[2],
+                        dx=args[0],
+                        dy=args[1],
                         action=MouseEvent.SCROLL_ACTION,
                     )
                     await self.stream.send(scroll_event)
 
                 elif kind == "barrier":
-                    await self._on_barrier_activated(msg[1], msg[2], msg[3])
+                    await self._on_barrier_activated(args[0], args[1], args[2])
 
             except asyncio.CancelledError:
                 break
             except Exception as e:
                 self._logger.exception(f"Event drain error: {e}")
                 await asyncio.sleep(0.01)
-
-    # -- Barrier activated -------------------------------------------------
 
     async def _on_barrier_activated(self, edge: str, cursor_x: float, cursor_y: float):
         """Dispatch cross-screen events when a barrier is hit."""
