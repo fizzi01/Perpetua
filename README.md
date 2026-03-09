@@ -28,11 +28,11 @@ Built with Python, leveraging high-performance uvloop (macOS and Linux) and winl
 
 #### Server (controls other machines)
 
-| Feature | macOS | Windows | X11 | Wayland |
-|---|:---:|:---:|:---:|:---:|
-| Mouse capture | :heavy_check_mark: | :heavy_check_mark: | :heavy_check_mark: | :x: |
-| Keyboard capture | :heavy_check_mark: | :heavy_check_mark: | :heavy_check_mark: | :heavy_check_mark: |
-| Clipboard sync | :heavy_check_mark: | :heavy_check_mark: | :heavy_check_mark: | :heavy_check_mark: |
+| Feature | macOS | Windows | X11 |             Wayland (GNOME)             |   Wayland (KDE)    |  Wayland (Others)   |
+|---|:---:|:---:|:---:|:---------------------------------------:|:------------------:|:-------------------:|
+| Mouse capture | :heavy_check_mark: | :heavy_check_mark: | :heavy_check_mark: |           :heavy_check_mark:            | :heavy_check_mark: |         :x:         |
+| Keyboard capture | :heavy_check_mark: | :heavy_check_mark: | :heavy_check_mark: |           :heavy_check_mark:            | :heavy_check_mark: | :heavy_check_mark:  |
+| Clipboard sync | :heavy_check_mark: | :heavy_check_mark: | :heavy_check_mark: | :heavy_check_mark:  | :heavy_check_mark: |  :heavy_check_mark: | 
 
 #### Client (controlled by a server)
 
@@ -50,8 +50,6 @@ Built with Python, leveraging high-performance uvloop (macOS and Linux) and winl
 
 > [!Important]
 > - **Windows**: You can't control a Windows client if there is no real mouse connected to the machine.
->
-> - **Linux (Wayland) Server**: Input capture is not supported. Server mode requires an X11 session.
 >
 > - **Input Capture Conflicts**: Perpetua cannot control the mouse when other applications have exclusive input capture (e.g., video games). This is an architectural limitation.
 
