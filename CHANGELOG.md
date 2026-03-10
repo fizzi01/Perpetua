@@ -1,5 +1,35 @@
 # Changelog
 
+## [1.4.0](https://github.com/fizzi01/Perpetua/compare/v1.3.0...v1.4.0) (2026-03-10)
+
+
+### Features
+
+* append timestamp to temporary configuration file names for uniqueness ([9c30a1b](https://github.com/fizzi01/Perpetua/commit/9c30a1b79dcc00638e825252c14f7590c3c04997))
+* complete Wayland support for GNOME and KDE ([#58](https://github.com/fizzi01/Perpetua/issues/58)) ([a24dced](https://github.com/fizzi01/Perpetua/commit/a24dced19373a649105ca38d9a0fcaea3c34b7c1))
+* **daemon:** force shutdown on multiple signals ([640dc1e](https://github.com/fizzi01/Perpetua/commit/640dc1eb0fb62807f1d27ea38ea747dedef7c4e1))
+* enhance client hostname validation during handshake ([422ce61](https://github.com/fizzi01/Perpetua/commit/422ce61bcd21d71ab24e05a3cc65eb5c8351421c))
+* enhance clipboard functionalities with file list detection ([#53](https://github.com/fizzi01/Perpetua/issues/53)) ([255fb7a](https://github.com/fizzi01/Perpetua/commit/255fb7af70cf1d83ec36b39d6fd45ffa41e0d048))
+* extend Wayland support client side ([#57](https://github.com/fizzi01/Perpetua/issues/57)) ([f4caa4d](https://github.com/fizzi01/Perpetua/commit/f4caa4dac4146ca87137a610f9e86a231dd8dd1c))
+* **gui:** add local IP address retrieval and display in client and server tab ([5ae9744](https://github.com/fizzi01/Perpetua/commit/5ae9744dc18d80b335ae21ac648d21c3b55f82d5))
+* **gui:** improve logging parsing and formatting ([5ae9744](https://github.com/fizzi01/Perpetua/commit/5ae9744dc18d80b335ae21ac648d21c3b55f82d5))
+* implement hotkey functionality for screen switching and panic actions ([#56](https://github.com/fizzi01/Perpetua/issues/56)) ([5019296](https://github.com/fizzi01/Perpetua/commit/5019296413a85185d86b1fa8cc4abdf8aa598be7))
+* **mouse:** enhance barrier activation handling and prevent spurious recaptures (Wayland) ([#59](https://github.com/fizzi01/Perpetua/issues/59)) ([640dc1e](https://github.com/fizzi01/Perpetua/commit/640dc1eb0fb62807f1d27ea38ea747dedef7c4e1))
+* removed wx dependency on Linux, reducing build time and size ([a24dced](https://github.com/fizzi01/Perpetua/commit/a24dced19373a649105ca38d9a0fcaea3c34b7c1))
+* support multiple IP addresses for clients and improve handshake ([#54](https://github.com/fizzi01/Perpetua/issues/54)) ([5ae9744](https://github.com/fizzi01/Perpetua/commit/5ae9744dc18d80b335ae21ac648d21c3b55f82d5))
+
+
+### Bug Fixes
+
+* adjust daemon shutdown handling ([8f8e6ab](https://github.com/fizzi01/Perpetua/commit/8f8e6ab81dcddc27b36dc2c64d6a5b673e3589d3))
+* **daemon:** handle connection errors when sending rejection messages ([a24dced](https://github.com/fizzi01/Perpetua/commit/a24dced19373a649105ca38d9a0fcaea3c34b7c1))
+* **gui:** fix logging auto scroll ([5ae9744](https://github.com/fizzi01/Perpetua/commit/5ae9744dc18d80b335ae21ac648d21c3b55f82d5))
+* handle error during stream close ([5019296](https://github.com/fizzi01/Perpetua/commit/5019296413a85185d86b1fa8cc4abdf8aa598be7))
+* **keyboard:** fix complex hotkeys not working in client uinput backend ([f4caa4d](https://github.com/fizzi01/Perpetua/commit/f4caa4dac4146ca87137a610f9e86a231dd8dd1c))
+* **keyboard:** fix keyboard hotkeys parsing on Linux ([a24dced](https://github.com/fizzi01/Perpetua/commit/a24dced19373a649105ca38d9a0fcaea3c34b7c1))
+* **keyboard:** force controller uinput backend for linux ([5019296](https://github.com/fizzi01/Perpetua/commit/5019296413a85185d86b1fa8cc4abdf8aa598be7))
+* **keyboard:** update wrong caps lock state management in client controller ([f4caa4d](https://github.com/fizzi01/Perpetua/commit/f4caa4dac4146ca87137a610f9e86a231dd8dd1c))
+
 ## [1.3.0](https://github.com/fizzi01/Perpetua/compare/v1.2.4...v1.3.0) (2026-02-28)
 
 
