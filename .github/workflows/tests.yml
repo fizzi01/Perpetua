@@ -68,7 +68,7 @@ jobs:
 
     - name: Install Python Deps
       run: |
-        poetry install --no-interaction
+        poetry install --only main,test --no-interaction
 
     - name: Test
       run: |

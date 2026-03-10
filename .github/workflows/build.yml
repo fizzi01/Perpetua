@@ -104,7 +104,7 @@ jobs:
             fakeroot
 
       - name: Install Python dependencies
-        run: poetry install --no-interaction -v
+        run: poetry install --only main,build --no-interaction -v
 
       - name: Cache Rust dependencies
         uses: Swatinem/rust-cache@v2

@@ -1,4 +1,4 @@
-.PHONY: help install install-dev install-build clean clean-all build build-gui build-daemon build-release build-debug test lint format check run deps-update deps-show
+.PHONY: help install install-dev install-build install-test clean clean-all build build-gui build-daemon build-release build-debug test lint format check run deps-update deps-show
 
 # Variables
 PYTHON := python3
@@ -41,8 +41,13 @@ install-dev: lock ## Install dev dependencies
 
 install-build: lock ## Install runtime and build dependencies
 	@echo "$(BLUE)Installing runtime and build dependencies...$(NC)"
-	$(POETRY) install
+	$(POETRY) install --only main,build
 	@echo "$(GREEN)Build dependencies installed$(NC)"
+
+install-test: lock ## Install runtime and test dependencies
+	@echo "$(BLUE)Installing runtime and test dependencies...$(NC)"
+	$(POETRY) install --only main,test
+	@echo "$(GREEN)Test dependencies installed$(NC)"
 
 ## Build targets
 build: install-build ## Build both GUI and daemon (release mode). Use ARGS="..." for extra arguments
@@ -87,12 +92,12 @@ clean-all: clean ## Clean all artifacts including Poetry cache and node_modules
 	@echo "$(GREEN)All artifacts cleaned$(NC)"
 
 ## Development targets
-test: ## Run tests
+test: install-test ## Run tests
 	@echo "$(BLUE)Running tests...$(NC)"
 	$(POETRY) run pytest
 	@echo "$(GREEN)Tests completed$(NC)"
 
-test-verbose: ## Run tests with verbose output
+test-verbose: install-test ## Run tests with verbose output
 	@echo "$(BLUE)Running tests (verbose)...$(NC)"
 	$(POETRY) run pytest -v
 	@echo "$(GREEN)Tests completed$(NC)"

@@ -42,7 +42,7 @@ jobs:
           cache: poetry
 
       - name: Install Python dependencies
-        run: poetry install --no-interaction -v
+        run: poetry install --only main,build --no-interaction -v
 
       - name: Setup Node.js
         uses: actions/setup-node@v4
