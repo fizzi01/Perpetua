@@ -673,6 +673,14 @@ class Daemon:
                     )
                     writer.write(self.prepare_msg_bytes(error_response))
                     await writer.drain()
+                except ConnectionResetError:
+                    self._logger.warning(
+                        "Connection reset while sending rejection message", address=addr
+                    )
+                except Exception as e:
+                    self._logger.error(
+                        f"Error sending rejection message ({e})", address=addr
+                    )
                 finally:
                     if writer:
                         try:

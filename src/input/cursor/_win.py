@@ -29,6 +29,7 @@ from multiprocessing.connection import PipeConnection
 
 from event.bus import EventBus
 from input.cursor import _base
+from input.cursor._worker import CursorHandlerWorker as _WorkerBase
 from network.stream.handler import StreamHandler
 
 
@@ -113,7 +114,7 @@ class CursorHandlerWindow(_base.CursorHandlerWindow):
             self.SetCursor(wx.NullCursor)
 
 
-class CursorHandlerWorker(_base.CursorHandlerWorker):
+class CursorHandlerWorker(_WorkerBase):
     RESULT_POLL_TIMEOUT = 1  # sec
     DATA_POLL_TIMEOUT = 0.01
 
@@ -125,3 +126,16 @@ class CursorHandlerWorker(_base.CursorHandlerWorker):
         window_class=CursorHandlerWindow,
     ):
         super().__init__(event_bus, stream, debug, window_class)
+
+    def _get_process_target(self):
+        return _base._CursorHandlerProcess.run
+
+    def _get_process_args(self):
+        return (
+            self.command_conn_rec,
+            self.result_conn_send,
+            self.mouse_conn_send,
+            self._debug,
+            self.window_class,
+            self._logger.level,
+        )

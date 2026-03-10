@@ -26,21 +26,16 @@ from src.input._platform import (
 
 _RULES = [
     # Wayland (libei via XDG Desktop Portal)
-    # Listener dummy (not implemented yet), controller from libei.
+    # Listener: InputCapture portal, Controller: RemoteDesktop portal.
     BackendRule(
         condition=lambda: is_linux() and is_wayland() and (is_gnome() or is_kde()),
         module="._libei",
-        symbols={"MouseController": "MouseController"},
-        names={"mouse_controller": "libei"},
-    ),
-    BackendRule(
-        condition=lambda: is_linux() and is_wayland() and (is_gnome() or is_kde()),
-        module="._dummy",
         symbols={
             "MouseListener": "MouseListener",
+            "MouseController": "MouseController",
             "Button": "Button",
         },
-        names={"mouse_listener": "dummy"},
+        names={"mouse_listener": "libei", "mouse_controller": "libei"},
     ),
     # Wayland: other compositors (dummy fallback)
     # TODO: add wlroots (zwlr_virtual_pointer).

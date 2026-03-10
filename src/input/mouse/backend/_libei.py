@@ -15,26 +15,62 @@
 #  along with this program.  If not, see <https://www.gnu.org/licenses/>.
 #
 
-"""
-libei mouse controller backend for Wayland compositors (GNOME >= 45, KDE Plasma >= 6.1).
+"""libei mouse backend for Wayland compositors (GNOME >= 45, KDE >= 6.1).
 
-liboeffis opens a RemoteDesktop session on the XDG Desktop Portal D-Bus interface
-and returns an EIS file descriptor.  That fd is handed to a libei Sender (snegg)
-which negotiates seat capabilities and obtains a Device for input emulation.
+MouseListener uses the InputCapture portal to capture the cursor at
+screen-edge barriers.  MouseController uses the RemoteDesktop portal
+to emulate pointer input via libei.
 
-snegg does not expose scroll methods on Device, so ei_device_scroll_discrete
-is called directly through the C bindings.
+Discrete scroll is called through the C bindings because snegg does
+not expose scroll methods on Device.
 """
 
 import os
+import queue
 import time
 import threading
 import enum
 import select as _select
+
 from evdev import ecodes
 from snegg.ei import Sender, EventType, DeviceCapability
 from snegg.c.libei import libei
 from snegg.oeffis import Oeffis, DeviceType, DisconnectedError, SessionClosedError
+
+from input.utils import ButtonMapping
+from utils.logging import get_logger
+
+
+def _ei_from_fd(cls, fd: int, name: str):
+    """Create a snegg Sender/Receiver, handling both API variants."""
+    try:
+        f = os.fdopen(fd, "rb", closefd=False)
+        return cls.create_for_fd(f, name=name)
+    except TypeError:
+        return cls.create_for_fd(fd, name=name)
+
+
+def _suppress_libei_stderr():
+    """Redirect stderr fd to /dev/null to silence libei C-level debug spam."""
+    try:
+        devnull = os.open(os.devnull, os.O_WRONLY)
+        saved = os.dup(2)
+        os.dup2(devnull, 2)
+        os.close(devnull)
+        return saved
+    except OSError:
+        return None
+
+
+def _restore_stderr(saved_fd):
+    """Restore stderr from a saved fd."""
+    if saved_fd is not None:
+        try:
+            os.dup2(saved_fd, 2)
+            os.close(saved_fd)
+        except OSError:
+            pass
+
 
 Button = enum.Enum(
     "Button",
@@ -48,7 +84,23 @@ ButtonToEcodeMap = {
     Button.right.name: ecodes.BTN_RIGHT,
 }
 
-_CAPABILITIES = (
+# Linux input event codes (from linux/input-event-codes.h)
+_BTN_LEFT = 0x110  # 272
+_BTN_RIGHT = 0x111  # 273
+_BTN_MIDDLE = 0x112  # 274
+
+_LINUX_BTN_TO_MAPPING = {
+    _BTN_LEFT: ButtonMapping.left,
+    _BTN_RIGHT: ButtonMapping.right,
+    _BTN_MIDDLE: ButtonMapping.middle,
+}
+
+
+def _now_us() -> int:
+    return int(time.monotonic() * 1_000_000)
+
+
+_CONTROLLER_CAPABILITIES = (
     DeviceCapability.POINTER,
     DeviceCapability.POINTER_ABSOLUTE,
     DeviceCapability.BUTTON,
@@ -56,14 +108,8 @@ _CAPABILITIES = (
 )
 
 
-def _now_us() -> int:
-    return int(time.monotonic() * 1_000_000)
-
-
 class _EiConnection:
-    """Singleton that owns the portal session, the libei Sender, and the
-    background dispatch thread.  Reconnects transparently when the
-    compositor drops the device (e.g. after idle timeout)."""
+    """RemoteDesktop portal session with libei Sender and dispatch thread."""
 
     def __init__(self):
         self._reset()
@@ -72,7 +118,6 @@ class _EiConnection:
         self._device = None
         self._sender: Sender | None = None
         self._oeffis: Oeffis | None = None
-        self._eis_file = None
         self._paused = threading.Event()
         self._error: Exception | None = None
         self._dispatch_thread: threading.Thread | None = None
@@ -128,10 +173,7 @@ class _EiConnection:
         poller.unregister(self._oeffis.fd)
 
         # Libei Sender
-        self._eis_file = os.fdopen(eis_fd, "rb", closefd=False)
-        self._sender = Sender.create_for_fd(
-            self._eis_file, name="perpetua-mouse-controller"
-        )
+        self._sender = _ei_from_fd(Sender, eis_fd, "perpetua-mouse-controller")
         poller.register(self._sender.fd, _select.POLLIN)
 
         # Seat bind and device acquisition loop
@@ -142,7 +184,7 @@ class _EiConnection:
                 self._sender.dispatch()
             for event in self._sender.events:
                 if event.event_type == EventType.SEAT_ADDED and not seat_bound:
-                    event.seat.bind(_CAPABILITIES)
+                    event.seat.bind(_CONTROLLER_CAPABILITIES)
                     seat_bound = True
                 elif event.event_type == EventType.DEVICE_ADDED and device is None:
                     device = event.device
@@ -166,44 +208,50 @@ class _EiConnection:
         self._dispatch_thread.start()
 
     def _dispatch_loop(self):
+        saved_stderr = _suppress_libei_stderr()
         poller = _select.poll()
         poller.register(self._sender.fd, _select.POLLIN)
 
-        while self._error is None:
-            try:
-                ready = poller.poll(500)
-            except Exception:
-                break
+        try:
+            while self._error is None:
+                try:
+                    ready = poller.poll(500)
+                except Exception:
+                    break
 
-            if not ready:
-                continue
+                if not ready:
+                    continue
 
-            try:
-                self._sender.dispatch()
-            except Exception as exc:
-                self._error = RuntimeError(f"libei: dispatch error: {exc}")
-                break
+                try:
+                    self._sender.dispatch()
+                except Exception as exc:
+                    self._error = RuntimeError(f"libei: dispatch error: {exc}")
+                    break
 
-            for event in self._sender.events:
-                etype = event.event_type
+                for event in self._sender.events:
+                    etype = event.event_type
 
-                if etype == EventType.DEVICE_PAUSED:
-                    self._paused.set()
+                    if etype == EventType.DEVICE_PAUSED:
+                        self._paused.set()
 
-                elif etype == EventType.DEVICE_RESUMED:
-                    self._paused.clear()
-                    if self._device is not None:
-                        self._device.start_emulating(0)
+                    elif etype == EventType.DEVICE_RESUMED:
+                        self._paused.clear()
+                        if self._device is not None:
+                            self._device.start_emulating(0)
 
-                elif etype == EventType.DEVICE_REMOVED:
-                    self._error = RuntimeError("libei: device removed by compositor")
-                    self._device = None
-                    return
+                    elif etype == EventType.DEVICE_REMOVED:
+                        self._error = RuntimeError(
+                            "libei: device removed by compositor"
+                        )
+                        self._device = None
+                        return
 
-                elif etype == EventType.DISCONNECT:
-                    self._error = RuntimeError("libei: disconnected by compositor")
-                    self._device = None
-                    return
+                    elif etype == EventType.DISCONNECT:
+                        self._error = RuntimeError("libei: disconnected by compositor")
+                        self._device = None
+                        return
+        finally:
+            _restore_stderr(saved_stderr)
 
 
 _conn: _EiConnection | None = None
@@ -227,15 +275,13 @@ def _reconnect() -> _EiConnection:
         return _conn
 
 
-def _scroll_delta(device, dx: float, dy: float):
-    libei.device_scroll_delta(device._cobject, dx, dy)
-
-
 def _scroll_discrete(device, dx: int, dy: int):
     libei.device_scroll_discrete(device._cobject, dx, dy)
 
 
 class MouseController:
+    """Emulates pointer input through the RemoteDesktop portal via libei."""
+
     def __init__(self):
         self._x = 0
         self._y = 0
@@ -298,4 +344,485 @@ class MouseController:
             device.frame(_now_us())
 
 
-__all__ = ["MouseController", "Button"]
+_LISTENER_CAPABILITIES = (
+    DeviceCapability.POINTER,
+    DeviceCapability.POINTER_ABSOLUTE,
+    DeviceCapability.TOUCH,
+    DeviceCapability.SCROLL,
+    DeviceCapability.BUTTON,
+)
+
+
+class _CaptureSession:
+    """State of an active InputCapture portal session."""
+
+    __slots__ = (
+        "portal",
+        "receiver",
+        "barrier_map",
+        "poller",
+        "captured",
+        "pending_activation",
+        "scroll_accum_x",
+        "scroll_accum_y",
+    )
+
+    def __init__(self, portal, receiver, barrier_map, poller):
+        self.portal = portal
+        self.receiver = receiver
+        self.barrier_map: dict[int, str] = barrier_map
+        self.poller = poller
+        self.captured: bool = False
+        self.pending_activation: bool = False
+        self.scroll_accum_x: float = 0.0
+        self.scroll_accum_y: float = 0.0
+
+    @classmethod
+    def create(cls, active_edges, logger) -> "_CaptureSession | None":
+        """Create a portal session with barriers only for *active_edges*."""
+        from pyinputcapture import InputCapturePortal
+        from snegg.ei import Receiver
+
+        portal = None
+        try:
+            portal = InputCapturePortal()
+            zones, eis_fd, bmap_list = portal.setup(active_edges)
+            logger.debug(f"Session created: zones={zones} edges={active_edges}")
+
+            receiver = _ei_from_fd(Receiver, eis_fd, "perpetua-cursor-capture")
+
+            portal.enable()
+            _wait_for_seat(receiver, logger)
+
+            poller = _select.poll()
+            poller.register(receiver.fd, _select.POLLIN)
+
+            barrier_map = {bid: edge for bid, edge in bmap_list}
+            return cls(portal, receiver, barrier_map, poller)
+
+        except Exception as exc:
+            logger.error(f"Session setup failed: {exc}")
+            if portal is not None:
+                try:
+                    portal.close()
+                except Exception:
+                    pass
+            return None
+
+    def teardown(self):
+        """Release capture and close the portal session."""
+        if self.captured:
+            try:
+                self.portal.release(None, None)
+            except Exception:
+                pass
+            self.captured = False
+        try:
+            self.portal.close()
+        except Exception:
+            pass
+
+    def release_cursor(self, x, y):
+        """Release capture and return cursor to (x, y)."""
+        try:
+            self.portal.release(x, y)
+        except Exception as exc:
+            raise RuntimeError(f"Release error: {exc}") from exc
+        self.captured = False
+
+    def poll_activated(self):
+        """Pop next Activated event from the queue."""
+        return self.portal.poll_activated()
+
+    @staticmethod
+    def compute_release_pos(cmd, portal):
+        """Compute absolute cursor position for release."""
+        x = cmd.get("x", -1)
+        y = cmd.get("y", -1)
+        if x != -1 and y != -1 and portal.zones:
+            w, h, x_off, y_off = portal.zones[0]
+            return float(x_off + x * w), float(y_off + y * h)
+        return None, None
+
+
+def _wait_for_seat(receiver, logger):
+    """Wait for the EIS seat and bind capabilities."""
+    poller = _select.poll()
+    poller.register(receiver.fd, _select.POLLIN)
+
+    seat_bound = False
+    device_ready = False
+
+    for _ in range(100):  # 10 seconds max
+        if poller.poll(100):
+            receiver.dispatch()
+
+        for event in receiver.events:
+            etype = event.event_type
+
+            if etype == EventType.SEAT_ADDED:
+                event.seat.bind(_LISTENER_CAPABILITIES)
+                receiver.dispatch()
+                logger.debug("EIS seat bound (all capabilities)")
+                seat_bound = True
+
+            elif etype == EventType.DEVICE_ADDED:
+                logger.debug(f"EIS device: {event.device}")
+
+            elif etype == EventType.DEVICE_RESUMED:
+                logger.debug("EIS device resumed (ready)")
+                device_ready = True
+
+        if seat_bound and device_ready:
+            return
+
+    if not seat_bound:
+        logger.warning("EIS seat wait timed out (no SEAT_ADDED)")
+    elif not device_ready:
+        logger.warning("EIS seat bound but no DEVICE_RESUMED (continuing)")
+
+
+_ALL_EDGES = ["bottom", "left", "right", "top"]
+_NO_SESSION = object()  # sentinel: no session yet (distinct from None = quit)
+
+
+class MouseListener:
+    """InputCapture portal listener (daemon thread).
+
+    Events are delivered via callbacks (on_move, on_click, on_scroll,
+    on_barrier) called from the daemon thread.
+
+    The session is created once with barriers on all four edges.
+    Active edges are tracked separately so the session never needs
+    to be torn down and recreated (avoids GNOME portal hang).
+    """
+
+    def __init__(
+        self, on_move=None, on_click=None, on_scroll=None, on_barrier=None, **kwargs
+    ):
+        self._on_move = on_move
+        self._on_click = on_click
+        self._on_scroll = on_scroll
+        self._on_barrier = on_barrier
+        self._thread: threading.Thread | None = None
+        self._is_running = False
+        self._clients_active = False
+        self._active_edges: set[str] = set()
+        self._ready_event = threading.Event()
+        self._cmd_queue: queue.Queue = queue.Queue()
+        self._logger = get_logger(self.__class__.__name__)
+
+    def start(self):
+        """Start the daemon thread."""
+        if self._is_running:
+            return
+        self._is_running = True
+        self._ready_event.clear()
+        self._thread = threading.Thread(target=self._thread_main, daemon=True)
+        self._thread.start()
+        self._logger.debug("InputCapture listener started")
+
+    def stop(self):
+        """Stop the daemon thread."""
+        if not self._is_running:
+            return
+        self._is_running = False
+        try:
+            self._cmd_queue.put({"type": "quit"})
+        except Exception:
+            pass
+        if self._thread and self._thread.is_alive():
+            self._thread.join(timeout=3)
+        self._logger.debug("InputCapture listener stopped")
+
+    def is_alive(self):
+        return self._is_running and self._thread is not None and self._thread.is_alive()
+
+    def update_clients(self, clients):
+        """Update which edges have active clients."""
+        self._cmd_queue.put({"type": "update_clients", "clients": clients})
+
+    def disable_capture(self, x=-1, y=-1):
+        """Release capture (cursor returns to server)."""
+        self._cmd_queue.put({"type": "disable_capture", "x": x, "y": y})
+
+    def _thread_main(self):
+        """Session lifecycle loop: idle (no session) or active (poll EIS)."""
+        logger = self._logger
+        session: _CaptureSession | None = None
+        first_session = True
+        saved_stderr = _suppress_libei_stderr()
+
+        try:
+            while self._is_running:
+                if session is None:
+                    result = self._idle_wait(logger)
+                    if result is None:
+                        break  # quit
+                    if result is _NO_SESSION:
+                        continue
+                    session = result
+                    if first_session:
+                        self._ready_event.set()
+                        first_session = False
+                    continue
+
+                action = self._active_tick(session, logger)
+                if action == "quit":
+                    session.teardown()
+                    break
+                elif action == "disconnected":
+                    session = None
+                    self._clients_active = False
+                    # Auto-reconnect if there are active edges
+                    if self._active_edges:
+                        time.sleep(1.0)
+                        session = self._create_session_with_retry(_ALL_EDGES, logger)
+                        if session is not None:
+                            self._clients_active = True
+
+        except Exception as exc:
+            logger.error(f"InputCapture thread fatal: {exc}")
+            self._ready_event.set()
+        finally:
+            if session is not None:
+                session.teardown()
+            _restore_stderr(saved_stderr)
+            logger.debug("Thread exiting")
+
+    _MAX_SESSION_RETRIES = 3
+    _SESSION_RETRY_DELAY = 1.0  # seconds
+
+    # idle phase (no session)
+    def _idle_wait(self, logger):
+        """Wait for commands while no session exists."""
+        try:
+            cmd = self._cmd_queue.get(timeout=0.1)
+        except queue.Empty:
+            return _NO_SESSION
+
+        cmd_type = cmd.get("type")
+
+        if cmd_type == "update_clients":
+            new_edges = set(k for k, v in cmd.get("clients", {}).items() if v)
+            if new_edges:
+                self._active_edges = new_edges
+                session = self._create_session_with_retry(_ALL_EDGES, logger)
+                if session is not None:
+                    self._clients_active = True
+                return session
+            return _NO_SESSION
+
+        if cmd_type == "quit":
+            return None
+
+        return _NO_SESSION
+
+    def _create_session_with_retry(self, active_edges, logger):
+        """Try to create a session, retrying a few times on failure."""
+        for attempt in range(self._MAX_SESSION_RETRIES):
+            if not self._is_running:
+                return None
+            if attempt > 0:
+                logger.debug(f"Session retry {attempt}/{self._MAX_SESSION_RETRIES}")
+                time.sleep(self._SESSION_RETRY_DELAY)
+            session = _CaptureSession.create(active_edges, logger)
+            if session is not None:
+                return session
+        logger.warning("Session creation failed after retries")
+        return None
+
+    # active phase (session exists)
+    def _active_tick(self, session, logger):
+        """Single iteration of the active session loop."""
+        self._dispatch_pending_activation(session)
+
+        # Drain commands
+        action = self._process_commands(session, logger)
+        if action != "continue":
+            return action
+
+        # Poll EIS events (10ms timeout)
+        events = session.poller.poll(10)
+        if not events:
+            return "continue"
+
+        try:
+            session.receiver.dispatch()
+        except Exception as exc:
+            logger.error(f"Receiver dispatch error: {exc}")
+            return "continue"
+
+        for event in session.receiver.events:
+            result = self._handle_ei_event(event, session, logger)
+            if result == "disconnected":
+                return "disconnected"
+
+        return "continue"
+
+    def _dispatch_pending_activation(self, session: _CaptureSession):
+        """Resolve a pending Activated signal from the D-Bus queue."""
+        if not session.pending_activation:
+            return
+
+        activation = session.poll_activated()
+        if activation:
+            bid, cx, cy = activation
+            session.pending_activation = False
+            edge = session.barrier_map.get(bid)
+
+            if not self._clients_active or edge not in self._active_edges:
+                try:
+                    session.release_cursor(None, None)
+                except RuntimeError:
+                    pass
+                return
+
+            if edge and self._on_barrier:
+                self._on_barrier(edge, cx, cy)
+
+    def _process_commands(self, session, logger):
+        """Drain the command queue (non-blocking)."""
+        while True:
+            try:
+                cmd = self._cmd_queue.get_nowait()
+            except queue.Empty:
+                return "continue"
+
+            cmd_type = cmd.get("type")
+
+            if cmd_type == "update_clients":
+                new_edges = set(k for k, v in cmd.get("clients", {}).items() if v)
+                self._active_edges = new_edges
+                self._clients_active = bool(new_edges)
+
+            elif cmd_type == "disable_capture":
+                if session.captured:
+                    cx, cy = _CaptureSession.compute_release_pos(
+                        cmd,
+                        session.portal,
+                    )
+                    try:
+                        session.release_cursor(cx, cy)
+                    except RuntimeError as exc:
+                        logger.error(str(exc))
+
+            elif cmd_type == "quit":
+                self._is_running = False
+                return "quit"
+
+        return "continue"
+
+    def _handle_ei_event(self, event, session: _CaptureSession, logger):
+        """Process a single EIS event."""
+        try:
+            etype = event.event_type
+        except Exception:
+            return None
+
+        try:
+            if etype == EventType.POINTER_MOTION:
+                if session.captured:
+                    pe = event.pointer_event
+                    raw_dx, raw_dy = pe.dx, pe.dy
+                    if raw_dx != raw_dx or raw_dy != raw_dy:  # NaN check
+                        return None
+                    dx = int(round(raw_dx))
+                    dy = int(round(raw_dy))
+                    if (dx or dy) and self._on_move:
+                        self._on_move(dx, dy)
+
+            elif etype == EventType.DEVICE_START_EMULATING:
+                self._handle_start_emulating(session, logger)
+
+            elif etype == EventType.DEVICE_STOP_EMULATING:
+                session.captured = False
+                session.pending_activation = False
+
+            elif etype == EventType.BUTTON_BUTTON:
+                if session.captured:
+                    be = event.button_event
+                    btn = _LINUX_BTN_TO_MAPPING.get(be.button)
+                    if btn is not None and self._on_click:
+                        self._on_click(btn, be.is_press)
+
+            elif etype == EventType.SCROLL_DISCRETE:
+                if session.captured:
+                    # snegg's scroll_event accessor calls ei_event_scroll_get_dx()
+                    # which is invalid for SCROLL_DISCRETE (type 603).
+                    # Go through the C bindings directly.
+                    raw = event._cobject
+                    raw_dx = libei.event_scroll_get_discrete_dx(raw)
+                    raw_dy = libei.event_scroll_get_discrete_dy(raw)
+                    # 120 hi-res units = 1 wheel notch
+                    dx = int(raw_dx) // 120
+                    dy = int(raw_dy) // 120
+                    if (dx or dy) and self._on_scroll:
+                        self._on_scroll(dx, dy)
+
+            elif etype == EventType.SCROLL_DELTA:
+                if session.captured:
+                    se = event.scroll_event
+                    self._accumulate_scroll(session, se.dx, se.dy)
+            elif etype == EventType.SEAT_ADDED:
+                event.seat.bind(_LISTENER_CAPABILITIES)
+                session.receiver.dispatch()
+
+            elif etype == EventType.DEVICE_PAUSED:
+                session.captured = False
+                session.pending_activation = False
+
+            elif etype == EventType.DISCONNECT:
+                logger.warning("EIS disconnected")
+                try:
+                    session.portal.close()
+                except Exception:
+                    pass
+                return "disconnected"
+
+        except Exception as exc:
+            logger.error(f"EI event error: {exc}")
+
+        return None
+
+    # Pixels-per-click threshold for SCROLL_DELTA (touchpad / smooth scroll).
+    _SCROLL_PX_PER_CLICK = 15.0
+
+    def _accumulate_scroll(self, session: _CaptureSession, dx: float, dy: float):
+        """Convert pixel-based SCROLL_DELTA into discrete click counts."""
+        session.scroll_accum_x += dx
+        session.scroll_accum_y += dy
+
+        threshold = self._SCROLL_PX_PER_CLICK
+        clicks_x = int(session.scroll_accum_x / threshold)
+        clicks_y = int(session.scroll_accum_y / threshold)
+
+        if clicks_x:
+            session.scroll_accum_x -= clicks_x * threshold
+        if clicks_y:
+            session.scroll_accum_y -= clicks_y * threshold
+        if (clicks_x or clicks_y) and self._on_scroll:
+            self._on_scroll(clicks_x, clicks_y)
+
+    def _handle_start_emulating(self, session: _CaptureSession, logger):
+        """Resolve barrier activation on DEVICE_START_EMULATING."""
+        session.captured = True
+
+        activation = session.poll_activated()
+        if activation:
+            bid, cx, cy = activation
+            edge = session.barrier_map.get(bid)
+            if not self._clients_active or edge not in self._active_edges:
+                try:
+                    session.release_cursor(None, None)
+                except RuntimeError as exc:
+                    logger.error(str(exc))
+                return
+
+            if edge and self._on_barrier:
+                self._on_barrier(edge, cx, cy)
+        else:
+            session.pending_activation = True
+
+
+__all__ = ["MouseListener", "MouseController", "Button"]
