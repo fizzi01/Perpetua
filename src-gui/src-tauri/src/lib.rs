@@ -22,6 +22,9 @@ use tauri::{PhysicalPosition, Position, TitleBarStyle};
 #[cfg(target_os = "windows")]
 use tauri::tray::{MouseButton, TrayIconEvent};
 
+#[cfg(target_os = "linux")]
+use tauri::Listener;
+
 use tauri::{
     menu::{MenuBuilder, MenuItem},
     tray::TrayIconBuilder,
@@ -194,7 +197,24 @@ where
         win_builder = win_builder.decorations(true).transparent(true);
     }
 
-    win_builder.build().unwrap();
+    let _win = win_builder.build().unwrap();
+    #[cfg(target_os = "linux")]
+    {
+        // credits @stenya
+        // https://github.com/safing/portmaster/commit/95838b510c75fa9dde6e99a4492e1c7e34f7cf18
+
+        // Workaround for KDE/Wayland environments on Linux:
+        // On KDE with Wayland, after hiding and showing the window,
+        // the title-bar buttons (close, minimize, maximize) may stop working.
+        // Toggling the resizable property appears to resolve this issue.
+        // Issue: https://github.com/safing/portmaster/issues/1909
+        // Additional info: https://github.com/tauri-apps/tauri/issues/6162#issuecomment-1423304398
+        let win_clone = _win.clone();
+        _win.listen("tauri://focus", move |_| {
+            let _ = win_clone.set_resizable(true);
+            let _ = win_clone.set_resizable(false);
+        });
+    }
 
     let show = MenuItem::with_id(app, "show_window", "Show", true, None::<&str>)?;
     let quit_i = MenuItem::with_id(app, "quit", "Quit", true, None::<&str>)?;
