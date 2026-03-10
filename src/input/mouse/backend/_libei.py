@@ -699,7 +699,9 @@ class MouseListener:
             # Spurious recapture guard
             if session.ignore_next_activation:
                 session.ignore_next_activation = False
-                self._logger.debug("[PENDING_ACTIVATION] IGNORED (spurious recapture after release)")
+                self._logger.debug(
+                    "[PENDING_ACTIVATION] IGNORED (spurious recapture after release)"
+                )
                 try:
                     session.release_cursor(None, None)
                 except RuntimeError:
@@ -724,7 +726,9 @@ class MouseListener:
                 return
 
             if edge and self._on_barrier:
-                self._logger.debug(f"[PENDING_ACTIVATION] -> on_barrier({edge}, {cx}, {cy})")
+                self._logger.debug(
+                    f"[PENDING_ACTIVATION] -> on_barrier({edge}, {cx}, {cy})"
+                )
                 self._on_barrier(edge, cx, cy)
 
     def _process_commands(self, session, logger):

@@ -42,7 +42,7 @@ from utils.screen import Screen
 
 class ServerMouseListener(_base.ServerMouseListener):
     """Linux mouse listener (Wayland barrier mode or X11 pynput)."""
-    
+
     # Offset from screen edge (normalized)
     _EDGE_OFFSET = 0.02
     MOVEMENT_HISTORY_N_THRESHOLD = 4

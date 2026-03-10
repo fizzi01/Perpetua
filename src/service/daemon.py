@@ -333,7 +333,8 @@ class Daemon:
 
         if self._shutdown_calls >= 3:
             self._logger.warning(
-                "Shutdown signal received multiple times, forcing exit", count=self._shutdown_calls
+                "Shutdown signal received multiple times, forcing exit",
+                count=self._shutdown_calls,
             )
             os._exit(0)
 
