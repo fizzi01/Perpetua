@@ -13,6 +13,7 @@ dependencies = [
     "pyobjc (>=10.2,<13.0) ; sys_platform == 'darwin'",
     "pywin32 (>=308,<400.0.0) ; sys_platform == 'win32'",
     "comtypes (>=1.4.8,<2.0.0) ; sys_platform == 'win32'",
+    "colorama (<=0.5.0) ; sys_platform == 'win32'",
     "zeroconf (>=0.136.2,<1.0.0)",
     "wxpython (>=4.2.2,<5.0.0) ; sys_platform == 'darwin' or sys_platform == 'win32'",
     "attrs (>=25.4.0,<26.0.0)",
