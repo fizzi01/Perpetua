@@ -313,6 +313,7 @@ class Daemon:
 
         # Setup signal handlers for graceful shutdown
         self._setup_signal_handlers()
+        self._shutdown_calls = 0
 
     def _setup_signal_handlers(self):
         """Setup signal handlers for graceful shutdown"""
@@ -328,6 +329,14 @@ class Daemon:
         """Handle shutdown signals"""
         self._logger.info("Received shutdown signal")
         await self.stop()
+        self._shutdown_calls += 1
+
+        if self._shutdown_calls >= 3:
+            self._logger.warning(
+                "Shutdown signal received multiple times, forcing exit",
+                count=self._shutdown_calls,
+            )
+            os._exit(0)
 
     # ==================== Lifecycle Methods ====================
 

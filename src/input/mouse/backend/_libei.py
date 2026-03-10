@@ -356,6 +356,8 @@ _LISTENER_CAPABILITIES = (
 class _CaptureSession:
     """State of an active InputCapture portal session."""
 
+    _RELEASE_EDGE_MARGIN = 5.0
+
     __slots__ = (
         "portal",
         "receiver",
@@ -365,6 +367,8 @@ class _CaptureSession:
         "pending_activation",
         "scroll_accum_x",
         "scroll_accum_y",
+        "last_activation_id",
+        "ignore_next_activation",
     )
 
     def __init__(self, portal, receiver, barrier_map, poller):
@@ -376,6 +380,8 @@ class _CaptureSession:
         self.pending_activation: bool = False
         self.scroll_accum_x: float = 0.0
         self.scroll_accum_y: float = 0.0
+        self.last_activation_id: int = 0
+        self.ignore_next_activation: bool = False
 
     @classmethod
     def create(cls, active_edges, logger) -> "_CaptureSession | None":
@@ -431,17 +437,37 @@ class _CaptureSession:
         self.captured = False
 
     def poll_activated(self):
-        """Pop next Activated event from the queue."""
-        return self.portal.poll_activated()
+        """Check for a new activation via atomics (no queue).
+
+        Returns (barrier_id, cx, cy) if a new activation arrived,
+        otherwise None.
+        """
+        aid = self.portal.activation_id
+        if aid == self.last_activation_id:
+            return None
+        self.last_activation_id = aid
+        bid = self.portal.barrier_id
+        cx, cy = self.portal.cursor_position
+        return (bid, cx, cy)
 
     @staticmethod
     def compute_release_pos(cmd, portal):
-        """Compute absolute cursor position for release."""
+        """Compute absolute cursor position for release.
+
+        Clamps the result at least _RELEASE_EDGE_MARGIN pixels away from
+        screen edges to prevent the cursor from landing on a barrier line
+        and triggering an immediate recapture.
+        """
         x = cmd.get("x", -1)
         y = cmd.get("y", -1)
         if x != -1 and y != -1 and portal.zones:
             w, h, x_off, y_off = portal.zones[0]
-            return float(x_off + x * w), float(y_off + y * h)
+            margin = _CaptureSession._RELEASE_EDGE_MARGIN
+            abs_x = float(x_off + x * w)
+            abs_y = float(y_off + y * h)
+            abs_x = max(x_off + margin, min(x_off + w - margin, abs_x))
+            abs_y = max(y_off + margin, min(y_off + h - margin, abs_y))
+            return abs_x, abs_y
         return None, None
 
 
@@ -669,9 +695,30 @@ class MouseListener:
         if activation:
             bid, cx, cy = activation
             session.pending_activation = False
+
+            # Spurious recapture guard
+            if session.ignore_next_activation:
+                session.ignore_next_activation = False
+                self._logger.debug(
+                    "[PENDING_ACTIVATION] IGNORED (spurious recapture after release)"
+                )
+                try:
+                    session.release_cursor(None, None)
+                except RuntimeError:
+                    pass
+                return
+
             edge = session.barrier_map.get(bid)
+            self._logger.debug(
+                f"[PENDING_ACTIVATION] bid={bid} edge={edge} cx={cx} cy={cy} "
+                f"last_aid={session.last_activation_id}"
+            )
 
             if not self._clients_active or edge not in self._active_edges:
+                self._logger.debug(
+                    f"[PENDING_ACTIVATION] REJECTED clients_active={self._clients_active} "
+                    f"edge={edge} active_edges={self._active_edges}"
+                )
                 try:
                     session.release_cursor(None, None)
                 except RuntimeError:
@@ -679,6 +726,9 @@ class MouseListener:
                 return
 
             if edge and self._on_barrier:
+                self._logger.debug(
+                    f"[PENDING_ACTIVATION] -> on_barrier({edge}, {cx}, {cy})"
+                )
                 self._on_barrier(edge, cx, cy)
 
     def _process_commands(self, session, logger):
@@ -702,6 +752,8 @@ class MouseListener:
                         cmd,
                         session.portal,
                     )
+                    logger.debug(f"[CMD] release_cursor abs=({cx}, {cy})")
+                    session.ignore_next_activation = True
                     try:
                         session.release_cursor(cx, cy)
                     except RuntimeError as exc:
@@ -807,6 +859,16 @@ class MouseListener:
     def _handle_start_emulating(self, session: _CaptureSession, logger):
         """Resolve barrier activation on DEVICE_START_EMULATING."""
         session.captured = True
+        logger.debug(f"[EIS] START_EMULATING last_aid={session.last_activation_id}")
+
+        if session.ignore_next_activation:
+            session.ignore_next_activation = False
+            logger.debug("[START_EMUL] IGNORED (spurious recapture after release)")
+            try:
+                session.release_cursor(None, None)
+            except RuntimeError as exc:
+                logger.error(str(exc))
+            return
 
         activation = session.poll_activated()
         if activation:

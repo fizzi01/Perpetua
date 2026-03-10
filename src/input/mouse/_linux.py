@@ -23,7 +23,6 @@ portal backend; on X11 the base implementation is used.
 #
 
 import asyncio
-from collections import deque
 
 from typing import Optional
 
@@ -44,6 +43,8 @@ from utils.screen import Screen
 class ServerMouseListener(_base.ServerMouseListener):
     """Linux mouse listener (Wayland barrier mode or X11 pynput)."""
 
+    # Offset from screen edge (normalized)
+    _EDGE_OFFSET = 0.02
     MOVEMENT_HISTORY_N_THRESHOLD = 4
     MOVEMENT_HISTORY_LEN = 5
 
@@ -54,8 +55,6 @@ class ServerMouseListener(_base.ServerMouseListener):
         if self._barrier_mode:
             self._active_client_barrier: Optional[str] = None
             self._barrier_screen_size: tuple[int, int] = Screen.get_size()
-            self._pending_events: deque = deque(maxlen=10000)
-            self._drain_task: Optional[asyncio.Task] = None
 
             self.event_bus.subscribe(
                 event_type=BusEventType.SCREEN_CHANGE_GUARD,
@@ -96,8 +95,6 @@ class ServerMouseListener(_base.ServerMouseListener):
         self._listener.start()
         self._listener.update_clients(dict(self._active_screens))
 
-        self._drain_task = self._loop.create_task(self._event_drain())
-
         self._logger.debug("Wayland barrier mode started")
         return True
 
@@ -107,8 +104,6 @@ class ServerMouseListener(_base.ServerMouseListener):
         return super().stop()
 
     def _stop_barrier(self) -> bool:
-        if self._drain_task and not self._drain_task.done():
-            self._drain_task.cancel()
         if self._listener:
             self._listener.stop()
         self._logger.debug("Wayland barrier mode stopped")
@@ -123,10 +118,6 @@ class ServerMouseListener(_base.ServerMouseListener):
         await super()._on_client_connected(data)
         if self._barrier_mode and data is not None and self._listener:
             self._listener.update_clients(dict(self._active_screens))
-
-            if self._drain_task is None or self._drain_task.done():
-                if self._loop:
-                    self._drain_task = self._loop.create_task(self._event_drain())
 
     async def _on_client_disconnected(self, data: Optional[ClientDisconnectedEvent]):
         if self._barrier_mode and data is not None:
@@ -146,88 +137,81 @@ class ServerMouseListener(_base.ServerMouseListener):
             self._listener.update_clients(dict(self._active_screens))
 
     async def _on_screen_change_guard_wayland(self, data):
-        """Handle SCREEN_CHANGE_GUARD on Wayland."""
+        """Handle SCREEN_CHANGE_GUARD on Wayland.
+
+        Barrier activations bypass this handler entirely (they dispatch
+        ACTIVE_SCREEN_CHANGED directly).  This only handles:
+        - Keyboard hotkey screen switches (active_screen set)
+        - Client returning cursor to server (active_screen=None)
+        """
         if data is None:
             return
 
         active_screen = data.active_screen
 
         if active_screen:
+            # Keyboard hotkey activation
+            self._logger.debug(f"[GUARD] hotkey activation screen={active_screen}")
+            self._active_client_barrier = active_screen
             await self.event_bus.dispatch(
                 event_type=BusEventType.ACTIVE_SCREEN_CHANGED,
                 data=data,
             )
-            self._active_client_barrier = active_screen
         else:
+            # Client returning cursor to server
+            if self._active_client_barrier is None:
+                self._logger.debug("[GUARD] REJECTED release: no active client")
+                return
+
             x = getattr(data, "x", -1)
             y = getattr(data, "y", -1)
             if x is None:
                 x = -1
             if y is None:
                 y = -1
+            self._logger.debug(
+                f"[GUARD] RELEASE client={self._active_client_barrier} x={x} y={y}"
+            )
             if self._listener:
                 self._listener.disable_capture(x, y)
+            self._active_client_barrier = None
             await self.event_bus.dispatch(
                 event_type=BusEventType.ACTIVE_SCREEN_CHANGED,
                 data=data,
             )
-            self._active_client_barrier = None
 
         await asyncio.sleep(0)
 
     def _on_barrier_move(self, dx, dy):
-        self._pending_events.append(("move", dx, dy))
+        asyncio.run_coroutine_threadsafe(
+            self.stream.send(MouseEvent(dx=dx, dy=dy, action=MouseEvent.MOVE_ACTION)),
+            self._loop,
+        )
 
     def _on_barrier_click(self, button, pressed):
-        self._pending_events.append(("click", button, pressed))
+        asyncio.run_coroutine_threadsafe(
+            self.stream.send(
+                MouseEvent(
+                    button=button,
+                    action=MouseEvent.CLICK_ACTION,
+                    is_presed=pressed,
+                )
+            ),
+            self._loop,
+        )
 
     def _on_barrier_scroll(self, dx, dy):
-        self._pending_events.append(("scroll", dx, dy))
+        asyncio.run_coroutine_threadsafe(
+            self.stream.send(MouseEvent(dx=dx, dy=dy, action=MouseEvent.SCROLL_ACTION)),
+            self._loop,
+        )
 
     def _on_barrier_hit(self, edge, cx, cy):
-        self._pending_events.append(("barrier", edge, cx, cy))
-
-    async def _event_drain(self):
-        """Read pending events from the deque and forward to streams."""
-        move_event = MouseEvent(action=MouseEvent.MOVE_ACTION)
-
-        while self._listener and self._listener.is_alive():
-            if not self._pending_events:
-                await asyncio.sleep(0.001)
-                continue
-
-            try:
-                kind, *args = self._pending_events.popleft()
-
-                if kind == "move":
-                    move_event.dx = args[0]
-                    move_event.dy = args[1]
-                    await self.stream.send(move_event)
-
-                elif kind == "click":
-                    btn_event = MouseEvent(
-                        button=args[0],
-                        action=MouseEvent.CLICK_ACTION,
-                        is_presed=args[1],
-                    )
-                    await self.stream.send(btn_event)
-
-                elif kind == "scroll":
-                    scroll_event = MouseEvent(
-                        dx=args[0],
-                        dy=args[1],
-                        action=MouseEvent.SCROLL_ACTION,
-                    )
-                    await self.stream.send(scroll_event)
-
-                elif kind == "barrier":
-                    await self._on_barrier_activated(args[0], args[1], args[2])
-
-            except asyncio.CancelledError:
-                break
-            except Exception as e:
-                self._logger.exception(f"Event drain error: {e}")
-                await asyncio.sleep(0.01)
+        self._logger.debug(f"[BARRIER_HIT] edge={edge} cx={cx} cy={cy}")
+        asyncio.run_coroutine_threadsafe(
+            self._on_barrier_activated(edge, cx, cy),
+            self._loop,
+        )
 
     async def _on_barrier_activated(self, edge: str, cursor_x: float, cursor_y: float):
         """Dispatch cross-screen events when a barrier is hit."""
@@ -236,39 +220,60 @@ class ServerMouseListener(_base.ServerMouseListener):
         if not screen or not self._active_screens.get(screen, False):
             return
 
-        self._logger.debug(f"Barrier activated: edge={edge} -> screen={screen}")
+        if self._active_client_barrier is not None:
+            return
 
+        self._active_client_barrier = screen
+
+        off = self._EDGE_OFFSET
         sw, sh = self._barrier_screen_size
         mouse_event = MouseEvent(x=0, y=0, action=MouseEvent.POSITION_ACTION)
 
         if edge == "left":
-            mouse_event.x = 1.0
+            mouse_event.x = 1.0 - off
             mouse_event.y = cursor_y / sh if sh else 0.5
         elif edge == "right":
-            mouse_event.x = 0.0
+            mouse_event.x = off
             mouse_event.y = cursor_y / sh if sh else 0.5
         elif edge == "top":
             mouse_event.x = cursor_x / sw if sw else 0.5
-            mouse_event.y = 1.0
+            mouse_event.y = 1.0 - off
         elif edge == "bottom":
             mouse_event.x = cursor_x / sw if sw else 0.5
-            mouse_event.y = 0.0
+            mouse_event.y = off
+
+        self._logger.debug(
+            f"[BARRIER_ACT] SENDING position x={mouse_event.x:.4f} y={mouse_event.y:.4f} "
+            f"to client={screen}"
+        )
 
         try:
             await self.event_bus.dispatch(
-                event_type=BusEventType.SCREEN_CHANGE_GUARD,
+                event_type=BusEventType.ACTIVE_SCREEN_CHANGED,
                 data=ActiveScreenChangedEvent(active_screen=screen),
             )
             await self.command_stream.send(CrossScreenCommandEvent(target=screen))
             await self.stream.send(mouse_event)
         except Exception as e:
             self._logger.error(f"Error dispatching cross-screen event: {e}")
+            self._active_client_barrier = None
 
 
 class ServerMouseController(_base.ServerMouseController):
     """Linux server-side mouse controller."""
 
-    pass
+    async def _on_active_screen_changed(self, data: Optional[ActiveScreenChangedEvent]):
+        """
+        Activate only when the active screen becomes None.
+        """
+        if data is not None:
+            active_screen = data.active_screen
+            if active_screen is None:
+                # Get the cursor position from data if available
+                x = data.x
+                y = data.y
+                if x > -1 and y > -1:
+                    self.position_cursor(x, y)
 
 
 class ClientMouseController(_base.ClientMouseController):

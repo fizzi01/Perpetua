@@ -24,7 +24,7 @@ dependencies = [
     "python-xlib @ git+https://github.com/fizzi01/python-xlib.git ; sys_platform == 'linux'",
     "python-wayland (== 1.0.0) ; sys_platform == 'linux'",
     "snegg @ git+http://gitlab.freedesktop.org/whot/snegg ; sys_platform == 'linux'",
-    "pyinputcapture ; sys_platform == 'linux'",
+    "pyinputcapture (==0.2.0) ; sys_platform == 'linux'",
     "winloop (==0.5.0) ; sys_platform == 'win32'",
     "structlog (>=25.5.0,<26.0.0)",
     "psutil (>=7.2.1,<8.0.0)",
@@ -56,6 +56,7 @@ pytest = "<10.0.0"
 pytest-timeout = "^2.4.0"
 structlog = ">=25.5.0,<26.0.0"
 aiofiles = ">=25.1.0,<26.0.0"
+ruff = "<1.0.0"
 
 [build-system]
 requires = ["poetry-core>=2.0.0,<3.0.0"]
