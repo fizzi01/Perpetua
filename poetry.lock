@@ -590,21 +590,20 @@ windows-terminal = ["colorama (>=0.4.6)"]
 
 [[package]]
 name = "pyinputcapture"
-version = "0.1.1"
+version = "0.2.0"
 description = "Python bindings for the XDG InputCapture portal (Wayland cursor capture via ashpd)"
 optional = false
 python-versions = ">=3.11"
 groups = ["main"]
 markers = "sys_platform == \"linux\""
 files = [
-    {file = "pyinputcapture-0.1.1-cp311-cp311-manylinux_2_17_aarch64.manylinux2014_aarch64.whl", hash = "sha256:053d8e43d48dc57693681f6abf10781f3dcdf32fab760b3d512b4ebe0e2a52a5"},
-    {file = "pyinputcapture-0.1.1-cp311-cp311-manylinux_2_17_x86_64.manylinux2014_x86_64.whl", hash = "sha256:d1f67732a9829decafb2b61614186786e9a9d647e25acdd9751482b9c75d4dd3"},
-    {file = "pyinputcapture-0.1.1-cp312-cp312-manylinux_2_17_aarch64.manylinux2014_aarch64.whl", hash = "sha256:b5d30dd053c207db496c0450a12a79f827bdcd244efa17db55db535f2bb1e100"},
-    {file = "pyinputcapture-0.1.1-cp312-cp312-manylinux_2_17_x86_64.manylinux2014_x86_64.whl", hash = "sha256:d95f1822b51841d0bbc455fa3b1c1d832c5a352db1cd5c2ecb3f45ac4086f7e5"},
-    {file = "pyinputcapture-0.1.1-cp313-cp313-macosx_11_0_arm64.whl", hash = "sha256:b6a7c65dfacc3e5c12a1ffbb588e3afe55c1baa5cf1e7c3a61054f0ab2a5fccd"},
-    {file = "pyinputcapture-0.1.1-cp313-cp313-manylinux_2_17_aarch64.manylinux2014_aarch64.whl", hash = "sha256:48fd3caf00b55c2d458da915a003bb4e58b0e8610af09aedba61142d5b56d77d"},
-    {file = "pyinputcapture-0.1.1-cp313-cp313-manylinux_2_17_x86_64.manylinux2014_x86_64.whl", hash = "sha256:fd6d5a21586dc09650d61a85bf2b7e10a3c1389601b49bd0a2bace8f694b7a93"},
-    {file = "pyinputcapture-0.1.1.tar.gz", hash = "sha256:8f0eeb21511f6999ed3bd40483a0fd429bf62ffdc3816a28ef3170abbc33a8cb"},
+    {file = "pyinputcapture-0.2.0-cp311-cp311-manylinux_2_17_aarch64.manylinux2014_aarch64.whl", hash = "sha256:689faf3aca355f7805afc1755bb7bbfacfc6a64ce1e91896b2bdcf38b2f30692"},
+    {file = "pyinputcapture-0.2.0-cp311-cp311-manylinux_2_17_x86_64.manylinux2014_x86_64.whl", hash = "sha256:39ad5df615966991f982dac1bd8b2fcdfde8535fb5c22b6b44dfdbccebaf5f23"},
+    {file = "pyinputcapture-0.2.0-cp312-cp312-manylinux_2_17_aarch64.manylinux2014_aarch64.whl", hash = "sha256:22ee21a6f5ec7c0058e061a26b6e95e2d3e7c7ab5ac4b48f4282d079ca3ab498"},
+    {file = "pyinputcapture-0.2.0-cp312-cp312-manylinux_2_17_x86_64.manylinux2014_x86_64.whl", hash = "sha256:1d53f3fb5a687d845c092c41cba9d2d8f57d395236ec02b5133b93cec0fa02f7"},
+    {file = "pyinputcapture-0.2.0-cp313-cp313-manylinux_2_17_aarch64.manylinux2014_aarch64.whl", hash = "sha256:ae8a086236d5a7b6e74d4d4c1b00f0d2fa245a66cc66fb495eef28886c685385"},
+    {file = "pyinputcapture-0.2.0-cp313-cp313-manylinux_2_17_x86_64.manylinux2014_x86_64.whl", hash = "sha256:7c535c9197ad142eaac554f864ed5e8a6de913a80901edc39f23ea2d20071ef2"},
+    {file = "pyinputcapture-0.2.0.tar.gz", hash = "sha256:1314a519b0556e643076b3e772c0d9d306189d5ee4485d4b7374a576469a9c90"},
 ]
 
 [[package]]
@@ -4706,4 +4705,4 @@ cffi = ["cffi (>=1.17,<2.0) ; platform_python_implementation != \"PyPy\" and pyt
 [metadata]
 lock-version = "2.1"
 python-versions = ">=3.11,<3.13"
-content-hash = "82fa2c12bbb3893ecde3df540599ac5a929c2c9171206aef22fcf3b52727c302"
+content-hash = "6f1ddf48c52c38080558187e4e2384e982eafe9249581cd9551af7e59aa864c2"
