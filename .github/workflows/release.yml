@@ -40,12 +40,42 @@ jobs:
           jq --arg v "$VERSION" '.version = $v' "$TAURI_CONF" > tmp.json && mv tmp.json "$TAURI_CONF"
 
           # Amend the existing commit and force push
+          git config user.name "github-actions[bot]"
+          git config user.email "github-actions[bot]@users.noreply.github.com"
+
           if git diff --quiet "$TAURI_CONF"; then
             echo "tauri.conf.json already up to date"
           else
-            git config user.name "github-actions[bot]"
-            git config user.email "github-actions[bot]@users.noreply.github.com"
             git add "$TAURI_CONF"
             git commit --amend --no-edit
             git push --force origin "$PR_BRANCH"
           fi
+
+          # --- Create pre-release with alpha version ---
+          ALPHA_VERSION="${VERSION}-alpha"
+          ALPHA_TAG="v${ALPHA_VERSION}"
+          ALPHA_BRANCH="pre-release/v${ALPHA_VERSION}"
+
+          # Clean up previous alpha release/branch if they exist (PR was updated)
+          gh release delete "$ALPHA_TAG" --yes --cleanup-tag 2>/dev/null || true
+          git push origin --delete "$ALPHA_BRANCH" 2>/dev/null || true
+
+          # Create alpha branch from the PR branch
+          git checkout -b "$ALPHA_BRANCH"
+
+          # Update pyproject.toml version to alpha
+          sed -i "s/^version = \"${VERSION}\"/version = \"${ALPHA_VERSION}\"/" pyproject.toml
+
+          # Update tauri.conf.json version to alpha
+          jq --arg v "$ALPHA_VERSION" '.version = $v' "$TAURI_CONF" > tmp.json && mv tmp.json "$TAURI_CONF"
+
+          git add pyproject.toml "$TAURI_CONF"
+          git commit -m "chore: set version to ${ALPHA_VERSION}"
+          git push origin "$ALPHA_BRANCH"
+
+          # Create pre-release (triggers build.yml via 'release: published')
+          gh release create "$ALPHA_TAG" \
+            --target "$ALPHA_BRANCH" \
+            --title "v${ALPHA_VERSION}" \
+            --prerelease \
+            --generate-notes
