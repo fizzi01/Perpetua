@@ -51,14 +51,22 @@ jobs:
             git push --force origin "$PR_BRANCH"
           fi
 
-          # --- Create pre-release with alpha version ---
+          # ----
+          # Create pre-release with alpha version
+          
           ALPHA_VERSION="${VERSION}-alpha"
           ALPHA_TAG="v${ALPHA_VERSION}"
           ALPHA_BRANCH="pre-release/v${ALPHA_VERSION}"
 
-          # Clean up previous alpha release/branch if they exist (PR was updated)
-          gh release delete "$ALPHA_TAG" --yes --cleanup-tag 2>/dev/null || true
-          git push origin --delete "$ALPHA_BRANCH" 2>/dev/null || true
+          # Clean up ALL previous alpha releases and branches
+          gh release list --json tagName -q '.[].tagName' | grep '\-alpha$' | while read -r tag; do
+            echo "Deleting alpha release: $tag"
+            gh release delete "$tag" --yes --cleanup-tag 2>/dev/null || true
+          done
+          git ls-remote --heads origin 'refs/heads/pre-release/v*-alpha' | awk '{print $2}' | sed 's|refs/heads/||' | while read -r branch; do
+            echo "Deleting alpha branch: $branch"
+            git push origin --delete "$branch" 2>/dev/null || true
+          done
 
           # Create alpha branch from the PR branch
           git checkout -b "$ALPHA_BRANCH"
