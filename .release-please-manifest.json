@@ -1,4 +1,4 @@
 {
     "$schema": "https://raw.githubusercontent.com/googleapis/release-please/refs/heads/main/schemas/config.json",
-    ".": "1.4.0"
+    ".": "1.5.0"
 }
