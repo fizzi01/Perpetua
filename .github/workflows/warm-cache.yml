@@ -45,7 +45,7 @@ jobs:
         run: poetry install --only main,build --no-interaction -v
 
       - name: Setup Node.js
-        uses: actions/setup-node@v4
+        uses: actions/setup-node@v6
         with:
           node-version: ${{ env.NODE_VERSION }}
 
@@ -88,7 +88,7 @@ jobs:
 
       - name: Cache Tauri CLI
         id: cache-tauri-cli
-        uses: actions/cache@v4
+        uses: actions/cache@v5
         with:
           path: |
             ~/.cargo/bin/cargo-tauri
