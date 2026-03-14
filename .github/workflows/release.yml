@@ -71,12 +71,11 @@ jobs:
 
           # Create alpha branch with updated version files
           git checkout -b "$ALPHA_BRANCH"
-          sed -i "s/^version = \"${VERSION}\"/version = \"${ALPHA_VERSION}\"/" pyproject.toml
           jq --arg v "$ALPHA_VERSION" '.version = $v' "$TAURI_CONF" > tmp.json && mv tmp.json "$TAURI_CONF"
 
           git config user.name "github-actions[bot]"
           git config user.email "github-actions[bot]@users.noreply.github.com"
-          git add pyproject.toml "$TAURI_CONF"
+          git add "$TAURI_CONF"
           git commit -m "chore: set version to ${ALPHA_VERSION}"
           git push origin "$ALPHA_BRANCH"
 
