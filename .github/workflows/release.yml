@@ -4,6 +4,7 @@ on:
   push:
     branches:
       - master
+  workflow_dispatch:
 
 permissions:
   contents: write
@@ -48,7 +49,7 @@ jobs:
           fi
 
       - name: Create alpha pre-release
-        if: ${{ steps.release.outputs.pr != '' }}
+        if: ${{ steps.release.outputs.pr != '' || github.event_name == 'workflow_dispatch' }}
         env:
           GH_TOKEN: ${{ secrets.PERPETUA_TOKEN }}
         run: |
