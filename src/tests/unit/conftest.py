@@ -72,6 +72,24 @@ def disable_uinput():
         yield
 
 
+@pytest.fixture(autouse=True)
+def disable_delayed_exit():
+    """Disable Daemon.delayed_exit to prevent test process from exiting."""
+    with patch("service.daemon.Daemon.delayed_exit"):
+        yield
+
+
+@pytest.fixture(autouse=True)
+def disable_permission_watchdog():
+    """Disable permission watchdog to prevent interference during tests."""
+
+    async def _noop(self, interval=5.0):
+        pass
+
+    with patch("service.daemon.Daemon._permission_watchdog", _noop):
+        yield
+
+
 # ============================================================================
 # Directory and Config Fixtures
 # ============================================================================

@@ -703,7 +703,7 @@ class Daemon:
     def delayed_exit(self):
         time.sleep(5)
         self._logger.error("Daemon still running, forcing exit")
-        os._exit(1)
+        os._exit(0)
 
     async def wait_for_shutdown(self):
         """Wait until daemon is shutdown"""
