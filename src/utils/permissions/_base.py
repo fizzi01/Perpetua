@@ -82,21 +82,25 @@ class PermissionChecker(ABC):
     and implement the required methods.
     """
 
-    def __init__(self, logger=None):
+    def __init__(self, logger=None, log: bool = True):
         """
         Initialize the permission checker.
 
         Args:
             logger: Optional logger instance for logging permission checks
+            log: Whether to log permission checks (default: True)
         """
         self.logger = logger
+        self.to_log = log
 
     def _log(self, message: str, level: str = "info"):
         """Log a message if logger is available"""
-        if self.logger:
+        if self.logger and self.to_log:
             log_method = getattr(self.logger, level, None)
             if log_method:
                 log_method(message)
+        elif not self.to_log:
+            pass  # No logger available, skip logging
         else:
             print(f"[{level.upper()}] {message}")
 
@@ -162,6 +166,14 @@ class PermissionChecker(ABC):
             for result in results.values()
             if result.is_denied or result.status == PermissionStatus.UNKNOWN
         ]
+
+    def check_accessibility_live(self) -> PermissionResult:
+        """
+        Perform a live (non-cached) accessibility permission check.
+
+        Default implementation falls back to the standard check.
+        """
+        return self.check_permission(PermissionType.ACCESSIBILITY)
 
     @abstractmethod
     def open_settings(self, permission_type: Optional[PermissionType] = None):

@@ -49,9 +49,9 @@ class PermissionChecker(_base.PermissionChecker):
     - Input Monitoring (required on macOS 10.15+)
     """
 
-    def __init__(self, logger=None):
+    def __init__(self, *args, **kwargs):
         """Initialize the macOS permission checker"""
-        super().__init__(logger)
+        super().__init__(*args, **kwargs)
         self._iokit_bundle = None
         self._mac_version = version.parse(platform.mac_ver()[0])
 
@@ -128,6 +128,58 @@ class PermissionChecker(_base.PermissionChecker):
                 status=PermissionStatus.UNKNOWN,
                 message=f"Failed to check permission: {e}",
                 can_request=False,
+            )
+
+    def check_accessibility_live(self) -> PermissionResult:
+        """
+        Perform a live (non-cached) accessibility permission check.
+
+        AXIsProcessTrusted() caches its result for the lifetime of the
+        process. This method uses IOHIDCheckAccess(kIOHIDRequestTypePostEvent).
+
+        Returns:
+            PermissionResult for accessibility permission
+        """
+        iokit = self._load_iokit_bundle()
+        if iokit is None:
+            return PermissionResult(
+                permission_type=PermissionType.ACCESSIBILITY,
+                status=PermissionStatus.DENIED,
+                message="Failed to load IOKit bundle for live check",
+                can_request=True,
+            )
+
+        try:
+            status = iokit["IOHIDCheckAccess"](kIOHIDRequestTypePostEvent)
+            has_access = status == kIOHIDAccessTypeGranted
+
+            self._log(f"Live accessibility check (IOKit): status={status}")
+
+            if has_access:
+                return PermissionResult(
+                    permission_type=PermissionType.ACCESSIBILITY,
+                    status=PermissionStatus.GRANTED,
+                    message="Accessibility permission verified (live check)",
+                )
+
+            self._log("Live accessibility check: permission revoked", level="warning")
+            return PermissionResult(
+                permission_type=PermissionType.ACCESSIBILITY,
+                status=PermissionStatus.DENIED,
+                message="Accessibility permission revoked (live check)",
+                can_request=True,
+            )
+
+        except Exception as e:
+            self._log(
+                f"IOKit live check failed ({e})",
+                level="warning",
+            )
+            return PermissionResult(
+                permission_type=PermissionType.ACCESSIBILITY,
+                status=PermissionStatus.DENIED,
+                message=f"Live check failed: {e}",
+                can_request=True,
             )
 
     def _check_input_monitoring_permission(self) -> PermissionResult:
