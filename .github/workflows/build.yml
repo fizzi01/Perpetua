@@ -40,7 +40,7 @@ jobs:
             archive-name: Perpetua-macOS_15-Intel
             archive-ext: zip
           - os: macos-15
-            platform: macOS-arm64
+            platform: macOS_15-arm64
             rust-target: aarch64-apple-darwin
             gui-exe-name: perpetua
             build-output: .build/aarch64-apple-darwin/release
