@@ -30,6 +30,8 @@ import datetime
 import errno
 import msgspec
 import os
+import time
+import threading
 
 from os import path
 import signal
@@ -44,6 +46,7 @@ from service.server import Server
 from utils import UIDGenerator
 from utils.logging import Logger, get_logger
 from utils.cli import DaemonArguments
+from utils.permissions import PermissionChecker
 from event.notification import (
     NotificationManager,
     NotificationEvent,
@@ -303,6 +306,7 @@ class Daemon:
         self._running = False
         self._shutdown_event = asyncio.Event()
         self._socket_server: Optional[asyncio.AbstractServer] = None
+        self._permission_watchdog_task: Optional[asyncio.Task] = None
 
         # Connected client management (only one at a time)
         self._connected_client_reader: Optional[asyncio.StreamReader] = None
@@ -324,6 +328,47 @@ class Daemon:
                 )
             except NotImplementedError:
                 pass
+
+    async def _permission_watchdog(self, interval: float = 5.0):
+        """Periodically verify that required permissions are still granted.
+
+        If permissions are revoked at runtime, triggers a graceful shutdown to
+        prevent the system from becoming unresponsive (blocked input).
+
+        The check runs in a thread executor to avoid blocking the event loop.
+        """
+        checker = PermissionChecker(log=False)
+        try:
+            loop = asyncio.get_running_loop()
+        except Exception:
+            self._logger.error("Permission watchdog failed to get event loop")
+            return
+        self._logger.info("Permission watchdog started", interval=interval)
+
+        try:
+            while self._running:
+                await asyncio.sleep(interval)
+                try:
+                    result = await loop.run_in_executor(
+                        None, checker.check_accessibility_live
+                    )
+                    if result.is_denied:
+                        self._logger.error(
+                            "Accessibility permission revoked at runtime, shutting down"
+                        )
+                        await self._notification_manager.notify_error(
+                            error="Accessibility permission was revoked. "
+                            "Shutting down to prevent input lock.",
+                            context="permission_watchdog",
+                        )
+                        await self.stop()
+                        return
+                except Exception as e:
+                    self._logger.warning(
+                        "Permission watchdog check failed", error=str(e)
+                    )
+        except asyncio.CancelledError:
+            pass
 
     async def _signal_shutdown(self):
         """Handle shutdown signals"""
@@ -427,6 +472,12 @@ class Daemon:
             self._logger.info(
                 f"Platform: {'Windows (TCP Socket)' if IS_WINDOWS else 'Unix (Socket)'}"
             )
+
+            # Start permission watchdog on macOS
+            if sys.platform == "darwin":
+                self._permission_watchdog_task = asyncio.create_task(
+                    self._permission_watchdog()
+                )
 
             if service is not None and service in ("server", "client"):
                 self._logger.info("Auto-starting service", service=service)
@@ -594,6 +645,11 @@ class Daemon:
 
         self._running = False
 
+        # Cancel permission watchdog
+        if self._permission_watchdog_task and not self._permission_watchdog_task.done():
+            self._permission_watchdog_task.cancel()
+            self._permission_watchdog_task = None
+
         # Disconnect connected client
         async with self._client_connection_lock:
             if self._connected_client_writer is not None:
@@ -641,8 +697,13 @@ class Daemon:
         self._shutdown_event.set()
         self._logger.info("Daemon stopped")
 
-        # Force exit to ensure all tasks are cleaned up
-        # os._exit(0)
+        # Start a thread that checks after 5 second if the daemon is still running and force exit
+        threading.Thread(target=self.delayed_exit, daemon=True).start()
+
+    def delayed_exit(self):
+        time.sleep(5)
+        self._logger.error("Daemon still running, forcing exit")
+        os._exit(1)
 
     async def wait_for_shutdown(self):
         """Wait until daemon is shutdown"""
