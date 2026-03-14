@@ -15,7 +15,7 @@ permissions:
 
 env:
   PYTHON_VERSION: "3.12"
-  NODE_VERSION: "20"
+  NODE_VERSION: "24"
 
 jobs:
   build:
@@ -37,7 +37,14 @@ jobs:
             rust-target: x86_64-apple-darwin
             gui-exe-name: perpetua
             build-output: .build/x86_64-apple-darwin/release
-            archive-name: Perpetua-macOS-Intel
+            archive-name: Perpetua-macOS_15-Intel
+            archive-ext: zip
+          - os: macos-15
+            platform: macOS-arm64
+            rust-target: aarch64-apple-darwin
+            gui-exe-name: perpetua
+            build-output: .build/aarch64-apple-darwin/release
+            archive-name: Perpetua-macOS_15
             archive-ext: zip
           - os: windows-latest
             platform: Windows-x86_64

@@ -26,26 +26,79 @@ jobs:
         env:
           GH_TOKEN: ${{ secrets.PERPETUA_TOKEN }}
         run: |
-          # Checkout the PR branch
           PR_BRANCH=$(echo '${{ steps.release.outputs.pr }}' | jq -r '.headBranchName')
           git fetch origin "$PR_BRANCH"
           git checkout "$PR_BRANCH"
 
-          # Extract version from pyproject.toml
           VERSION=$(grep -m1 '^version' pyproject.toml | sed 's/version = "\(.*\)"/\1/')
           echo "Detected version: $VERSION"
 
-          # Update tauri.conf.json
           TAURI_CONF="src-gui/src-tauri/tauri.conf.json"
           jq --arg v "$VERSION" '.version = $v' "$TAURI_CONF" > tmp.json && mv tmp.json "$TAURI_CONF"
 
-          # Amend the existing commit and force push
+          git config user.name "github-actions[bot]"
+          git config user.email "github-actions[bot]@users.noreply.github.com"
+
           if git diff --quiet "$TAURI_CONF"; then
             echo "tauri.conf.json already up to date"
           else
-            git config user.name "github-actions[bot]"
-            git config user.email "github-actions[bot]@users.noreply.github.com"
             git add "$TAURI_CONF"
             git commit --amend --no-edit
             git push --force origin "$PR_BRANCH"
           fi
+
+      - name: Create alpha pre-release
+        if: ${{ steps.release.outputs.pr != '' }}
+        env:
+          GH_TOKEN: ${{ secrets.PERPETUA_TOKEN }}
+        run: |
+          VERSION=$(grep -m1 '^version' pyproject.toml | sed 's/version = "\(.*\)"/\1/')
+          TAURI_CONF="src-gui/src-tauri/tauri.conf.json"
+          ALPHA_VERSION="${VERSION}-alpha"
+          ALPHA_TAG="v${ALPHA_VERSION}"
+          ALPHA_BRANCH="pre-release/v${ALPHA_VERSION}"
+
+          # Clean up all previous alpha releases and branches
+          gh release list --json tagName -q '.[].tagName' | { grep '\-alpha$' || true; } | while read -r tag; do
+            echo "Deleting alpha release: $tag"
+            gh release delete "$tag" --yes --cleanup-tag 2>/dev/null || true
+          done
+          git ls-remote --heads origin 'refs/heads/pre-release/v*-alpha' | awk '{print $2}' | sed 's|refs/heads/||' | while read -r branch; do
+            echo "Deleting alpha branch: $branch"
+            git push origin --delete "$branch" 2>/dev/null || true
+          done
+
+          # Create alpha branch with updated version files
+          git checkout -b "$ALPHA_BRANCH"
+          sed -i "s/^version = \"${VERSION}\"/version = \"${ALPHA_VERSION}\"/" pyproject.toml
+          jq --arg v "$ALPHA_VERSION" '.version = $v' "$TAURI_CONF" > tmp.json && mv tmp.json "$TAURI_CONF"
+
+          git config user.name "github-actions[bot]"
+          git config user.email "github-actions[bot]@users.noreply.github.com"
+          git add pyproject.toml "$TAURI_CONF"
+          git commit -m "chore: set version to ${ALPHA_VERSION}"
+          git push origin "$ALPHA_BRANCH"
+
+          # Create pre-release (triggers build.yml via 'release: published')
+          gh release create "$ALPHA_TAG" \
+            --target "$ALPHA_BRANCH" \
+            --title "v${ALPHA_VERSION}" \
+            --prerelease \
+            --generate-notes
+
+      - name: Cleanup alpha pre-releases
+        if: ${{ steps.release.outputs.releases_created == 'true' }}
+        env:
+          GH_TOKEN: ${{ secrets.PERPETUA_TOKEN }}
+        run: |
+          # Delete all alpha releases and tags
+          gh release list --json tagName -q '.[].tagName' | { grep '\-alpha$' || true; } | while read -r tag; do
+            echo "Deleting alpha release: $tag"
+            gh release delete "$tag" --yes --cleanup-tag 2>/dev/null || true
+          done
+
+          # Delete all alpha branches
+          git ls-remote --heads origin 'refs/heads/pre-release/v*-alpha' | awk '{print $2}' | sed 's|refs/heads/||' | while read -r branch; do
+            echo "Deleting alpha branch: $branch"
+            git push origin --delete "$branch" 2>/dev/null || true
+          done
