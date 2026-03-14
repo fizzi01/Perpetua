@@ -10,7 +10,7 @@
 
 Perpetua is an open-source, cross-platform KVM software that lets you share a single keyboard and mouse across multiple devices. Inspired by Apple's Universal Control, it provides seamless cursor movement between devices, keyboard sharing, and automatic clipboard synchronization. All secured with TLS encryption.
 
-Built with Python, leveraging high-performance uvloop (macOS and Linux) and winloop (Windows) for low-latency, responsive input handling.
+Built with Python using uvloop (macOS/Linux) and winloop (Windows) as event loops and compiled with Nuitka, for low-latency and responsive input handling. This results in very high performance with just ~6% CPU usage under heavy load.
 
 
 <div align="center">
@@ -21,42 +21,10 @@ Built with Python, leveraging high-performance uvloop (macOS and Linux) and winl
     </picture>
 </div>
 
-## Download
+
+## Getting Started
+
 [![GitHub Downloads (all assets, latest release)](https://img.shields.io/github/downloads/fizzi01/Perpetua/latest/total?style=for-the-badge&logo=github&label=DOWNLOAD%20LATEST&color=%234f47e4)](https://github.com/fizzi01/Perpetua/releases/latest)
-
-### Platform Support
-
-#### Server (controls other machines)
-
-| Feature | macOS | Windows | X11 |             Wayland (GNOME)             |   Wayland (KDE)    |  Wayland (Others)   |
-|---|:---:|:---:|:---:|:---------------------------------------:|:------------------:|:-------------------:|
-| Mouse capture | :heavy_check_mark: | :heavy_check_mark: | :heavy_check_mark: |           :heavy_check_mark:            | :heavy_check_mark: |         :x:         |
-| Keyboard capture | :heavy_check_mark: | :heavy_check_mark: | :heavy_check_mark: |           :heavy_check_mark:            | :heavy_check_mark: | :heavy_check_mark:  |
-| Clipboard sync | :heavy_check_mark: | :heavy_check_mark: | :heavy_check_mark: | :heavy_check_mark:  | :heavy_check_mark: |  :heavy_check_mark: | 
-
-#### Client (controlled by a server)
-
-| Feature | macOS | Windows | X11 | Wayland (GNOME) | Wayland (KDE) | Wayland (Others) |
-|---|:---:|:---:|:---:|:---:|:---:|:---:|
-| Mouse control | :heavy_check_mark: | :heavy_check_mark: | :heavy_check_mark: | :heavy_check_mark: | :heavy_check_mark: | :x: |
-| Keyboard control | :heavy_check_mark: | :heavy_check_mark: | :heavy_check_mark: | :heavy_check_mark: | :heavy_check_mark: | :heavy_check_mark: |
-| Clipboard sync | :heavy_check_mark: | :heavy_check_mark: | :heavy_check_mark: | :heavy_check_mark: | :heavy_check_mark: | :heavy_check_mark: |
-
-> [!NOTE]
-> Wayland client support requires **GNOME >= 45** or **KDE Plasma >= 6.1** (via libei & liboeffis).
-> Other Wayland compositors (wlroots-based, Hyprland, Sway, etc.) are not yet supported.
-
-### Known Issues
-
-> [!Important]
-> - **Windows**: You can't control a Windows client if there is no real mouse connected to the machine.
->
-> - **Input Capture Conflicts**: Perpetua cannot control the mouse when other applications have exclusive input capture (e.g., video games). This is an architectural limitation.
-
-
-## Usage
-
-[Download](#download) the latest release.
 
 - **macOS**: Extract the `.zip`, run `xattr -c Perpetua.app` and launch `Perpetua.app`.
 - **Windows**: Extract the archive and run `Perpetua.exe` inside the `Perpetua` folder.
@@ -67,26 +35,228 @@ The GUI will guide you through choosing server or client mode and the initial co
 > [!TIP]
 > For detailed configuration options, including client-server pairing and security settings, see the [Configuration](#configuration) section below.
 
+> [!NOTE]
+> **macOS:** Perpetua requires Accessibility permissions and Local Network access (Privacy & Security). At first launch, macOS will show prompts to grant these permissions. You can also manage permissions manually in System Settings > Privacy & Security.
+
 ### Background Mode
 
 You can run Perpetua as a background service using the daemon mode:
 
 ```bash
 # Run in daemon mode
-./Perpetua --daemon
+Perpetua --daemon
 
 # Automatically start as server
-./Perpetua --daemon --server
+Perpetua --daemon --server
 
 # Automatically start as client
-./Perpetua --daemon --client
+Perpetua --daemon --client
 ```
 
 For a full list of available commands and options:
 ```bash
-./Perpetua --help
+Perpetua --help
 ```
 
+### Keyboard Shortcuts
+
+The following hotkeys are available on the **server** machine to control input focus without moving the mouse to a screen edge.
+
+| Shortcut | Action |
+|---|---|
+| `Ctrl + Shift + P + ←` | Switch focus to the **left** client |
+| `Ctrl + Shift + P + →` | Switch focus to the **right** client |
+| `Ctrl + Shift + P + ↑` | Switch focus to the **top** client |
+| `Ctrl + Shift + P + ↓` | Switch focus to the **bottom** client |
+| `Ctrl + Shift + P + Esc` | Return focus to the **server** |
+| `Ctrl + Shift + Q` | **Panic** — force-quit Perpetua |
+
+> [!NOTE]
+> Client switch hotkeys require the server to be running and at least one client to be connected.
+
+
+## Platform Support
+
+### Server (controls other machines)
+
+| Feature | macOS | Windows | X11 |             Wayland (GNOME)             |   Wayland (KDE)    |  Wayland (Others)   |
+|---|:---:|:---:|:---:|:---------------------------------------:|:------------------:|:-------------------:|
+| Mouse capture | :heavy_check_mark: | :heavy_check_mark: | :heavy_check_mark: |           :heavy_check_mark:            | :heavy_check_mark: |         :x:         |
+| Keyboard capture | :heavy_check_mark: | :heavy_check_mark: | :heavy_check_mark: |           :heavy_check_mark:            | :heavy_check_mark: | :heavy_check_mark:  |
+| Clipboard sync | :heavy_check_mark: | :heavy_check_mark: | :heavy_check_mark: | :heavy_check_mark:  | :heavy_check_mark: |  :heavy_check_mark: |
+
+### Client (controlled by a server)
+
+| Feature | macOS | Windows | X11 | Wayland (GNOME) | Wayland (KDE) | Wayland (Others) |
+|---|:---:|:---:|:---:|:---:|:---:|:---:|
+| Mouse control | :heavy_check_mark: | :heavy_check_mark: | :heavy_check_mark: | :heavy_check_mark: | :heavy_check_mark: | :x: |
+| Keyboard control | :heavy_check_mark: | :heavy_check_mark: | :heavy_check_mark: | :heavy_check_mark: | :heavy_check_mark: | :heavy_check_mark: |
+| Clipboard sync | :heavy_check_mark: | :heavy_check_mark: | :heavy_check_mark: | :heavy_check_mark: | :heavy_check_mark: | :heavy_check_mark: |
+
+Supported desktop environments: **GNOME >= 45** or **KDE Plasma >= 6.1**.
+
+Other Wayland compositors (wlroots-based, Hyprland, Sway, etc.) are not yet supported.
+
+> [!NOTE]
+> **Linux (Wayland):** requires `libei` and `liboeffis` installed on the system.
+
+### Known Issues
+
+> [!Important]
+> - **Windows**: You can't control a Windows client if there is no real mouse connected to the machine.
+>
+> - **Input Capture Conflicts**: Perpetua cannot control the mouse when other applications have exclusive input capture (e.g., video games). This is an architectural limitation.
+
+
+## Configuration
+
+Perpetua uses JSON to define client and server settings. The configuration file is automatically generated on first launch with sensible defaults, requiring minimal manual intervention for most use cases.
+
+Configuration File Locations:
+- macOS: `$HOME/Library/Caches/Perpetua`
+- Windows: `%LOCALAPPDATA%\Perpetua`
+- Linux: `$HOME/.perpetua`
+
+<details>
+<summary><b>Server Configuration</b></summary>
+
+The server configuration is managed automatically for basic setup (certificate generation, network binding). However, to accept client connections, you must manually add each client to the server configuration (or in `Server > Clients` section), specifying:
+
+- Client IPs and/or Hostname
+- Screen Position: The spatial arrangement relative to the server (left, right, top, bottom)
+
+This configuration defines how devices are arranged in your workspace for a seamless cursor transition between them.
+
+</details>
+
+<details>
+<summary><b>Client Configuration</b></summary>
+
+Clients can find servers in two ways:
+
+Auto Discovery (Default):
+- Scans the local network for available servers
+- Works out of the box, no configuration needed
+
+Manual Configuration:
+- Set the server's hostname or IP address directly in the config file (or in the appropriate field in `Client > Options`)
+- Use this when auto-discovery doesn't work or you have a static network setup
+
+</details>
+
+<details>
+<summary><b>First Connection and OTP Pairing</b></summary>
+
+When a client connects to a new server for the first time, it needs to get the server's TLS certificate to establish a secure connection. Here's how it works:
+
+1. The client starts the connection process
+2. On the `Server` (which must be running and listening), generate an OTP through the GUI in the `Security` section ("*Secure connection*" must be **enabled**!)
+3. Enter the OTP on the `Client` when prompted (the GUI walks you through this)
+4. If the certificate exchange succeeds and the client is in the server's allowlist, the connection is established
+5. Done!
+
+The OTP is just for the initial certificate exchange. After that, connections to the same server authenticate automatically using the saved certificates.
+
+</details>
+
+<details>
+<summary><b>Configuration File Structure</b></summary>
+
+The configuration [json file](#file-structure) is split into three sections: `server`, `client`, and `general`.
+
+#### Server Section
+
+`streams_enabled` controls what the server will manage on each connected client:
+- `1`: Mouse
+- `4`: Keyboard
+- `12`: Clipboard
+
+`log_level` sets the logging verbosity:
+- `0`: Debug (detailed logs)
+- `1`: Info (standard logs)
+
+`authorized_clients` lists the clients that can connect. To add a new client, you only need to specify:
+- `uid`: Unique identifier
+- `host_name` and/or `ip_addresses`: Client's network identity
+- `screen_position`: Where the client is positioned relative to the server (`left`, `right`, `top`, `bottom`)
+
+Other fields are automatically populated by the system.
+
+#### Client Section
+
+The same field names have the same meaning as in the server section. The `server_info` block tells the client which server to connect to (leave it empty for auto-discovery or fill in the `host` field for manual configuration).
+
+#### General Section
+
+These parameters affect the application's internal behavior. Only modify them if you know what you're doing.
+
+#### File Structure
+```json
+{
+    "server": {
+        "uid": "...",
+        "host": "0.0.0.0",
+        "port": 55655,
+        "heartbeat_interval": 1,
+        "streams_enabled": {
+            "1": true,
+            "4": true,
+            "12": true
+        },
+        "ssl_enabled": true,
+        "log_level": 1,
+        "authorized_clients": [
+            {
+                "uid": "...",
+                "host_name": "MYCLIENT",
+                "ip_addresses": [
+                    "192.168.1.66"
+                ],
+                "first_connection_date": "2026-02-02 19:09:00",
+                "last_connection_date": "2026-02-02 19:16:12",
+                "screen_position": "top",
+                "screen_resolution": "1920x1080",
+                "ssl": true,
+                "is_connected": true,
+                "additional_params": {}
+            }
+        ]
+    },
+    "client": {
+        "server_info": {
+            "uid": "",
+            "host": "",
+            "hostname": null,
+            "port": 55655,
+            "heartbeat_interval": 1,
+            "auto_reconnect": true,
+            "ssl": true,
+            "additional_params": {}
+        },
+        "uid": "...",
+        "client_hostname": "MYSERVER",
+        "streams_enabled": {
+            "1": true,
+            "4": true,
+            "12": true
+        },
+        "ssl_enabled": true,
+        "log_level": 1
+    },
+    "general": {
+        "default_host": "0.0.0.0",
+        "default_port": 55655,
+        "default_daemon_port": 55652
+    }
+}
+```
+
+</details>
+
+> [!NOTE]
+> When multiple Perpetua servers are detected on the network (in auto-discovery mode),
+> the GUI will present a selection dialog allowing the user to
+> choose the desired server.
 
 
 ## Development / Building from Source
@@ -124,7 +294,6 @@ For a full list of available commands and options:
     ```bash
         sudo apt-get update
         sudo apt-get install -y \
-            libtiff-dev \
             libgtk-3-dev \
             automake \
             libtool \
@@ -261,174 +430,6 @@ poetry run python build.py --skip-gui
 ```
 
 </details>
-
-
-## Configuration
-
-Perpetua uses JSON to define client and server settings. The configuration file is automatically generated on first launch with sensible defaults, requiring minimal manual intervention for most use cases.
-
-Configuration File Locations:
-- macOS: `$HOME/Library/Caches/Perpetua`
-- Windows: `%LOCALAPPDATA%\Perpetua`
-- Linux: `$HOME/.perpetua`
-
-<details>
-<summary><b>Server Configuration</b></summary>
-
-The server configuration is managed automatically for basic setup (certificate generation, network binding). However, to accept client connections, you must manually add each client to the server configuration (or in `Server > Clients` section), specifying:
-
-- Client IPs and/or Hostname
-- Screen Position: The spatial arrangement relative to the server (left, right, top, bottom)
-
-This configuration defines how devices are arranged in your workspace for a seamless cursor transition between them.
-
-</details>
-
-<details>
-<summary><b>Client Configuration</b></summary>
-
-Clients can find servers in two ways:
-
-Auto Discovery (Default):
-- Scans the local network for available servers
-- Works out of the box, no configuration needed
-
-Manual Configuration:
-- Set the server's hostname or IP address directly in the config file (or in the appropriate field in `Client > Options`)
-- Use this when auto-discovery doesn't work or you have a static network setup
-
-</details>
-
-<details>
-<summary><b>First Connection and OTP Pairing</b></summary>
-
-When a client connects to a new server for the first time, it needs to get the server's TLS certificate to establish a secure connection. Here's how it works:
-
-1. The client starts the connection process
-2. On the `Server` (which must be running and listening), generate an OTP through the GUI in the `Security` section ("*Secure connection*" must be **enabled**!)
-3. Enter the OTP on the `Client` when prompted (the GUI walks you through this)
-4. If the certificate exchange succeeds and the client is in the server's allowlist, the connection is established
-5. Done!
-
-The OTP is just for the initial certificate exchange. After that, connections to the same server authenticate automatically using the saved certificates.
-
-</details>
-
-<details>
-<summary><b>Configuration File Structure</b></summary>
-
-The configuration [json file](#file-structure) is split into three sections: `server`, `client`, and `general`.
-
-#### Server Section
-
-`streams_enabled` controls what the server will manage on each connected client:
-- `1`: Mouse
-- `4`: Keyboard  
-- `12`: Clipboard
-
-`log_level` sets the logging verbosity:
-- `0`: Debug (detailed logs)
-- `1`: Info (standard logs)
-
-`authorized_clients` lists the clients that can connect. To add a new client, you only need to specify:
-- `uid`: Unique identifier
-- `host_name` and/or `ip_addresses`: Client's network identity
-- `screen_position`: Where the client is positioned relative to the server (`left`, `right`, `top`, `bottom`)
-
-Other fields are automatically populated by the system.
-
-#### Client Section
-
-The same field names have the same meaning as in the server section. The `server_info` block tells the client which server to connect to (leave it empty for auto-discovery or fill in the `host` field for manual configuration).
-
-#### General Section
-
-These parameters affect the application's internal behavior. Only modify them if you know what you're doing.
-
-#### File Structure
-```json
-{
-    "server": {
-        "uid": "...",
-        "host": "0.0.0.0",
-        "port": 55655,
-        "heartbeat_interval": 1,
-        "streams_enabled": {
-            "1": true,
-            "4": true,
-            "12": true
-        },
-        "ssl_enabled": true,
-        "log_level": 1,
-        "authorized_clients": [
-            {
-                "uid": "...",
-                "host_name": "MYCLIENT",
-                "ip_addresses": [
-                    "192.168.1.66"
-                ],
-                "first_connection_date": "2026-02-02 19:09:00",
-                "last_connection_date": "2026-02-02 19:16:12",
-                "screen_position": "top",
-                "screen_resolution": "1920x1080",
-                "ssl": true,
-                "is_connected": true,
-                "additional_params": {}
-            }
-        ]
-    },
-    "client": {
-        "server_info": {
-            "uid": "",
-            "host": "",
-            "hostname": null,
-            "port": 55655,
-            "heartbeat_interval": 1,
-            "auto_reconnect": true,
-            "ssl": true,
-            "additional_params": {}
-        },
-        "uid": "...",
-        "client_hostname": "MYSERVER",
-        "streams_enabled": {
-            "1": true,
-            "4": true,
-            "12": true
-        },
-        "ssl_enabled": true,
-        "log_level": 1
-    },
-    "general": {
-        "default_host": "0.0.0.0",
-        "default_port": 55655,
-        "default_daemon_port": 55652
-    }
-}
-```
-
-</details>
-
-> [!NOTE]
-> When multiple Perpetua servers are detected on the network (in auto-discovery mode),
-> the GUI will present a selection dialog allowing the user to
-> choose the desired server.
-
-
-## Keyboard Shortcuts
-
-The following hotkeys are available on the **server** machine to control input focus without moving the mouse to a screen edge.
-
-| Shortcut | Action |
-|---|---|
-| `Ctrl + Shift + P + ←` | Switch focus to the **left** client |
-| `Ctrl + Shift + P + →` | Switch focus to the **right** client |
-| `Ctrl + Shift + P + ↑` | Switch focus to the **top** client |
-| `Ctrl + Shift + P + ↓` | Switch focus to the **bottom** client |
-| `Ctrl + Shift + P + Esc` | Return focus to the **server** |
-| `Ctrl + Shift + Q` | **Panic** — force-quit Perpetua |
-
-> [!NOTE]
-> Client switch hotkeys require the server to be running and at least one client to be connected.
 
 
 ## Roadmap
