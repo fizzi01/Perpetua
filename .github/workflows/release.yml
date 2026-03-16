@@ -26,8 +26,9 @@ jobs:
         if: ${{ steps.release.outputs.pr != '' }}
         env:
           GH_TOKEN: ${{ secrets.PERPETUA_TOKEN }}
+          RELEASE_PR: ${{ steps.release.outputs.pr }}
         run: |
-          PR_BRANCH=$(echo '${{ steps.release.outputs.pr }}' | jq -r '.headBranchName')
+          PR_BRANCH=$(echo "$RELEASE_PR" | jq -r '.headBranchName')
           git fetch origin "$PR_BRANCH"
           git checkout "$PR_BRANCH"
 
@@ -52,8 +53,29 @@ jobs:
         if: ${{ steps.release.outputs.pr != '' || github.event_name == 'workflow_dispatch' }}
         env:
           GH_TOKEN: ${{ secrets.PERPETUA_TOKEN }}
+          RELEASE_PR: ${{ steps.release.outputs.pr }}
         run: |
+          # Resolve the release PR branch
+          if [ -n "$RELEASE_PR" ]; then
+            PR_BRANCH=$(echo "$RELEASE_PR" | jq -r '.headBranchName')
+          else
+            # Fallback: find the open release-please PR with autorelease: pending
+            PR_BRANCH=$(gh pr list --state open --label "autorelease: pending" \
+              --json headRefName,title -q '.[] | select(.title | test("^chore\\(master\\): release")) | .headRefName' \
+              | head -n1)
+            if [ -z "$PR_BRANCH" ]; then
+              echo "No release PR found, skipping alpha pre-release"
+              exit 0
+            fi
+          fi
+
+          # Checkout the PR branch to read the bumped version
+          git fetch origin "$PR_BRANCH"
+          git checkout "$PR_BRANCH"
+
           VERSION=$(grep -m1 '^version' pyproject.toml | sed 's/version = "\(.*\)"/\1/')
+          echo "Detected version from PR branch: $VERSION"
+
           TAURI_CONF="src-gui/src-tauri/tauri.conf.json"
           ALPHA_VERSION="${VERSION}-alpha"
           ALPHA_TAG="v${ALPHA_VERSION}"
