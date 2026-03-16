@@ -1,5 +1,18 @@
 # Changelog
 
+## [1.5.0](https://github.com/fizzi01/Perpetua/compare/v1.4.0...v1.5.0) (2026-03-16)
+
+
+### Features
+
+* **daemon:** implement live accessibility permission checks on macOS ([#62](https://github.com/fizzi01/Perpetua/issues/62)) ([7d19528](https://github.com/fizzi01/Perpetua/commit/7d19528e053e294625c11ac69ced7cddd726450d))
+
+
+### Bug Fixes
+
+* **daemon:** force exit when process remain pending on stop ([7d19528](https://github.com/fizzi01/Perpetua/commit/7d19528e053e294625c11ac69ced7cddd726450d))
+* **gui:** fix titlebar buttons not working on Wayland ([#60](https://github.com/fizzi01/Perpetua/issues/60)) ([7475b39](https://github.com/fizzi01/Perpetua/commit/7475b39eac65fd382e37a7be7ea59386ea5f29c4))
+
 ## [1.4.0](https://github.com/fizzi01/Perpetua/compare/v1.3.0...v1.4.0) (2026-03-10)
 
 
