@@ -146,7 +146,6 @@ class CursorHandlerWorker(object):
                 data=self._last_event,
             )
             await asyncio.sleep(0)
-            await asyncio.sleep(0)
             try:
                 await self.enable_capture()
             except Exception as e:
@@ -354,7 +353,7 @@ class CursorHandlerWorker(object):
 
     # Bound on how many in-flight deltas we keep buffered between the OS-thread
     # reader and the asyncio forwarder. Old deltas are dropped if the consumer
-    # (network stream) can't keep up — cursor jitter is preferable to growing
+    # (network stream) can't keep up - cursor jitter is preferable to growing
     # backpressure on every mouse move.
     _MOUSE_QUEUE_MAXSIZE = 4096
 

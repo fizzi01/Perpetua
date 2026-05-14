@@ -829,11 +829,11 @@ class Daemon:
                         await asyncio.sleep(0.1)
                         continue
 
-                    commands_data, bytes_read = self.parse_msg_bytes(bytes(buff))
+                    commands_data, bytes_read = self.parse_msg_bytes(buff)
 
-                    # Clear read bytes from buffer
+                    # Clear read bytes in-place (no reallocation of the bytearray).
                     if bytes_read > 0:
-                        buff = buff[bytes_read:]
+                        del buff[:bytes_read]
 
                     for command_data in commands_data:
                         try:
@@ -909,7 +909,7 @@ class Daemon:
         return message_bytes + length_prefix + b"\n"
 
     @staticmethod
-    def parse_msg_bytes(data: bytes) -> tuple[list[dict], int]:
+    def parse_msg_bytes(data: "bytes | bytearray") -> tuple[list[dict], int]:
         """
         Parses a byte sequence containing serialized messages with length prefixes and a delimiter.
 
