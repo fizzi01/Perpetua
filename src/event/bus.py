@@ -17,7 +17,7 @@
 
 from abc import ABC
 import asyncio
-from typing import Callable, Dict, List, Optional, Any, TypeVar
+from typing import Callable, Dict, List, Optional, Any, Tuple, TypeVar
 import inspect
 
 from utils import BackgroundTasks
@@ -26,6 +26,10 @@ from utils.logging import get_logger
 from . import BusEvent
 
 T = TypeVar("T", bound=BusEvent)
+
+# Stored entry: (callback, is_coroutine_function). Pre-resolving the
+# coroutine check at subscribe time keeps the per-event hot path branch-free.
+_Subscriber = Tuple[Callable, bool]
 
 
 class EventBus(ABC):
@@ -68,7 +72,7 @@ class AsyncEventBus(EventBus):
     def __init__(self):
         super().__init__()
         # Use dict for O(1) lookup, list for subscribers
-        self._subscribers: Dict[int, List[Callable]] = {}
+        self._subscribers: Dict[int, List[_Subscriber]] = {}
 
         self._logger = get_logger(self.__class__.__name__)
 
@@ -88,25 +92,36 @@ class AsyncEventBus(EventBus):
     ):
         """
         Subscribe a callback function to a specific event type.
+        Duplicate subscriptions are ignored (idempotent).
         Thread-safe, but prefer calling from async context.
         """
-        # Sync version for compatibility
-        if event_type not in self._subscribers:
-            self._subscribers[event_type] = []
-        if priority:
-            self._subscribers[event_type].insert(0, callback)
+        subs = self._subscribers.get(event_type)
+        if subs is None:
+            subs = []
+            self._subscribers[event_type] = subs
         else:
-            self._subscribers[event_type].append(callback)
+            # Skip duplicates: a second subscribe would otherwise double-fire
+            # the callback on every event (e.g. on stream restart).
+            for cb, _ in subs:
+                if cb is callback or cb == callback:
+                    return
+        entry: _Subscriber = (callback, inspect.iscoroutinefunction(callback))
+        if priority:
+            subs.insert(0, entry)
+        else:
+            subs.append(entry)
 
     def unsubscribe(self, event_type: int, callback: Callable[[Optional[T]], Any]):
         """
         Unsubscribe a callback function from an event type.
         """
-        if (
-            event_type in self._subscribers
-            and callback in self._subscribers[event_type]
-        ):
-            self._subscribers[event_type].remove(callback)
+        subs = self._subscribers.get(event_type)
+        if not subs:
+            return
+        for i, (cb, _) in enumerate(subs):
+            if cb is callback or cb == callback:
+                del subs[i]
+                return
 
     async def dispatch(self, event_type: int, data: Optional[T] = None, **kwargs):
         """
@@ -121,9 +136,10 @@ class AsyncEventBus(EventBus):
             return
 
         # Create tasks for all callbacks
-        tasks = []
-        for callback in listeners:
-            tasks.append(self._execute_callback(callback, data, **kwargs))
+        tasks = [
+            self._execute_callback(cb, is_async, data, **kwargs)
+            for cb, is_async in listeners
+        ]
 
         # Execute all callbacks concurrently
         if tasks:
@@ -162,24 +178,22 @@ class AsyncEventBus(EventBus):
                 f"dispatch_nowait dropped (event_type={event_type}): {e}"
             )
 
-    async def _execute_callback(self, callback: Callable, data, **kwargs):
+    async def _execute_callback(
+        self, callback: Callable, is_async: bool, data, **kwargs
+    ):
         """
         Execute a callback with exception handling.
-        Automatically handles both sync and async callbacks.
+        `is_async` is pre-resolved at subscribe time to avoid an inspect call per event.
         """
         try:
-            # Check if callback is async
-            if inspect.iscoroutinefunction(callback):
+            if is_async:
                 await callback(data, **kwargs)
             else:
                 # Run sync callback in executor to avoid blocking
                 loop = asyncio.get_running_loop()
                 await loop.run_in_executor(None, lambda: callback(data, **kwargs))  # type: ignore
         except Exception as e:
-            # import traceback
-
             self._logger.error(f"Exception raised while dispatching event ({e})")
-            # self._logger.error(traceback.format_exc())
 
 
 # Backward compatibility alias

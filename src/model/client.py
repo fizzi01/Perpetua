@@ -23,11 +23,15 @@ screen resolution, and client name. But also additional optional config paramete
 #  along with this program.  If not, see <https://www.gnu.org/licenses/>.
 #
 
+import re
 from enum import StrEnum
 
 from typing import Optional
 
 from model.connection import ClientConnection
+
+# Compiled once: hostname validation runs on every client (dis)connect.
+_HOSTNAME_LABEL_RE = re.compile(r"(?!-)[A-Z\d-]{1,63}(?<!-)$", re.IGNORECASE)
 
 
 class ScreenPosition(StrEnum):
@@ -244,14 +248,11 @@ class ClientObj:
         Returns:
             A boolean indicating whether the hostname is valid (True) or invalid (False).
         """
-        import re
-
         if len(hostname) > 255:
             return False
         if hostname[-1] == ".":
             hostname = hostname[:-1]
-        allowed = re.compile(r"(?!-)[A-Z\d-]{1,63}(?<!-)$", re.IGNORECASE)
-        return all(allowed.match(x) for x in hostname.split("."))
+        return all(_HOSTNAME_LABEL_RE.match(x) for x in hostname.split("."))
 
     def get_net_id(self) -> Optional[str]:
         """

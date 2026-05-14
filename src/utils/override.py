@@ -21,19 +21,34 @@ Override decorator to replace methods in classes.
 #
 
 
-def override(method):
+class _Override:
     """
-    A decorator to indicate that a method is intended to override a method in a superclass.
-    Raises an error if the method does not actually override any method in the superclass.
+    Descriptor returned by @override.
+
+    Validation runs once at class-creation time via __set_name__ (instead of on
+    every method call), and then the descriptor swaps itself out for the raw
+    method so the runtime cost of the decorator is zero.
     """
 
-    def wrapper(self, *args, **kwargs):
-        # Check if the method exists in any superclass
-        for cls in self.__class__.__mro__[1:]:
-            if method.__name__ in cls.__dict__:
-                return method(self, *args, **kwargs)
+    __slots__ = ("_method",)
+
+    def __init__(self, method):
+        self._method = method
+
+    def __set_name__(self, owner, name):
+        for cls in owner.__mro__[1:]:
+            if name in cls.__dict__:
+                # Bind the raw callable on the owner: future lookups skip us.
+                setattr(owner, name, self._method)
+                return
         raise NotImplementedError(
-            f"Method '{method.__name__}' does not override any method in superclass."
+            f"Method '{name}' on '{owner.__name__}' does not override any method in superclass."
         )
 
-    return wrapper
+
+def override(method):
+    """
+    Decorator that asserts a method overrides one from a superclass.
+    Validation happens once when the owning class is created.
+    """
+    return _Override(method)

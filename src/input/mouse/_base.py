@@ -150,15 +150,15 @@ class ServerMouseListener(object):
         """
         Starts the mouse listener.
         """
-        # Capture event loop reference if not already set
-        if self._loop is None:
-            try:
-                self._loop = asyncio.get_running_loop()
-            except RuntimeError:
-                self._logger.warning(
-                    "No event loop running. "
-                    "Mouse listener must be started within an async context."
-                )
+        # Always re-capture the running loop: a previous start() may have
+        # cached a loop that has since been closed (e.g. between tests).
+        try:
+            self._loop = asyncio.get_running_loop()
+        except RuntimeError:
+            self._logger.warning(
+                "No event loop running. "
+                "Mouse listener must be started within an async context."
+            )
 
         if not self.is_alive():
             # Screen.hide_icon()

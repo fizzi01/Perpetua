@@ -61,29 +61,15 @@ class StreamWrapper:
                 # If the connection is already closed, we can ignore the error
                 pass
 
-        async def _try_writer_close(self):
-            """
-            Attempts to write an empty byte string to the writer and drain it.
-            If an exception occurs during this process, it closes the writer.
-            """
-            try:
-                self._writer.write(b"")
-                await self._writer.drain()
-            except Exception:
-                await self.close()
-
         async def is_closed(self) -> bool:
             """
-            Checks if the writer connection is closed.
+            Returns True if the writer is closing or closed.
 
-            This asynchronous method ensures that the writer connection is properly
-            checked for closure. It attempts to close the writer if necessary and
-            then verifies whether the writer connection is currently closing.
-
-            Returns:
-                bool: True if the writer connection is closing or closed, False otherwise.
+            Previously this method issued a zero-byte write+drain as a liveness
+            probe, but that triggers a real protocol flush on every heartbeat.
+            The transport's own `is_closing()` is sufficient - heartbeats are
+            sent separately and surface actual disconnections.
             """
-            await self._try_writer_close()
             return self._writer.is_closing()
 
         def get_sockname(self) -> Tuple[str, int]:

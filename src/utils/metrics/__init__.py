@@ -67,6 +67,8 @@ class ConnectionMetrics:
     min_latency: float = float("inf")
     max_latency: float = 0.0
     _latency_samples: deque = field(default_factory=lambda: deque(maxlen=1000))
+    # Running sum so calculate_avg_latency is O(1) instead of O(N) on every export.
+    _latency_sum: float = 0.0
 
     # Errors and QOL
     connection_errors: int = 0
@@ -108,24 +110,25 @@ class ConnectionMetrics:
         Args:
             latency: Latency sample in seconds.
         """
-        self._latency_samples.append(latency)
-        self.min_latency = min(self.min_latency, latency)
-        self.max_latency = max(self.max_latency, latency)
+        samples = self._latency_samples
+        # If the bounded deque is full, manually evict so we can keep the
+        # running sum in sync (deque.maxlen-eviction doesn't return the value).
+        if samples.maxlen is not None and len(samples) == samples.maxlen:
+            self._latency_sum -= samples.popleft()
+        samples.append(latency)
+        self._latency_sum += latency
+        if latency < self.min_latency:
+            self.min_latency = latency
+        if latency > self.max_latency:
+            self.max_latency = latency
 
     def calculate_avg_latency(self) -> float:
         """
-        Calculate and update the average latency from recorded samples.
-
-        Returns:
-            The calculated average latency in seconds.
+        Returns the running average latency in seconds. O(1).
         """
-        if self._latency_samples:
-            try:
-                self.avg_latency = sum(self._latency_samples) / len(
-                    self._latency_samples
-                )
-            except ZeroDivisionError:
-                self.avg_latency = 0.0
+        n = len(self._latency_samples)
+        if n:
+            self.avg_latency = self._latency_sum / n
         return self.avg_latency
 
     def get_throughput(self) -> Dict[str, float]:

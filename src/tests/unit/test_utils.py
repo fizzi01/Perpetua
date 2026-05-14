@@ -57,6 +57,8 @@ def test_get_local_ip_exception():
             pass
 
     socket.socket = FailingSocket
+    # Bypass the TTL cache so we actually hit the patched socket.
+    utils.net.invalidate_local_ip_cache()
     try:
         try:
             utils.net.get_local_ip()
@@ -67,3 +69,4 @@ def test_get_local_ip_exception():
             )
     finally:
         socket.socket = original_socket
+        utils.net.invalidate_local_ip_cache()
