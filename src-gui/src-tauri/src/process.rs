@@ -177,7 +177,7 @@ impl DaemonProcess {
     }
 
     /// Terminate the daemon process gracefully (SIGTERM on Unix, kill on Windows).
-    /// This is idempotent — calling it more than once is safe.
+    /// This is idempotent - calling it more than once is safe.
     pub fn terminate(&self) {
         let mut guard = match self.inner.lock() {
             Ok(g) => g,

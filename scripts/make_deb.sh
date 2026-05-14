@@ -31,7 +31,7 @@ ICON_SRC="src-gui/src-tauri/icons/icon.png"
 
 # ── Preflight checks ──────────────────────────────────────────────────────────
 if [ ! -f "pyproject.toml" ]; then
-  echo "error: pyproject.toml not found — run this script from the project root." >&2
+  echo "error: pyproject.toml not found - run this script from the project root." >&2
   exit 1
 fi
 
@@ -105,7 +105,7 @@ printf "%s (%s) unstable; urgency=low\n\n  * See upstream CHANGELOG.md for detai
 if [ -f "$CHANGELOG_SRC" ]; then
   gzip -9 -n -c "$CHANGELOG_SRC" > "$DEB_ROOT/usr/share/doc/${APP_NAME}/changelog.gz"
 else
-  echo "warning: $CHANGELOG_SRC not found — skipping upstream changelog." >&2
+  echo "warning: $CHANGELOG_SRC not found - skipping upstream changelog." >&2
 fi
 
 # ── AppStream metainfo ────────────────────────────────────────────────────────

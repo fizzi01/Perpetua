@@ -29,7 +29,7 @@ import msgspec
 
 
 # Wire encoder/decoder: msgpack is binary, faster than JSON, and natively
-# carries `bytes` values — so chunked payloads no longer need base64.
+# carries `bytes` values - so chunked payloads no longer need base64.
 # JSON helpers (to_json/from_json) are kept for external/debug usage.
 _wire_encoder = msgspec.msgpack.Encoder()
 _wire_decoder_typed: "msgspec.msgpack.Decoder" = None  # type: ignore
@@ -51,7 +51,7 @@ class ProtocolMessage(msgspec.Struct):
     """
     Standardized message format with timestamp and ordering support.
     Wire format: `!Icc` length+marker prefix followed by msgpack-encoded body.
-    Payload values can include native `bytes` — chunked transfers used to
+    Payload values can include native `bytes` - chunked transfers used to
     base64-encode them, but msgpack carries binary natively.
     """
 
@@ -258,7 +258,7 @@ class MessageBuilder:
             end_pos = min(start_pos + raw_chunk_size, len(payload_bytes))
             chunk_payload_bytes = payload_bytes[start_pos:end_pos]
 
-            # Raw bytes in the payload — msgpack serializes them directly.
+            # Raw bytes in the payload - msgpack serializes them directly.
             chunk_message = ProtocolMessage(
                 message_type=message.message_type,
                 timestamp=message.timestamp,

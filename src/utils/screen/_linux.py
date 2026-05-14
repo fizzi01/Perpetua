@@ -54,7 +54,7 @@ class Screen(_base.Screen):
 
     @classmethod
     def _get_size_wayland(cls) -> tuple[int, int]:
-        # Primary: python-wayland — native Wayland protocol via wl_output
+        # Primary: python-wayland - native Wayland protocol via wl_output
         if cls._size_cache:
             return cls._size_cache
 

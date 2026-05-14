@@ -9,7 +9,7 @@ DUMPYKEYS_RULE_CONTENT='SUBSYSTEM=="tty", MODE="0666" TAG+="uaccess", GROUP="inp
 
 check_root() {
   if [ "$(id -u)" -ne 0 ]; then
-    echo "perpetua: insufficient privileges — this operation requires root." >&2
+    echo "perpetua: insufficient privileges - this operation requires root." >&2
     exit 1
   fi
 }
@@ -19,7 +19,7 @@ write_rule() {
   content="$2"
 
   if [ -f "$path" ] && [ "$(cat "$path")" = "$content" ]; then
-    echo "perpetua: $path already up to date — skipping."
+    echo "perpetua: $path already up to date - skipping."
     return 0
   fi
 
@@ -67,7 +67,7 @@ case "$1" in
         fi
       fi
     else
-      echo "perpetua: could not detect the installing user — add yourself to the 'input' group manually:"
+      echo "perpetua: could not detect the installing user - add yourself to the 'input' group manually:"
       echo "  sudo usermod -aG input \$USER"
     fi
 

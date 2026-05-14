@@ -1362,7 +1362,7 @@ class TestFileListDetection:
                 "input.clipboard._base.paste_file_list", side_effect=dynamic_file_list
             ),
         ):
-            # Listener that only monitors TEXT — FILE should be ignored
+            # Listener that only monitors TEXT - FILE should be ignored
             listener = Clipboard(
                 on_change=on_change,
                 poll_interval=0.1,

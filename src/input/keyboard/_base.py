@@ -463,7 +463,7 @@ class ServerKeyboardListener(object):
 
     async def _hotkey_panic(self) -> None:
         """
-        Hotkey handler: panic button — sends SIGQUIT to the current process.
+        Hotkey handler: panic button - sends SIGQUIT to the current process.
         Combination: Ctrl+Shift+Q
         """
         self._logger.warning("Panic hotkey triggered: sending SIGTERM to self.")

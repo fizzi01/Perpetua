@@ -477,7 +477,7 @@ class ConnectionHandler(BaseConnectionHandler):
                         await cur_stream.close()
                         return False
                     else:
-                        # Client has no known IPs yet (hostname-only config) — register this IP
+                        # Client has no known IPs yet (hostname-only config) - register this IP
                         self._logger.log(
                             f"Registering new IP {client_addr} for client {client.get_net_id()}",
                             Logger.INFO,
