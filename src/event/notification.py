@@ -130,7 +130,7 @@ class NotificationEventType(str, Enum):
     PONG = "pong"
 
 
-@dataclass(slots=True)
+@dataclass
 class NotificationEvent:
     """
     A notification event sent from daemon to client.
@@ -207,7 +207,7 @@ class NotificationEvent:
 # ==================== Specific Event Classes ====================
 
 
-@dataclass(slots=True)
+@dataclass
 class ServiceEvent(NotificationEvent):
     """Base class for service lifecycle events"""
 
@@ -231,7 +231,7 @@ class ServiceEvent(NotificationEvent):
         )
 
 
-@dataclass(slots=True)
+@dataclass
 class ServiceStartedEvent(ServiceEvent):
     """Service started successfully"""
 
@@ -244,7 +244,7 @@ class ServiceStartedEvent(ServiceEvent):
         )
 
 
-@dataclass(slots=True)
+@dataclass
 class ServiceStoppedEvent(ServiceEvent):
     """Service stopped"""
 
@@ -257,7 +257,7 @@ class ServiceStoppedEvent(ServiceEvent):
         )
 
 
-@dataclass(slots=True)
+@dataclass
 class ServiceErrorEvent(ServiceEvent):
     """Service encountered an error"""
 
@@ -271,7 +271,7 @@ class ServiceErrorEvent(ServiceEvent):
         )
 
 
-@dataclass(slots=True)
+@dataclass
 class ConnectionEvent(NotificationEvent):
     """Base class for connection events"""
 
@@ -287,7 +287,7 @@ class ConnectionEvent(NotificationEvent):
         super().__init__(event_type=event_type, data=data, message=message)
 
 
-@dataclass(slots=True)
+@dataclass
 class ConnectedEvent(ConnectionEvent):
     """Successfully connected to peer"""
 
@@ -299,7 +299,7 @@ class ConnectedEvent(ConnectionEvent):
         )
 
 
-@dataclass(slots=True)
+@dataclass
 class DisconnectedEvent(ConnectionEvent):
     """Disconnected from peer"""
 
@@ -311,7 +311,7 @@ class DisconnectedEvent(ConnectionEvent):
         )
 
 
-@dataclass(slots=True)
+@dataclass
 class ConnectionErrorEvent(ConnectionEvent):
     """Connection error"""
 
@@ -323,7 +323,7 @@ class ConnectionErrorEvent(ConnectionEvent):
         )
 
 
-@dataclass(slots=True)
+@dataclass
 class OtpGeneratedEvent(NotificationEvent):
     """OTP generated for authentication"""
 
@@ -337,7 +337,7 @@ class OtpGeneratedEvent(NotificationEvent):
         )
 
 
-@dataclass(slots=True)
+@dataclass
 class OtpNeededEvent(NotificationEvent):
     """OTP is required for authentication"""
 
@@ -351,7 +351,7 @@ class OtpNeededEvent(NotificationEvent):
         )
 
 
-@dataclass(slots=True)
+@dataclass
 class OtpValidatedEvent(NotificationEvent):
     """OTP validated successfully"""
 
@@ -363,7 +363,7 @@ class OtpValidatedEvent(NotificationEvent):
         )
 
 
-@dataclass(slots=True)
+@dataclass
 class OtpInvalidEvent(NotificationEvent):
     """OTP validation failed"""
 
@@ -377,7 +377,7 @@ class OtpInvalidEvent(NotificationEvent):
         )
 
 
-@dataclass(slots=True)
+@dataclass
 class ServerListFoundEvent(NotificationEvent):
     """Servers discovered on the network"""
 
@@ -391,7 +391,7 @@ class ServerListFoundEvent(NotificationEvent):
         )
 
 
-@dataclass(slots=True)
+@dataclass
 class ServerChoiceNeededEvent(NotificationEvent):
     """User needs to choose a server"""
 
@@ -405,7 +405,7 @@ class ServerChoiceNeededEvent(NotificationEvent):
         )
 
 
-@dataclass(slots=True)
+@dataclass
 class ServerChoiceMadeEvent(NotificationEvent):
     """User selected a server"""
 
@@ -419,7 +419,7 @@ class ServerChoiceMadeEvent(NotificationEvent):
         )
 
 
-@dataclass(slots=True)
+@dataclass
 class ClientConnectedEvent(NotificationEvent):
     """Client connected to server"""
 
@@ -439,7 +439,7 @@ class ClientConnectedEvent(NotificationEvent):
         )
 
 
-@dataclass(slots=True)
+@dataclass
 class ClientDisconnectedEvent(NotificationEvent):
     """Client disconnected from server"""
 
@@ -459,7 +459,7 @@ class ClientDisconnectedEvent(NotificationEvent):
         )
 
 
-@dataclass(slots=True)
+@dataclass
 class StreamEnabledEvent(NotificationEvent):
     """Stream was enabled"""
 
@@ -473,7 +473,7 @@ class StreamEnabledEvent(NotificationEvent):
         )
 
 
-@dataclass(slots=True)
+@dataclass
 class StreamDisabledEvent(NotificationEvent):
     """Stream was disabled"""
 
@@ -487,7 +487,7 @@ class StreamDisabledEvent(NotificationEvent):
         )
 
 
-@dataclass(slots=True)
+@dataclass
 class ConfigSavedEvent(NotificationEvent):
     """Configuration was saved"""
 
@@ -501,7 +501,7 @@ class ConfigSavedEvent(NotificationEvent):
         )
 
 
-@dataclass(slots=True)
+@dataclass
 class ConfigUpdatedEvent(NotificationEvent):
     """Configuration was updated"""
 
@@ -519,7 +519,7 @@ class ConfigUpdatedEvent(NotificationEvent):
         )
 
 
-@dataclass(slots=True)
+@dataclass
 class StatusUpdateEvent(NotificationEvent):
     """General status update"""
 
@@ -533,7 +533,7 @@ class StatusUpdateEvent(NotificationEvent):
         )
 
 
-@dataclass(slots=True)
+@dataclass
 class FileTransferStartedEvent(NotificationEvent):
     """File transfer started"""
 
@@ -551,7 +551,7 @@ class FileTransferStartedEvent(NotificationEvent):
         )
 
 
-@dataclass(slots=True)
+@dataclass
 class FileTransferProgressEvent(NotificationEvent):
     """File transfer progress update"""
 
@@ -577,7 +577,7 @@ class FileTransferProgressEvent(NotificationEvent):
         )
 
 
-@dataclass(slots=True)
+@dataclass
 class FileTransferCompletedEvent(NotificationEvent):
     """File transfer completed"""
 
@@ -591,7 +591,7 @@ class FileTransferCompletedEvent(NotificationEvent):
         )
 
 
-@dataclass(slots=True)
+@dataclass
 class FileTransferFailedEvent(NotificationEvent):
     """File transfer failed"""
 
@@ -605,7 +605,7 @@ class FileTransferFailedEvent(NotificationEvent):
         )
 
 
-@dataclass(slots=True)
+@dataclass
 class ScreenChangedEvent(NotificationEvent):
     """Active screen changed"""
 
@@ -619,7 +619,7 @@ class ScreenChangedEvent(NotificationEvent):
         )
 
 
-@dataclass(slots=True)
+@dataclass
 class ErrorEvent(NotificationEvent):
     """General error event"""
 
@@ -635,7 +635,7 @@ class ErrorEvent(NotificationEvent):
         )
 
 
-@dataclass(slots=True)
+@dataclass
 class WarningEvent(NotificationEvent):
     """General warning event"""
 
@@ -651,7 +651,7 @@ class WarningEvent(NotificationEvent):
         )
 
 
-@dataclass(slots=True)
+@dataclass
 class InfoEvent(NotificationEvent):
     """General info event"""
 
@@ -661,7 +661,7 @@ class InfoEvent(NotificationEvent):
         super().__init__(event_type=NotificationEventType.INFO, data=data, message=info)
 
 
-@dataclass(slots=True)
+@dataclass
 class CommandSuccessEvent(NotificationEvent):
     """Command executed successfully"""
 
@@ -683,7 +683,7 @@ class CommandSuccessEvent(NotificationEvent):
         )
 
 
-@dataclass(slots=True)
+@dataclass
 class CommandErrorEvent(NotificationEvent):
     """Command execution failed"""
 
