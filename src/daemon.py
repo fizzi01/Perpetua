@@ -255,6 +255,9 @@ class Daemon:
 
     MAX_CONNECTIONS = 1  # Only accept one connection at a time
     BUFFER_SIZE = 16384  # 16KB
+    # Cap concurrent command executions: a buggy/abusive client could otherwise
+    # spam commands and accumulate fire-and-forget tasks without bound.
+    MAX_CONCURRENT_COMMANDS = 16
 
     _encoder = msgspec.json.Encoder()
     _decoder = msgspec.json.Decoder()
@@ -317,6 +320,8 @@ class Daemon:
 
         # Strong refs for fire-and-forget tasks (command exec, notifications, etc.)
         self._bg_tasks = BackgroundTasks()
+        # Limit concurrent command tasks regardless of how fast they arrive.
+        self._command_semaphore = asyncio.Semaphore(self.MAX_CONCURRENT_COMMANDS)
 
         # Setup signal handlers for graceful shutdown
         self._setup_signal_handlers()
@@ -348,12 +353,19 @@ class Daemon:
             return
         self._logger.info("Permission watchdog started", interval=interval)
 
+        # Cap the OS-level check so a stuck system call can't hold the
+        # watchdog (or, indirectly via the default executor, the loop) hostage.
+        check_timeout = max(interval, 5.0)
+        max_retry = 3
         try:
             while self._running:
                 await asyncio.sleep(interval)
                 try:
-                    result = await loop.run_in_executor(
-                        None, checker.check_accessibility_live
+                    result = await asyncio.wait_for(
+                        loop.run_in_executor(
+                            None, checker.check_accessibility_live
+                        ),
+                        timeout=check_timeout,
                     )
                     if result.is_denied:
                         self._logger.error(
@@ -362,6 +374,23 @@ class Daemon:
                         await self._notification_manager.notify_error(
                             error="Accessibility permission was revoked. "
                             "Shutting down to prevent input lock.",
+                            context="permission_watchdog",
+                        )
+                        await self.stop()
+                        return
+                except asyncio.TimeoutError:
+                    self._logger.warning(
+                        "Permission watchdog check timed out",
+                        timeout=check_timeout,
+                    )
+                    max_retry -= 1
+                    if max_retry <= 0:
+                        self._logger.error(
+                            "Permission watchdog check failed repeatedly, shutting down"
+                        )
+                        await self._notification_manager.notify_error(
+                            error="Permission watchdog check failed repeatedly. "
+                            "Shutting down to prevent potential input lock.",
                             context="permission_watchdog",
                         )
                         await self.stop()
@@ -818,7 +847,9 @@ class Daemon:
                             continue
 
                         # Execute command (no response needed, commands send notifications)
-                        self._bg_tasks.spawn(self._execute_command(command, params))
+                        self._bg_tasks.spawn(
+                            self._execute_command_throttled(command, params)
+                        )
                         await asyncio.sleep(0)
 
                 except asyncio.TimeoutError:
@@ -1036,6 +1067,17 @@ class Daemon:
             return self._client, self._client_config, "client", None
         else:
             return None, None, "", f"Invalid service type: {service_type}"
+
+    async def _execute_command_throttled(
+        self, command: str, params: Dict[str, Any]
+    ) -> None:
+        """
+        Bounded variant of _execute_command: holds a semaphore slot while the
+        underlying handler runs so a flood of commands can't accumulate
+        unbounded fire-and-forget tasks.
+        """
+        async with self._command_semaphore:
+            await self._execute_command(command, params)
 
     async def _execute_command(self, command: str, params: Dict[str, Any]) -> None:
         """
