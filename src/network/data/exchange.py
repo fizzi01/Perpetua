@@ -72,6 +72,12 @@ class MessageExchangeConfig:
     auto_dispatch: bool = True
     receive_buffer_size: int = 65536  # bytes for asyncio receive buffer
     multicast: bool = False  # Whether to use multicast transport
+    # Max messages buffered for the consumer. When full, mouse/screen frames
+    # are dropped (drop-oldest); other types still block so we don't silently
+    # discard control or clipboard traffic.
+    message_queue_maxsize: int = 1024
+    # Log a warning at most once per N puts when the queue stays above this fill ratio.
+    queue_high_watermark: float = 0.8
 
 
 class MessageExchange:
@@ -145,10 +151,63 @@ class MessageExchange:
             self._metrics = await self._metrics_collector.register_connection(self._id)
 
         self._running = True
-        self._message_queue: Queue[ProtocolMessage] = asyncio.Queue(maxsize=10000)
+        self._message_queue: Queue[ProtocolMessage] = asyncio.Queue(
+            maxsize=self.config.message_queue_maxsize
+        )
+        self._high_water = int(
+            self.config.message_queue_maxsize * self.config.queue_high_watermark
+        )
+        self._last_high_water_warn: float = 0.0
         self._receive_task = asyncio.create_task(self._receive_loop())
 
         self._logger.debug("Started")
+
+    # Message types that tolerate frame loss when the consumer falls behind.
+    # Anything else (clipboard, command, file, ...) keeps the blocking put().
+    _DROP_OLDEST_TYPES = frozenset({"mouse"})
+
+    async def _enqueue_message(self, message: "ProtocolMessage") -> None:
+        """
+        Bounded put with backpressure policy:
+        - lossy types (mouse) drop the oldest queued frame when full,
+          so the receive loop never stalls on a slow consumer;
+        - everything else awaits a slot.
+        Emits a rate-limited warning when the queue stays near capacity.
+        """
+        q = self._message_queue
+        if q is None:
+            return
+
+        if message.message_type in self._DROP_OLDEST_TYPES:
+            try:
+                q.put_nowait(message)
+            except asyncio.QueueFull:
+                # Drop the oldest frame to make room and re-warn (rate-limited).
+                try:
+                    dropped = q.get_nowait()
+                    q.task_done()
+                    self._logger.warning(
+                        f"Exchange queue full ({q.maxsize}); dropped oldest "
+                        f"{getattr(dropped, 'message_type', '?')} frame"
+                    )
+                except asyncio.QueueEmpty:
+                    pass
+                try:
+                    q.put_nowait(message)
+                except asyncio.QueueFull:
+                    pass
+        else:
+            await q.put(message)
+
+        # Periodic backpressure warning so high fill ratios are visible
+        # without spamming logs.
+        if q.qsize() >= self._high_water:
+            now = monotonic()
+            if now - self._last_high_water_warn > 5.0:
+                self._last_high_water_warn = now
+                self._logger.warning(
+                    f"Exchange queue high-water hit: {q.qsize()}/{q.maxsize}"
+                )
 
     async def stop(self):
         """Cleanup and shutdown the message exchange layer."""
@@ -254,12 +313,12 @@ class MessageExchange:
                             if self.config.auto_dispatch:
                                 await self.dispatch_message(reconstructed)
                             elif self._message_queue:
-                                await self._message_queue.put(reconstructed)  # ty:ignore[possibly-missing-attribute]
+                                await self._enqueue_message(reconstructed)
                     else:
                         if self.config.auto_dispatch:
                             await self.dispatch_message(message)
                         elif self._message_queue:
-                            await self._message_queue.put(message)  # ty:ignore[possibly-missing-attribute]
+                            await self._enqueue_message(message)
 
                     offset += total_length
                     # print(f"Received message of type {message.message_type}, length {msg_length} bytes")
