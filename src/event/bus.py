@@ -20,6 +20,7 @@ import asyncio
 from typing import Callable, Dict, List, Optional, Any, TypeVar
 import inspect
 
+from utils import BackgroundTasks
 from utils.logging import get_logger
 
 from . import BusEvent
@@ -71,6 +72,14 @@ class AsyncEventBus(EventBus):
 
         self._logger = get_logger(self.__class__.__name__)
 
+        # Loop is captured lazily: the bus may be constructed before the loop
+        # is running (e.g. unit-test fixtures). dispatch_nowait grabs it on first call.
+        try:
+            self._loop: Optional[asyncio.AbstractEventLoop] = asyncio.get_running_loop()
+        except RuntimeError:
+            self._loop = None
+        self._bg = BackgroundTasks()
+
     def subscribe(
         self,
         event_type: int,
@@ -106,7 +115,7 @@ class AsyncEventBus(EventBus):
         Supports both sync and async callbacks.
         """
         # Fast path: get listeners without lock (dict access is atomic in CPython)
-        listeners = self._subscribers.get(event_type)
+        listeners = tuple(self._subscribers.get(event_type, ()))
 
         if not listeners:
             return
@@ -124,13 +133,34 @@ class AsyncEventBus(EventBus):
     def dispatch_nowait(self, event_type: int, *args, **kwargs):
         """
         Fire-and-forget dispatch without waiting for completion.
-        Creates a background task.
+        Safe to call from non-loop threads (native input callbacks).
+        Drops the event with a warning if no loop is running.
         """
+        coro = self.dispatch(event_type, *args, **kwargs)
+        loop = self._loop
+        if loop is None:
+            try:
+                loop = asyncio.get_running_loop()
+                self._loop = loop
+            except RuntimeError:
+                coro.close()
+                self._logger.warning(
+                    f"dispatch_nowait dropped: no running loop (event_type={event_type})"
+                )
+                return
+        if loop.is_closed():
+            coro.close()
+            self._logger.warning(
+                f"dispatch_nowait dropped: loop is closed (event_type={event_type})"
+            )
+            return
         try:
-            asyncio.create_task(self.dispatch(event_type, *args, **kwargs))
-        except RuntimeError:
-            # No event loop running
-            pass
+            loop.call_soon_threadsafe(self._bg.spawn, coro)
+        except RuntimeError as e:
+            coro.close()
+            self._logger.warning(
+                f"dispatch_nowait dropped (event_type={event_type}): {e}"
+            )
 
     async def _execute_callback(self, callback: Callable, data, **kwargs):
         """

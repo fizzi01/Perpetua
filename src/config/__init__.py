@@ -42,9 +42,7 @@ _decoder = msgspec.json.Decoder()
 
 async def _write(file, content: str) -> None:
     async with aiofiles.open(file, "w") as f:
-        for line in content:
-            await f.write(line)
-            await asyncio.sleep(0)
+        await f.write(content)
 
 
 @dataclass

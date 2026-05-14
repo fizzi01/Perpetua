@@ -34,6 +34,7 @@ from network.stream import StreamType
 
 from utils.logging import Logger, get_logger
 from utils import ExponentialBackoff
+from utils.net import set_socket_nodelay
 
 from .handler import CallbackError, BaseConnectionHandler
 
@@ -107,6 +108,7 @@ class ConnectionHandler(BaseConnectionHandler):
 
         self.certfile = certfile
         self.use_ssl = use_ssl
+        self._ssl_context_cache: Optional[tuple[Optional[str], ssl.SSLContext]] = None
 
         if self.use_ssl and self.certfile is None:
             raise ValueError("SSL is enabled but no certificate file provided")
@@ -344,6 +346,7 @@ class ConnectionHandler(BaseConnectionHandler):
                 asyncio.open_connection(self.host, self.port),
                 timeout=self.CONNECTION_ATTEMPT_TIMEOUT,
             )
+            set_socket_nodelay(_command_writer)
             self._command_stream = StreamWrapper(
                 reader=_command_reader, writer=_command_writer
             )
@@ -476,6 +479,23 @@ class ConnectionHandler(BaseConnectionHandler):
             self._logger.log(traceback.format_exc(), Logger.ERROR)
             return False
 
+    def _get_ssl_context(self) -> Optional[ssl.SSLContext]:
+        """
+        Lazily build and cache the client SSL context.
+        Re-uses the same context across all streams to avoid re-parsing the CA.
+        """
+        if not self.use_ssl or not self.certfile:
+            return None
+        if (
+            self._ssl_context_cache is not None
+            and self._ssl_context_cache[0] == self.certfile
+        ):
+            return self._ssl_context_cache[1]
+        context = ssl.create_default_context(ssl.Purpose.SERVER_AUTH)
+        context.load_verify_locations(self.certfile)
+        self._ssl_context_cache = (self.certfile, context)
+        return context
+
     async def _open_additional_streams(self, streams: list[int]) -> bool:
         """
         Attempts to open additional streams based on the provided stream types and establish
@@ -490,10 +510,7 @@ class ConnectionHandler(BaseConnectionHandler):
             bool: True if all streams were successfully connected and configured; False if
                 any stream connection failed due to a timeout or other issues.
         """
-        ssl_context = None
-        if self.use_ssl and self.certfile:
-            ssl_context = ssl.create_default_context(ssl.Purpose.SERVER_AUTH)
-            ssl_context.load_verify_locations(self.certfile)
+        ssl_context = self._get_ssl_context()
 
         for stream_type in streams:
             try:
@@ -502,6 +519,7 @@ class ConnectionHandler(BaseConnectionHandler):
                     asyncio.open_connection(self.host, self.port),
                     timeout=self.CONNECTION_ATTEMPT_TIMEOUT,
                 )
+                set_socket_nodelay(writer)
 
                 # Upgrade to TLS if needed
                 if self.use_ssl and ssl_context:
@@ -509,6 +527,7 @@ class ConnectionHandler(BaseConnectionHandler):
                         writer.start_tls(sslcontext=ssl_context),
                         timeout=self.CONNECTION_ATTEMPT_TIMEOUT,
                     )
+                    set_socket_nodelay(writer)
 
                 # Store connected stream readers and writers in ClientConnection
                 if self._client_obj is None:

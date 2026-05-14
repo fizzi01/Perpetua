@@ -24,7 +24,7 @@ from asyncio.queues import Queue
 
 import asyncio
 from dataclasses import dataclass
-from time import time
+from time import monotonic, time
 from typing import Callable, Dict, Optional, Any, List, Coroutine
 
 from config import ApplicationConfig
@@ -33,6 +33,11 @@ from network.protocol.message import ProtocolMessage, MessageBuilder
 from network.stream import StreamType
 from utils.logging import Logger, get_logger
 from utils.metrics import ConnectionMetrics, MetricsCollector
+
+# Drop partial chunk-reassembly buffers after this many seconds without progress.
+CHUNK_REASSEMBLY_TTL: float = 60.0
+# How often to walk _chunk_buffer looking for stale entries (seconds).
+CHUNK_GC_INTERVAL: float = 5.0
 
 
 @dataclass
@@ -100,8 +105,13 @@ class MessageExchange:
             str, Callable[[ProtocolMessage], Coroutine[Any, Any, None]]
         ] = {}
 
-        # Chunk reassembly buffer
-        self._chunk_buffer: Dict[str, list[Optional[ProtocolMessage]]] = {}
+        # Chunk reassembly buffer: message_id -> (chunks, monotonic_created_at)
+        # Stale entries are dropped after CHUNK_REASSEMBLY_TTL to avoid leaks when
+        # a sender drops mid-stream and never delivers the final chunk.
+        self._chunk_buffer: Dict[
+            str, tuple[list[Optional[ProtocolMessage]], float]
+        ] = {}
+        self._last_chunk_gc: float = 0.0
 
         # Transport layer callbacks
         # We support multiple transports for multicast scenarios
@@ -608,6 +618,24 @@ class MessageExchange:
         except (asyncio.TimeoutError, asyncio.QueueEmpty):
             return None
 
+    def _gc_stale_chunks(self, now: float) -> None:
+        if now - self._last_chunk_gc < CHUNK_GC_INTERVAL:
+            return
+        self._last_chunk_gc = now
+        stale = [
+            mid
+            for mid, (_chunks, created) in self._chunk_buffer.items()
+            if now - created > CHUNK_REASSEMBLY_TTL
+        ]
+        if not stale:
+            return
+        for mid in stale:
+            del self._chunk_buffer[mid]
+        self._logger.warning(
+            f"Dropped {len(stale)} stale chunk-reassembly buffer(s) "
+            f"older than {CHUNK_REASSEMBLY_TTL}s"
+        )
+
     async def _handle_chunk(self, chunk: ProtocolMessage) -> Optional[ProtocolMessage]:
         """
         Handle a chunked message and reassemble when complete.
@@ -622,15 +650,20 @@ class MessageExchange:
             )
             return None
 
-        if message_id not in self._chunk_buffer:
-            self._chunk_buffer[message_id] = [None] * chunk.total_chunks  # ty:ignore[unsupported-operator]
+        now = monotonic()
+        self._gc_stale_chunks(now)
 
-        self._chunk_buffer[message_id][chunk.chunk_index] = chunk  # ty:ignore[invalid-assignment]
+        entry = self._chunk_buffer.get(message_id)
+        if entry is None:
+            entry = ([None] * chunk.total_chunks, now)  # ty:ignore[unsupported-operator]
+            self._chunk_buffer[message_id] = entry
+        chunks_list = entry[0]
+        chunks_list[chunk.chunk_index] = chunk  # ty:ignore[invalid-assignment]
 
         # Check if all chunks received
-        if all(c is not None for c in self._chunk_buffer[message_id]):
-            chunks = self._chunk_buffer.pop(message_id)
-            return self.builder.reconstruct_from_chunks(chunks)
+        if all(c is not None for c in chunks_list):
+            del self._chunk_buffer[message_id]
+            return self.builder.reconstruct_from_chunks(chunks_list)
 
         return None
 

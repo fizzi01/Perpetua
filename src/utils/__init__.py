@@ -15,12 +15,13 @@
 #  along with this program.  If not, see <https://www.gnu.org/licenses/>.
 #
 
+import asyncio
 import hashlib
 import sys
 import importlib
 import time
 import random
-from typing import Optional
+from typing import Coroutine, Optional, Set
 
 
 def backend_module(package: str, platform_map: Optional[dict] = None):
@@ -179,3 +180,36 @@ class ExponentialBackoff:
     def current_delay(self) -> float:
         """Get current delay value (before jitter)."""
         return min(self._current_delay, self.max_delay)
+
+
+class BackgroundTasks:
+    """
+    Holds strong refs to fire-and-forget asyncio.Tasks
+    """
+
+    __slots__ = ("_tasks",)
+
+    def __init__(self) -> None:
+        self._tasks: Set[asyncio.Task] = set()
+
+    def spawn(self, coro: Coroutine) -> asyncio.Task:
+        task = asyncio.create_task(coro)
+        self._tasks.add(task)
+        task.add_done_callback(self._tasks.discard)
+        return task
+
+    def __len__(self) -> int:
+        return len(self._tasks)
+
+    async def drain(self, cancel: bool = False) -> None:
+        if not self._tasks:
+            return
+        # Exclude the current task: a task awaiting itself would deadlock.
+        current = asyncio.current_task()
+        to_wait = [t for t in self._tasks if t is not current]
+        if cancel:
+            for t in to_wait:
+                t.cancel()
+        if to_wait:
+            await asyncio.gather(*to_wait, return_exceptions=True)
+        self._tasks.difference_update(to_wait)

@@ -151,6 +151,14 @@ class NotificationEvent:
     message: Optional[str] = None
     metadata: Optional[Dict[str, Any]] = None
 
+    def __post_init__(self) -> None:
+        # Detach `data` and `metadata` from the producer's dicts so subscribers
+        # that mutate them concurrently can't corrupt each other's view.
+        if self.data is not None:
+            self.data = dict(self.data)
+        if self.metadata is not None:
+            self.metadata = dict(self.metadata)
+
     def to_dict(self) -> Dict[str, Any]:
         """Convert event to dictionary"""
         result = {

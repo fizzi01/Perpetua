@@ -92,7 +92,7 @@ class TestCertificateSharing(unittest.TestCase):
         )
 
         otp = "123456"
-        token = sharing._create_jwt(otp)
+        token = asyncio.run(sharing._create_jwt(otp))
 
         # Token should be a non-empty string
         self.assertIsInstance(token, str)

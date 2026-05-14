@@ -353,20 +353,20 @@ class CursorHandlerWorker(object):
         conn = self.mouse_conn_rec
         # poll_timeout = self.DATA_POLL_TIMEOUT
 
-        # Pre-allocate a reusable event object
-        mouse_event = MouseEvent(action=MouseEvent.MOVE_ACTION)
-
         while self._is_running and self.stream is not None:
             try:
                 # Non-blocking poll
-                has_data = conn.poll
+                has_data = conn.poll(0)
 
                 if has_data:
                     # Read from the pipe in executor
                     delta_x, delta_y = await loop.run_in_executor(None, conn.recv)  # type: ignore # ty:ignore[unused-ignore-comment]
 
-                    mouse_event.dx = delta_x
-                    mouse_event.dy = delta_y
+                    # Fresh event per iteration: stream.send may await between
+                    # iterations, so reusing one object would race delta values.
+                    mouse_event = MouseEvent(
+                        action=MouseEvent.MOVE_ACTION, dx=delta_x, dy=delta_y
+                    )
 
                     # Async send via stream
                     await self.stream.send(mouse_event)

@@ -61,7 +61,7 @@ def anyio_backend(request):
 @pytest.fixture(autouse=True)
 def disable_command_handler_clear():
     """Disable CommandHandler.clear during tests to preserve handlers."""
-    with patch("service.daemon.CommandHandler.clear"):
+    with patch("daemon.CommandHandler.clear"):
         yield
 
 
@@ -75,7 +75,7 @@ def disable_uinput():
 @pytest.fixture(autouse=True)
 def disable_delayed_exit():
     """Disable Daemon.delayed_exit to prevent test process from exiting."""
-    with patch("service.daemon.Daemon.delayed_exit"):
+    with patch("daemon.Daemon.delayed_exit"):
         yield
 
 
@@ -86,7 +86,7 @@ def disable_permission_watchdog():
     async def _noop(self, interval=5.0):
         pass
 
-    with patch("service.daemon.Daemon._permission_watchdog", _noop):
+    with patch("daemon.Daemon._permission_watchdog", _noop):
         yield
 
 

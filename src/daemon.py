@@ -43,7 +43,7 @@ from enum import StrEnum
 from config import ApplicationConfig, ServerConfig, ClientConfig
 from service.client import Client
 from service.server import Server
-from utils import UIDGenerator
+from utils import UIDGenerator, BackgroundTasks
 from utils.logging import Logger, get_logger
 from utils.cli import DaemonArguments
 from utils.permissions import PermissionChecker
@@ -314,6 +314,9 @@ class Daemon:
         self._client_connection_lock = asyncio.Lock()
 
         self._command_handlers: Dict[str, Callable] = CommandHandler.get_handlers(self)
+
+        # Strong refs for fire-and-forget tasks (command exec, notifications, etc.)
+        self._bg_tasks = BackgroundTasks()
 
         # Setup signal handlers for graceful shutdown
         self._setup_signal_handlers()
@@ -694,6 +697,12 @@ class Daemon:
         if not IS_WINDOWS and os.path.exists(self.socket_path):
             os.unlink(self.socket_path)
 
+        # Wait for any in-flight fire-and-forget tasks to finish (or cancel them).
+        try:
+            await asyncio.wait_for(self._bg_tasks.drain(), timeout=2.0)
+        except asyncio.TimeoutError:
+            await self._bg_tasks.drain(cancel=True)
+
         self._shutdown_event.set()
         self._logger.info("Daemon stopped")
 
@@ -809,7 +818,7 @@ class Daemon:
                             continue
 
                         # Execute command (no response needed, commands send notifications)
-                        asyncio.create_task(self._execute_command(command, params))
+                        self._bg_tasks.spawn(self._execute_command(command, params))
                         await asyncio.sleep(0)
 
                 except asyncio.TimeoutError:
@@ -962,7 +971,7 @@ class Daemon:
         """
         # Services now send NotificationEvent objects directly
         # We forward them through the notification manager
-        asyncio.create_task(self._notification_manager.notify_event(event))
+        self._bg_tasks.spawn(self._notification_manager.notify_event(event))
 
     def is_client_connected(self) -> bool:
         """Check if a client is currently connected"""
@@ -2152,7 +2161,7 @@ class Daemon:
         )
 
         # Schedule shutdown after notification is sent
-        asyncio.create_task(self._delayed_shutdown())
+        self._bg_tasks.spawn(self._delayed_shutdown())
 
     async def _delayed_shutdown(self):
         """Delay shutdown to allow response to be sent"""

@@ -18,6 +18,9 @@
 from utils import backend_module
 from typing import TYPE_CHECKING
 
+import asyncio
+import socket
+
 if TYPE_CHECKING:
     from ._base import CommonNetInfo
 
@@ -28,3 +31,14 @@ else:
     MissingIpError = _backend_module.MissingIpError
     get_local_ip = CommonNetInfo.get_local_ip
     del _backend_module
+
+
+def set_socket_nodelay(writer: "asyncio.StreamWriter") -> None:
+    # input deltas are tiny and latency-critical.
+    sock = writer.get_extra_info("socket")
+    if sock is None:
+        return
+    try:
+        sock.setsockopt(socket.IPPROTO_TCP, socket.TCP_NODELAY, 1)
+    except OSError:
+        pass

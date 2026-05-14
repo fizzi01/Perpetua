@@ -33,6 +33,7 @@ from network.data.exchange import MessageExchange, MessageExchangeConfig
 from network.protocol.message import MessageType, ProtocolMessage
 from network.stream import StreamType
 from utils.logging import Logger, get_logger
+from utils.net import set_socket_nodelay
 
 from .handler import CallbackError, BaseConnectionHandler
 
@@ -277,6 +278,7 @@ class ConnectionHandler(BaseConnectionHandler):
         self, reader: asyncio.StreamReader, writer: asyncio.StreamWriter
     ):
         """Gestisce una nuova connessione client (handshake o stream aggiuntivo)"""
+        set_socket_nodelay(writer)
         addr = writer.get_extra_info("peername")
         self._logger.log(f"Accepted connection from {addr}", Logger.DEBUG)
 
@@ -637,6 +639,7 @@ class ConnectionHandler(BaseConnectionHandler):
                 )
 
                 stream_addr = stream_writer.get_extra_info("peername")
+                set_socket_nodelay(stream_writer)
 
                 # Wrap SSL
                 if client.ssl and self.certfile and self.keyfile:
@@ -644,6 +647,7 @@ class ConnectionHandler(BaseConnectionHandler):
                         stream_writer.start_tls(self._get_ssl_context()),
                         timeout=self.CONNECTION_ATTEMPT_TIMEOUT,
                     )
+                    set_socket_nodelay(stream_writer)
                     self._logger.log(
                         f"SSL stream connection for {stream_type} from {stream_addr}",
                         Logger.INFO,
@@ -876,12 +880,19 @@ class ConnectionHandler(BaseConnectionHandler):
     def _get_ssl_context(self) -> Optional[ssl.SSLContext]:
         """
         Create SSL context if certfile and keyfile are provided.
+        Cached: certificate parsing happens once per (certfile, keyfile) pair.
         """
         if not self.certfile or not self.keyfile:
             return None
 
+        cache_key = (self.certfile, self.keyfile)
+        cached = getattr(self, "_ssl_context_cache", None)
+        if cached is not None and cached[0] == cache_key:
+            return cached[1]
+
         context = ssl.create_default_context(ssl.Purpose.CLIENT_AUTH)
         context.load_cert_chain(certfile=self.certfile, keyfile=self.keyfile)
+        self._ssl_context_cache = (cache_key, context)
         return context
 
     def _ssl_wrap(self, client_socket):

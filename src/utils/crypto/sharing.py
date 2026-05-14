@@ -113,6 +113,14 @@ class CertificateSharing:
         return kdf.derive(otp.encode("utf-8"))
 
     @staticmethod
+    async def _derive_key_from_otp_async(otp: str, salt: bytes) -> bytes:
+        # PBKDF2 is CPU-bound, keep it off the event loop.
+        loop = asyncio.get_running_loop()
+        return await loop.run_in_executor(
+            None, CertificateSharing._derive_key_from_otp, otp, salt
+        )
+
+    @staticmethod
     def encrypt_data(data: bytes, otp: str) -> Tuple[bytes, bytes, bytes]:
         """
         Encrypt data using AES-GCM with key derived from OTP.
@@ -138,6 +146,15 @@ class CertificateSharing:
         return encrypted_data, nonce, salt
 
     @staticmethod
+    async def encrypt_data_async(data: bytes, otp: str) -> Tuple[bytes, bytes, bytes]:
+        salt = secrets.token_bytes(16)
+        nonce = secrets.token_bytes(12)
+        key = await CertificateSharing._derive_key_from_otp_async(otp, salt)
+        aesgcm = AESGCM(key)
+        encrypted_data = aesgcm.encrypt(nonce, data, None)
+        return encrypted_data, nonce, salt
+
+    @staticmethod
     def decrypt_data(
         encrypted_data: bytes, nonce: bytes, salt: bytes, otp: str
     ) -> bytes:
@@ -160,7 +177,15 @@ class CertificateSharing:
         aesgcm = AESGCM(key)
         return aesgcm.decrypt(nonce, encrypted_data, None)
 
-    def _create_jwt(self, otp: str) -> str:
+    @staticmethod
+    async def decrypt_data_async(
+        encrypted_data: bytes, nonce: bytes, salt: bytes, otp: str
+    ) -> bytes:
+        key = await CertificateSharing._derive_key_from_otp_async(otp, salt)
+        aesgcm = AESGCM(key)
+        return aesgcm.decrypt(nonce, encrypted_data, None)
+
+    async def _create_jwt(self, otp: str) -> str:
         """
         Create JWT containing encrypted certificate data.
 
@@ -170,8 +195,10 @@ class CertificateSharing:
         Returns:
             JWT token with encrypted certificate
         """
-        # Encrypt certificate data
-        encrypted_data, nonce, salt = self.encrypt_data(self._cert_data, otp)
+        # Encrypt certificate data (PBKDF2 runs in executor)
+        encrypted_data, nonce, salt = await self.encrypt_data_async(
+            self._cert_data, otp
+        )
 
         # Encode binary data to base64 for JSON serialization
         payload = {
@@ -209,8 +236,8 @@ class CertificateSharing:
                 await writer.drain()
                 return
 
-            # Create and send JWT
-            token = self._create_jwt(self._otp)  # ty:ignore[invalid-argument-type]
+            # Create and send JWT (PBKDF2 derivation runs off the event loop)
+            token = await self._create_jwt(self._otp)  # ty:ignore[invalid-argument-type]
             writer.write(f"TOKEN:{token}\n".encode("utf-8"))
             await writer.drain()
 
@@ -424,8 +451,8 @@ class CertificateReceiver:
                 nonce = base64.b64decode(nonce_b64)
                 salt = base64.b64decode(salt_b64)
 
-                # Decrypt certificate data using OTP
-                cert_data = CertificateSharing.decrypt_data(
+                # Decrypt certificate data using OTP (PBKDF2 in executor)
+                cert_data = await CertificateSharing.decrypt_data_async(
                     encrypted_cert, nonce, salt, otp
                 )
 
