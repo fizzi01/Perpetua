@@ -67,9 +67,9 @@ class TestProtocolMessage:
         assert y == b"Y"
         assert length == len(binary_data) - prefix_len
 
-        # Verify body is valid JSON/msgspec
-        json_body = binary_data[prefix_len:]
-        decoded_map = msgspec.json.decode(json_body)
+        # Verify body is valid msgpack (wire format)
+        body = binary_data[prefix_len:]
+        decoded_map = msgspec.msgpack.decode(body)
         assert decoded_map["message_type"] == msg.message_type
 
     def test_from_bytes(self):
