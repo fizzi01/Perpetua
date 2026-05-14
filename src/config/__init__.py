@@ -40,6 +40,51 @@ _encoder = msgspec.json.Encoder()
 _decoder = msgspec.json.Decoder()
 
 
+# Module-level cache for parsed config files: path -> (mtime_ns, parsed_dict).
+# Multiple components (ApplicationConfig, ServerConfig, ClientConfig) read the
+# same file to pull their own section; without a cache each one re-parses.
+_config_cache: Dict[str, "tuple[int, Dict[str, Any]]"] = {}
+
+
+def _get_cached_or_load_sync(file_path: str) -> Optional[Dict[str, Any]]:
+    """Return the parsed config dict, hitting the cache if mtime is unchanged."""
+    try:
+        mtime_ns = os.stat(file_path).st_mtime_ns
+    except OSError:
+        return None
+    cached = _config_cache.get(file_path)
+    if cached is not None and cached[0] == mtime_ns:
+        return cached[1]
+    with open(file_path, "rb") as f:
+        parsed = _decoder.decode(f.read())
+    _config_cache[file_path] = (mtime_ns, parsed)
+    return parsed
+
+
+async def _get_cached_or_load(file_path: str) -> Optional[Dict[str, Any]]:
+    """Async variant of _get_cached_or_load_sync."""
+    try:
+        mtime_ns = os.stat(file_path).st_mtime_ns
+    except OSError:
+        return None
+    cached = _config_cache.get(file_path)
+    if cached is not None and cached[0] == mtime_ns:
+        return cached[1]
+    async with aiofiles.open(file_path, "rb") as f:
+        raw = await f.read()
+    parsed = _decoder.decode(raw)
+    _config_cache[file_path] = (mtime_ns, parsed)
+    return parsed
+
+
+def invalidate_config_cache(file_path: Optional[str] = None) -> None:
+    """Drop a cached entry (or the entire cache if file_path is None)."""
+    if file_path is None:
+        _config_cache.clear()
+    else:
+        _config_cache.pop(file_path, None)
+
+
 async def _write(file, content: str) -> None:
     async with aiofiles.open(file, "w") as f:
         await f.write(content)
@@ -206,9 +251,9 @@ class ApplicationConfig:
             return False
 
         try:
-            with open(file_path, "r") as f:
-                content = f.read()
-                config = _decoder.decode(content.encode())
+            config = _get_cached_or_load_sync(file_path)
+            if config is None:
+                return False
             data = config.get(self.app_key, {})
             if data:
                 self.from_dict(data)
@@ -235,9 +280,9 @@ class ApplicationConfig:
             return False
 
         try:
-            async with aiofiles.open(file_path, "r") as f:
-                content = await f.read()
-                config = _decoder.decode(content.encode())
+            config = await _get_cached_or_load(file_path)
+            if config is None:
+                return False
             data = config.get(self.app_key, {})
             if data:
                 self.from_dict(data)
@@ -548,9 +593,9 @@ class ServerConfig:
             return False
 
         try:
-            with open(file_path, "r") as f:
-                content = f.read()
-                config = _decoder.decode(content.encode())
+            config = _get_cached_or_load_sync(file_path)
+            if config is None:
+                return False
             data = config.get(self.app_config.server_key, {})
             if data:
                 self.from_dict(data)
@@ -576,9 +621,9 @@ class ServerConfig:
             return False
 
         try:
-            async with aiofiles.open(file_path, "r") as f:
-                content = await f.read()
-                config = _decoder.decode(content.encode())
+            config = await _get_cached_or_load(file_path)
+            if config is None:
+                return False
             data = config.get(self.app_config.server_key, {})
             if data:
                 self.from_dict(data)
@@ -849,9 +894,9 @@ class ClientConfig:
             return False
 
         try:
-            with open(file_path, "r") as f:
-                content = f.read()
-                config = _decoder.decode(content.encode())
+            config = _get_cached_or_load_sync(file_path)
+            if config is None:
+                return False
             data = config.get(self.app_config.client_key, {})
             if data:
                 self.from_dict(data)
@@ -877,9 +922,9 @@ class ClientConfig:
             return False
 
         try:
-            async with aiofiles.open(file_path, "r") as f:
-                content = await f.read()
-                config = _decoder.decode(content.encode())
+            config = await _get_cached_or_load(file_path)
+            if config is None:
+                return False
             data = config.get(self.app_config.client_key, {})
             if data:
                 self.from_dict(data)
