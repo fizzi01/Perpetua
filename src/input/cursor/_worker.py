@@ -81,7 +81,14 @@ class CursorHandlerWorker(object):
         self.mouse_conn_rec, self.mouse_conn_send = Pipe(duplex=False)
         self.process = None
         self._is_running = False
-        self._mouse_data_task = None  # Async task instead of thread
+        self._mouse_data_task = None  # Async forwarder task
+
+        # Dedicated thread that owns mouse_conn_rec: blocking reads avoid the
+        # per-delta run_in_executor scheduling overhead. Deltas land on
+        # _mouse_data_queue via call_soon_threadsafe.
+        self._mouse_data_thread: Optional[threading.Thread] = None
+        self._mouse_thread_stop = threading.Event()
+        self._mouse_data_queue: Optional[asyncio.Queue] = None
 
         self._active_client: Optional[str] = None
         self._last_event: Optional[BusEvent] = None
@@ -345,42 +352,97 @@ class CursorHandlerWorker(object):
         """Checks if the window process is running"""
         return self._is_running and self.process is not None and self.process.is_alive()
 
+    # Bound on how many in-flight deltas we keep buffered between the OS-thread
+    # reader and the asyncio forwarder. Old deltas are dropped if the consumer
+    # (network stream) can't keep up — cursor jitter is preferable to growing
+    # backpressure on every mouse move.
+    _MOUSE_QUEUE_MAXSIZE = 4096
+
+    def _mouse_data_reader_thread(
+        self,
+        loop: asyncio.AbstractEventLoop,
+        queue: "asyncio.Queue",
+    ) -> None:
+        """
+        Runs on a dedicated thread. Owns mouse_conn_rec and blocks on recv
+        (with a short poll timeout so we can react to shutdown). Each delta
+        is handed to the asyncio queue via call_soon_threadsafe.
+        """
+        conn = self.mouse_conn_rec
+        stop = self._mouse_thread_stop
+        while not stop.is_set():
+            try:
+                if not conn.poll(0.1):
+                    continue
+                delta = conn.recv()
+            except (EOFError, OSError):
+                break
+            except Exception:
+                # Pipe closed mid-shutdown or transient OS-level error: bail out.
+                break
+            try:
+                loop.call_soon_threadsafe(self._enqueue_mouse_delta, queue, delta)
+            except RuntimeError:
+                # Loop closing.
+                break
+
+    @staticmethod
+    def _enqueue_mouse_delta(queue: "asyncio.Queue", delta) -> None:
+        """Drop-oldest enqueue: cursor deltas are lossy by design."""
+        try:
+            queue.put_nowait(delta)
+        except asyncio.QueueFull:
+            try:
+                queue.get_nowait()
+                queue.put_nowait(delta)
+            except (asyncio.QueueEmpty, asyncio.QueueFull):
+                pass
+
     async def _mouse_data_listener(self):
         """
-        Async coroutine to listen for mouse data from the capture process.
-        Reads from the pipe in a non-blocking way using executor.
+        Forwards mouse deltas from the reader thread onto the stream. Each
+        iteration awaits a single asyncio.Queue.get; the actual blocking pipe
+        read happens on the dedicated thread.
         """
         loop = asyncio.get_running_loop()
-        conn = self.mouse_conn_rec
-        # poll_timeout = self.DATA_POLL_TIMEOUT
+        self._mouse_data_queue = asyncio.Queue(maxsize=self._MOUSE_QUEUE_MAXSIZE)
+        self._mouse_thread_stop.clear()
+        self._mouse_data_thread = threading.Thread(
+            target=self._mouse_data_reader_thread,
+            args=(loop, self._mouse_data_queue),
+            name="CursorMouseDeltaReader",
+            daemon=True,
+        )
+        self._mouse_data_thread.start()
 
-        while self._is_running and self.stream is not None:
-            try:
-                # Non-blocking poll
-                has_data = conn.poll(0)
-
-                if has_data:
-                    # Read from the pipe in executor
-                    delta_x, delta_y = await loop.run_in_executor(None, conn.recv)  # type: ignore # ty:ignore[unused-ignore-comment]
-
-                    # Fresh event per iteration: stream.send may await between
-                    # iterations, so reusing one object would race delta values.
-                    mouse_event = MouseEvent(
-                        action=MouseEvent.MOVE_ACTION, dx=delta_x, dy=delta_y
-                    )
-
-                    # Async send via stream
+        try:
+            queue = self._mouse_data_queue
+            while self._is_running and self.stream is not None:
+                try:
+                    delta_x, delta_y = await queue.get()
+                except asyncio.CancelledError:
+                    raise
+                # Fresh event per iteration: stream.send may await between
+                # iterations, so reusing one object would race delta values.
+                mouse_event = MouseEvent(
+                    action=MouseEvent.MOVE_ACTION, dx=delta_x, dy=delta_y
+                )
+                try:
                     await self.stream.send(mouse_event)
-                else:
-                    # Small sleep to avoid busy waiting
-                    await asyncio.sleep(0)
-
-            except EOFError:
-                await asyncio.sleep(0)
-                break
-            except Exception as e:
-                self._logger.exception(f"Error in mouse data listener ({e})")
-                await asyncio.sleep(0.01)
+                except Exception as e:
+                    self._logger.exception(f"Error sending mouse delta ({e})")
+                    await asyncio.sleep(0.01)
+        finally:
+            # Signal the reader thread to wind down on cancellation/loop exit.
+            self._mouse_thread_stop.set()
+            if self._mouse_data_thread is not None:
+                # join from an executor so we don't block the loop here.
+                t = self._mouse_data_thread
+                self._mouse_data_thread = None
+                try:
+                    await loop.run_in_executor(None, t.join, 1.0)
+                except Exception:
+                    pass
 
     async def send_command(self, command):
         """Sends a command to the window asynchronously"""

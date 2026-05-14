@@ -75,7 +75,7 @@ class MessageExchangeConfig:
     # Max messages buffered for the consumer. When full, mouse/screen frames
     # are dropped (drop-oldest); other types still block so we don't silently
     # discard control or clipboard traffic.
-    message_queue_maxsize: int = 1024
+    message_queue_maxsize: int = 4096
     # Log a warning at most once per N puts when the queue stays above this fill ratio.
     queue_high_watermark: float = 0.8
 
