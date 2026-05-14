@@ -72,8 +72,10 @@ class ProtocolMessage(msgspec.Struct):
     prefix_lenght: ClassVar[int] = struct.calcsize(_prefix_format)
 
     def to_dict(self) -> Dict[str, Any]:
-        """Convert message to dictionary for serialization."""
-        return {f: getattr(self, f) for f in self.__struct_fields__}
+        """Convert message to dictionary for serialization.
+        Uses msgspec's C-implemented asdict, which is materially faster than
+        the Python-level comprehension."""
+        return msgspec.structs.asdict(self)
 
     def to_json(self) -> str:
         """Serialize message to JSON string (debug/external use, not wire)."""
