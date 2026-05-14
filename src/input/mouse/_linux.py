@@ -37,6 +37,7 @@ from event import (
     ClientConnectedEvent,
     ClientDisconnectedEvent,
 )
+from utils.logging import Logger
 from utils.screen import Screen
 
 
@@ -207,7 +208,8 @@ class ServerMouseListener(_base.ServerMouseListener):
         )
 
     def _on_barrier_hit(self, edge, cx, cy):
-        self._logger.debug(f"[BARRIER_HIT] edge={edge} cx={cx} cy={cy}")
+        if self._logger.is_enabled_for(Logger.DEBUG):
+            self._logger.debug(f"[BARRIER_HIT] edge={edge} cx={cx} cy={cy}")
         asyncio.run_coroutine_threadsafe(
             self._on_barrier_activated(edge, cx, cy),
             self._loop,

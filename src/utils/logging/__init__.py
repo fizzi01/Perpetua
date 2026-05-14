@@ -128,6 +128,15 @@ class BaseLogger(ABC):
     def set_level(self, level: int):
         pass
 
+    def is_enabled_for(self, level: int) -> bool:
+        """
+        Cheap check used to skip building expensive log payloads (f-strings,
+        big dict snapshots) on hot paths when the level would be filtered out
+        anyway. Default fallback compares against self.level(); subclasses
+        delegate to the underlying logging.Logger.isEnabledFor when available.
+        """
+        return level >= self.level()
+
 
 class Logger(BaseLogger):
     """
@@ -318,6 +327,9 @@ class Logger(BaseLogger):
 
     def exception(self, message: str, **kw: Any):
         pass
+
+    def is_enabled_for(self, level: int) -> bool:
+        return self._logger.isEnabledFor(self._parse_level(level))
 
 
 class StructLogger(BaseLogger):

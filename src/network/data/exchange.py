@@ -208,9 +208,10 @@ class MessageExchange:
                     )
 
                     if msg_length > max_msg_size:
-                        self._logger.debug(
-                            f"Received message length {msg_length} exceeds maximum allowed {max_msg_size}. Skipping."
-                        )
+                        if self._logger.is_enabled_for(Logger.DEBUG):
+                            self._logger.debug(
+                                f"Received message length {msg_length} exceeds maximum allowed {max_msg_size}. Skipping."
+                            )
                         # Message too large, seek next marker
                         offset += 1
                         # await asyncio.sleep(0)
@@ -222,9 +223,10 @@ class MessageExchange:
                     if offset + total_length > buffer_len:
                         # Incomplete message, keep from offset onwards
                         # await asyncio.sleep(0)
-                        self._logger.debug(
-                            f"Incomplete message received. Expected length: {total_length}, current buffer length: {buffer_len - offset}. Waiting for more data."
-                        )
+                        if self._logger.is_enabled_for(Logger.DEBUG):
+                            self._logger.debug(
+                                f"Incomplete message received. Expected length: {total_length}, current buffer length: {buffer_len - offset}. Waiting for more data."
+                            )
                         break
 
                     # Extract and process the complete message
@@ -645,9 +647,10 @@ class MessageExchange:
         """
         message_id = chunk.message_id
         if message_id is None:
-            self._logger.debug(
-                "Received chunk without message_id", data=chunk.to_dict()
-            )
+            if self._logger.is_enabled_for(Logger.DEBUG):
+                self._logger.debug(
+                    "Received chunk without message_id", data=chunk.to_dict()
+                )
             return None
 
         now = monotonic()
