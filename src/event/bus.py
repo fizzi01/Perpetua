@@ -69,10 +69,16 @@ class AsyncEventBus(EventBus):
     Optimized for maximum efficiency with minimal overhead.
     """
 
+    # Auto-disable a callback after this many consecutive failures so one buggy
+    # listener can't keep poisoning every dispatch (logged loudly, easy to spot).
+    MAX_CONSECUTIVE_FAILURES = 20
+
     def __init__(self):
         super().__init__()
         # Use dict for O(1) lookup, list for subscribers
         self._subscribers: Dict[int, List[_Subscriber]] = {}
+        # (event_type, id(callback)) -> consecutive failure count
+        self._failure_counts: Dict[Tuple[int, int], int] = {}
 
         self._logger = get_logger(self.__class__.__name__)
 
@@ -121,6 +127,7 @@ class AsyncEventBus(EventBus):
         for i, (cb, _) in enumerate(subs):
             if cb is callback or cb == callback:
                 del subs[i]
+                self._failure_counts.pop((event_type, id(cb)), None)
                 return
 
     async def dispatch(self, event_type: int, data: Optional[T] = None, **kwargs):
@@ -137,7 +144,7 @@ class AsyncEventBus(EventBus):
 
         # Create tasks for all callbacks
         tasks = [
-            self._execute_callback(cb, is_async, data, **kwargs)
+            self._execute_callback(event_type, cb, is_async, data, **kwargs)
             for cb, is_async in listeners
         ]
 
@@ -179,12 +186,20 @@ class AsyncEventBus(EventBus):
             )
 
     async def _execute_callback(
-        self, callback: Callable, is_async: bool, data, **kwargs
+        self,
+        event_type: int,
+        callback: Callable,
+        is_async: bool,
+        data,
+        **kwargs,
     ):
         """
         Execute a callback with exception handling.
         `is_async` is pre-resolved at subscribe time to avoid an inspect call per event.
+        A callback that keeps raising on consecutive events gets auto-unsubscribed
+        after MAX_CONSECUTIVE_FAILURES to keep the bus healthy.
         """
+        key = (event_type, id(callback))
         try:
             if is_async:
                 await callback(data, **kwargs)
@@ -193,7 +208,25 @@ class AsyncEventBus(EventBus):
                 loop = asyncio.get_running_loop()
                 await loop.run_in_executor(None, lambda: callback(data, **kwargs))  # type: ignore
         except Exception as e:
-            self._logger.error(f"Exception raised while dispatching event ({e})")
+            count = self._failure_counts.get(key, 0) + 1
+            self._failure_counts[key] = count
+            self._logger.error(
+                f"Exception in event {event_type} callback "
+                f"{getattr(callback, '__qualname__', repr(callback))} "
+                f"({count}/{self.MAX_CONSECUTIVE_FAILURES}): {e}"
+            )
+            if count >= self.MAX_CONSECUTIVE_FAILURES:
+                self._logger.warning(
+                    f"Disabling callback "
+                    f"{getattr(callback, '__qualname__', repr(callback))} "
+                    f"for event {event_type}: too many consecutive failures"
+                )
+                self.unsubscribe(event_type, callback)
+            return
+        # Success: clear any prior failure streak so transient errors don't
+        # accumulate toward the auto-disable threshold.
+        if key in self._failure_counts:
+            del self._failure_counts[key]
 
 
 # Backward compatibility alias
