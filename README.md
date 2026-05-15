@@ -32,11 +32,24 @@ Built with Python using uvloop (macOS/Linux) and winloop (Windows) as event loop
 
 The GUI will guide you through choosing server or client mode and the initial configuration.
 
-> [!TIP]
-> For detailed configuration options, including client-server pairing and security settings, see the [Configuration](#configuration) section below.
-
 > [!NOTE]
 > **macOS:** Perpetua requires Accessibility permissions and Local Network access (Privacy & Security). At first launch, macOS will show prompts to grant these permissions. You can also manage permissions manually in System Settings > Privacy & Security.
+
+### First-Time Setup
+
+Install Perpetua on both machines, then run through these steps once. After this, every reconnection is automatic.
+
+1. On the machine that owns the keyboard and mouse, open Perpetua and pick `Server`. Press the power button to start it.
+2. On the other machine, open Perpetua and pick `Client`. Press the power button. The client auto-discovers the server on the local network.
+3. On the `Server`, an OTP card appears under the power button when the client asks to pair. Share the 6-digit code with the user of the client.
+4. On the `Client`, enter the OTP when prompted.
+5. The `Server` shows an Allow/Deny card with a screen position selector (top, bottom, left, right). Pick a position and press Allow.
+6. Done!
+
+The OTP is shown only on the server's screen and entered manually on the client; it never travels over the network.
+
+> [!TIP]
+> You can pre-register clients in `Server > Clients` instead. Pre-registered clients skip the Allow/Deny prompt and connect directly.
 
 ### Background Mode
 
@@ -69,7 +82,7 @@ The following hotkeys are available on the **server** machine to control input f
 | `Ctrl + Shift + P + ↑` | Switch focus to the **top** client |
 | `Ctrl + Shift + P + ↓` | Switch focus to the **bottom** client |
 | `Ctrl + Shift + P + Esc` | Return focus to the **server** |
-| `Ctrl + Shift + Q` | **Panic** — force-quit Perpetua |
+| `Ctrl + Shift + Q` | **Panic** - force-quit Perpetua |
 
 > [!NOTE]
 > Client switch hotkeys require the server to be running and at least one client to be connected.
@@ -120,10 +133,12 @@ Configuration File Locations:
 <details>
 <summary><b>Server Configuration</b></summary>
 
-The server configuration is managed automatically for basic setup (certificate generation, network binding). However, to accept client connections, you must manually add each client to the server configuration (or in `Server > Clients` section), specifying:
+The server configuration is managed automatically for basic setup (certificate generation, network binding). To accept client connections, you can:
 
-- Client IPs and/or Hostname
-- Screen Position: The spatial arrangement relative to the server (left, right, top, bottom)
+- Let the GUI handle it: when a new client tries to connect, the `Server` shows an Allow/Deny card with a screen position selector. Picking Allow adds the client to the allowlist with the chosen position.
+- Or pre-register each client manually in `Server > Clients` section (or in the config file) before they connect. Specify:
+    - Client IPs and/or Hostname
+    - Screen Position: The spatial arrangement relative to the server (left, right, top, bottom)
 
 This configuration defines how devices are arranged in your workspace for a seamless cursor transition between them.
 
@@ -149,13 +164,15 @@ Manual Configuration:
 
 When a client connects to a new server for the first time, it needs to get the server's TLS certificate to establish a secure connection. Here's how it works:
 
-1. The client starts the connection process
-2. On the `Server` (which must be running and listening), generate an OTP through the GUI in the `Security` section ("*Secure connection*" must be **enabled**!)
-3. Enter the OTP on the `Client` when prompted (the GUI walks you through this)
-4. If the certificate exchange succeeds and the client is in the server's allowlist, the connection is established
+1. The `Client` starts the connection process and signals the `Server` it wants to pair ("*Secure connection*" must be **enabled**, it is by default).
+2. The `Server` generates an OTP automatically and shows it on the GUI under the power button.
+3. Share the OTP with the user of the `Client` and enter it when prompted.
+4. The `Server` shows an Allow/Deny card with a screen position selector. Picking Allow adds the client to the allowlist; picking Deny rejects the handshake.
 5. Done!
 
-The OTP is just for the initial certificate exchange. After that, connections to the same server authenticate automatically using the saved certificates.
+You can also generate the OTP manually from the `Security` section on the `Server` (the same card appears under the power button). This is useful when pre-registering clients without waiting for an incoming request.
+
+The OTP is just for the initial certificate exchange. After that, connections to the same server authenticate automatically using the saved certificates. The OTP itself never travels over the network - it is shown only on the server's screen.
 
 </details>
 
@@ -175,12 +192,14 @@ The configuration [json file](#file-structure) is split into three sections: `se
 - `0`: Debug (detailed logs)
 - `1`: Info (standard logs)
 
+`pairing_port` is the port used for the initial OTP-based certificate exchange. Leave it `null` to derive it as `port - 2`. The value is advertised over mDNS so clients discover it automatically.
+
 `authorized_clients` lists the clients that can connect. To add a new client, you only need to specify:
 - `uid`: Unique identifier
 - `host_name` and/or `ip_addresses`: Client's network identity
 - `screen_position`: Where the client is positioned relative to the server (`left`, `right`, `top`, `bottom`)
 
-Other fields are automatically populated by the system.
+Other fields are automatically populated by the system. Clients can also be added on the fly from the GUI via the Allow/Deny prompt.
 
 #### Client Section
 
@@ -197,6 +216,7 @@ These parameters affect the application's internal behavior. Only modify them if
         "uid": "...",
         "host": "0.0.0.0",
         "port": 55655,
+        "pairing_port": null,
         "heartbeat_interval": 1,
         "streams_enabled": {
             "1": true,
@@ -257,6 +277,55 @@ These parameters affect the application's internal behavior. Only modify them if
 > When multiple Perpetua servers are detected on the network (in auto-discovery mode),
 > the GUI will present a selection dialog allowing the user to
 > choose the desired server.
+
+
+## Troubleshooting
+
+<details>
+<summary><b>"Port already in use" on server start</b></summary>
+
+The configured TCP `port` (default `55655`) is occupied by another process. Open `Server > Options` and pick a different value, then retry.
+
+</details>
+
+<details>
+<summary><b>Pairing port collision</b></summary>
+
+The pairing listener (default `port - 2`) auto-falls-back to the next free adjacent port when busy. The actual port is advertised over mDNS so clients pick it up automatically.
+
+To pin a specific port, set `pairing_port` in the server config.
+
+</details>
+
+<details>
+<summary><b>GUI can't reach the daemon</b></summary>
+
+The daemon writes its endpoint to `<config-dir>/runtime/daemon.endpoint`, and the GUI reads it on startup. You can override it with the `PERPETUA_DAEMON_ENDPOINT` environment variable:
+
+```bash
+# Linux / macOS
+PERPETUA_DAEMON_ENDPOINT=unix:///tmp/my-perpetua.sock Perpetua
+
+# Windows
+PERPETUA_DAEMON_ENDPOINT=tcp://127.0.0.1:55700 Perpetua
+```
+
+Stale endpoint files left behind by a crash are harmless. The GUI falls back to the platform default and the daemon rewrites the file on next start.
+
+</details>
+
+<details>
+<summary><b>Firewall ports</b></summary>
+
+For a LAN-only setup only the `Server` needs inbound rules:
+
+- TCP `55655` (`port`): main TLS data channel.
+- TCP `55653` (`pairing_port`): plaintext OTP-based pairing.
+- UDP `5353`: mDNS auto-discovery.
+
+The `Client` only makes outbound connections.
+
+</details>
 
 
 ## Development / Building from Source
@@ -342,7 +411,7 @@ The project includes both a build script and Makefile for convenient building.
 
 ### Development Setup
 
-In development mode the two components run independently — the Rust GUI
+In development mode the two components run independently - the Rust GUI
 launches via `cargo tauri dev` and the Python daemon is started manually
 in a separate terminal.
 
