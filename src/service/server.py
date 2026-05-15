@@ -347,7 +347,7 @@ class Server:
     async def start_pairing_service(
         self,
         host: Optional[str] = None,
-        port: int = ServerConfig.DEFAULT_PORT - 2,
+        port: Optional[int] = None,
     ) -> bool:
         """
         Start the always-on pairing/cert-sharing listener.
@@ -379,10 +379,14 @@ class Server:
             return False
 
         bind_host = host if host is not None else "0.0.0.0"
+        # Resolve effective pairing port: explicit arg -> config override ->
+        # legacy "port - 2" convention. Keeping the resolution centralised so
+        # both server.py and the mDNS TXT record agree.
+        bind_port = port if port is not None else self.config.get_pairing_port()
         self._cert_sharing = CertificateSharing(
             cert_data=cert_data,
             host=bind_host,
-            port=port,
+            port=bind_port,
             timeout=30,
             pairing_request_callback=self._on_pairing_requested,
         )
@@ -429,7 +433,7 @@ class Server:
     async def share_certificate(
         self,
         host: str = "0.0.0.0",
-        port: int = ServerConfig.DEFAULT_PORT - 2,
+        port: Optional[int] = None,
         timeout: int = 30,
     ) -> Tuple[bool, Optional[str]]:
         """
@@ -457,6 +461,8 @@ class Server:
             self._logger.error("No certificates available to share")
             return False, None
 
+        bind_port = port if port is not None else self.config.get_pairing_port()
+
         # Fast path: pairing service already up — just refresh the OTP.
         if self._cert_sharing and self._cert_sharing.is_sharing_active():
             otp, remaining = await self._cert_sharing.ensure_active_otp(timeout=timeout)
@@ -477,7 +483,7 @@ class Server:
             self._cert_sharing = CertificateSharing(
                 cert_data=cert_data,
                 host=host,
-                port=port,
+                port=bind_port,
                 timeout=timeout,
                 pairing_request_callback=self._on_pairing_requested,
             )
@@ -968,11 +974,16 @@ class Server:
             approval_callback=self._request_client_approval,
         )
 
-        # Start mDNS service
+        # Start mDNS service — advertise the pairing port so clients can
+        # discover it without relying on the legacy ``port - 2`` convention.
+        extra_props = {"pairing_port": str(self.config.get_pairing_port())}
         try:
             service_task = asyncio.create_task(
                 self._mdns_service.register_service(
-                    host=self.config.host, port=self.config.port, uid=self.config.uid
+                    host=self.config.host,
+                    port=self.config.port,
+                    uid=self.config.uid,
+                    extra_props=extra_props,
                 )
             )
         except RuntimeError as re:

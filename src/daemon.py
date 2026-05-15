@@ -47,6 +47,14 @@ from utils import UIDGenerator, BackgroundTasks
 from utils.logging import Logger, get_logger
 from utils.cli import DaemonArguments
 from utils.permissions import PermissionChecker
+from utils.runtime import (
+    env_endpoint_override,
+    endpoint_to_socket_path,
+    format_tcp_endpoint,
+    format_unix_endpoint,
+    remove_endpoint,
+    write_endpoint,
+)
 from event.notification import (
     NotificationManager,
     NotificationEvent,
@@ -262,6 +270,10 @@ class Daemon:
     # Cap concurrent command executions: a buggy/abusive client could otherwise
     # spam commands and accumulate fire-and-forget tasks without bound.
     MAX_CONCURRENT_COMMANDS = 16
+    # How many adjacent ports to try if the preferred one is busy (Windows).
+    # The actual bound port is exposed via the runtime endpoint file so the
+    # GUI keeps finding us regardless of the fallback choice.
+    TCP_FALLBACK_PORT_RANGE = 10
 
     _encoder = msgspec.json.Encoder()
     _decoder = msgspec.json.Decoder()
@@ -280,9 +292,22 @@ class Daemon:
             app_config: Application configuration
             auto_load_config: Whether to auto-load existing configurations
         """
-        self.socket_path = socket_path or self.DEFAULT_SOCKET_PATH
+        # Precedence for the IPC endpoint location:
+        # 1. Explicit ``socket_path`` argument (tests / programmatic use).
+        # 2. ``PERPETUA_DAEMON_ENDPOINT`` env var (dev, containers, multi-instance).
+        # 3. Platform default computed from ApplicationConfig.
+        env_ep = env_endpoint_override()
+        if socket_path:
+            self.socket_path = socket_path
+        elif env_ep:
+            self.socket_path = endpoint_to_socket_path(env_ep)
+        else:
+            self.socket_path = self.DEFAULT_SOCKET_PATH
         self.app_config = app_config or ApplicationConfig()
         self.auto_load_config = auto_load_config
+        # Records the endpoint URL we actually bound; persisted to disk so
+        # the GUI can find us even if we fell back to a different port.
+        self._endpoint_url: Optional[str] = None
 
         # Initialize logging with file output
         self._logger = get_logger(
@@ -507,6 +532,26 @@ class Daemon:
                 f"Platform: {'Windows (TCP Socket)' if IS_WINDOWS else 'Unix (Socket)'}"
             )
 
+            # Publish the actual endpoint we ended up bound to so the GUI and
+            # external tooling can find us even after EADDRINUSE fallback or
+            # a user-customised port. Failure is non-fatal - the daemon still
+            # works, callers can fall back to legacy default discovery.
+            if self._endpoint_url:
+                try:
+                    json_path, txt_path = write_endpoint(
+                        self.app_config.get_save_path(),
+                        self._endpoint_url,
+                        version=self.app_config.version,
+                    )
+                    self._logger.debug(
+                        f"Endpoint published at {json_path} (txt: {txt_path})"
+                    )
+                except Exception as e:
+                    self._logger.warning(
+                        f"Could not write endpoint file ({e}); "
+                        f"falling back to legacy discovery"
+                    )
+
             # Start permission watchdog on macOS
             if sys.platform == "darwin":
                 self._permission_watchdog_task = asyncio.create_task(
@@ -542,7 +587,7 @@ class Daemon:
         - If socket doesn't exist -> create new one
         """
         if os.path.exists(self.socket_path):
-            self._logger.info(
+            self._logger.debug(
                 f"Socket file {self.socket_path} already exists, checking if daemon is running..."
             )
 
@@ -601,73 +646,91 @@ class Daemon:
         # Set socket permissions (owner read/write only)
         os.chmod(self.socket_path, 0o600)
         self._logger.info(f"Unix socket server created at {self.socket_path}")
+        self._endpoint_url = format_unix_endpoint(self.socket_path)
 
     async def _start_tcp_server(self):
         """
-        Start TCP socket server on localhost (Windows)
+        Start TCP socket server on localhost (Windows).
 
         Logic:
-        - Try to connect to the port first
-        - If connection succeeds -> raise DaemonAlreadyRunningException
-        - If connection fails with "connection refused" -> port is free, create server
-        - If binding fails with "address already in use" -> raise DaemonPortOccupiedException
+        1. Verify the preferred port doesn't already host a live Perpetua
+           daemon - if it does, raise DaemonAlreadyRunningException so the
+           caller knows to attach instead of starting a duplicate.
+        2. Try to bind the preferred port. If it is occupied by a different
+           process, walk forward through up to ``TCP_FALLBACK_PORT_RANGE``
+           adjacent ports. The actual bound port is written to the runtime
+           endpoint file so the GUI keeps finding us.
         """
         # Parse host and port from socket_path
         if ":" in self.socket_path:
             host, port_str = self.socket_path.split(":", 1)
-            port = int(port_str)
+            preferred_port = int(port_str)
         else:
-            # Default fallback
             host = "127.0.0.1"
-            port = ApplicationConfig.DEFAULT_PORT - 1
+            preferred_port = ApplicationConfig.DEFAULT_DAEMON_PORT
 
-        self._logger.info(f"Checking if daemon is already running on {host}:{port}...")
+        self._logger.debug(
+            f"Checking if daemon is already running on {host}:{preferred_port}..."
+        )
 
-        # First, try to connect to check if daemon is already running
+        # First, try to connect to check if daemon is already running on the
+        # preferred port. Only the preferred port carries the "already
+        # running" semantics - fallback ports might host unrelated services.
         try:
             reader, writer = await asyncio.wait_for(
-                asyncio.open_connection(host, port), timeout=2.0
+                asyncio.open_connection(host, preferred_port), timeout=2.0
             )
-            # Connection successful -> daemon is already running
             writer.close()
             await writer.wait_closed()
 
-            error_msg = f"Daemon is already running on {host}:{port}"
+            error_msg = f"Daemon is already running on {host}:{preferred_port}"
             self._logger.error(error_msg)
             raise DaemonAlreadyRunningException(error_msg)
 
         except (ConnectionRefusedError, OSError) as e:
-            # Connection refused is expected if no daemon is running
             self._logger.debug(f"Port check failed as expected: {type(e).__name__}")
-
         except asyncio.TimeoutError:
-            # Timeout might indicate port is open but not responding properly
             self._logger.warning(
                 "Connection attempt timed out, proceeding with server creation"
             )
 
-        # Now try to create the server
-        try:
-            self._socket_server = await asyncio.start_server(
-                self._handle_client_connection, host=host, port=port
-            )
-            self._logger.info(f"TCP server started on {host}:{port}")
-
-        except OSError as e:
-            # Check if error is due to address already in use
-            if (
-                e.errno == 48 or "address already in use" in str(e).lower()
-            ):  # errno 48 on macOS, 98 on Linux
-                error_msg = (
-                    f"Port {port} is already occupied by another process. "
-                    f"Cannot start daemon."
+        last_err: Optional[OSError] = None
+        for offset in range(self.TCP_FALLBACK_PORT_RANGE + 1):
+            port = preferred_port + offset
+            try:
+                self._socket_server = await asyncio.start_server(
+                    self._handle_client_connection, host=host, port=port
                 )
-                self._logger.error(error_msg)
-                raise DaemonPortOccupiedException(error_msg) from e
-            else:
-                # Other OS error
+                if offset > 0:
+                    self._logger.warning(
+                        f"Preferred port {preferred_port} busy; "
+                        f"bound fallback port {port} instead"
+                    )
+                self._logger.info(f"TCP server started on {host}:{port}")
+                # Keep socket_path in sync with the port we actually bound so
+                # subsequent log lines and the endpoint file match reality.
+                self.socket_path = f"{host}:{port}"
+                self._endpoint_url = format_tcp_endpoint(host, port)
+                return
+            except OSError as e:
+                # errno 48 on macOS, 98 on Linux, 10048 on Windows
+                if (
+                    e.errno in (48, 98, 10048)
+                    or "address already in use" in str(e).lower()
+                ):
+                    last_err = e
+                    self._logger.info(f"Port {port} busy, trying next fallback...")
+                    continue
                 self._logger.error(f"Failed to start TCP server: {e}")
                 raise
+
+        # Exhausted all candidates.
+        error_msg = (
+            f"Could not bind any port in range "
+            f"{preferred_port}..{preferred_port + self.TCP_FALLBACK_PORT_RANGE}"
+        )
+        self._logger.error(error_msg)
+        raise DaemonPortOccupiedException(error_msg) from last_err
 
     async def stop(self):
         """Stop the daemon and cleanup resources"""
@@ -727,6 +790,13 @@ class Daemon:
         # Remove socket file (Unix only)
         if not IS_WINDOWS and os.path.exists(self.socket_path):
             os.unlink(self.socket_path)
+
+        # Clear the runtime endpoint advertisement so the GUI / tooling stop
+        # trying to reach a dead daemon.
+        try:
+            remove_endpoint(self.app_config.get_save_path())
+        except Exception as e:
+            self._logger.debug(f"Failed to clean endpoint file ({e})")
 
         # Wait for any in-flight fire-and-forget tasks to finish (or cancel them).
         try:

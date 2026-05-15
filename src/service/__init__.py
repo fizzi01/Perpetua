@@ -23,7 +23,7 @@ Service package provides server and client public APIs.
 from utils import UIDGenerator
 
 import asyncio
-from typing import Optional
+from typing import Dict, Optional
 import socket
 
 from zeroconf import (
@@ -40,6 +40,17 @@ from utils.logging import get_logger
 from utils.net import get_local_ip, CommonNetInfo
 
 
+def _txt_int(props: dict, key: bytes) -> Optional[int]:
+    """Extract an integer value from a zeroconf TXT record, gracefully."""
+    raw = props.get(key)
+    if raw is None or raw == b"":
+        return None
+    try:
+        return int(raw.decode())
+    except (UnicodeDecodeError, ValueError):
+        return None
+
+
 class Service:
     """
     It represents a discovered service on the network.
@@ -52,6 +63,7 @@ class Service:
         port: Optional[int] = None,
         hostname: Optional[str] = None,
         uid: Optional[str] = None,
+        pairing_port: Optional[int] = None,
     ):
         """
         An mDNS service instance.
@@ -62,12 +74,15 @@ class Service:
             port: Service port.
             hostname: Service hostname.
             uid: Service unique identifier.
+            pairing_port: Optional plaintext pairing/cert-sharing port
+                advertised in the TXT record. ``None`` for legacy servers.
         """
         self.uid = uid
         self.name = name
         self.address = address
         self.hostname: Optional[str] = hostname
         self.port = port
+        self.pairing_port: Optional[int] = pairing_port
 
     def as_dict(self) -> dict:
         """
@@ -79,6 +94,7 @@ class Service:
             "address": self.address,
             "hostname": self.hostname,
             "port": self.port,
+            "pairing_port": self.pairing_port,
         }
 
 
@@ -112,7 +128,16 @@ class _ServiceListener(ServiceListener):
             if hostname is not None:
                 hostname = hostname.decode()
 
-            service = Service(name, address, info.port, uid=uid, hostname=hostname)
+            pairing_port = _txt_int(info.properties, b"pairing_port")
+
+            service = Service(
+                name,
+                address,
+                info.port,
+                uid=uid,
+                hostname=hostname,
+                pairing_port=pairing_port,
+            )
 
             self._services.append(service)
 
@@ -136,6 +161,9 @@ class _ServiceListener(ServiceListener):
                     b_hostname = info.properties.get(b"hostname", None)
                     if b_hostname is not None:
                         service.hostname = b_hostname.decode()
+                    pp = _txt_int(info.properties, b"pairing_port")
+                    if pp is not None:
+                        service.pairing_port = pp
                     break
 
     def update_service(self, zc: Zeroconf, type_: str, name: str) -> None:
@@ -237,7 +265,12 @@ class ServiceDiscovery:
                 continue
         return False
 
-    async def _register_service(self, host: str, port: int) -> None:
+    async def _register_service(
+        self,
+        host: str,
+        port: int,
+        extra_props: Optional[Dict[str, str]] = None,
+    ) -> None:
         """
         Registers a network service using mDNS. This allows the service
         to be discoverable on the local network by other devices. The method validates
@@ -275,7 +308,14 @@ class ServiceDiscovery:
         service_name = ".".join([self._uid, self._service_type])
         # Build service info
         try:
-            properties = {"hostname": hostname}
+            properties: Dict[str, str] = {"hostname": hostname}
+            if extra_props:
+                # Stringify everything: zeroconf's TXT records are bytes
+                # under the hood and stringly typed by convention.
+                for k, v in extra_props.items():
+                    if v is None:
+                        continue
+                    properties[str(k)] = str(v)
             s_info = ServiceInfo(
                 type_=self._service_type,
                 name=service_name,
@@ -355,7 +395,11 @@ class ServiceDiscovery:
     #     pass
 
     async def register_service(
-        self, host: str, port: int, uid: Optional[str] = None
+        self,
+        host: str,
+        port: int,
+        uid: Optional[str] = None,
+        extra_props: Optional[Dict[str, str]] = None,
     ) -> None:
         """
         It registers a service on the network using mDNS.
@@ -364,6 +408,8 @@ class ServiceDiscovery:
             host: An IP addr where the service is running.
             port: The port where the service is running.
             uid: A unique identifier for the service instance. If None, a new UID will be generated.
+            extra_props: Additional TXT record entries to advertise (e.g.
+                ``{"pairing_port": "55653"}``). Values are coerced to ``str``.
 
         Raises:
             ValueError: If the host is an empty string, or if the service type or name
@@ -375,7 +421,7 @@ class ServiceDiscovery:
         if uid is not None:
             self._uid = uid
         # TODO: We need to check if there is another service on same host/port
-        await self._register_service(host, port)
+        await self._register_service(host, port, extra_props=extra_props)
 
     async def unregister_service(self):
         """

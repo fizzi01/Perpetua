@@ -326,6 +326,11 @@ class ServerConfig:
         self.host: str = self.DEFAULT_HOST
         self.port: int = self.DEFAULT_PORT
         self.heartbeat_interval: int = self.DEFAULT_HEARTBEAT_INTERVAL
+        # Plaintext port the always-on pairing/cert-sharing listener binds to.
+        # ``None`` means "derive from port" (legacy: ``port - 2``); persisting
+        # an explicit value lets the admin avoid collisions with arbitrary
+        # other services on the host.
+        self.pairing_port: Optional[int] = None
 
         # Stream management
         self.streams_enabled: Dict[int, bool] = {}
@@ -346,6 +351,17 @@ class ServerConfig:
         self.uid: Optional[str] = None
 
         self._write_lock = asyncio.Lock()
+
+    def get_pairing_port(self) -> int:
+        """Effective port for the pairing/cert-sharing listener.
+
+        Honours an explicit ``pairing_port`` from config; otherwise falls
+        back to the legacy convention of ``port - 2`` so existing setups
+        keep working without a config migration.
+        """
+        if isinstance(self.pairing_port, int) and self.pairing_port > 0:
+            return self.pairing_port
+        return self.port - 2
 
     # SSL Configuration
     def enable_ssl(self) -> None:
@@ -496,6 +512,7 @@ class ServerConfig:
             "uid": self.uid,
             "host": self.host,
             "port": self.port,
+            "pairing_port": self.pairing_port,
             "heartbeat_interval": self.heartbeat_interval,
             "streams_enabled": self.streams_enabled,
             "ssl_enabled": self.ssl_enabled,
@@ -508,6 +525,10 @@ class ServerConfig:
         self.uid = data.get("uid", self.uid)
         self.host = data.get("host", self.host)
         self.port = data.get("port", self.port)
+        pp = data.get("pairing_port", self.pairing_port)
+        # Accept either an integer or None/null; ignore anything else so a
+        # botched manual edit doesn't crash the daemon.
+        self.pairing_port = pp if isinstance(pp, int) else None
         self.heartbeat_interval = data.get(
             "heartbeat_interval", self.heartbeat_interval
         )

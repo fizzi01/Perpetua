@@ -386,10 +386,33 @@ class Client:
                 return False
             return await self._otp_needed
 
+    def _resolve_pairing_port(self, explicit: Optional[int] = None) -> int:
+        """Pick the right plaintext pairing port for the current server.
+
+        Precedence:
+        1. Explicit ``explicit`` argument (caller knows best).
+        2. ``pairing_port`` advertised by the server in its mDNS TXT record
+           (preferred - the server is the source of truth).
+        3. Legacy convention ``server_port - 2`` for back-compat with
+           servers that don't advertise the field yet.
+        """
+        if explicit is not None and explicit > 0:
+            return explicit
+        server_uid = self.config.get_server_uid()
+        if server_uid:
+            for svc in self._found_services or []:
+                if (
+                    svc.uid == server_uid
+                    and getattr(svc, "pairing_port", None)
+                    and svc.pairing_port
+                ):
+                    return svc.pairing_port
+        return self.config.get_server_port() - 2
+
     async def request_pairing(
         self,
         server_host: Optional[str] = None,
-        server_port: int = ClientConfig.DEFAULT_SERVER_PORT - 2,
+        server_port: Optional[int] = None,
         timeout: int = 5,
     ) -> tuple[bool, int, Optional[str]]:
         """
@@ -397,7 +420,7 @@ class Client:
 
         The server displays the OTP on its admin GUI; the user then reads it
         and enters it on this client via :meth:`set_otp`. The OTP itself never
-        travels over the network — this method only triggers generation and
+        travels over the network - this method only triggers generation and
         notification.
 
         Args:
@@ -418,8 +441,9 @@ class Client:
             self._logger.warning("Cannot request pairing without a server host")
             return False, 0, "NO_SERVER_HOST"
 
+        port = self._resolve_pairing_port(server_port)
         receiver = CertificateReceiver(
-            server_host=server_host, server_port=server_port, timeout=timeout
+            server_host=server_host, server_port=port, timeout=timeout
         )
         return await receiver.request_pairing(hostname=self.config.get_hostname())
 
@@ -452,7 +476,7 @@ class Client:
         self,
         otp: str,
         server_host: Optional[str] = None,
-        server_port: int = ClientConfig.DEFAULT_SERVER_PORT - 2,
+        server_port: Optional[int] = None,
         timeout: int = 30,
     ) -> bool:
         """
@@ -483,14 +507,15 @@ class Client:
         if server_host is None:
             server_host = self.config.get_server_host()
 
+        port = self._resolve_pairing_port(server_port)
         self._logger.info(
-            f"Attempting to receive certificate from {server_host}:{server_port}"
+            f"Attempting to receive certificate from {server_host}:{port}"
         )
 
         try:
             # Create receiver
             self._cert_receiver = CertificateReceiver(
-                server_host=server_host, server_port=server_port, timeout=timeout
+                server_host=server_host, server_port=port, timeout=timeout
             )
 
             # Receive certificate
@@ -802,7 +827,7 @@ class Client:
 
                     # Best-effort: ask the server to auto-generate an OTP and
                     # surface it on its admin GUI. Failures (legacy server,
-                    # rate-limit, network) are fine — the user can still get
+                    # rate-limit, network) are fine - the user can still get
                     # an OTP by clicking "Share Certificate" on the server.
                     try:
                         ok, ttl, err = await self.request_pairing()
