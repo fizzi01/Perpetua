@@ -693,5 +693,12 @@ class _ClientStreamHandler(StreamHandler):
 
     async def stop(self):
         self._send_ready.set()  # Unblock _core_sender so it can exit
+        # Reset _is_active so a subsequent _on_client_active() actually
+        # reconfigures the transport. Without this, the early-return guard
+        # `if self._is_active: return` swallowed the post-reconnect setup
+        # for BidirectionalStreamHandlers with active_only=False (clipboard),
+        # leaving msg_exchange stopped and recv_loop never restarted.
+        self._is_active = False
+        self._notify_send_not_ready()
         await super().stop()
         await self.msg_exchange.stop()

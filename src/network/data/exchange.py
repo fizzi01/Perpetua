@@ -617,6 +617,12 @@ class MessageExchange:
         """
         # Cycle through all send callbacks
         callback_snapshot = list(self._send_callbacks.items())
+        # Guard against a silent drop
+        if not callback_snapshot:
+            raise MissingTransportError(
+                "Transport layer not configured (no send callbacks). "
+                "Call set_transport() first."
+            )
         for tr_id, send_callback in callback_snapshot:  # Round-robin
             if not send_callback:
                 raise MissingTransportError(

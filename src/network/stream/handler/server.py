@@ -406,31 +406,40 @@ class MulticastStreamHandler(_ServerStreamHandler):
 
     async def _on_client_connected(self, data: Optional[ClientConnectedEvent]):
         self._clients_connected += 1
-        self._notify_send_ready()
 
-        if data is None:
-            return
-
+        # Configure the transport BEFORE signalling that sends are allowed.
+        # If we signal early, _core_sender may wake up, pop a queued message,
+        # and iterate over an empty/stale `_send_callbacks` map, producing a
+        # silent drop (no callback iterated => no error raised). The original
+        # ordering caused the first clipboard payload after a fresh connect to
+        # be lost.
+        transport_configured = False
         try:
-            client_screen = data.client_screen
-            # Because multicast, we set_transport for each connected client
-            client = self.clients.get_client(screen_position=client_screen)
-            if client is not None:
-                cl_conn = client.get_connection()
-                if cl_conn is not None:
-                    cl_stream = cl_conn.get_stream(self.stream_type)
-                    if cl_stream is None:
-                        await asyncio.sleep(0)
-                        return
-
-                    await self.msg_exchange.set_transport(
-                        send_callback=cl_stream.get_writer_call(),
-                        receive_callback=cl_stream.get_reader_call(),
-                        tr_id=client_screen,
-                    )
+            if data is not None:
+                client_screen = data.client_screen
+                # Because multicast, we set_transport for each connected client
+                client = self.clients.get_client(screen_position=client_screen)
+                if client is not None:
+                    cl_conn = client.get_connection()
+                    if cl_conn is not None:
+                        cl_stream = cl_conn.get_stream(self.stream_type)
+                        if cl_stream is not None:
+                            await self.msg_exchange.set_transport(
+                                send_callback=cl_stream.get_writer_call(),
+                                receive_callback=cl_stream.get_reader_call(),
+                                tr_id=client_screen,
+                            )
+                            transport_configured = True
         finally:
             if self._clients_connected == 1:
                 await self.msg_exchange.start()
+            # Only release the sender after the transport is wired; if we
+            # couldn't configure it for this client, leave the gate closed
+            # so we don't drop queued frames into a void.
+            if transport_configured:
+                self._notify_send_ready()
+            else:
+                await asyncio.sleep(0)
 
     async def _on_client_disconnected(self, data: Optional[ClientDisconnectedEvent]):
         self._clients_connected -= 1

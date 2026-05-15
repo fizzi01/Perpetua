@@ -48,16 +48,10 @@ class StreamWrapper:
 
         def __init__(self, writer: asyncio.StreamWriter):
             self._writer: asyncio.StreamWriter = writer
-            # Serialize concurrent writes. Without this, the heartbeat task and
-            # the MessageExchange consumer can interleave bytes on the same
-            # transport (especially during chunked sends like clipboard payloads)
-            # producing unparseable frames that look like a disconnect to the peer.
-            self._send_lock: asyncio.Lock = asyncio.Lock()
 
         async def send(self, data: bytes):
-            async with self._send_lock:
-                self._writer.write(data)
-                await self._writer.drain()
+            self._writer.write(data)
+            await self._writer.drain()
 
         async def close(self):
             try:

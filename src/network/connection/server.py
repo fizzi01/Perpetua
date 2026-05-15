@@ -60,7 +60,7 @@ class ConnectionHandler(BaseConnectionHandler):
     HANDSHAKE_DELAY = 0.2  # sec
     HANDSHAKE_MSG_TIMEOUT = 5.0  # sec
     CONNECTION_ATTEMPT_TIMEOUT = 10  # sec
-    MAX_HEARTBEAT_MISSES = 2
+    MAX_HEARTBEAT_MISSES = 0
 
     def __init__(
         self,
@@ -787,18 +787,22 @@ class ConnectionHandler(BaseConnectionHandler):
 
                                 stream_reader = client_conn.get_reader(stream_type)
                                 stream_writer = client_conn.get_writer(stream_type)
-                                if (
+                                reader_closed = (
                                     stream_reader is None or stream_reader.is_closed()
-                                ) or (
+                                )
+                                writer_closed = (
                                     stream_writer is None
                                     or await stream_writer.is_closed()
-                                ):
+                                )
+                                if reader_closed or writer_closed:
                                     # Force closure of the stream writer if it exists
                                     if stream_writer:
                                         await stream_writer.close()
                                     closed_streams.append(stream_type)
-                                else:
-                                    # Send heartbeat
+                                elif stream_writer is not None:
+                                    # Send heartbeat (writer is guaranteed non-None
+                                    # here because reader_closed/writer_closed were
+                                    # both false).
                                     hb_msg = ProtocolMessage(
                                         message_type=MessageType.HEARTBEAT,
                                         source="server",
