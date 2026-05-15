@@ -934,6 +934,100 @@ class TestClientMouseController:
             assert controller._is_dragging is False
 
     @pytest.mark.anyio
+    async def test_rapid_clicks_all_forwarded(
+        self,
+        event_bus,
+        mock_stream_handler,
+        mock_mouse_controller,
+    ):
+        """
+        Regression: rapid consecutive press/release pairs must each produce a
+        real press() and release() call. The previous double-click emulation
+        emitted ``click(btn, 0)`` on the second fast press, dropping it.
+        """
+        with patch(
+            "input.mouse._base.MouseController", return_value=mock_mouse_controller
+        ):
+            controller = ClientMouseController(
+                event_bus,
+                mock_stream_handler,
+                mock_stream_handler,
+            )
+
+            # Four fast press/release pairs in rapid succession.
+            for _ in range(4):
+                controller._click(ButtonMapping.left.value, True)
+                controller._click(ButtonMapping.left.value, False)
+
+            assert mock_mouse_controller.press.call_count == 4
+            assert mock_mouse_controller.release.call_count == 4
+
+    @pytest.mark.anyio
+    async def test_consecutive_clicks_increment_click_count(
+        self,
+        event_bus,
+        mock_stream_handler,
+        mock_mouse_controller,
+    ):
+        """
+        Fast clicks on the same button must tag press/release with an
+        increasing click_count so the OS recognises double/triple-click.
+        Slow clicks must reset back to 1.
+        """
+        with patch(
+            "input.mouse._base.MouseController", return_value=mock_mouse_controller
+        ):
+            controller = ClientMouseController(
+                event_bus,
+                mock_stream_handler,
+                mock_stream_handler,
+            )
+
+            controller._click(ButtonMapping.left.value, True)
+            assert controller._click_count == 1
+            controller._click(ButtonMapping.left.value, False)
+
+            controller._click(ButtonMapping.left.value, True)
+            assert controller._click_count == 2
+            controller._click(ButtonMapping.left.value, False)
+
+            controller._click(ButtonMapping.left.value, True)
+            assert controller._click_count == 3
+            controller._click(ButtonMapping.left.value, False)
+
+            # Simulate a long pause beyond the multi-click window.
+            controller._last_press_time -= controller.DOUBLE_CLICK_THRESHOLD + 1
+
+            controller._click(ButtonMapping.left.value, True)
+            assert controller._click_count == 1
+
+    @pytest.mark.anyio
+    async def test_different_button_resets_click_count(
+        self,
+        event_bus,
+        mock_stream_handler,
+        mock_mouse_controller,
+    ):
+        """Switching button within the window must reset the multi-click counter."""
+        with patch(
+            "input.mouse._base.MouseController", return_value=mock_mouse_controller
+        ):
+            controller = ClientMouseController(
+                event_bus,
+                mock_stream_handler,
+                mock_stream_handler,
+            )
+
+            controller._click(ButtonMapping.left.value, True)
+            controller._click(ButtonMapping.left.value, False)
+            controller._click(ButtonMapping.left.value, True)
+            assert controller._click_count == 2
+            controller._click(ButtonMapping.left.value, False)
+
+            controller._click(ButtonMapping.right.value, True)
+            assert controller._click_count == 1
+
+    @pytest.mark.anyio
     async def test_scroll(
         self,
         event_bus,

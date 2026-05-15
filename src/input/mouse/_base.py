@@ -503,6 +503,11 @@ class ClientMouseController(object):
 
     MOVEMENT_HISTORY_N_THRESHOLD = 6
     MOVEMENT_HISTORY_LEN = 8
+    # Time window within which consecutive presses on the same button are
+    # treated as part of a multi-click sequence (double, triple, ...).
+    DOUBLE_CLICK_THRESHOLD = 0.4
+    # Safety cap on the click_count we forward to the OS.
+    MAX_CLICK_COUNT = 10
 
     def __init__(
         self,
@@ -538,7 +543,7 @@ class ClientMouseController(object):
         self._pressed = False
         self._previous_button: int | None = None
         self._last_press_time: float = -99
-        self._doubleclick_counter: int = 0
+        self._click_count: int = 0
         self._is_dragging = False
 
         self._logger = get_logger(self.__class__.__name__)
@@ -864,39 +869,80 @@ class ClientMouseController(object):
     def _click(self, button: int | None, is_pressed: bool):
         """
         Perform a mouse click action.
+
+        Each press/release is forwarded 1:1 to the OS so no click is dropped.
+        Consecutive presses on the same button within DOUBLE_CLICK_THRESHOLD are
+        tagged with an incrementing click_count (1, 2, 3, ...) which lets the OS
+        recognise double/triple clicks.
         """
-        current_time = time()
         try:
-            # Get button name from button value
             name = ButtonMapping(button).name
             btn = Button[name]
-        except ValueError:
+        except (ValueError, KeyError):
             return
 
-        if self._pressed and not is_pressed:
-            self._controller.release(btn)
-            self._pressed = False
-        elif not self._pressed and is_pressed:
-            # double-click emulation
-            if (
-                current_time - self._last_press_time
-            ) < 0.4 and self._previous_button == button:
-                self._controller.click(btn, self._doubleclick_counter)
-                if 0 <= self._doubleclick_counter < 10:
-                    self._doubleclick_counter += 1
+        if is_pressed:
+            # Defensive: if we're already pressed (e.g. duplicated or
+            # reordered press event), release first so we don't get stuck.
+            if self._pressed:
+                try:
+                    self._controller.release(btn)
+                except Exception as e:
+                    self._logger.log(
+                        f"Failed to release stuck button ({e})", Logger.ERROR
+                    )
                 self._pressed = False
+
+            current_time = time()
+            if (
+                (current_time - self._last_press_time) < self.DOUBLE_CLICK_THRESHOLD
+                and self._previous_button == button
+                and self._click_count < self.MAX_CLICK_COUNT
+            ):
+                self._click_count += 1
             else:
+                self._click_count = 1
+
+            self._apply_click_count(self._click_count)
+
+            try:
                 self._controller.press(btn)
-                self._doubleclick_counter = 0
                 self._pressed = True
+            except Exception as e:
+                self._logger.log(f"Failed to press button ({e})", Logger.ERROR)
 
             self._last_press_time = current_time
             self._previous_button = button
+        else:
+            if self._pressed:
+                self._apply_click_count(self._click_count)
+                try:
+                    self._controller.release(btn)
+                except Exception as e:
+                    self._logger.log(f"Failed to release button ({e})", Logger.ERROR)
+                self._pressed = False
 
         self._is_dragging = is_pressed and ButtonMapping(button).value in [
             ButtonMapping.left.value,
             ButtonMapping.right.value,
         ]
+
+    def _apply_click_count(self, count: int):
+        """
+        Hint the next press/release with the desired click_count.
+
+        Only meaningful on macOS where pynput.Controller increments its
+        ``_click`` attribute inside ``_press`` and tags the Quartz event with
+        ``kCGMouseEventClickState``.
+        """
+        if not hasattr(self._controller, "_click"):
+            return
+        try:
+            # pynput's macOS _press does `self._click += 1` before posting,
+            # so set count-1 to land on the desired value.
+            self._controller._click = max(count - 1, 0)
+        except Exception:
+            pass
 
     def _scroll(self, dx: int | float, dy: int | float):
         """
