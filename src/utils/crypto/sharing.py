@@ -52,6 +52,9 @@ ERR_UNKNOWN_REQUEST = "UNKNOWN_REQUEST"
 _MAX_HEADER_BYTES = 1024
 # Default per-IP cooldown between pairing requests (seconds).
 DEFAULT_PAIRING_COOLDOWN = 5.0
+# Default number of adjacent ports to try if the preferred one is occupied.
+# Set to 0 to disable fallback and fail fast.
+DEFAULT_PORT_FALLBACK_RANGE = 10
 
 
 # Error class
@@ -85,6 +88,7 @@ class CertificateSharing:
             Callable[[Dict[str, str]], Awaitable[None]]
         ] = None,
         pairing_cooldown: float = DEFAULT_PAIRING_COOLDOWN,
+        port_fallback_range: int = DEFAULT_PORT_FALLBACK_RANGE,
     ):
         """
         Initialize certificate sharing manager.
@@ -101,10 +105,16 @@ class CertificateSharing:
                 replying to the client.
             pairing_cooldown: Per-IP minimum seconds between pairing requests.
                 Set to 0 to disable rate-limiting.
+            port_fallback_range: How many adjacent ports to try if the
+                preferred one is busy. Set to 0 to disable fallback and fail
+                fast. The actually bound port is exposed via
+                :meth:`get_actual_port`.
         """
         self._cert_data = cert_data
         self._host = host
         self._port = port
+        self._actual_port: Optional[int] = None
+        self._port_fallback_range = max(0, port_fallback_range)
         self._timeout = timeout
 
         self._otp: Optional[str] = None
@@ -134,6 +144,59 @@ class CertificateSharing:
     def update_cert_data(self, cert_data: bytes) -> None:
         """Replace the certificate payload (used when certs are regenerated)."""
         self._cert_data = cert_data
+
+    def get_actual_port(self) -> Optional[int]:
+        """Return the port the listener actually bound (post-fallback)."""
+        return self._actual_port
+
+    async def _bind_with_fallback(self) -> Optional[asyncio.Server]:
+        """Try the preferred port, then walk forward through adjacent ports.
+
+        Returns the asyncio.Server on success, or None if every candidate
+        port in ``[port, port + port_fallback_range]`` was busy. Logs each
+        attempt so the admin can see why we moved on.
+        """
+        last_err: Optional[OSError] = None
+        for offset in range(self._port_fallback_range + 1):
+            candidate = self._port + offset
+            try:
+                server = await asyncio.start_server(
+                    self._handle_client, self._host, candidate
+                )
+                if offset > 0:
+                    self._logger.log(
+                        f"Preferred port {self._port} busy; "
+                        f"using fallback port {candidate}",
+                        Logger.WARNING,
+                    )
+                self._actual_port = candidate
+                return server
+            except OSError as e:
+                # errno 48 on macOS, 98 on Linux, 10048 on Windows
+                if (
+                    e.errno in (48, 98, 10048)
+                    or "address already in use" in str(e).lower()
+                ):
+                    last_err = e
+                    self._logger.log(
+                        f"Port {candidate} busy; trying next fallback",
+                        Logger.DEBUG,
+                    )
+                    continue
+                # Unrelated OS error: don't try further candidates.
+                self._logger.log(
+                    f"Failed to bind {self._host}:{candidate} ({e})",
+                    Logger.ERROR,
+                )
+                raise
+        if last_err is not None:
+            self._logger.log(
+                f"All {self._port_fallback_range + 1} candidate ports "
+                f"({self._port}..{self._port + self._port_fallback_range}) "
+                f"are occupied",
+                Logger.ERROR,
+            )
+        return None
 
     @staticmethod
     def _generate_otp() -> str:
@@ -472,14 +535,18 @@ class CertificateSharing:
             self._otp_expiry = time.time() + self._timeout
             self._shared = False
 
-            self._server = await asyncio.start_server(
-                self._handle_client, self._host, self._port
-            )
+            server = await self._bind_with_fallback()
+            if server is None:
+                self._otp = None
+                self._otp_expiry = None
+                return False, None
+            self._server = server
 
             self._running = True
             self._service_mode = False
             self._logger.log(
-                f"Certificate sharing server started on {self._host}:{self._port}",
+                f"Certificate sharing server started on "
+                f"{self._host}:{self._actual_port}",
                 Logger.INFO,
             )
             self._logger.log(
@@ -512,16 +579,17 @@ class CertificateSharing:
             return True
 
         try:
-            self._server = await asyncio.start_server(
-                self._handle_client, self._host, self._port
-            )
+            server = await self._bind_with_fallback()
+            if server is None:
+                return False
+            self._server = server
             self._running = True
             self._service_mode = True
             self._shared = False
             self._otp = None
             self._otp_expiry = None
             self._logger.log(
-                f"Pairing service listening on {self._host}:{self._port}",
+                f"Pairing service listening on {self._host}:{self._actual_port}",
                 Logger.INFO,
             )
             return True

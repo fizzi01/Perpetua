@@ -306,6 +306,7 @@ export function ServerTab({onStatusChange, state}: ServerTabProps) {
             }).then(unlisten => {
                 listeners.addListenerOnce('approval-resolved', unlisten);
             });
+
         };
 
         const cleanup = () => {
@@ -383,89 +384,99 @@ export function ServerTab({onStatusChange, state}: ServerTabProps) {
         setOtpRequested(false);
     };
 
+    // Register Start/Stop server command listeners exactly once for the tab's
+    // lifetime. Previously these were re-registered per click, which caused
+    // two compounding bugs: a race between the in-callback ``removeListener``
+    // and the async ``addListener``, plus ``addListener`` refcounting that
+    // dropped the new unlisten — leaking Tauri handlers that fired on
+    // subsequent events.
+    //
+    // Under React StrictMode this useEffect itself runs mount→cleanup→mount.
+    // Tauri's ``listen`` API is async, so the cleanup of the first pass runs
+    // *before* the promise resolves with the unlisten. The ``cancelled`` flag
+    // catches the latecomers: if a promise resolves after cleanup, we
+    // immediately call unlisten on it so it can never become a leaked Tauri
+    // handler.
+    useEffect(() => {
+        let cancelled = false;
+        const unlisteners: Array<() => void> = [];
+
+        const register = (promise: Promise<() => void>) => {
+            promise.then(unlisten => {
+                if (cancelled) {
+                    unlisten();
+                } else {
+                    unlisteners.push(unlisten);
+                }
+            });
+        };
+
+        register(listenCommand(EventType.CommandSuccess, CommandType.StartServer, (event) => {
+            console.log(`Server started successfully: ${event.message}`);
+            const res = event.data?.result;
+            setIsRunning(true);
+            switchTrayIcon(true);
+            setRunningPending(false);
+            if (res) {
+                addNotification('success', 'Server started', `Listening on ${res.host}:${res.port}`);
+                setPort(res.port.toString());
+                const start_time = res.start_time;
+                if (start_time) {
+                    const startDate = new Date(start_time);
+                    const now = new Date();
+                    setUptime(Math.floor((now.getTime() - startDate.getTime()) / 1000));
+                }
+            }
+            clientEventHandler.setup();
+        }));
+
+        register(listenCommand(EventType.CommandError, CommandType.StartServer, (event) => {
+            addNotification('error', 'Failed', event.data?.error || '');
+            setRunningPending(false);
+            onStatusChange(false);
+        }));
+
+        register(listenCommand(EventType.CommandSuccess, CommandType.StopServer, (event) => {
+            console.log(`Server stopped successfully: ${event.message}`);
+            setIsRunning(false);
+            clientManager.disconnectAll();
+            setUptime(0);
+            dismissOtp();
+            addNotification('warning', 'Server stopped');
+            onStatusChange(false);
+            setRunningPending(false);
+            switchTrayIcon(false);
+            clientEventHandler.cleanup();
+        }));
+
+        register(listenCommand(EventType.CommandError, CommandType.StopServer, (event) => {
+            addNotification('error', 'Failed to stop server', event.data?.error || '');
+            setRunningPending(false);
+        }));
+
+        return () => {
+            cancelled = true;
+            unlisteners.forEach(u => u());
+        };
+        // eslint-disable-next-line react-hooks/exhaustive-deps
+    }, []);
+
     const handleToggleServer = () => {
         if (!isRunning) {
             setRunningPending(true);
             onStatusChange(true);
-
-            listenCommand(EventType.CommandSuccess, CommandType.StartServer, (event) => {
-                console.log(`Server started successfully: ${event.message}`);
-                setIsRunning(true);
-                switchTrayIcon(true);
-                let res = event.data?.result;
-                if (res) {
-                    addNotification('success', 'Server started', `Listening on ${res.host}:${res.port}`);
-                    setPort(res.port.toString());
-                    setRunningPending(false);
-
-                    let start_time = res.start_time;
-                    // Parse timestamp isoformat
-                    if (start_time) {
-                        let startDate = new Date(start_time);
-                        let now = new Date();
-                        let uptimeSeconds = Math.floor((now.getTime() - startDate.getTime()) / 1000);
-                        setUptime(uptimeSeconds);
-                    }
-                }
-
-                listeners.removeListener('start-server');
-                listeners.removeListener('start-server-error');
-            }).then(unlisten => {
-                listeners.addListener('start-server', unlisten);
-            });
-
-            listenCommand(EventType.CommandError, CommandType.StartServer, (event) => {
-                addNotification('error', 'Failed', event.data?.error || '');
-                setRunningPending(false);
-                onStatusChange(false);
-
-                listeners.removeListener('start-server');
-                listeners.removeListener('start-server-error');
-            }).then(unlisten => {
-                listeners.addListener('start-server-error', unlisten);
-            });
-
-            startServer().then(() => {
-                clientEventHandler.setup();
-            }).catch((err) => {
+            startServer().catch((err) => {
                 console.error('Error starting server:', err);
                 addNotification('error', 'Failed to start server');
                 setRunningPending(false);
                 onStatusChange(false);
-
-                // Cleanup
-                listeners.removeListener('start-server');
-                listeners.removeListener('start-server-error');
             });
-
         } else {
             setRunningPending(true);
-
-            clientEventHandler.cleanup();
-
-            // Setup one-time listener
-            listenCommand(EventType.CommandSuccess, CommandType.StopServer, (event) => {
-                console.log(`Server stopped successfully: ${event.message}`);
-                setIsRunning(false);
-                clientManager.disconnectAll();
-                setUptime(0);
-                dismissOtp();
-                addNotification('warning', 'Server stopped');
-                onStatusChange(false);
-                setRunningPending(false);
-                switchTrayIcon(false);
-                // Auto-unlisten
-                listeners.removeListener('stop-server');
-            }).then(unlisten => {
-                listeners.addListener('stop-server', unlisten);
-            });
-
             stopServer().catch((err) => {
                 console.error('Error stopping server:', err);
                 addNotification('error', 'Failed to stop server');
                 setRunningPending(false);
-                // Cleanup listener
-                listeners.removeListener('stop-server');
             });
         }
     };

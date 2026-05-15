@@ -42,7 +42,7 @@ from enum import StrEnum
 
 from config import ApplicationConfig, ServerConfig, ClientConfig
 from service.client import Client
-from service.server import Server
+from service.server import Server, ServerStartError
 from utils import UIDGenerator, BackgroundTasks
 from utils.logging import Logger, get_logger
 from utils.cli import DaemonArguments
@@ -1275,7 +1275,18 @@ class Daemon:
             #     "Server", data={"status": "starting"}
             # )
 
-            success = await self._server.start()
+            try:
+                success = await self._server.start()
+            except ServerStartError as start_err:
+                # Known, user-actionable failure (e.g. port already in use).
+                # Forward the specific message so the GUI shows something
+                # actionable instead of a generic "Failed to start server".
+                self._logger.error(str(start_err))
+                await self._notification_manager.notify_command_error(
+                    command, str(start_err)
+                )
+                return
+
             if success:
                 self._state["server"].start()
                 response_data = {
