@@ -144,6 +144,69 @@ pub async fn add_client(
 }
 
 #[tauri::command]
+pub async fn approve_client(
+    peer_ip: String,
+    screen_position: String,
+    s: tauri::State<'_, AtomicAsyncWriter>,
+) -> Result<(), String> {
+    if peer_ip.is_empty() {
+        return Err("peer_ip must be provided".to_string());
+    }
+    let command = CommandEvent::build(
+        CommandType::ApproveClient,
+        &format!(
+            r#"{{ "peer_ip": {}, "screen_position": {} }}"#,
+            handle_string_param(peer_ip),
+            handle_string_param(screen_position),
+        ),
+    );
+    let command = EventParser::serialize(&command).map_err(|e| {
+        format!(
+            "Failed to serialize {} command: {}",
+            CommandType::ApproveClient,
+            e
+        )
+    })?;
+    s.send(command).await.map_err(|e| {
+        format!(
+            "Failed to send {} command ({})",
+            CommandType::ApproveClient,
+            e
+        )
+    })?;
+    Ok(())
+}
+
+#[tauri::command]
+pub async fn deny_client(
+    peer_ip: String,
+    s: tauri::State<'_, AtomicAsyncWriter>,
+) -> Result<(), String> {
+    if peer_ip.is_empty() {
+        return Err("peer_ip must be provided".to_string());
+    }
+    let command = CommandEvent::build(
+        CommandType::DenyClient,
+        &format!(r#"{{ "peer_ip": {} }}"#, handle_string_param(peer_ip)),
+    );
+    let command = EventParser::serialize(&command).map_err(|e| {
+        format!(
+            "Failed to serialize {} command: {}",
+            CommandType::DenyClient,
+            e
+        )
+    })?;
+    s.send(command).await.map_err(|e| {
+        format!(
+            "Failed to send {} command ({})",
+            CommandType::DenyClient,
+            e
+        )
+    })?;
+    Ok(())
+}
+
+#[tauri::command]
 pub async fn remove_client(
     hostname: String,
     ip_address: String,

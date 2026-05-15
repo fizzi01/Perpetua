@@ -24,7 +24,7 @@ import asyncio
 from asyncio.futures import Future
 
 import ssl
-from typing import Optional, Callable, Any
+from typing import Optional, Callable, Any, Awaitable
 
 from model.client import ClientsManager, ClientObj
 from model.connection import StreamWrapper, ClientConnection
@@ -76,6 +76,9 @@ class ConnectionHandler(BaseConnectionHandler):
         allowlist: Optional[ClientsManager] = None,
         certfile: Optional[str] = None,
         keyfile: Optional[str] = None,
+        approval_callback: Optional[
+            Callable[[str, str, str], Awaitable[Optional["ClientObj"]]]
+        ] = None,
     ):
         self.certfile = certfile
         self.keyfile = keyfile
@@ -84,6 +87,11 @@ class ConnectionHandler(BaseConnectionHandler):
         self.connected_callback = connected_callback
         self.disconnected_callback = disconnected_callback
         self.reconnected_callback = reconnected_callback
+        # When set, unknown clients (not in the allowlist) are deferred to this
+        # callback for interactive approval instead of being rejected outright.
+        # The callback receives (peer_ip, hostname, uid) and returns either a
+        # populated ClientObj or None (denied / timeout).
+        self.approval_callback = approval_callback
 
         self.host = host
         self.port = port
@@ -98,6 +106,13 @@ class ConnectionHandler(BaseConnectionHandler):
         ] = {}  # {ip_address: {stream_type: Future}}
 
         self._logger = get_logger(self.__class__.__name__)
+
+    def set_approval_callback(
+        self,
+        callback: Optional[Callable[[str, str, str], Awaitable[Optional["ClientObj"]]]],
+    ) -> None:
+        """Plug in (or remove) an interactive approval callback at runtime."""
+        self.approval_callback = callback
 
     async def start(self) -> bool:
         """Avvia il server asyncio con heartbeat monitoring"""
@@ -491,18 +506,37 @@ class ConnectionHandler(BaseConnectionHandler):
                 if (
                     client is None
                 ):  # Client not found - Client is None so not in allowlist
-                    self._logger.log(
-                        f"Client with IP {client_addr} not found in allowlist.",
-                        Logger.WARNING,
-                    )
-                    await client_msg_exchange.send_handshake_message(
-                        ack=False,
-                        source="server",
-                    )
-                    await asyncio.sleep(self.HANDSHAKE_DELAY)
-                    await client_msg_exchange.stop()
-                    await cur_stream.close()
-                    return False
+                    # If an approval callback is plugged in, defer the
+                    # decision to it (the admin sees an allow/deny prompt on
+                    # the GUI). A returned ClientObj joins the allowlist;
+                    # None means the admin denied or the prompt timed out.
+                    if self.approval_callback is not None:
+                        try:
+                            client = await self.approval_callback(
+                                client_addr,
+                                tmp_host_name or "",
+                                tmp_uid or "",
+                            )
+                        except Exception as e:
+                            self._logger.log(
+                                f"approval_callback raised for {client_addr} ({e})",
+                                Logger.ERROR,
+                            )
+                            client = None
+
+                    if client is None:
+                        self._logger.log(
+                            f"Client with IP {client_addr} not authorized.",
+                            Logger.WARNING,
+                        )
+                        await client_msg_exchange.send_handshake_message(
+                            ack=False,
+                            source="server",
+                        )
+                        await asyncio.sleep(self.HANDSHAKE_DELAY)
+                        await client_msg_exchange.stop()
+                        await cur_stream.close()
+                        return False
 
                 # --- UID consistency check ---
                 # If the client already has a saved uid, verify it matches the received one

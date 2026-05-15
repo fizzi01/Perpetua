@@ -31,6 +31,8 @@ from model.client import ClientObj, ClientsManager
 from event.bus import AsyncEventBus
 from event.notification import (
     NotificationEvent,
+    ClientApprovalRequestedEvent,
+    ClientApprovalResolvedEvent,
     ClientConnectedEvent as ClientConnectedNotification,
     ClientDisconnectedEvent as ClientDisconnectedNotification,
     ConfigSavedEvent,
@@ -187,6 +189,14 @@ class Server:
         self._notification_callback: Optional[
             Callable[[NotificationEvent], Awaitable[None]]
         ] = None
+
+        # Pending client-approval requests: each unknown client that initiates
+        # a handshake spawns a Future stored here, resolved by the admin via
+        # approve_pending_client / deny_pending_client (or by timeout).
+        self._pending_approvals: Dict[str, "asyncio.Future[Optional[ClientObj]]"] = {}
+        self._pending_approval_meta: Dict[str, Dict[str, str]] = {}
+        self._pending_approvals_lock = asyncio.Lock()
+        self._approval_request_timeout = 60  # seconds
 
     @property
     def clients_manager(self) -> ClientsManager:
@@ -785,6 +795,146 @@ class Server:
             self._logger.error(f"Failed to disable {stream_type} stream ({e})")
             raise RuntimeError(f"Failed to disable {stream_type} stream ({e})")
 
+    # ==================== Client Approval (interactive) ====================
+
+    async def _request_client_approval(
+        self, peer_ip: str, hostname: str, uid: str
+    ) -> Optional[ClientObj]:
+        """Ask the admin (via GUI) whether to accept an unknown client.
+
+        Called by the ConnectionHandler when a client not present in the
+        allowlist completes the handshake. Emits a notification with the
+        client's identifiers, then blocks on a Future that the admin resolves
+        via :meth:`approve_pending_client` or :meth:`deny_pending_client`.
+
+        Returns:
+            A populated ClientObj if approved (already added to the
+            allowlist), or None if denied / timed out.
+        """
+        request_id = f"{peer_ip}-{int(asyncio.get_running_loop().time() * 1000)}"
+
+        async with self._pending_approvals_lock:
+            existing = self._pending_approvals.get(peer_ip)
+            if existing is not None and not existing.done():
+                # A second handshake attempt from the same IP while an admin
+                # decision is pending: piggy-back on the same Future instead
+                # of stacking prompts.
+                self._logger.info(
+                    f"Reusing pending approval for {peer_ip} (hostname={hostname})"
+                )
+                fut = existing
+            else:
+                fut = asyncio.get_running_loop().create_future()
+                self._pending_approvals[peer_ip] = fut
+                self._pending_approval_meta[peer_ip] = {
+                    "hostname": hostname,
+                    "uid": uid,
+                    "request_id": request_id,
+                }
+
+        if existing is None or existing.done():
+            await self._send_notification(
+                ClientApprovalRequestedEvent(
+                    peer_ip=peer_ip,
+                    hostname=hostname,
+                    uid=uid,
+                    request_id=request_id,
+                    timeout=self._approval_request_timeout,
+                )
+            )
+
+        try:
+            result = await asyncio.wait_for(
+                asyncio.shield(fut), timeout=self._approval_request_timeout
+            )
+            return result
+        except asyncio.TimeoutError:
+            self._logger.warning(
+                f"Approval request for {peer_ip} timed out — denying by default"
+            )
+            await self._resolve_pending_approval(peer_ip, None, reason="timeout")
+            return None
+        finally:
+            async with self._pending_approvals_lock:
+                # Clean up only if this Future is still the one we stored.
+                if self._pending_approvals.get(peer_ip) is fut:
+                    self._pending_approvals.pop(peer_ip, None)
+                    self._pending_approval_meta.pop(peer_ip, None)
+
+    async def _resolve_pending_approval(
+        self,
+        peer_ip: str,
+        client: Optional[ClientObj],
+        screen_position: str = "",
+        reason: str = "",
+    ) -> bool:
+        """Resolve a pending approval Future. Returns True if a Future existed."""
+        async with self._pending_approvals_lock:
+            fut = self._pending_approvals.get(peer_ip)
+            meta = self._pending_approval_meta.get(peer_ip, {})
+        if fut is None or fut.done():
+            return False
+        fut.set_result(client)
+        await self._send_notification(
+            ClientApprovalResolvedEvent(
+                peer_ip=peer_ip,
+                approved=client is not None,
+                request_id=meta.get("request_id", ""),
+                screen_position=screen_position,
+                reason=reason,
+            )
+        )
+        return True
+
+    async def approve_pending_client(
+        self, peer_ip: str, screen_position: str = "top"
+    ) -> bool:
+        """Approve an unknown client that's waiting for the admin's OK.
+
+        Adds the client to the persistent allowlist with the chosen screen
+        position before unblocking the handshake.
+        """
+        async with self._pending_approvals_lock:
+            meta = self._pending_approval_meta.get(peer_ip)
+            fut = self._pending_approvals.get(peer_ip)
+        if fut is None or fut.done():
+            self._logger.warning(
+                f"No pending approval for {peer_ip} (or already resolved)"
+            )
+            return False
+
+        hostname = (meta or {}).get("hostname") or None
+        try:
+            client = await self.add_client(
+                ip_addresses=peer_ip,
+                hostname=hostname,
+                screen_position=screen_position,
+                auto_save=True,
+            )
+        except Exception as e:
+            self._logger.error(f"Failed to add approved client {peer_ip} ({e})")
+            await self._resolve_pending_approval(
+                peer_ip, None, reason=f"add_failed: {e}"
+            )
+            return False
+
+        await self._resolve_pending_approval(
+            peer_ip, client, screen_position=screen_position, reason="approved"
+        )
+        return True
+
+    async def deny_pending_client(self, peer_ip: str, reason: str = "denied") -> bool:
+        """Deny an unknown client awaiting approval."""
+        return await self._resolve_pending_approval(peer_ip, None, reason=reason)
+
+    def get_pending_approvals(self) -> list[Dict[str, str]]:
+        """Snapshot of currently pending approvals (for status queries)."""
+        return [
+            {"peer_ip": ip, **(self._pending_approval_meta.get(ip, {}))}
+            for ip, fut in self._pending_approvals.items()
+            if not fut.done()
+        ]
+
     # ==================== Server Lifecycle ====================
 
     async def start(self) -> bool:
@@ -815,6 +965,7 @@ class Server:
             allowlist=self.clients_manager,
             certfile=self.certfile,
             keyfile=self.keyfile,
+            approval_callback=self._request_client_approval,
         )
 
         # Start mDNS service
@@ -878,6 +1029,14 @@ class Server:
         self._logger.info("Stopping Server...")
 
         tasks: list[asyncio.Task] = []
+
+        # Cancel any pending client-approval prompts so admin GUI stops
+        # showing them and the futures don't leak.
+        for ip, fut in list(self._pending_approvals.items()):
+            if not fut.done():
+                fut.set_result(None)
+            self._pending_approvals.pop(ip, None)
+            self._pending_approval_meta.pop(ip, None)
 
         # Stop connection handler
         if self.connection_handler:

@@ -80,6 +80,8 @@ pub enum EventType {
     ClientAdded,
     ClientRemoved,
     ClientUpdated,
+    ClientApprovalRequested,
+    ClientApprovalResolved,
 
     // Stream events
     StreamEnabled,
@@ -180,6 +182,9 @@ pub enum CommandType {
     RemoveClient,
     EditClient,
     ListClients,
+    ApproveClient,
+    DenyClient,
+    ListPendingApprovals,
 
     // SSL/Certificate management
     EnableSsl,

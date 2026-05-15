@@ -30,11 +30,14 @@ import {AnimatePresence, motion} from 'motion/react';
 import {InlineNotification, Notification} from './ui/inline-notification';
 import {PowerButton} from './ui/power-button';
 import {PermissionsPanel} from './ui/permissions-panel';
+import {PendingApprovalCard} from './ui/pending-approval-card';
 
 import {useEventListeners} from '../hooks/useEventListeners';
 import {useClientManagement} from '../hooks/useClientManagement';
 import {
     addClient as addClientCommand,
+    approveClient as approveClientCommand,
+    denyClient as denyClientCommand,
     getLocalIpAddress,
     removeClient as removeClientCommand,
     saveServerConfig,
@@ -45,6 +48,8 @@ import {
 } from '../api/Sender';
 import {listenCommand, listenGeneralEvent} from '../api/Listener';
 import {
+    ClientApprovalRequest,
+    ClientApprovalResolved,
     ClientEditObj,
     ClientObj,
     CommandType,
@@ -82,6 +87,10 @@ export function ServerTab({onStatusChange, state}: ServerTabProps) {
     const [otpExpiresAt, setOtpExpiresAt] = useState<number | null>(null);
     const [otpRemaining, setOtpRemaining] = useState(0);
     const [pairingRequester, setPairingRequester] = useState('');
+    // Pending client-approval prompts: unknown clients trying to connect that
+    // the admin must allow/deny. Keyed by peer_ip so duplicate handshakes
+    // collapse onto the same prompt.
+    const [pendingApprovals, setPendingApprovals] = useState<ClientApprovalRequest[]>([]);
     const [firstInit, setFirstInit] = useState(true);
     const [clientIpTags, setClientIpTags] = useState<string[]>([]);
     const [clientIpInput, setClientIpInput] = useState('');
@@ -277,15 +286,84 @@ export function ServerTab({onStatusChange, state}: ServerTabProps) {
             }).then(unlisten => {
                 listeners.addListenerOnce('pairing-requested', unlisten);
             });
+
+            // An unknown client is trying to connect — server is holding the
+            // handshake open until we allow or deny via the inline card.
+            listenGeneralEvent(EventType.ClientApprovalRequested, false, (event) => {
+                const info = event.data as ClientApprovalRequest | undefined;
+                if (!info || !info.peer_ip) return;
+                handleApprovalRequest(info);
+            }).then(unlisten => {
+                listeners.addListenerOnce('approval-requested', unlisten);
+            });
+
+            // Server signalled the approval is resolved (timeout, second
+            // window, etc.). Drop the inline card if it's still up.
+            listenGeneralEvent(EventType.ClientApprovalResolved, false, (event) => {
+                const info = event.data as ClientApprovalResolved | undefined;
+                if (!info || !info.peer_ip) return;
+                handleApprovalResolved(info);
+            }).then(unlisten => {
+                listeners.addListenerOnce('approval-resolved', unlisten);
+            });
         };
 
         const cleanup = () => {
             listeners.removeListener('client-connected');
             listeners.removeListener('client-disconnected');
             listeners.removeListener('pairing-requested');
+            listeners.removeListener('approval-requested');
+            listeners.removeListener('approval-resolved');
         };
 
         return {cleanup, setup};
+    };
+
+    const handleApprovalRequest = (info: ClientApprovalRequest) => {
+        setPendingApprovals((prev) => {
+            // Collapse repeated requests from the same IP onto the latest
+            // request_id so the card always reflects the most recent attempt.
+            const filtered = prev.filter((r) => r.peer_ip !== info.peer_ip);
+            return [...filtered, info];
+        });
+        const who = info.hostname || info.peer_ip;
+        addNotification(
+            'info',
+            'New client wants to connect',
+            `${who} is waiting for approval`
+        );
+    };
+
+    const handleApprovalResolved = (info: ClientApprovalResolved) => {
+        setPendingApprovals((prev) =>
+            prev.filter((r) => r.peer_ip !== info.peer_ip)
+        );
+    };
+
+    const handleApproveClient = (req: ClientApprovalRequest, position: string) => {
+        // Optimistically remove the card; the resolved-event will also remove
+        // it but we want immediate UI feedback.
+        setPendingApprovals((prev) =>
+            prev.filter((r) => r.peer_ip !== req.peer_ip)
+        );
+        approveClientCommand(req.peer_ip, position).catch((err) => {
+            console.error('Error approving client:', err);
+            addNotification('error', 'Failed to approve client');
+            // Restore the card so the admin can retry.
+            setPendingApprovals((prev) =>
+                prev.some((r) => r.peer_ip === req.peer_ip) ? prev : [...prev, req]
+            );
+        });
+    };
+
+    const handleDenyClient = (req: ClientApprovalRequest) => {
+        setPendingApprovals((prev) =>
+            prev.filter((r) => r.peer_ip !== req.peer_ip)
+        );
+        denyClientCommand(req.peer_ip).catch((err) => {
+            console.error('Error denying client:', err);
+            addNotification('error', 'Failed to deny client');
+        });
     };
 
     const handlePairingRequest = (info: PairingRequestInfo) => {
@@ -741,6 +819,22 @@ export function ServerTab({onStatusChange, state}: ServerTabProps) {
                         </div>
                     </motion.div>
                 )}
+            </AnimatePresence>
+
+            {/* Pending client-approval prompts. One card per unknown client
+                attempting to connect; the admin chooses screen position and
+                clicks Allow, or denies. The handshake on the server is held
+                open until one of the buttons is pressed (or the request
+                times out, in which case the resolved event removes the card). */}
+            <AnimatePresence>
+                {pendingApprovals.map((req) => (
+                    <PendingApprovalCard
+                        key={`${req.peer_ip}-${req.request_id}`}
+                        request={req}
+                        onApprove={(position) => handleApproveClient(req, position)}
+                        onDeny={() => handleDenyClient(req)}
+                    />
+                ))}
             </AnimatePresence>
 
             {/* Inline Notifications */}
