@@ -1045,6 +1045,7 @@ class Server:
             certfile=self.certfile,
             keyfile=self.keyfile,
             approval_callback=self._request_client_approval,
+            server_uid=self.config.uid,
         )
 
         # Initialize and start enabled components
@@ -1101,6 +1102,11 @@ class Server:
             ):  # At this point we have a UID generated and assigned
                 self.config.uid = self._mdns_service.get_uid()
                 await self.save_config()
+            # Backfill the handshake-ack UID now that we know it. First-run
+            # servers build the connection handler before mDNS assigns a
+            # UID, so without this clients would see ``server_uid=""``.
+            if self.connection_handler is not None:
+                self.connection_handler.set_server_uid(self.config.uid)
         except RuntimeError as re:
             self._logger.warning(f"Failed to start mDNS service ({re})")
         except Exception as e:

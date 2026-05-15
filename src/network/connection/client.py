@@ -77,6 +77,7 @@ class ConnectionHandler(BaseConnectionHandler):
         disconnected_callback: Optional[Callable[["ClientObj"], Any]] = None,
         reconnected_callback: Optional[Callable[["ClientObj", list[int]], Any]] = None,
         stale_cert_callback: Optional[Callable[[], Any]] = None,
+        server_uid_callback: Optional[Callable[[str], Any]] = None,
         host: str = "127.0.0.1",
         port: int = 5001,
         wait: int = 5,
@@ -114,6 +115,11 @@ class ConnectionHandler(BaseConnectionHandler):
         # OTP pairing flow so the user isn't left staring at a cryptic
         # SSL error in the log.
         self.stale_cert_callback = stale_cert_callback
+        # Invoked with the server's UID once it arrives in the handshake
+        # ack. The Client service uses this to persist the UID locally so
+        # the certificate mapping has a stable, non-empty key even when
+        # mDNS discovery wasn't the entry point.
+        self.server_uid_callback = server_uid_callback
 
         self.host = host
         self.port = port
@@ -496,6 +502,22 @@ class ConnectionHandler(BaseConnectionHandler):
             self._client_obj.set_screen_position(
                 handshake_ack.payload.get("screen_position", "unknown")
             )
+
+            # Server now advertises its UID in the ack so the client can
+            # persist a stable identifier (used as the cert-mapping key)
+            # without depending on mDNS discovery. Fire the callback once
+            # per handshake; the upstream Client service decides whether
+            # to write it to disk.
+            server_uid = handshake_ack.payload.get("server_uid", "")
+            if server_uid and self.server_uid_callback:
+                try:
+                    result = self.server_uid_callback(server_uid)
+                    if asyncio.iscoroutine(result):
+                        await result
+                except Exception as e:
+                    self._logger.log(
+                        f"Error in server_uid_callback ({e})", Logger.ERROR
+                    )
 
             # Open additional streams
             if self.open_streams:

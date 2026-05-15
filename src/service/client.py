@@ -530,9 +530,34 @@ class Client:
                 self._logger.error("Received empty certificate data")
                 return False
 
-            # Save certificate
+            # Save certificate. Falling back to the resolved server host
+            # when the UID is missing prevents the cert from being saved
+            # as ``ca_.crt`` (empty source_id) — a degenerate state that
+            # collides with every other empty-uid client and breaks the
+            # mapping lookup. The UID stays the preferred key when known.
+            primary_id = self.config.get_server_uid()
+            if not primary_id:
+                resolved = self._cert_receiver.get_resolved_host()
+                primary_id = resolved or self.config.get_server_host() or ""
+                if not primary_id:
+                    self._logger.error(
+                        "Cannot save certificate: no UID, host, or resolved address"
+                    )
+                    return False
+                # Promote the fallback identifier into the config UID, so
+                # later lookups (``has_certificate``, ``_load_certificate``,
+                # ``_handle_certificate_check``) keep finding the cert. The
+                # original choose_server flow normally fills this in; we
+                # only end up here for manual-config or daemon-restart
+                # scenarios where the UID never made it to disk.
+                self.config.set_server_connection(uid=primary_id)
+                asyncio.create_task(self.config.save())
+                self._logger.warning(
+                    f"Server UID was empty; using fallback {primary_id!r} "
+                    f"as both source_id and persisted server UID"
+                )
             if not self._cert_manager.save_ca_data(
-                data=cert_data, source_id=self.config.get_server_uid()
+                data=cert_data, source_id=primary_id
             ):
                 self._logger.error("Failed to save received certificate")
                 return False
@@ -765,6 +790,11 @@ class Client:
                     hostname=service.hostname,
                     port=service.port,
                 )
+                # Persist the choice to disk so a daemon restart (or a Client
+                # re-instantiation) keeps the server UID. Without this, the
+                # next pairing flow would save the certificate with an empty
+                # source_id (producing ``ca_.crt`` and orphan mapping rows).
+                asyncio.create_task(self.config.save())
                 # Set the server future result in case someone is waiting for it
                 if not self._server.done():
                     self._server.set_result(service)
@@ -1018,6 +1048,7 @@ class Client:
                         disconnected_callback=self._on_disconnected,
                         reconnected_callback=self._on_streams_reconnected,
                         stale_cert_callback=self._on_stale_certificate,
+                        server_uid_callback=self._on_server_uid_received,
                         host=self.config.get_server_host(),
                         port=self.config.get_server_port(),
                         heartbeat_interval=self.config.get_heartbeat_interval(),
@@ -1450,6 +1481,28 @@ class Client:
                 client_screen=client.get_screen_position(), streams=streams
             ),
         )
+
+    async def _on_server_uid_received(self, uid: str) -> None:
+        """Persist the server UID announced in the handshake ack.
+
+        Keeps the local config in sync with what the server actually
+        identifies as, so the cert-mapping key matches even when the
+        pairing started from a manual host/port (no mDNS discovery) or
+        the saved config drifted across restarts.
+        """
+        if not uid:
+            return
+        current = self.config.get_server_uid()
+        if current == uid:
+            return
+        self._logger.info(
+            f"Updating server UID from {current!r} to {uid!r} (from handshake)"
+        )
+        self.config.set_server_connection(uid=uid)
+        try:
+            await self.config.save()
+        except Exception as e:
+            self._logger.warning(f"Could not persist updated server UID ({e})")
 
     async def _on_stale_certificate(self) -> None:
         """Recover from a server cert that no longer verifies.

@@ -79,9 +79,15 @@ class ConnectionHandler(BaseConnectionHandler):
         approval_callback: Optional[
             Callable[[str, str, str], Awaitable[Optional["ClientObj"]]]
         ] = None,
+        server_uid: Optional[str] = None,
     ):
         self.certfile = certfile
         self.keyfile = keyfile
+        # Sent to clients in the handshake ack so they can persist a stable
+        # identifier for this server (used as the cert mapping key). Without
+        # this, manual-config clients never learn the UID and their cert
+        # files end up named after the IP / hostname only.
+        self.server_uid = server_uid
         self.clients = allowlist if allowlist is not None else ClientsManager()
 
         self.connected_callback = connected_callback
@@ -113,6 +119,16 @@ class ConnectionHandler(BaseConnectionHandler):
     ) -> None:
         """Plug in (or remove) an interactive approval callback at runtime."""
         self.approval_callback = callback
+
+    def set_server_uid(self, uid: Optional[str]) -> None:
+        """Update the advertised server UID at runtime.
+
+        The Server service initialises the connection handler before the
+        mDNS UID is resolved on first launch, so this setter is used to
+        backfill the identifier as soon as it becomes available. Subsequent
+        handshakes will include it in the ack payload.
+        """
+        self.server_uid = uid
 
     async def start(self) -> bool:
         """Avvia il server asyncio con heartbeat monitoring"""
@@ -612,12 +628,16 @@ class ConnectionHandler(BaseConnectionHandler):
                     client=client.to_dict(),
                 )
 
-                # Send position info back to client
+                # Send position info back to client. ``server_uid`` lets the
+                # client persist a stable identifier for this server even
+                # when mDNS discovery wasn't used (manual-config case),
+                # keeping subsequent certificate lookups consistent.
                 await client_msg_exchange.send_handshake_message(
                     ack=True,
                     source="server",
                     screen_position=client.screen_position,
                     target=client.screen_position,
+                    server_uid=self.server_uid or "",
                 )
 
                 conn = ClientConnection(client_addr)
