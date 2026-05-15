@@ -59,6 +59,7 @@ class ConnectionHandler(BaseConnectionHandler):
 
     HANDSHAKE_DELAY = 0.2  # sec
     HANDSHAKE_MSG_TIMEOUT = 5.0  # sec
+    HANDSHAKE_EOF_POLL_INTERVAL = 0.05  # sec, how often to check peer EOF during handshake
     CONNECTION_ATTEMPT_TIMEOUT = 10  # sec
     MAX_HEARTBEAT_MISSES = 0
 
@@ -300,12 +301,10 @@ class ConnectionHandler(BaseConnectionHandler):
 
             # TODO: Move client allowlist verification here and let user allow/block before handshake
 
-            # Handshake
+            # Handshake. _handshake() logs the specific failure reason
+            # (timeout, allowlist miss, uid/hostname mismatch, probe, ...);
+            # we only need to ensure the socket is cleaned up here.
             if not await self._handshake(reader, writer, addr[0], client_obj):
-                self._logger.log(
-                    f"Handshake failed for client {addr[0]}. Closing connection.",
-                    Logger.WARNING,
-                )
                 await self._clean_on_connection_lost(writer)
                 return
 
@@ -332,6 +331,68 @@ class ConnectionHandler(BaseConnectionHandler):
         against the list of known IP addresses.
         """
         return client_obj.has_ip(address)
+
+    async def _wait_for_handshake_response(
+        self,
+        msg_exchange: MessageExchange,
+        reader: asyncio.StreamReader,
+        timeout: float,
+    ) -> tuple[Optional[ProtocolMessage], bool]:
+        """
+        Wait for a handshake response while watching for peer EOF.
+
+        Races message reception against EOF detection on the reader. If the
+        peer closes the connection without responding (typical TCP probe used
+        by clients/health checks to verify reachability), this returns
+        ``(None, True)`` as soon as the close is observed, avoiding the full
+        handshake timeout.
+
+        Args:
+            msg_exchange: MessageExchange driving the handshake.
+            reader: Underlying ``StreamReader`` whose EOF state signals a probe.
+            timeout: Maximum time to wait, in seconds.
+
+        Returns:
+            ``(message, is_probe)`` where ``message`` is the received
+            :class:`ProtocolMessage` (or ``None`` if the peer closed), and
+            ``is_probe`` is True when EOF was reached before any message
+            arrived.
+
+        Raises:
+            asyncio.TimeoutError: If neither a message nor EOF is observed
+                within ``timeout`` seconds.
+        """
+        receive_task = asyncio.create_task(msg_exchange.get_received_message())
+
+        async def _wait_for_eof():
+            while not reader.at_eof():
+                await asyncio.sleep(self.HANDSHAKE_EOF_POLL_INTERVAL)
+
+        eof_task = asyncio.create_task(_wait_for_eof())
+
+        try:
+            done, _pending = await asyncio.wait(
+                {receive_task, eof_task},
+                timeout=timeout,
+                return_when=asyncio.FIRST_COMPLETED,
+            )
+        finally:
+            for t in (receive_task, eof_task):
+                if not t.done():
+                    t.cancel()
+                    try:
+                        await t
+                    except (asyncio.CancelledError, Exception):
+                        pass
+
+        if not done:
+            raise asyncio.TimeoutError()
+
+        if receive_task in done and not receive_task.cancelled():
+            return receive_task.result(), False
+
+        # EOF observed before any handshake response: peer closed early.
+        return None, True
 
     async def _handshake(
         self,
@@ -374,15 +435,28 @@ class ConnectionHandler(BaseConnectionHandler):
             # Start receiving to process the response
             await client_msg_exchange.start()
 
-            # Wait for response with timeout
+            # Wait for response, watching for peer EOF to detect TCP probes
+            # (clients that open a connection just to test reachability and
+            # close immediately - e.g. service-side availability checks).
             try:
-                response = await asyncio.wait_for(
-                    client_msg_exchange.get_received_message(),
-                    timeout=self.HANDSHAKE_MSG_TIMEOUT,
+                response, is_probe = await self._wait_for_handshake_response(
+                    client_msg_exchange,
+                    reader,
+                    self.HANDSHAKE_MSG_TIMEOUT,
                 )
             except asyncio.TimeoutError:
                 self._logger.log(
                     f"Handshake timeout for client {client_addr}", Logger.WARNING
+                )
+                await client_msg_exchange.stop()
+                return False
+
+            if is_probe:
+                # Peer closed before responding: silently abort - this is a
+                # routine reachability probe, not a failed handshake.
+                self._logger.log(
+                    f"Probe connection from {client_addr} closed before handshake response",
+                    Logger.DEBUG,
                 )
                 await client_msg_exchange.stop()
                 return False
@@ -490,7 +564,7 @@ class ConnectionHandler(BaseConnectionHandler):
                 # Normal flow: update client info
                 client.uid = response.payload.get("client_name", client.uid)
                 client.screen_resolution = response.payload.get(
-                    "screen_resolution", None
+                    "screen_resolution", "0x0"
                 )
                 client.additional_params = response.payload.get("additional_params", {})
                 client.ssl = response.payload.get("ssl", False)
