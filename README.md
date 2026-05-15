@@ -22,6 +22,18 @@ Built with Python using uvloop (macOS/Linux) and winloop (Windows) as event loop
 </div>
 
 
+## Table of Contents
+
+- [Getting Started](#getting-started)
+- [Platform Support](#platform-support)
+- [Usage](#usage)
+- [Configuration](#configuration)
+- [Troubleshooting](#troubleshooting)
+- [Development / Building from Source](#development--building-from-source)
+- [Roadmap](#roadmap)
+- [License](#license)
+
+
 ## Getting Started
 
 [![GitHub Downloads (all assets, latest release)](https://img.shields.io/github/downloads/fizzi01/Perpetua/latest/total?style=for-the-badge&logo=github&label=DOWNLOAD%20LATEST&color=%234f47e4)](https://github.com/fizzi01/Perpetua/releases/latest)
@@ -39,6 +51,8 @@ The GUI will guide you through choosing server or client mode and the initial co
 
 Install Perpetua on both machines, then run through these steps once. After this, every reconnection is automatic.
 
+`Server` is the machine with the physical keyboard and mouse you want to share. `Client` is the machine you want to control with them.
+
 1. On the machine that owns the keyboard and mouse, open Perpetua and pick `Server`. Press the power button to start it.
 2. On the other machine, open Perpetua and pick `Client`. Press the power button. The client auto-discovers the server on the local network.
 3. On the `Server`, an OTP card appears under the power button when the client asks to pair. Share the 6-digit code with the user of the client.
@@ -50,6 +64,45 @@ The OTP is shown only on the server's screen and entered manually on the client;
 
 > [!TIP]
 > You can pre-register clients in `Server > Clients` instead. Pre-registered clients skip the Allow/Deny prompt and connect directly.
+
+> [!NOTE]
+> If anything goes wrong and the cursor gets stuck on the wrong machine, press `Ctrl + Shift + Q` on the server to force-quit Perpetua. See [Keyboard Shortcuts](#keyboard-shortcuts) for the full list.
+
+
+## Platform Support
+
+### Server (controls other machines)
+
+| Feature | macOS | Windows | X11 |             Wayland (GNOME)             |   Wayland (KDE)    |  Wayland (Others)   |
+|---|:---:|:---:|:---:|:---------------------------------------:|:------------------:|:-------------------:|
+| Mouse capture | :heavy_check_mark: | :heavy_check_mark: | :heavy_check_mark: |           :heavy_check_mark:            | :heavy_check_mark: |         :x:         |
+| Keyboard capture | :heavy_check_mark: | :heavy_check_mark: | :heavy_check_mark: |           :heavy_check_mark:            | :heavy_check_mark: | :heavy_check_mark:  |
+| Clipboard sync | :heavy_check_mark: | :heavy_check_mark: | :heavy_check_mark: | :heavy_check_mark:  | :heavy_check_mark: |  :heavy_check_mark: |
+
+### Client (controlled by a server)
+
+| Feature | macOS | Windows | X11 | Wayland (GNOME) | Wayland (KDE) | Wayland (Others) |
+|---|:---:|:---:|:---:|:---:|:---:|:---:|
+| Mouse control | :heavy_check_mark: | :heavy_check_mark: | :heavy_check_mark: | :heavy_check_mark: | :heavy_check_mark: | :x: |
+| Keyboard control | :heavy_check_mark: | :heavy_check_mark: | :heavy_check_mark: | :heavy_check_mark: | :heavy_check_mark: | :heavy_check_mark: |
+| Clipboard sync | :heavy_check_mark: | :heavy_check_mark: | :heavy_check_mark: | :heavy_check_mark: | :heavy_check_mark: | :heavy_check_mark: |
+
+Supported desktop environments: **GNOME >= 45** or **KDE Plasma >= 6.1**.
+
+Other Wayland compositors (wlroots-based, Hyprland, Sway, etc.) are not yet supported.
+
+> [!NOTE]
+> **Linux (Wayland):** requires `libei` and `liboeffis` installed on the system.
+
+### Known Issues
+
+> [!Important]
+> - **Windows**: You can't control a Windows client if there is no real mouse connected to the machine.
+>
+> - **Input Capture Conflicts**: Perpetua cannot control the mouse when other applications have exclusive input capture (e.g., video games). This is an architectural limitation.
+
+
+## Usage
 
 ### Background Mode
 
@@ -88,47 +141,9 @@ The following hotkeys are available on the **server** machine to control input f
 > Client switch hotkeys require the server to be running and at least one client to be connected.
 
 
-## Platform Support
-
-### Server (controls other machines)
-
-| Feature | macOS | Windows | X11 |             Wayland (GNOME)             |   Wayland (KDE)    |  Wayland (Others)   |
-|---|:---:|:---:|:---:|:---------------------------------------:|:------------------:|:-------------------:|
-| Mouse capture | :heavy_check_mark: | :heavy_check_mark: | :heavy_check_mark: |           :heavy_check_mark:            | :heavy_check_mark: |         :x:         |
-| Keyboard capture | :heavy_check_mark: | :heavy_check_mark: | :heavy_check_mark: |           :heavy_check_mark:            | :heavy_check_mark: | :heavy_check_mark:  |
-| Clipboard sync | :heavy_check_mark: | :heavy_check_mark: | :heavy_check_mark: | :heavy_check_mark:  | :heavy_check_mark: |  :heavy_check_mark: |
-
-### Client (controlled by a server)
-
-| Feature | macOS | Windows | X11 | Wayland (GNOME) | Wayland (KDE) | Wayland (Others) |
-|---|:---:|:---:|:---:|:---:|:---:|:---:|
-| Mouse control | :heavy_check_mark: | :heavy_check_mark: | :heavy_check_mark: | :heavy_check_mark: | :heavy_check_mark: | :x: |
-| Keyboard control | :heavy_check_mark: | :heavy_check_mark: | :heavy_check_mark: | :heavy_check_mark: | :heavy_check_mark: | :heavy_check_mark: |
-| Clipboard sync | :heavy_check_mark: | :heavy_check_mark: | :heavy_check_mark: | :heavy_check_mark: | :heavy_check_mark: | :heavy_check_mark: |
-
-Supported desktop environments: **GNOME >= 45** or **KDE Plasma >= 6.1**.
-
-Other Wayland compositors (wlroots-based, Hyprland, Sway, etc.) are not yet supported.
-
-> [!NOTE]
-> **Linux (Wayland):** requires `libei` and `liboeffis` installed on the system.
-
-### Known Issues
-
-> [!Important]
-> - **Windows**: You can't control a Windows client if there is no real mouse connected to the machine.
->
-> - **Input Capture Conflicts**: Perpetua cannot control the mouse when other applications have exclusive input capture (e.g., video games). This is an architectural limitation.
-
-
 ## Configuration
 
 Perpetua uses JSON to define client and server settings. The configuration file is automatically generated on first launch with sensible defaults, requiring minimal manual intervention for most use cases.
-
-Configuration File Locations:
-- macOS: `$HOME/Library/Caches/Perpetua`
-- Windows: `%LOCALAPPDATA%\Perpetua`
-- Linux: `$HOME/.perpetua`
 
 <details>
 <summary><b>Server Configuration</b></summary>
@@ -178,6 +193,11 @@ The OTP is just for the initial certificate exchange. After that, connections to
 
 <details>
 <summary><b>Configuration File Structure</b></summary>
+
+The configuration file lives at:
+- macOS: `$HOME/Library/Caches/Perpetua`
+- Windows: `%LOCALAPPDATA%\Perpetua`
+- Linux: `$HOME/.perpetua`
 
 The configuration [json file](#file-structure) is split into three sections: `server`, `client`, and `general`.
 
@@ -273,13 +293,43 @@ These parameters affect the application's internal behavior. Only modify them if
 
 </details>
 
-> [!NOTE]
-> When multiple Perpetua servers are detected on the network (in auto-discovery mode),
-> the GUI will present a selection dialog allowing the user to
-> choose the desired server.
-
 
 ## Troubleshooting
+
+<details>
+<summary><b>The client doesn't show up on the server</b></summary>
+
+Auto-discovery uses mDNS. Make sure:
+
+- The `Server` is running and `Secure connection` is enabled.
+- Both machines are on the same LAN/subnet.
+- UDP `5353` is not blocked by a firewall (see [Firewall ports](#firewall-ports)).
+
+As a fallback, set the server's hostname or IP directly in the `Client > Options` section.
+
+</details>
+
+<details>
+<summary><b>OTP card never appears on the server</b></summary>
+
+The OTP only appears when the `Client` actively asks to pair. Check that:
+
+- `Secure connection` is enabled on the `Server` (it is by default).
+- The pairing port on the server (default `port - 2`) is reachable from the client (see [Firewall ports](#firewall-ports)).
+- The client is actually trying to connect - its power button is green and it has discovered the server.
+
+You can also generate the OTP manually from the `Security` section on the `Server`.
+
+</details>
+
+<details>
+<summary><b>Cursor doesn't cross to the other screen</b></summary>
+
+Check the client's screen position in `Server > Clients`. The position (top, bottom, left, right) defines which edge of the server screen the cursor uses to enter the client. If the client is offline, the cursor stays on the server side.
+
+If the cursor gets stuck on the wrong machine, press `Ctrl + Shift + Q` on the server to force-quit Perpetua.
+
+</details>
 
 <details>
 <summary><b>"Port already in use" on server start</b></summary>
@@ -314,6 +364,7 @@ Stale endpoint files left behind by a crash are harmless. The GUI falls back to 
 
 </details>
 
+<a id="firewall-ports"></a>
 <details>
 <summary><b>Firewall ports</b></summary>
 
@@ -329,6 +380,8 @@ The `Client` only makes outbound connections.
 
 
 ## Development / Building from Source
+
+This section is for contributors and people building from source. End users can grab the prebuilt binaries from [Releases](https://github.com/fizzi01/Perpetua/releases/latest).
 
 <details>
 <summary><b>Prerequisites</b></summary>
@@ -382,6 +435,8 @@ The `Client` only makes outbound connections.
 > [!NOTE]
 > **Windows versions prior to Windows 10 (1803)** require [Microsoft Edge WebView2 Runtime](https://developer.microsoft.com/en-us/microsoft-edge/webview2/) to be installed manually.
 
+<details>
+<summary><b>Click to expand build instructions</b></summary>
 
 ### Quick Start
 
@@ -435,9 +490,6 @@ in a separate terminal.
    The Tauri dev server supports hot-reload for the frontend. In debug
    builds the Rust binary does **not** spawn the daemon automatically.
 
-> [!NOTE]
-> Make sure all prerequisites and dependencies are installed before
-> running the daemon or the GUI.
 
 
 <details>
@@ -497,6 +549,8 @@ Build Daemon:
 # From project root
 poetry run python build.py --skip-gui
 ```
+
+</details>
 
 </details>
 
