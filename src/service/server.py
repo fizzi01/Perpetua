@@ -34,6 +34,8 @@ from event.notification import (
     ClientConnectedEvent as ClientConnectedNotification,
     ClientDisconnectedEvent as ClientDisconnectedNotification,
     ConfigSavedEvent,
+    OtpGeneratedEvent,
+    PairingRequestEvent,
     StreamEnabledEvent,
     StreamDisabledEvent,
 )
@@ -332,7 +334,88 @@ class Server:
             self._logger.error(f"Error setting up SSL certificates ({e})")
             raise
 
-    # TODO: Better handling -> We should keep the sharing server alive because port may be blocked
+    async def start_pairing_service(
+        self,
+        host: Optional[str] = None,
+        port: int = ServerConfig.DEFAULT_PORT - 2,
+    ) -> bool:
+        """
+        Start the always-on pairing/cert-sharing listener.
+
+        While this listener is running, clients can:
+
+        - send ``REQUEST_PAIRING`` to ask the server to auto-generate an OTP
+          and surface it on the admin GUI (no OTP travels over the network);
+        - send ``GET_CERTIFICATE`` to download the encrypted CA bundle once an
+          OTP is active.
+
+        Idempotent: if the service is already running, this is a no-op.
+        """
+        if not self._cert_manager.certificates_exist():
+            self._logger.warning(
+                "No certificates available, skipping pairing service start"
+            )
+            return False
+
+        if self._cert_sharing and self._cert_sharing.is_sharing_active():
+            # Refresh the callback so it captures the current notification
+            # callback even if it changed since last start.
+            self._cert_sharing.set_pairing_request_callback(self._on_pairing_requested)
+            return True
+
+        cert_data = self._cert_manager.load_ca_data()
+        if not cert_data:
+            self._logger.error("Failed to load CA certificate data")
+            return False
+
+        bind_host = host if host is not None else "0.0.0.0"
+        self._cert_sharing = CertificateSharing(
+            cert_data=cert_data,
+            host=bind_host,
+            port=port,
+            timeout=30,
+            pairing_request_callback=self._on_pairing_requested,
+        )
+
+        ok = await self._cert_sharing.start_service()
+        if not ok:
+            self._logger.error("Failed to start pairing service")
+            self._cert_sharing = None
+        return ok
+
+    async def _on_pairing_requested(self, info: Dict[str, str]) -> None:
+        """Bridge a pairing request from CertificateSharing into notifications.
+
+        Emits two events so the GUI can react with either:
+        - the legacy ``OtpGenerated`` path (existing UI just works);
+        - the richer ``PairingRequested`` path (shows which client asked).
+        """
+        try:
+            otp = info.get("otp", "")
+            timeout_val = int(info.get("timeout", "0") or 0)
+            peer_ip = info.get("peer_ip", "")
+            hostname = info.get("hostname", "")
+            was_active = info.get("was_active", "0") == "1"
+        except Exception as e:
+            self._logger.error(f"Malformed pairing info payload: {e}")
+            return
+
+        await self._send_notification(
+            PairingRequestEvent(
+                otp=otp,
+                timeout=timeout_val,
+                peer_ip=peer_ip,
+                hostname=hostname,
+                was_active=was_active,
+            )
+        )
+        # Mirror as OtpGenerated so existing GUI listeners keep working
+        # without needing to know about pairing-vs-manual provenance.
+        if otp:
+            await self._send_notification(
+                OtpGeneratedEvent(otp=otp, timeout=timeout_val)
+            )
+
     async def share_certificate(
         self,
         host: str = "0.0.0.0",
@@ -340,15 +423,16 @@ class Server:
         timeout: int = 30,
     ) -> Tuple[bool, Optional[str]]:
         """
-        Start certificate sharing process with OTP.
+        Start (or refresh) certificate sharing with an OTP.
 
-        Opens a temporary server that clients can connect to receive the CA certificate.
-        Returns an OTP that must be used by the client to decrypt the certificate.
+        If the always-on pairing service is running, this just ensures an OTP
+        is active and returns it — no new socket is opened. Otherwise it falls
+        back to the legacy one-shot flow that opens a temporary server.
 
         Args:
             host: Host address for temporary server (default: all interfaces)
             port: Port for temporary server (default: 55556)
-            timeout: Maximum time window in seconds (default: 30)
+            timeout: OTP validity window in seconds (default: 30)
 
         Returns:
             Tuple of (success, otp). OTP is None if failed.
@@ -363,21 +447,29 @@ class Server:
             self._logger.error("No certificates available to share")
             return False, None
 
-        # Stop previous sharing if active
+        # Fast path: pairing service already up — just refresh the OTP.
         if self._cert_sharing and self._cert_sharing.is_sharing_active():
-            await self._cert_sharing.stop_sharing()
+            otp, remaining = await self._cert_sharing.ensure_active_otp(timeout=timeout)
+            if otp:
+                self._logger.info(
+                    f"Refreshed OTP via pairing service (valid {remaining}s)"
+                )
+                return True, otp
+            return False, None
 
         try:
-            # Get CA certificate
             cert_data = self._cert_manager.load_ca_data()
 
             if not cert_data:
                 self._logger.error("Failed to load CA certificate data")
                 return False, None
 
-            # Create and start sharing
             self._cert_sharing = CertificateSharing(
-                cert_data=cert_data, host=host, port=port, timeout=timeout
+                cert_data=cert_data,
+                host=host,
+                port=port,
+                timeout=timeout,
+                pairing_request_callback=self._on_pairing_requested,
             )
 
             success, otp = await self._cert_sharing.start_sharing()
@@ -763,6 +855,16 @@ class Server:
             await self.stop(True)
             return False
 
+        # Bring up the pairing/cert-sharing listener so clients can request an
+        # OTP without the admin having to push a button first. Failure is
+        # non-fatal: the rest of the server keeps running, the admin can still
+        # share certs manually via share_certificate().
+        if self.config.ssl_enabled:
+            try:
+                await self.start_pairing_service(host=self.config.host)
+            except Exception as e:
+                self._logger.warning(f"Pairing service did not start ({e})")
+
         self._running = True
         self._logger.info(f"Server started on {self.config.host}:{self.config.port}")
         return True
@@ -780,6 +882,14 @@ class Server:
         # Stop connection handler
         if self.connection_handler:
             await self.connection_handler.stop()
+
+        # Stop pairing/cert-sharing listener
+        if self._cert_sharing:
+            try:
+                await self._cert_sharing.stop_sharing()
+            except Exception as e:
+                self._logger.warning(f"Error stopping pairing service ({e})")
+            self._cert_sharing = None
 
         # Stop all components
         for component_name, component in list(self._components.items()):

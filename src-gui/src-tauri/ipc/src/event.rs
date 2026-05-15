@@ -62,6 +62,7 @@ pub enum EventType {
     OtpValidated,
     OtpInvalid,
     OtpGenerated,
+    PairingRequested,
     SslHandshakeStarted,
     SslHandshakeCompleted,
     SslHandshakeFailed,
@@ -186,6 +187,7 @@ pub enum CommandType {
     ShareCertificate,
     ReceiveCertificate,
     SetOtp,
+    RequestPairing,
 
     // Server selection (client)
     CheckServerChoiceNeeded,

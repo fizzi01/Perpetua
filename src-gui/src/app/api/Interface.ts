@@ -59,6 +59,7 @@ export enum EventType {
     OtpValidated,
     OtpInvalid,
     OtpGenerated,
+    PairingRequested,
     SslHandshakeStarted,
     SslHandshakeCompleted,
     SslHandshakeFailed,
@@ -165,6 +166,7 @@ export enum CommandType {
     ShareCertificate,
     ReceiveCertificate,
     SetOtp,
+    RequestPairing,
 
     // Server selection (client)
     CheckServerChoiceNeeded,
@@ -250,6 +252,14 @@ export interface OtpInfo {
     otp: string;
     timeout: number; // in seconds
     instructions: string;
+}
+
+export interface PairingRequestInfo {
+    otp: string;
+    timeout: number;
+    peer_ip: string;
+    hostname: string;
+    was_active: boolean;
 }
 
 

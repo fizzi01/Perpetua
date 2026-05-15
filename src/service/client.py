@@ -386,6 +386,43 @@ class Client:
                 return False
             return await self._otp_needed
 
+    async def request_pairing(
+        self,
+        server_host: Optional[str] = None,
+        server_port: int = ClientConfig.DEFAULT_SERVER_PORT - 2,
+        timeout: int = 5,
+    ) -> tuple[bool, int, Optional[str]]:
+        """
+        Ask the server to auto-generate an OTP for this client.
+
+        The server displays the OTP on its admin GUI; the user then reads it
+        and enters it on this client via :meth:`set_otp`. The OTP itself never
+        travels over the network — this method only triggers generation and
+        notification.
+
+        Args:
+            server_host: Server host to contact (default: configured server).
+            server_port: Pairing port (default: configured server port - 2).
+            timeout: Connection/IO timeout in seconds.
+
+        Returns:
+            Tuple of (success, otp_validity_seconds, error_code). On a
+            successful request, the GUI on this side can show
+            ``otp_validity_seconds`` as a hint of how long the user has to
+            type the OTP before it expires.
+        """
+        if server_host is None:
+            server_host = self.config.get_server_host()
+
+        if not server_host:
+            self._logger.warning("Cannot request pairing without a server host")
+            return False, 0, "NO_SERVER_HOST"
+
+        receiver = CertificateReceiver(
+            server_host=server_host, server_port=server_port, timeout=timeout
+        )
+        return await receiver.request_pairing(hostname=self.config.get_hostname())
+
     async def set_otp(self, otp: str) -> bool:
         """
         Set the OTP for certificate receiving process.
@@ -762,6 +799,24 @@ class Client:
                     self._logger.info(
                         "Waiting to receive certificate from server. Provide OTP to continue..."
                     )
+
+                    # Best-effort: ask the server to auto-generate an OTP and
+                    # surface it on its admin GUI. Failures (legacy server,
+                    # rate-limit, network) are fine — the user can still get
+                    # an OTP by clicking "Share Certificate" on the server.
+                    try:
+                        ok, ttl, err = await self.request_pairing()
+                        if ok:
+                            self._logger.info(
+                                f"Pairing request accepted; OTP valid {ttl}s"
+                            )
+                        else:
+                            self._logger.info(
+                                "Auto pairing not available "
+                                f"({err or 'unknown'}); fall back to manual OTP"
+                            )
+                    except Exception as e:
+                        self._logger.warning(f"Pairing request failed: {e}")
 
                     # Send notification that OTP is needed
                     await self._send_notification(OtpNeededEvent(needed=True))

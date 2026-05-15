@@ -44,7 +44,16 @@ import {
     switchTrayIcon
 } from '../api/Sender';
 import {listenCommand, listenGeneralEvent} from '../api/Listener';
-import {ClientEditObj, ClientObj, CommandType, EventType, OtpInfo, ServerStatus, StreamType} from '../api/Interface';
+import {
+    ClientEditObj,
+    ClientObj,
+    CommandType,
+    EventType,
+    OtpInfo,
+    PairingRequestInfo,
+    ServerStatus,
+    StreamType
+} from '../api/Interface';
 
 import {ServerTabProps} from '../commons/Tab'
 import {isValidIpAddress, parseStreams} from '../api/Utility'
@@ -212,14 +221,50 @@ export function ServerTab({onStatusChange, state}: ServerTabProps) {
             }).then(unlisten => {
                 listeners.addListenerOnce('client-disconnected', unlisten);
             });
+
+            // A client asked us to auto-generate an OTP. Surface it the same
+            // way as a manual share: populate the OTP field and toast.
+            listenGeneralEvent(EventType.PairingRequested, false, (event) => {
+                const info = event.data as PairingRequestInfo | undefined;
+                if (!info || !info.otp) return;
+                handlePairingRequest(info);
+            }).then(unlisten => {
+                listeners.addListenerOnce('pairing-requested', unlisten);
+            });
         };
 
         const cleanup = () => {
             listeners.removeListener('client-connected');
             listeners.removeListener('client-disconnected');
+            listeners.removeListener('pairing-requested');
         };
 
         return {cleanup, setup};
+    };
+
+    const handlePairingRequest = (info: PairingRequestInfo) => {
+        // If we already have an OTP displayed (manual share in progress) and
+        // the server reports the OTP was already active, the daemon just
+        // mirrored the same code — don't bounce the UI.
+        if (otp !== '' && info.was_active) return;
+
+        const who = info.hostname || info.peer_ip || 'a client';
+        setOtp(info.otp);
+        setOtpRequested(false);
+        addNotification(
+            'success',
+            `Pairing request from ${who}`,
+            `OTP: ${info.otp} (valid ${info.timeout}s)`
+        );
+        if (info.timeout && info.timeout > 0) {
+            setTimeout(() => {
+                setOtp((current) => (current === info.otp ? '' : current));
+                addNotification('info', 'OTP Expired');
+            }, info.timeout * 1000);
+        }
+        setTimeout(() => {
+            otpFocus.current?.scrollIntoView({behavior: 'smooth'});
+        }, 5);
     };
 
     const handleToggleServer = () => {

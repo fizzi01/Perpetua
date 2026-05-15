@@ -325,6 +325,26 @@ pub async fn stop_client(s: tauri::State<'_, AtomicAsyncWriter>) -> Result<(), S
 }
 
 #[tauri::command]
+pub async fn request_pairing(s: tauri::State<'_, AtomicAsyncWriter>) -> Result<(), String> {
+    let command = CommandEvent::build(CommandType::RequestPairing, "{}");
+    let command = EventParser::serialize(&command).map_err(|e| {
+        format!(
+            "Failed to serialize {} command: {}",
+            CommandType::RequestPairing,
+            e
+        )
+    })?;
+    s.send(command).await.map_err(|e| {
+        format!(
+            "Failed to send {} command ({})",
+            CommandType::RequestPairing,
+            e
+        )
+    })?;
+    Ok(())
+}
+
+#[tauri::command]
 pub async fn set_otp(otp: String, s: tauri::State<'_, AtomicAsyncWriter>) -> Result<(), String> {
     let command = CommandEvent::build(CommandType::SetOtp, &format!(r#"{{ "otp": "{}" }}"#, otp));
     let command = EventParser::serialize(&command)

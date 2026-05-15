@@ -66,6 +66,7 @@ class NotificationEventType(str, Enum):
     OTP_VALIDATED = "otp_validated"
     OTP_INVALID = "otp_invalid"
     OTP_GENERATED = "otp_generated"
+    PAIRING_REQUESTED = "pairing_requested"
     SSL_HANDSHAKE_STARTED = "ssl_handshake_started"
     SSL_HANDSHAKE_COMPLETED = "ssl_handshake_completed"
     SSL_HANDSHAKE_FAILED = "ssl_handshake_failed"
@@ -334,6 +335,41 @@ class OtpGeneratedEvent(NotificationEvent):
             event_type=NotificationEventType.OTP_GENERATED,
             data=data,
             message="OTP generated for authentication",
+        )
+
+
+@dataclass
+class PairingRequestEvent(NotificationEvent):
+    """A client asked the server to start the pairing/cert-sharing flow.
+
+    The OTP is included so the GUI can surface it to the admin without a
+    second event. The OTP still travels only inside the daemon→GUI IPC
+    channel — it never leaves the server host over the network.
+    """
+
+    def __init__(
+        self,
+        otp: str,
+        timeout: int,
+        peer_ip: str,
+        hostname: str = "",
+        was_active: bool = False,
+        **kwargs,
+    ):
+        data = {
+            "otp": otp,
+            "timeout": timeout,
+            "peer_ip": peer_ip,
+            "hostname": hostname,
+            "was_active": was_active,
+        }
+        data.update(kwargs)
+        display = hostname or peer_ip or "unknown client"
+        super().__init__(
+            event_type=NotificationEventType.PAIRING_REQUESTED,
+            data=data,
+            source="server",
+            message=f"{display} requested pairing",
         )
 
 

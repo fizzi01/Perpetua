@@ -118,6 +118,7 @@ class DaemonCommand(StrEnum):
     SHARE_CERTIFICATE = "share_certificate"
     RECEIVE_CERTIFICATE = "receive_certificate"
     SET_OTP = "set_otp"
+    REQUEST_PAIRING = "request_pairing"
 
     # Server selection (client)
     CHECK_SERVER_CHOICE_NEEDED = "check_server_choice_needed"
@@ -2107,6 +2108,48 @@ class Daemon:
                     else "No OTP needed",
                 },
             )
+        except Exception as e:
+            await self._notification_manager.notify_command_error(command, f"{str(e)}")
+
+    @CommandHandler.register(DaemonCommand.REQUEST_PAIRING)
+    async def _handle_request_pairing(self, params: Dict[str, Any]) -> None:
+        """Ask the configured server to auto-generate an OTP (client only).
+
+        Lets the GUI offer a manual "Request OTP" button as a fallback when
+        the automatic request fired by the connection flow didn't reach the
+        server (e.g. server was not yet running at first attempt).
+        """
+        command = DaemonCommand.REQUEST_PAIRING.value
+
+        if not self._client:
+            await self._notification_manager.notify_command_error(
+                command, "Client not initialized"
+            )
+            return
+
+        try:
+            host = params.get("host")
+            port = params.get("port")
+            timeout = params.get("timeout", 5)
+
+            kwargs: Dict[str, Any] = {"timeout": timeout}
+            if host:
+                kwargs["server_host"] = host
+            if port:
+                kwargs["server_port"] = port
+
+            success, ttl, err = await self._client.request_pairing(**kwargs)
+
+            if success:
+                await self._notification_manager.notify_command_success(
+                    command,
+                    "Pairing request sent",
+                    result_data={"otp_validity_seconds": ttl},
+                )
+            else:
+                await self._notification_manager.notify_command_error(
+                    command, f"Pairing request failed: {err or 'unknown'}"
+                )
         except Exception as e:
             await self._notification_manager.notify_command_error(command, f"{str(e)}")
 

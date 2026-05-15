@@ -394,6 +394,7 @@ pub fn run(daemon_config: Option<DaemonConfig>) {
             commands::start_client,
             commands::stop_client,
             commands::set_otp,
+            commands::request_pairing,
             commands::choose_server,
             commands::set_client_config,
             // -- General Commands --

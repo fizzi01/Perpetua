@@ -65,6 +65,10 @@ export function setOtp(otp: string): Promise<void> {
     return invoke(getType(CommandType, CommandType.SetOtp), {otp});
 }
 
+export function requestPairing(): Promise<void> {
+    return invoke(getType(CommandType, CommandType.RequestPairing));
+}
+
 export function chooseServer(uid: string): Promise<void> {
     return invoke(getType(CommandType, CommandType.ChooseServer), {uid});
 }
