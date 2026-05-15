@@ -362,9 +362,7 @@ class Daemon:
                 await asyncio.sleep(interval)
                 try:
                     result = await asyncio.wait_for(
-                        loop.run_in_executor(
-                            None, checker.check_accessibility_live
-                        ),
+                        loop.run_in_executor(None, checker.check_accessibility_live),
                         timeout=check_timeout,
                     )
                     if result.is_denied:

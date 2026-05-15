@@ -59,7 +59,9 @@ class ConnectionHandler(BaseConnectionHandler):
 
     HANDSHAKE_DELAY = 0.2  # sec
     HANDSHAKE_MSG_TIMEOUT = 5.0  # sec
-    HANDSHAKE_EOF_POLL_INTERVAL = 0.05  # sec, how often to check peer EOF during handshake
+    HANDSHAKE_EOF_POLL_INTERVAL = (
+        0.05  # sec, how often to check peer EOF during handshake
+    )
     CONNECTION_ATTEMPT_TIMEOUT = 10  # sec
     MAX_HEARTBEAT_MISSES = 0
 
