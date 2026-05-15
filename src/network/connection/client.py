@@ -39,6 +39,15 @@ from utils.net import set_socket_nodelay
 from .handler import CallbackError, BaseConnectionHandler
 
 
+class StaleCertificateError(Exception):
+    """Raised when the locally stored CA certificate fails TLS verification
+    against the server. Signals that the cert needs to be deleted and a new
+    pairing flow must run before connections can resume.
+    """
+
+    pass
+
+
 class ConnectionHandler(BaseConnectionHandler):
     """
     Async client-side connection handler using asyncio.
@@ -67,6 +76,7 @@ class ConnectionHandler(BaseConnectionHandler):
         connected_callback: Optional[Callable[["ClientObj"], Any]] = None,
         disconnected_callback: Optional[Callable[["ClientObj"], Any]] = None,
         reconnected_callback: Optional[Callable[["ClientObj", list[int]], Any]] = None,
+        stale_cert_callback: Optional[Callable[[], Any]] = None,
         host: str = "127.0.0.1",
         port: int = 5001,
         wait: int = 5,
@@ -98,6 +108,12 @@ class ConnectionHandler(BaseConnectionHandler):
         self.connected_callback = connected_callback
         self.disconnected_callback = disconnected_callback
         self.reconnected_callback = reconnected_callback
+        # Invoked at most once per ConnectionHandler instance when TLS
+        # verification fails against the server (stale local CA). The Client
+        # service uses this to delete the cached cert and re-trigger the
+        # OTP pairing flow so the user isn't left staring at a cryptic
+        # SSL error in the log.
+        self.stale_cert_callback = stale_cert_callback
 
         self.host = host
         self.port = port
@@ -317,6 +333,31 @@ class ConnectionHandler(BaseConnectionHandler):
                 self._connected = False
                 await self.stop()
                 break
+            except StaleCertificateError as e:
+                # Stop the loop, the cert can't verify and retrying would
+                # just produce the same error. Hand control to the upper
+                # layer via the callback so it can wipe the cert, surface a
+                # notification, and (optionally) re-pair.
+                self._logger.log(
+                    f"Stale CA certificate detected ({e}); stopping reconnect loop.",
+                    Logger.WARNING,
+                )
+                # Full disconnection path: closes streams, marks the client
+                # as disconnected and — critically — fires
+                # disconnected_callback so the upper layer transitions out
+                # of the "connecting" UI state instead of staying pending.
+                await self._handle_disconnection(err=e)
+                if self.stale_cert_callback:
+                    try:
+                        result = self.stale_cert_callback()
+                        if asyncio.iscoroutine(result):
+                            await result
+                    except Exception as cb_err:
+                        self._logger.log(
+                            f"Error in stale_cert_callback ({cb_err})", Logger.ERROR
+                        )
+                self._running = False
+                break
             except Exception as e:
                 self._logger.exception(f"Error in core loop ({e})")
 
@@ -472,6 +513,10 @@ class ConnectionHandler(BaseConnectionHandler):
             return False
         except asyncio.CancelledError:
             raise
+        except StaleCertificateError:
+            # Bubble up so the core loop can fire the stale-cert callback
+            # and stop reconnecting against a cert that can never verify.
+            raise
         except Exception as e:
             self._logger.log(f"Handshake error ({e})", Logger.ERROR)
             import traceback
@@ -547,6 +592,37 @@ class ConnectionHandler(BaseConnectionHandler):
             except asyncio.TimeoutError:
                 self._logger.log(
                     f"Timeout connecting stream {stream_type}", Logger.ERROR
+                )
+                return False
+            except ssl.SSLCertVerificationError as e:
+                # The local CA can't verify the server's cert. Almost always
+                # means the server regenerated its CA but we still hold an
+                # older one. Surface this as a specific error so the upper
+                # layer can wipe the cert and re-pair instead of looping
+                # forever on a cryptic SSL log line.
+                self._logger.log(
+                    f"TLS verification failed on stream {stream_type}: {e}. "
+                    f"The locally stored CA certificate looks stale.",
+                    Logger.ERROR,
+                )
+                raise StaleCertificateError(str(e)) from e
+            except ssl.SSLError as e:
+                # Some Python builds raise the generic SSLError instead of
+                # the specific subclass for verification failures. Detect by
+                # message and treat the same.
+                msg = str(e).lower()
+                if (
+                    "certificate verify failed" in msg
+                    or "certificate signature failure" in msg
+                ):
+                    self._logger.log(
+                        f"TLS verification failed on stream {stream_type}: {e}. "
+                        f"The locally stored CA certificate looks stale.",
+                        Logger.ERROR,
+                    )
+                    raise StaleCertificateError(str(e)) from e
+                self._logger.log(
+                    f"SSL error on stream {stream_type} ({e})", Logger.ERROR
                 )
                 return False
             except Exception as e:

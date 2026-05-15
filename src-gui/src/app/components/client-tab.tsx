@@ -251,6 +251,20 @@ export function ClientTab({onStatusChange, state}: ClientTabProps) {
             }).then((unlisten) => {
                 listeners.addListenerOnce('client-connection-error', unlisten);
             });
+
+            // The stored CA cert no longer verifies (server regenerated its
+            // CA). The daemon already deleted the cached copy and reset the
+            // pairing state; we just surface a clear message so the user
+            // knows to restart and re-enter a fresh OTP.
+            listenGeneralEvent(EventType.CertificateStale, false, (event) => {
+                addNotification(
+                    'warning',
+                    'Server changed its certificate',
+                    event.message || 'Restart the client and re-pair with a fresh OTP.'
+                );
+            }).then((unlisten) => {
+                listeners.addListenerOnce('certificate-stale', unlisten);
+            });
         }
 
         const cleanup = () => {
@@ -259,6 +273,7 @@ export function ClientTab({onStatusChange, state}: ClientTabProps) {
             listeners.forceRemoveListener('server-choice-needed');
             listeners.forceRemoveListener('otp-needed');
             listeners.forceRemoveListener('client-connection-error');
+            listeners.forceRemoveListener('certificate-stale');
         }
 
         return {setup, cleanup};

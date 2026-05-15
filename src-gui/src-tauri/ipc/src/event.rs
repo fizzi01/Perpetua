@@ -68,6 +68,7 @@ pub enum EventType {
     SslHandshakeFailed,
     CertificateShared,
     CertificateReceived,
+    CertificateStale,
 
     // Server choice events (client)
     ServerChoiceNeeded,

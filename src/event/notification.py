@@ -72,6 +72,7 @@ class NotificationEventType(str, Enum):
     SSL_HANDSHAKE_FAILED = "ssl_handshake_failed"
     CERTIFICATE_SHARED = "certificate_shared"
     CERTIFICATE_RECEIVED = "certificate_received"
+    CERTIFICATE_STALE = "certificate_stale"
 
     # Server choice events (client)
     SERVER_CHOICE_NEEDED = "server_choice_needed"
@@ -337,6 +338,34 @@ class OtpGeneratedEvent(NotificationEvent):
             event_type=NotificationEventType.OTP_GENERATED,
             data=data,
             message="OTP generated for authentication",
+        )
+
+
+@dataclass
+class CertificateStaleEvent(NotificationEvent):
+    """The locally stored CA cert no longer verifies against the server.
+
+    The client deletes the stale cert before emitting this; the GUI should
+    surface a message telling the user to re-pair (which happens
+    automatically on the next start/connect attempt).
+    """
+
+    def __init__(
+        self,
+        server_uid: str = "",
+        server_host: str = "",
+        **kwargs,
+    ):
+        data = {"server_uid": server_uid, "server_host": server_host}
+        data.update(kwargs)
+        super().__init__(
+            event_type=NotificationEventType.CERTIFICATE_STALE,
+            data=data,
+            source="client",
+            message=(
+                "Server certificate no longer trusted. The stored copy was "
+                "removed; re-pair with the server to reconnect."
+            ),
         )
 
 

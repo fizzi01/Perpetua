@@ -284,6 +284,71 @@ class CertificateManager:
             self._logger.log(f"Error saving CA data: {e}", Logger.ERROR)
             return False
 
+    def remove_ca_data(self, *source_ids: Optional[str]) -> bool:
+        """Delete the saved CA certificate(s) referenced by any of the given
+        identifiers.
+
+        The save path stores a CA under one source-id key (typically the
+        server UID) and ``extend_mapping`` adds aliases under additional
+        keys (resolved IP, hostname). Pass every identifier the caller
+        knows about; this method:
+
+        1. Resolves each non-empty ``source_id`` against the mapping.
+        2. Unlinks the referenced cert file(s) on disk.
+        3. Removes every mapping entry that pointed at any of those files,
+           wiping orphan aliases in the same pass.
+
+        Returns True if at least one file or mapping entry was removed.
+        """
+        try:
+            mapping = self._load_cert_mapping()
+            files_to_remove: set[str] = set()
+            ids_removed: list[str] = []
+
+            for sid in source_ids:
+                if not sid:
+                    continue
+                cert_filename = mapping.get(sid)
+                if cert_filename:
+                    files_to_remove.add(cert_filename)
+                    ids_removed.append(sid)
+
+            # Also drop any alias pointing at one of those files — handles
+            # the resolved-IP alias added by extend_mapping.
+            if files_to_remove:
+                for key, filename in list(mapping.items()):
+                    if filename in files_to_remove:
+                        mapping.pop(key, None)
+
+            for filename in files_to_remove:
+                try:
+                    (self.cert_dir / filename).unlink()
+                except FileNotFoundError:
+                    pass
+                except OSError as e:
+                    self._logger.log(
+                        f"Error removing CA cert file {filename}: {e}",
+                        Logger.WARNING,
+                    )
+
+            if files_to_remove or ids_removed:
+                self._save_cert_mapping(mapping)
+                self._logger.log(
+                    f"Removed CA certificate(s): files={sorted(files_to_remove)}, "
+                    f"identifiers={ids_removed}",
+                    Logger.INFO,
+                )
+                return True
+
+            self._logger.log(
+                f"No CA certificate found for any of: {[s for s in source_ids if s]}",
+                Logger.DEBUG,
+            )
+            return False
+        except Exception as e:
+            self._logger.log(f"Error removing CA data: {e}", Logger.ERROR)
+            return False
+
     def extend_mapping(
         self, source_id: Optional[str], cert_filename: Optional[str]
     ) -> bool:
