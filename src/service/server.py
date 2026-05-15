@@ -23,6 +23,7 @@ Provides a clean interface to configure and manage server components.
 
 import asyncio
 import socket
+import sys
 
 from typing import Optional, Dict, Tuple, Callable, Awaitable
 
@@ -973,15 +974,22 @@ class Server:
     def _is_port_available(host: str, port: int) -> bool:
         """Synchronously probe whether ``host:port`` is free for bind.
 
-        Tries an actual ``bind`` on a non-reuse socket so we observe the same
-        ``EADDRINUSE`` the real listener would hit. Returns True if the bind
-        succeeded (port was free), False if it failed for any OS reason.
+        Mirrors what ``asyncio.start_server`` would actually attempt: on POSIX
+        the event loop sets ``SO_REUSEADDR`` by default, so sockets stuck in
+        ``TIME_WAIT`` from a previous incarnation don't block a fresh bind.
+        Without ``SO_REUSEADDR`` here this probe was reporting "port busy"
+        for ~60s after every stop, even though the real start would have
+        succeeded fine.
+
+        On Windows ``SO_REUSEADDR`` has different (looser) semantics; setting
+        it would let two unrelated servers steal each other's port, so we
+        keep the probe strict there to match the OS behaviour.
         """
         bind_host = host if host and host != "0.0.0.0" else ""
         try:
             with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as s:
-                # Don't set SO_REUSEADDR. We want to mirror what asyncio
-                # start_server would see, including EADDRINUSE collisions.
+                if sys.platform != "win32":
+                    s.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
                 s.bind((bind_host, port))
             return True
         except OSError:
