@@ -55,7 +55,7 @@ class ConnectionHandler(BaseConnectionHandler):
     HANDSHAKE_DELAY = 0.5  # seconds
     STREAM_CONN_DELAY_GUARD = 1  # seconds
     HANDSHAKE_MSG_TIMEOUT = 5.0  # seconds
-    MAX_HEARTBEAT_MISSES = 1
+    MAX_HEARTBEAT_MISSES = 2
 
     BACKOFF_INITIAL_DELAY = 1.0  # Start with 1 second
     BACKOFF_MAX_DELAY = 60.0  # Cap at 1 minute
@@ -643,16 +643,24 @@ class ConnectionHandler(BaseConnectionHandler):
                 if heartbeat_trials < self.MAX_HEARTBEAT_MISSES:
                     heartbeat_trials += 1
                     self._logger.log(
-                        f"Heartbeat missed {heartbeat_trials}/{self.MAX_HEARTBEAT_MISSES}",
+                        f"Heartbeat missed {heartbeat_trials}/{self.MAX_HEARTBEAT_MISSES} "
+                        f"(exc_type={type(e).__name__}, exc={e!r})",
                         Logger.WARNING,
                     )
                     continue
                 else:
-                    self._logger.log("Heartbeat detected disconnection", Logger.WARNING)
+                    self._logger.log(
+                        f"Heartbeat detected disconnection "
+                        f"(exc_type={type(e).__name__}, exc={e!r})",
+                        Logger.WARNING,
+                    )
                     await self._handle_disconnection(err=e)
                     break
             except Exception as e:
-                self._logger.log(f"Heartbeat error ({e})", Logger.ERROR)
+                self._logger.log(
+                    f"Heartbeat error (exc_type={type(e).__name__}, exc={e!r})",
+                    Logger.ERROR,
+                )
                 await self._handle_disconnection(err=e)
                 break
 

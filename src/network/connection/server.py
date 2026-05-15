@@ -60,7 +60,7 @@ class ConnectionHandler(BaseConnectionHandler):
     HANDSHAKE_DELAY = 0.2  # sec
     HANDSHAKE_MSG_TIMEOUT = 5.0  # sec
     CONNECTION_ATTEMPT_TIMEOUT = 10  # sec
-    MAX_HEARTBEAT_MISSES = 0
+    MAX_HEARTBEAT_MISSES = 2
 
     def __init__(
         self,
@@ -811,7 +811,8 @@ class ConnectionHandler(BaseConnectionHandler):
                                         await stream_writer.send(hb_msg.to_bytes())
                                     except Exception as e:
                                         self._logger.warning(
-                                            f"Heartbeat send failed on stream {stream_type} for client {client.get_net_id()} ({e})"
+                                            f"Heartbeat send failed on stream {stream_type} for client {client.get_net_id()} "
+                                            f"(exc_type={type(e).__name__}, exc={e!r})"
                                         )
                                         closed_streams.append(stream_type)
 
@@ -855,7 +856,9 @@ class ConnectionHandler(BaseConnectionHandler):
                             ):
                                 heartbeat_trials[client.get_net_id()] += 1
                                 self._logger.log(
-                                    f"Heartbeat missed for client {client.get_net_id()} (trial {heartbeat_trials[client.get_net_id()]}/{self.MAX_HEARTBEAT_MISSES})",
+                                    f"Heartbeat missed for client {client.get_net_id()} "
+                                    f"(trial {heartbeat_trials[client.get_net_id()]}/{self.MAX_HEARTBEAT_MISSES}, "
+                                    f"exc_type={type(e).__name__}, exc={e!r})",
                                     Logger.WARNING,
                                 )
                             else:
@@ -863,7 +866,8 @@ class ConnectionHandler(BaseConnectionHandler):
                                 heartbeat_trials[client.get_net_id()] = 0
                         except Exception as e:
                             self._logger.log(
-                                f"Heartbeat error for client {client.get_net_id()} ({e})",
+                                f"Heartbeat error for client {client.get_net_id()} "
+                                f"(exc_type={type(e).__name__}, exc={e!r})",
                                 Logger.CRITICAL,
                             )
         except asyncio.CancelledError:
