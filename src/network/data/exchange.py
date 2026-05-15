@@ -547,6 +547,7 @@ class MessageExchange:
         streams: Optional[List[int]] = None,
         source: Optional[str] = None,
         target: Optional[str] = None,
+        server_uid: Optional[str] = None,
     ):
         """Send handshake message."""
         message = self.builder.create_handshake_message(
@@ -559,6 +560,7 @@ class MessageExchange:
             streams=streams,
             source=source,
             target=target,
+            server_uid=server_uid,
         )
         await self._send_message(message)
 

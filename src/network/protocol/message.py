@@ -525,6 +525,7 @@ class MessageBuilder:
         streams: Optional[List[int]] = None,
         source: Optional[str] = None,
         target: Optional[str] = None,
+        server_uid: Optional[str] = None,
     ) -> ProtocolMessage:
         """Create a handshake message with timestamp."""
         return ProtocolMessage(
@@ -539,6 +540,7 @@ class MessageBuilder:
                 "ssl": ssl,
                 "streams": streams or [],
                 "additional_params": additional_params or {},
+                "server_uid": server_uid,
             },
             source=source,
             target=target,
