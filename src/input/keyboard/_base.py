@@ -98,6 +98,9 @@ class ServerKeyboardListener(object):
 
         self._listener: Optional[KeyboardListener] = None
 
+        # Serializes concurrent invocations of `_sync_caps_lock_state`.
+        self._caps_lock_sync_lock = asyncio.Lock()
+
         self._hotkey_consumed = False
         self._hotkeys: list[HotKey] = self._build_hotkeys()
 
@@ -325,15 +328,20 @@ class ServerKeyboardListener(object):
     async def _sync_caps_lock_state(self, ext_state: Optional[bool] = None):
         """
         Sync server's Caps Lock state with clients by sending a toggle event if needed.
-        """
-        if ext_state is None:
-            ext_state = self._get_lock_state()
 
-        if self._get_lock_state() != ext_state:
-            event = KeyboardEvent(
-                key=Key.caps_lock.name, action=KeyboardEvent.PRESS_ACTION
-            )
-            await self.stream.send(event)
+        Wrapped in ``_caps_lock_sync_lock`` so two rapidly-fired active-screen
+        changes cannot interleave the read/compare/send sequence and emit
+        spurious double-toggles.
+        """
+        async with self._caps_lock_sync_lock:
+            if ext_state is None:
+                ext_state = self._get_lock_state()
+
+            if self._get_lock_state() != ext_state:
+                event = KeyboardEvent(
+                    key=Key.caps_lock.name, action=KeyboardEvent.PRESS_ACTION
+                )
+                await self.stream.send(event)
 
     def _darwin_suppress_filter(self, event_type, event):
         raise NotImplementedError("Mouse suppress filter not implemented yet.")
