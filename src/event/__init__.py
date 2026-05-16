@@ -54,6 +54,12 @@ class BusEventType(IntEnum):
 
     CLIENT_STREAM_RECONNECTED = 7  # Dispatched when a client stream reconnects
 
+    # Dispatched when a client's workspace placements change at runtime
+    # (e.g. the GUI saves a new layout via SetClientLayout). Lets the
+    # mouse listener refresh its cached EdgeBindings without forcing the
+    # client to reconnect.
+    CLIENT_LAYOUT_UPDATED = 8
+
 
 class BusEvent(ABC):
     """
@@ -122,14 +128,35 @@ class ActiveScreenChangedEvent(BusEvent):
 class ClientConnectedEvent(BusEvent):
     """
     Event dispatched when a new client connects.
+
+    ``edge_bindings`` carries the spatial cross-screen contract derived
+    from the client's ``placements`` and the server's monitor list. The
+    mouse listener consumes these directly so it doesn't have to import
+    the model layer or run geometry math on the hot path. Empty list
+    when the client hasn't been positioned on the workspace yet (in
+    which case the legacy ``screen_position`` fallback drives routing).
+
+    Each entry is a serialized :class:`utils.screen.EdgeBinding`
+    (``EdgeBinding.to_dict()``) so the event payload survives plain
+    JSON / msgpack round-trips downstream.
     """
 
-    def __init__(self, client_screen: str, streams: Optional[list[int]] = None):
+    def __init__(
+        self,
+        client_screen: str,
+        streams: Optional[list[int]] = None,
+        edge_bindings: Optional[list[dict]] = None,
+    ):
         self.client_screen = client_screen
         self.streams = streams
+        self.edge_bindings: list[dict] = list(edge_bindings) if edge_bindings else []
 
     def to_dict(self) -> dict:
-        return {"client_screen": self.client_screen, "streams": self.streams}
+        return {
+            "client_screen": self.client_screen,
+            "streams": self.streams,
+            "edge_bindings": list(self.edge_bindings),
+        }
 
 
 class ClientDisconnectedEvent(ClientConnectedEvent):
@@ -140,16 +167,44 @@ class ClientDisconnectedEvent(ClientConnectedEvent):
     pass
 
 
+class ClientLayoutUpdatedEvent(BusEvent):
+    """Dispatched when a client's workspace placements are mutated at
+    runtime (typically from the GUI's layout editor). Carries the
+    refreshed serialized EdgeBindings so the mouse listener can hot-swap
+    its routing cache without forcing the client to disconnect.
+    """
+
+    def __init__(self, client_screen: str, edge_bindings: Optional[list[dict]] = None):
+        self.client_screen = client_screen
+        self.edge_bindings: list[dict] = list(edge_bindings) if edge_bindings else []
+
+    def to_dict(self) -> dict:
+        return {
+            "client_screen": self.client_screen,
+            "edge_bindings": list(self.edge_bindings),
+        }
+
+
 class ClientActiveEvent(BusEvent):
     """
     Event dispatched when the client becomes active.
+
+    ``client_monitor_id`` (optional) tells the receiving client which of
+    its own monitors the server's cursor crossed into. When set, the
+    client mouse controller denormalizes incoming positions against
+    that monitor's bbox instead of the full virtual desktop, so the
+    cursor lands on the right physical screen on multi-monitor clients.
     """
 
-    def __init__(self, client_screen: str):
+    def __init__(self, client_screen: str, client_monitor_id: Optional[int] = None):
         self.client_screen = client_screen
+        self.client_monitor_id = client_monitor_id
 
     def to_dict(self) -> dict:
-        return {"client_screen": self.client_screen}
+        return {
+            "client_screen": self.client_screen,
+            "client_monitor_id": self.client_monitor_id,
+        }
 
 
 class Event(ABC):
@@ -272,6 +327,11 @@ class CommandEvent(Event):
 class CrossScreenCommandEvent(CommandEvent):
     """
     Cross screen command event data structure.
+
+    ``client_monitor_id`` carries the target monitor on the receiving
+    client when the server's spatial routing has matched an
+    :class:`EdgeBinding`. ``None`` falls back to the client's virtual
+    desktop bbox (legacy single-monitor behaviour).
     """
 
     def __init__(
@@ -280,30 +340,41 @@ class CrossScreenCommandEvent(CommandEvent):
         target: str = "",
         x: float | int = -1,
         y: float | int = -1,
+        client_monitor_id: Optional[int] = None,
     ):
         super().__init__(
             command=CommandEvent.CROSS_SCREEN,
             source=source,
             target=target,
-            params={"x": x, "y": y},
+            params={"x": x, "y": y, "client_monitor_id": client_monitor_id},
         )
 
     def get_position(self) -> tuple[float | int, float | int]:
         return self.params.get("x", -1), self.params.get("y", -1)
 
+    def get_client_monitor_id(self) -> Optional[int]:
+        v = self.params.get("client_monitor_id")
+        return int(v) if v is not None else None
+
     @classmethod
     def from_command_event(cls, event: CommandEvent) -> Self:
+        cm_raw = event.params.get("client_monitor_id")
         return cls(
             source=event.source,
             target=event.target,
             x=event.params.get("x", -1),
             y=event.params.get("y", -1),
+            client_monitor_id=int(cm_raw) if cm_raw is not None else None,
         )
 
     def to_dict(self) -> dict:
         return {
             "command": self.command,
-            "params": {"x": self.params.get("x", -1), "y": self.params.get("y", -1)},
+            "params": {
+                "x": self.params.get("x", -1),
+                "y": self.params.get("y", -1),
+                "client_monitor_id": self.params.get("client_monitor_id"),
+            },
         }
 
 

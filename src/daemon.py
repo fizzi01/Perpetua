@@ -122,6 +122,8 @@ class DaemonCommand(StrEnum):
     APPROVE_CLIENT = "approve_client"
     DENY_CLIENT = "deny_client"
     LIST_PENDING_APPROVALS = "list_pending_approvals"
+    # Multi-monitor layout (server only)
+    SET_CLIENT_LAYOUT = "set_client_layout"
 
     # SSL/Certificate management
     ENABLE_SSL = "enable_ssl"
@@ -1487,10 +1489,26 @@ class Daemon:
         }
 
         if self._server_config and self._server:
+            # Server-local monitor list: cheap to query (the OS hands it
+            # back from a cached struct), and the GUI needs it to render
+            # the layout editor. Skipped silently on platforms where the
+            # Screen backend doesn't enumerate displays — the GUI falls
+            # back to a single virtual monitor in that case.
+            try:
+                from utils.screen import Screen
+
+                server_monitors = [m.to_dict() for m in Screen.get_monitors()]
+            except Exception as e:
+                self._logger.debug(
+                    f"Could not enumerate server monitors for status: {e}"
+                )
+                server_monitors = []
+
             status["server_info"] = {
                 **self._server_config.to_dict(),
                 "running": self._server.is_running(),
                 "start_time": self._state["server"].get_timestamp(),
+                "monitors": server_monitors,
             }
 
         if self._client_config and self._client:
@@ -2062,6 +2080,60 @@ class Daemon:
                     "ip_address": ip_address,
                     "new_screen_position": new_screen_position,
                     "new_ip_addresses": new_ip_addresses,
+                },
+            )
+        except Exception as e:
+            await self._notification_manager.notify_command_error(command, f"{str(e)}")
+
+    @CommandHandler.register(DaemonCommand.SET_CLIENT_LAYOUT)
+    async def _handle_set_client_layout(self, params: Dict[str, Any]) -> None:
+        """Persist the workspace placements of one client (server only).
+
+        Expected params:
+            client_uid (str, optional): preferred lookup key
+            hostname (str, optional): fallback lookup
+            ip_address (str, optional): last-resort lookup
+            placements (list[dict]): list of
+              ``{client_monitor_id, workspace_x, workspace_y, width, height}``
+
+        On success the placements are stored on the ClientObj, the
+        config is saved, and a notification is broadcast so other GUI
+        clients can refresh.
+        """
+        command = DaemonCommand.SET_CLIENT_LAYOUT.value
+
+        if not self._server or not self._server.is_running():
+            await self._notification_manager.notify_command_error(
+                command, "Server is not running"
+            )
+            return
+
+        try:
+            placements = params.get("placements", []) or []
+            client_uid = params.get("client_uid")
+            hostname = params.get("hostname")
+            ip_address = params.get("ip_address")
+            if not (client_uid or hostname or ip_address):
+                await self._notification_manager.notify_command_error(
+                    command,
+                    "Must provide client_uid, hostname, or ip_address",
+                )
+                return
+
+            updated = await self._server.set_client_layout(
+                placements=placements,
+                uid=client_uid,
+                hostname=hostname,
+                ip_address=ip_address,
+            )
+
+            await self._notification_manager.notify_command_success(
+                command,
+                f"Layout updated for {updated.get_net_id()}",
+                result_data={
+                    "client_uid": updated.uid,
+                    "net_id": updated.get_net_id(),
+                    "placements": list(updated.placements),
                 },
             )
         except Exception as e:

@@ -165,6 +165,7 @@ export enum CommandType {
     ApproveClient,
     DenyClient,
     ListPendingApprovals,
+    SetClientLayout,
 
     // SSL/Certificate management
     EnableSsl,
@@ -194,6 +195,61 @@ export enum StreamType {
     Clipboard = 12,
 }
 
+// -- Multi-monitor layout types --
+// Mirror of utils.screen._monitor on the Python side. Coordinates are
+// in the OS global display coordinate space.
+export interface MonitorInfo {
+    monitor_id: number;
+    min_x: number;
+    min_y: number;
+    max_x: number;
+    max_y: number;
+    is_primary?: boolean;
+    name?: string;
+    scaling_factor?: number;
+}
+
+export type Edge = "left" | "right" | "top" | "bottom";
+
+export interface LayoutSlot {
+    monitor_id: number;
+    edge: Edge;
+    // Half-open [start, end) interval in [0, 1] along the edge's
+    // secondary axis (Y for LEFT/RIGHT, X for TOP/BOTTOM).
+    segment_start: number;
+    segment_end: number;
+}
+
+export interface LayoutBinding {
+    slot: LayoutSlot;
+    client_uid: string;
+    // Pin the routed cursor to a specific monitor on the client
+    // null = client picks.
+    client_monitor_id: number | null;
+}
+
+// New workspace model (replaces the old edge+segment slots for the GUI).
+// Each placement positions ONE client monitor inside the unified virtual
+// workspace; server monitors stay at their native OS coordinates and act
+// as the anchor. Cross-screen routing follows from adjacency in this
+// workspace, not from a fixed LEFT/RIGHT/TOP/BOTTOM enum.
+export interface MonitorPlacement {
+    client_uid: string;
+    client_monitor_id: number;
+    // Top-left corner in the server's virtual workspace coord space (in
+    // OS pixels). Width / height are mirrored from the client's
+    // advertised MonitorInfo so the box keeps its aspect ratio when the
+    // user moves it.
+    workspace_x: number;
+    workspace_y: number;
+    width: number;
+    height: number;
+}
+
+export interface WorkspaceLayout {
+    placements: MonitorPlacement[];
+}
+
 // -- Status Interfaces --
 export interface ClientObj {
     uid: string;
@@ -205,6 +261,14 @@ export interface ClientObj {
     is_connected: boolean;
     first_connection_date: string;
     last_connection_date: string;
+    // Per-monitor info advertised by the client on the latest handshake.
+    // Empty / undefined when running against a legacy client that
+    // doesn't advertise its monitor layout yet.
+    monitors?: MonitorInfo[];
+    // Persisted workspace placements of this client's monitors in the
+    // server's unified workspace. Sourced from the daemon config so the
+    // GUI can seed the layout editor on startup.
+    placements?: MonitorPlacement[];
 }
 
 export interface ClientEditObj {
@@ -223,6 +287,10 @@ export interface ServerStatus {
     streams_enabled: Object;
     ssl_enabled: boolean;
     authorized_clients: ClientObj[];
+    // Local monitor list as enumerated by the daemon on the server
+    // machine. Empty when the OS backend can't enumerate displays;
+    // the GUI falls back to a single virtual monitor in that case.
+    monitors?: MonitorInfo[];
 }
 
 export interface ClientConnectionInfo {

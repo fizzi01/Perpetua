@@ -19,7 +19,7 @@
 
 import {invoke} from '@tauri-apps/api/core';
 import {getType} from '../api/Utility';
-import {CommandType, StreamType} from '../api/Interface';
+import {CommandType, MonitorPlacement, StreamType} from '../api/Interface';
 
 // -- SERVER-SPECIFIC API CALLS --
 
@@ -52,6 +52,37 @@ export function approveClient(peer_ip: string, screen_position: string): Promise
 
 export function denyClient(peer_ip: string): Promise<void> {
     return invoke(getType(CommandType, CommandType.DenyClient), {peerIp: peer_ip});
+}
+
+/**
+ * Persist the multi-monitor workspace placements of one client on the
+ * daemon. Identify the client by UID when available (stable); the
+ * hostname / IP fallbacks exist for clients that haven't completed
+ * pairing yet.
+ *
+ * The daemon validates that the placements don't overlap each other,
+ * any server monitor, or any OTHER client's placements before
+ * persisting. On rejection, ``CommandError`` is dispatched.
+ */
+export function setClientLayout(
+    clientUid: string | undefined,
+    placements: MonitorPlacement[],
+    extra: {hostname?: string; ipAddress?: string} = {},
+): Promise<void> {
+    return invoke(getType(CommandType, CommandType.SetClientLayout), {
+        clientUid,
+        hostname: extra.hostname,
+        ipAddress: extra.ipAddress,
+        // Snake-case the payload shape so the daemon receives the same
+        // dict the Python side already speaks.
+        placements: placements.map((p) => ({
+            client_monitor_id: p.client_monitor_id,
+            workspace_x: p.workspace_x,
+            workspace_y: p.workspace_y,
+            width: p.width,
+            height: p.height,
+        })),
+    });
 }
 
 export function saveServerConfig(host: string, port: number, sslEnabled: boolean): Promise<void> {

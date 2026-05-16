@@ -25,7 +25,7 @@ import {Switch} from "./ui/switch";
 
 import {ScrollArea} from './ui/scrollbar';
 
-import {Activity, Info, Key, Lock, Plus, Settings, Shield, Trash2, Users, X} from 'lucide-react';
+import {Activity, Info, Key, Layout as LayoutIcon, Lock, Plus, Settings, Shield, Trash2, Users, X} from 'lucide-react';
 import {AnimatePresence, motion} from 'motion/react';
 import {InlineNotification, Notification} from './ui/inline-notification';
 import {PowerButton} from './ui/power-button';
@@ -41,6 +41,7 @@ import {
     getLocalIpAddress,
     removeClient as removeClientCommand,
     saveServerConfig,
+    setClientLayout,
     shareCertificate,
     startServer,
     stopServer,
@@ -65,6 +66,15 @@ import {isValidIpAddress, parseStreams} from '../api/Utility'
 import {abbreviateText, CopyableBadge} from './ui/copyable-badge';
 import {SelectPortal, SelectViewport} from '@radix-ui/react-select';
 import {ActionButton} from './ui/action-button';
+import type {LayoutEditorClient} from './LayoutEditor';
+import type {MonitorInfo, MonitorPlacement} from '../api/Interface';
+import {
+    LAYOUT_EDITOR_EVENTS,
+    type LayoutEditorInitPayload,
+    type LayoutEditorSavePayload,
+} from '../LayoutEditorWindow';
+import {emit, listen, type UnlistenFn} from '@tauri-apps/api/event';
+import {Window} from '@tauri-apps/api/window';
 
 export function ServerTab({onStatusChange, state}: ServerTabProps) {
     let previousState = useRef<ServerStatus | null>(null);
@@ -74,6 +84,58 @@ export function ServerTab({onStatusChange, state}: ServerTabProps) {
     const [showOptions, setShowOptions] = useState(false);
     const [showClients, setShowClients] = useState(false);
     const [showSecurity, setShowSecurity] = useState(false);
+    // Local working-copy of the workspace placements (per client
+    // monitor). Today this is GUI-only state; future work will persist
+    // it via a SetLayout command on the daemon and load it back from
+    // ServerStatus.
+    const [layoutPlacements, setLayoutPlacements] = useState<MonitorPlacement[]>([]);
+    // Server monitors are populated from the daemon's status payload
+    // (see ``_handle_status`` server-side, which now serialises
+    // ``Screen.get_monitors()``). Falls back to an empty list when the
+    // OS backend can't enumerate displays; the editor then renders a
+    // single virtual placeholder so the user can still drag things
+    // around.
+    const [serverMonitors, setServerMonitors] = useState<MonitorInfo[]>(
+        state.monitors ?? [],
+    );
+
+    useEffect(() => {
+        // Keep the local cache in sync with status updates. We compare
+        // by JSON because MonitorInfo is a plain dict and the array
+        // identity changes on every status refresh.
+        const incoming = state.monitors ?? [];
+        setServerMonitors((prev) => {
+            if (JSON.stringify(prev) === JSON.stringify(incoming)) return prev;
+            return incoming;
+        });
+    }, [state.monitors]);
+
+    useEffect(() => {
+        // Seed the working layout from the daemon's authoritative client
+        // list whenever it changes. The daemon stores ``placements`` per
+        // ClientObj; flatten them so the editor renders the persisted
+        // state on startup instead of a blank canvas. We always overwrite
+        // — the editor saves through SetClientLayout (which dispatches
+        // CLIENT_LAYOUT_UPDATED), so authorized_clients is the source of
+        // truth.
+        const incoming: MonitorPlacement[] = [];
+        for (const c of state.authorized_clients ?? []) {
+            for (const p of c.placements ?? []) {
+                incoming.push({
+                    client_uid: c.uid,
+                    client_monitor_id: p.client_monitor_id,
+                    workspace_x: p.workspace_x,
+                    workspace_y: p.workspace_y,
+                    width: p.width,
+                    height: p.height,
+                });
+            }
+        }
+        setLayoutPlacements((prev) => {
+            if (JSON.stringify(prev) === JSON.stringify(incoming)) return prev;
+            return incoming;
+        });
+    }, [state.authorized_clients]);
     const [uid, setUid] = useState(state.uid);
     const [port, setPort] = useState(state.port.toString());
     const [host, setHost] = useState(state.host);
@@ -132,6 +194,141 @@ export function ServerTab({onStatusChange, state}: ServerTabProps) {
         setTimeout(() => {
             setNotifications((prev) => prev.filter((n) => n.id !== newNotification.id));
         }, 4000);
+    };
+
+    // Opens the layout-editor window (defined statically in
+    // tauri.conf.json so we don't need extra create-window permissions),
+    // pushes the current state to it once it signals readiness, and
+    // listens for the save / cancel reply.
+    const openLayoutEditorWindow = async () => {
+        const editorWindow = await Window.getByLabel('layout-editor');
+        if (!editorWindow) {
+            addNotification('error', 'Layout editor window not available');
+            return;
+        }
+
+        const buildPayload = (): LayoutEditorInitPayload => ({
+            serverMonitors: serverMonitors.length > 0
+                ? serverMonitors
+                : [{
+                    monitor_id: 0,
+                    min_x: 0,
+                    min_y: 0,
+                    max_x: 1920,
+                    max_y: 1080,
+                    is_primary: true,
+                }] as MonitorInfo[],
+            clients: clientManager.clients.map<LayoutEditorClient>((c) => ({
+                uid: c.id,
+                name: c.name || c.ips?.join(', ') || c.id,
+                // Forward the monitor list advertised by the client on
+                // its handshake so the editor can render one draggable
+                // box per client monitor.
+                monitors: c.monitors,
+            })),
+            placements: layoutPlacements,
+        });
+
+        // Wire the response listeners BEFORE showing the window so the
+        // ready event from the editor (fired as soon as it mounts) is
+        // never lost.
+        const unlistenFns: UnlistenFn[] = [];
+        const cleanup = () => {
+            for (const u of unlistenFns) {
+                try { u(); } catch { /* ignore */ }
+            }
+        };
+
+        unlistenFns.push(
+            await listen(LAYOUT_EDITOR_EVENTS.READY, async () => {
+                await emit(LAYOUT_EDITOR_EVENTS.INIT, buildPayload());
+            }),
+        );
+        unlistenFns.push(
+            await listen<LayoutEditorSavePayload>(
+                LAYOUT_EDITOR_EVENTS.SAVE,
+                async (event) => {
+                    const next = event.payload.placements || [];
+                    setLayoutPlacements(next);
+
+                    // Per-client dispatch: group placements by client_uid
+                    // (including clients with an empty list so the
+                    // daemon can clear a previously-set layout) and
+                    // send one ``SetClientLayout`` per client. Errors
+                    // surface as separate notifications so a single
+                    // bad client doesn't hide the others' success.
+                    const grouped = new Map<string, MonitorPlacement[]>();
+                    for (const c of clientManager.clients) {
+                        grouped.set(c.id, []);
+                    }
+                    for (const p of next) {
+                        const existing = grouped.get(p.client_uid) ?? [];
+                        existing.push(p);
+                        grouped.set(p.client_uid, existing);
+                    }
+
+                    let saved = 0;
+                    let failed = 0;
+                    for (const [clientUid, placements] of grouped) {
+                        const client = clientManager.clients.find(
+                            (c) => c.id === clientUid,
+                        );
+                        try {
+                            await setClientLayout(
+                                client?.uid || undefined,
+                                placements,
+                                {
+                                    hostname: client?.name,
+                                    ipAddress: client?.ips?.[0],
+                                },
+                            );
+                            saved += 1;
+                        } catch (err) {
+                            failed += 1;
+                            console.error(
+                                'SetClientLayout failed for',
+                                clientUid,
+                                err,
+                            );
+                            addNotification(
+                                'error',
+                                `Layout rejected for ${client?.name ?? clientUid}`,
+                                String(err),
+                            );
+                        }
+                    }
+                    if (failed === 0) {
+                        addNotification(
+                            'info',
+                            saved === 1
+                                ? 'Layout saved'
+                                : `Layout saved (${saved} clients)`,
+                        );
+                    }
+                    cleanup();
+                },
+            ),
+        );
+        unlistenFns.push(
+            await listen(LAYOUT_EDITOR_EVENTS.CANCEL, () => {
+                cleanup();
+            }),
+        );
+
+        try {
+            await editorWindow.show();
+            await editorWindow.setFocus();
+            // The editor window is created at app boot (visible:false) and
+            // emits READY once on mount — by the time the user opens it
+            // that emit is long lost, so we push INIT directly. The
+            // READY listener above still handles the re-mount case (dev
+            // hot-reload etc).
+            await emit(LAYOUT_EDITOR_EVENTS.INIT, buildPayload());
+        } catch (err) {
+            console.error('Failed to show layout editor window', err);
+            addNotification('error', 'Failed to open layout editor');
+            cleanup();
+        }
     };
 
     const handleToggleClients = () => {
@@ -919,10 +1116,15 @@ export function ServerTab({onStatusChange, state}: ServerTabProps) {
             />
 
             {/* Action Buttons */}
-            <div className="grid grid-cols-3 gap-2">
+            <div className="grid grid-cols-4 gap-2">
                 <ActionButton onClick={handleToggleClients} clicked={showClients}>
                     <Users size={20}/>
                     <span className="text-xs">Clients</span>
+                </ActionButton>
+
+                <ActionButton onClick={openLayoutEditorWindow} clicked={false}>
+                    <LayoutIcon size={20}/>
+                    <span className="text-xs">Layout</span>
                 </ActionButton>
 
                 <ActionButton onClick={handleToggleSecurity} clicked={showSecurity}>

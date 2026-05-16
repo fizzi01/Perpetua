@@ -178,6 +178,38 @@ pub async fn approve_client(
 }
 
 #[tauri::command]
+pub async fn set_client_layout(
+    client_uid: Option<String>,
+    hostname: Option<String>,
+    ip_address: Option<String>,
+    placements: serde_json::Value,
+    s: tauri::State<'_, AtomicAsyncWriter>,
+) -> Result<(), String> {
+    let payload = serde_json::json!({
+        "client_uid": client_uid,
+        "hostname": hostname,
+        "ip_address": ip_address,
+        "placements": placements,
+    });
+    let command = CommandEvent::build(CommandType::SetClientLayout, &payload.to_string());
+    let command = EventParser::serialize(&command).map_err(|e| {
+        format!(
+            "Failed to serialize {} command: {}",
+            CommandType::SetClientLayout,
+            e
+        )
+    })?;
+    s.send(command).await.map_err(|e| {
+        format!(
+            "Failed to send {} command ({})",
+            CommandType::SetClientLayout,
+            e
+        )
+    })?;
+    Ok(())
+}
+
+#[tauri::command]
 pub async fn deny_client(
     peer_ip: String,
     s: tauri::State<'_, AtomicAsyncWriter>,

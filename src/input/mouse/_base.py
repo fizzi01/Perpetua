@@ -30,6 +30,7 @@ from event import (
     ClientConnectedEvent,
     ClientDisconnectedEvent,
     ClientActiveEvent,
+    ClientLayoutUpdatedEvent,
 )
 from event.bus import EventBus
 from model.client import ScreenPosition
@@ -76,6 +77,15 @@ class ServerMouseListener(object):
 
         self._listening = False
         self._active_screens = {}
+        # Spatial cross-screen routing table populated by
+        # ``_on_client_connected``: one entry per ``client_screen`` (the
+        # client's identifier in the bus events), value is the list of
+        # serialized EdgeBindings derived from that client's placements.
+        # When an edge crossing fires we look up the binding owning
+        # ``(server_monitor_id, edge, axis_norm)`` and prefer it over
+        # the legacy ``_active_screens`` lookup so multi-monitor
+        # placements drive routing.
+        self._edge_bindings_by_client: dict[str, list[dict]] = {}
         # Primary monitor size kept for backward compatibility / scroll
         # events. Edge detection uses the full MonitorLayout so the
         # outer edges of EACH monitor count (asymmetric multi-monitor
@@ -149,6 +159,11 @@ class ServerMouseListener(object):
         self.event_bus.subscribe(
             event_type=BusEventType.CLIENT_DISCONNECTED,
             callback=self._on_client_disconnected,
+            priority=True,
+        )
+        self.event_bus.subscribe(
+            event_type=BusEventType.CLIENT_LAYOUT_UPDATED,
+            callback=self._on_client_layout_updated,
             priority=True,
         )
 
@@ -225,6 +240,13 @@ class ServerMouseListener(object):
 
         if client_screen and StreamType.MOUSE in client_streams:  # If not, we ignore
             self._active_screens[client_screen] = True
+            # Cache the spatial routing table for this client. Each
+            # entry is a serialized EdgeBinding dict — we keep them as
+            # dicts on the hot path to avoid an extra import on the
+            # pynput thread.
+            self._edge_bindings_by_client[client_screen] = list(
+                getattr(data, "edge_bindings", []) or []
+            )
 
         await asyncio.sleep(0)
 
@@ -239,11 +261,29 @@ class ServerMouseListener(object):
         client = data.client_screen
         if client and client in self._active_screens:
             del self._active_screens[client]
+        # Drop the cached routing table for the disconnected client so
+        # stale bindings never accidentally route a crossing into a
+        # client that's no longer reachable.
+        self._edge_bindings_by_client.pop(client, None)
 
         # if active screens is empty, we stop listening
         if len(self._active_screens.items()) == 0:
             self._listening = False
 
+        await asyncio.sleep(0)
+
+    async def _on_client_layout_updated(self, data: Optional[ClientLayoutUpdatedEvent]):
+        """Hot-swap the cached EdgeBindings of a client without waiting
+        for it to reconnect. Called from ``Server.set_client_layout``
+        after a successful save so the layout editor's changes take
+        effect on the very next mouse crossing.
+        """
+        if data is None or not data.client_screen:
+            return
+        if data.client_screen in self._active_screens:
+            self._edge_bindings_by_client[data.client_screen] = list(
+                data.edge_bindings or []
+            )
         await asyncio.sleep(0)
 
     async def _on_active_screen_changed(self, data: Optional[ActiveScreenChangedEvent]):
@@ -280,6 +320,104 @@ class ServerMouseListener(object):
         """
         min_x, min_y, max_x, max_y = self._screen_bbox
         return min_x, min_y, max_x, max_y, max(1, max_x - min_x), max(1, max_y - min_y)
+
+    # Lookup tables for the ScreenEdge <-> Edge-string mapping used by
+    # ``_resolve_cross_screen_target``. Done at class scope so the hot
+    # path doesn't allocate a fresh dict per crossing.
+    _EDGE_TO_STRING: dict = {
+        ScreenEdge.LEFT: "left",
+        ScreenEdge.RIGHT: "right",
+        ScreenEdge.TOP: "top",
+        ScreenEdge.BOTTOM: "bottom",
+    }
+    _EDGE_TO_LEGACY_POSITION: dict = {
+        ScreenEdge.LEFT: ScreenPosition.LEFT,
+        ScreenEdge.RIGHT: ScreenPosition.RIGHT,
+        ScreenEdge.TOP: ScreenPosition.TOP,
+        ScreenEdge.BOTTOM: ScreenPosition.BOTTOM,
+    }
+
+    def _resolve_cross_screen_target(
+        self,
+        edge: ScreenEdge,
+        cursor_x: float,
+        cursor_y: float,
+        bbox_x_norm: float,
+        bbox_y_norm: float,
+    ) -> Optional[tuple[str, Optional[int]]]:
+        """Pick the target ``(client_screen, client_monitor_id)`` for an
+        edge crossing.
+
+        Priority:
+
+        1. **Spatial routing** via ``_edge_bindings_by_client``: locate
+           the server monitor currently under the cursor, project the
+           cursor onto that monitor's secondary axis, and pick the
+           client whose :class:`EdgeBinding` owns the resulting
+           ``(server_monitor_id, edge, axis_norm)`` tuple. Returns the
+           matched binding's ``client_monitor_id`` so the receiving
+           client can land the cursor on the right physical screen.
+
+        2. **Legacy fallback**: if no binding matches, route via the
+           old ``_active_screens[ScreenPosition.X]`` lookup so clients
+           that haven't been positioned on the workspace yet keep
+           working with their ``screen_position`` enum. ``client_monitor_id``
+           is ``None`` in this path.
+
+        Returns ``None`` when neither path applies (no target).
+        """
+        edge_str = self._EDGE_TO_STRING.get(edge)
+        legacy_pos = self._EDGE_TO_LEGACY_POSITION.get(edge)
+
+        if edge_str and self._edge_bindings_by_client:
+            # Find the server monitor whose edge was hit. We use the
+            # MonitorLayout's hit-test; if the cursor is in a dead
+            # zone (L-shape gap), fall back to the closest monitor.
+            monitor = self._monitor_layout.find_monitor_at(cursor_x, cursor_y)
+            if monitor is None and self._monitor_layout.monitors:
+                # Cursor at the outer bbox edge but not strictly inside
+                # any monitor; snap to the closest one.
+                best = None
+                best_dist = None
+                for m in self._monitor_layout.monitors:
+                    cx = max(m.min_x, min(cursor_x, m.max_x - 1))
+                    cy = max(m.min_y, min(cursor_y, m.max_y - 1))
+                    dist = (cx - cursor_x) ** 2 + (cy - cursor_y) ** 2
+                    if best_dist is None or dist < best_dist:
+                        best = m
+                        best_dist = dist
+                monitor = best
+
+            if monitor is not None:
+                m_w = max(1, monitor.max_x - monitor.min_x)
+                m_h = max(1, monitor.max_y - monitor.min_y)
+                if edge == ScreenEdge.LEFT or edge == ScreenEdge.RIGHT:
+                    axis_norm = (cursor_y - monitor.min_y) / m_h
+                else:
+                    axis_norm = (cursor_x - monitor.min_x) / m_w
+                axis_norm = max(0.0, min(1.0, axis_norm))
+
+                for client_screen, bindings in self._edge_bindings_by_client.items():
+                    for b in bindings:
+                        if (
+                            b.get("server_monitor_id") == monitor.monitor_id
+                            and b.get("server_edge") == edge_str
+                            and b.get("axis_start", 0.0)
+                            <= axis_norm
+                            < b.get("axis_end", 0.0)
+                        ):
+                            cm = b.get("client_monitor_id")
+                            return client_screen, int(cm) if cm is not None else None
+
+        # Legacy fallback: virtual-desktop normalized coordinate is
+        # only used as a tie-breaker for logging; the actual decision
+        # is whether _any_ client is registered at that side.
+        _ = bbox_x_norm
+        _ = bbox_y_norm
+        if legacy_pos and self._active_screens.get(legacy_pos, False):
+            return legacy_pos, None
+
+        return None
 
     def _darwin_mouse_suppress_filter(self, event_type, event):
         raise NotImplementedError("Mouse suppress filter not implemented yet.")
@@ -337,50 +475,40 @@ class ServerMouseListener(object):
                 x_norm = (x - min_x) / width
                 y_norm = (y - min_y) / height
 
+                # Per-monitor routing using the placements coming from
+                # each ClientObj. The target (server_monitor_id, edge,
+                # axis_norm) is matched against the cached EdgeBindings;
+                # a hit overrides the legacy ScreenPosition fallback.
+                resolved = self._resolve_cross_screen_target(
+                    edge=edge,
+                    cursor_x=x,
+                    cursor_y=y,
+                    bbox_x_norm=x_norm,
+                    bbox_y_norm=y_norm,
+                )
+                if resolved is None:
+                    return True
+                target_screen, target_monitor_id = resolved
+
                 try:
                     self._cross_screen_event.set()
-                    if edge == ScreenEdge.LEFT and self._active_screens.get(
-                        ScreenPosition.LEFT, False
-                    ):
-                        # Normalize position to avoid sticking
+                    if edge == ScreenEdge.LEFT:
                         mouse_event.x = 1
                         mouse_event.y = y_norm
-                        # Schedule async operations
-                        self._schedule_async(
-                            self._handle_cross_screen(
-                                edge, mouse_event, ScreenPosition.LEFT
-                            )
-                        )
-                    elif edge == ScreenEdge.RIGHT and self._active_screens.get(
-                        ScreenPosition.RIGHT, False
-                    ):
+                    elif edge == ScreenEdge.RIGHT:
                         mouse_event.x = 0
                         mouse_event.y = y_norm
-                        self._schedule_async(
-                            self._handle_cross_screen(
-                                edge, mouse_event, ScreenPosition.RIGHT
-                            )
-                        )
-                    elif edge == ScreenEdge.TOP and self._active_screens.get(
-                        ScreenPosition.TOP, False
-                    ):
+                    elif edge == ScreenEdge.TOP:
                         mouse_event.x = x_norm
                         mouse_event.y = 1
-                        self._schedule_async(
-                            self._handle_cross_screen(
-                                edge, mouse_event, ScreenPosition.TOP
-                            )
-                        )
-                    elif edge == ScreenEdge.BOTTOM and self._active_screens.get(
-                        ScreenPosition.BOTTOM, False
-                    ):
+                    elif edge == ScreenEdge.BOTTOM:
                         mouse_event.x = x_norm
                         mouse_event.y = 0
-                        self._schedule_async(
-                            self._handle_cross_screen(
-                                edge, mouse_event, ScreenPosition.BOTTOM
-                            )
+                    self._schedule_async(
+                        self._handle_cross_screen(
+                            edge, mouse_event, target_screen, target_monitor_id
                         )
+                    )
                 except Exception as e:
                     self._logger.error(f"Failed to dispatch mouse event ({e})")
                 finally:
@@ -421,7 +549,11 @@ class ServerMouseListener(object):
                 )
 
     async def _handle_cross_screen(
-        self, edge: ScreenEdge, mouse_event: MouseEvent, screen: str
+        self,
+        edge: ScreenEdge,
+        mouse_event: MouseEvent,
+        screen: str,
+        client_monitor_id: Optional[int] = None,
     ):
         """Async handler for cross-screen events"""
         # Mark the cross-screen handler as in-flight under the shared state
@@ -451,7 +583,11 @@ class ServerMouseListener(object):
                 )
 
                 # Wait for message dispatch to complete
-                await self.command_stream.send(CrossScreenCommandEvent(target=screen))
+                await self.command_stream.send(
+                    CrossScreenCommandEvent(
+                        target=screen, client_monitor_id=client_monitor_id
+                    )
+                )
                 await self.stream.send(mouse_event)
                 await asyncio.sleep(0)
 
@@ -630,6 +766,10 @@ class ClientMouseController(object):
 
         self._is_active = False
         self._current_screen = None
+        # Target monitor id signalled by the server's most recent
+        # CrossScreenCommandEvent. ``None`` falls back to the virtual
+        # desktop bbox below (legacy / single-monitor client).
+        self._active_monitor_id: Optional[int] = None
         self._screen_size: tuple[int, int] = Screen.get_size()
         # Full per-monitor layout for edge detection on the mirror-back
         # crossing path; the bbox below is derived from it and kept for
@@ -789,6 +929,11 @@ class ClientMouseController(object):
         """
         if data is not None:
             self._current_screen = data.client_screen
+            # Track which of our monitors the server's spatial routing
+            # targeted. Used by ``_position_cursor`` / ``_move_cursor``
+            # to pin the cursor to that physical screen instead of the
+            # full virtual-desktop bbox.
+            self._active_monitor_id = data.client_monitor_id
         # Reset movement history
         self._movement_history.clear()
 
@@ -807,6 +952,10 @@ class ClientMouseController(object):
         self._movement_history.clear()
         self._cross_screen_event.clear()
         self._is_active = False
+        # Drop the target-monitor pin so a subsequent activation that
+        # doesn't carry an id (legacy server / hotkey path) doesn't
+        # inherit a stale pin.
+        self._active_monitor_id = None
 
     async def _mouse_event_callback(self, message):
         """
@@ -923,16 +1072,30 @@ class ClientMouseController(object):
 
         return await asyncio.sleep(0)
 
+    def _target_bbox(self) -> tuple[int, int, int, int]:
+        """Return the bbox that incoming normalized ``(x, y)`` coords
+        should be denormalized against.
+
+        When the server's spatial routing has pinned a specific monitor
+        on this client (via the most recent ``ClientActiveEvent``), use
+        that monitor's bounds — otherwise fall back to the full virtual
+        desktop bbox (legacy single-monitor behaviour).
+        """
+        if self._active_monitor_id is not None and self._monitor_layout.monitors:
+            for m in self._monitor_layout.monitors:
+                if m.monitor_id == self._active_monitor_id:
+                    return (m.min_x, m.min_y, m.max_x, m.max_y)
+        return self._screen_bbox
+
     async def _position_cursor(self, x: float | int, y: float | int):
         """
         Position the mouse cursor to the specified (x, y) coordinates.
 
-        Denormalizes against the virtual-desktop bbox so an incoming
-        ``(x, y)`` in ``[0, 1]`` can land on any monitor of the multi-display
-        client (secondary monitors with non-zero origins included).
+        Denormalizes against the active target monitor when the server
+        signalled one; otherwise against the full virtual-desktop bbox.
         """
         try:
-            min_x, min_y, max_x, max_y = self._screen_bbox
+            min_x, min_y, max_x, max_y = self._target_bbox()
             width = max_x - min_x
             height = max_y - min_y
             if width <= 0 or height <= 0:
@@ -968,9 +1131,10 @@ class ClientMouseController(object):
             self._controller.move(dx=dx, dy=dy)
         else:
             try:
-                # Denormalize against the virtual-desktop bbox so the cursor
-                # can be placed on any monitor of the multi-display client.
-                min_x, min_y, max_x, max_y = self._screen_bbox
+                # Denormalize against the active target monitor (set by
+                # the server's spatial routing) or the full virtual bbox
+                # when no target is pinned.
+                min_x, min_y, max_x, max_y = self._target_bbox()
                 width = max_x - min_x
                 height = max_y - min_y
                 if width <= 0 or height <= 0:

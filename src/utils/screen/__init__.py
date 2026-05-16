@@ -20,12 +20,14 @@ from typing import TYPE_CHECKING
 
 from ._monitor import (
     Edge,
+    EdgeBinding,
     LayoutBinding,
     LayoutReconciliation,
     LayoutSlot,
     LayoutValidator,
     MonitorInfo,
     MonitorLayout,
+    compute_edge_bindings,
     reconcile_bindings_with_client_monitors,
 )
 
@@ -48,4 +50,6 @@ __all__ = [
     "LayoutValidator",
     "LayoutReconciliation",
     "reconcile_bindings_with_client_monitors",
+    "EdgeBinding",
+    "compute_edge_bindings",
 ]

@@ -16,7 +16,7 @@
 
 """Unit tests for the monitor / layout model.
 
-Covers the data shapes that feed into Phase 2 of the multi-monitor work:
+Covers the data shapes that feed into of the multi-monitor work:
 
 - :class:`MonitorInfo` + :class:`MonitorLayout` (geometry helpers,
   neighbour detection in asymmetric arrangements).
@@ -29,12 +29,14 @@ import pytest
 
 from utils.screen import (
     Edge,
+    EdgeBinding,
     LayoutBinding,
     LayoutReconciliation,
     LayoutSlot,
     LayoutValidator,
     MonitorInfo,
     MonitorLayout,
+    compute_edge_bindings,
     reconcile_bindings_with_client_monitors,
 )
 
@@ -51,7 +53,7 @@ def _mon(monitor_id: int, x: int, y: int, w: int, h: int, primary: bool = False)
 
 
 class TestMonitorLayoutNeighbors:
-    """Validate the asymmetric-layout bug fix that motivated Phase 2:
+    """Validate the asymmetric-layout bug fix:
 
     When a secondary monitor sits above a narrower primary AND extends
     past the primary's X range, the primary monitor's left/right edges
@@ -420,3 +422,182 @@ class TestLayoutReconciliation:
         )
         assert len(result.dropped) == 1
         assert len(result.kept) == 1  # the unpinned one survives
+
+
+class TestComputeEdgeBindings:
+    """The runtime contract derived from a client's placements +
+    server's monitor list.
+
+    Each placement that abuts a server monitor on at least one side
+    yields one :class:`EdgeBinding` per touched edge. The
+    ``axis_start`` / ``axis_end`` range is normalized over the SERVER
+    monitor's secondary axis so the mouse listener can match against
+    the cursor position directly.
+    """
+
+    @staticmethod
+    def _placement(client_monitor_id: int, x: int, y: int, w: int, h: int) -> dict:
+        return {
+            "client_monitor_id": client_monitor_id,
+            "workspace_x": x,
+            "workspace_y": y,
+            "width": w,
+            "height": h,
+        }
+
+    def test_full_right_abutment_produces_full_segment(self):
+        # Server monitor at origin 1920x1080; client monitor flush to
+        # the right, same height -> full [0, 1] segment on RIGHT edge.
+        server = _mon(0, 0, 0, 1920, 1080, primary=True)
+        placement = self._placement(0, 1920, 0, 1280, 1080)
+        out = compute_edge_bindings(placement, [server])
+        assert len(out) == 1
+        b = out[0]
+        assert isinstance(b, EdgeBinding)
+        assert b.server_monitor_id == 0
+        assert b.server_edge == Edge.RIGHT
+        assert b.axis_start == 0.0
+        assert b.axis_end == 1.0
+        assert b.client_monitor_id == 0
+
+    def test_partial_right_abutment_produces_partial_segment(self):
+        # Client monitor smaller than server, vertically centered:
+        # Y range [200, 920) of server's 1080 -> normalized
+        # ~[0.185, 0.852).
+        server = _mon(0, 0, 0, 1920, 1080)
+        placement = self._placement(0, 1920, 200, 1280, 720)
+        out = compute_edge_bindings(placement, [server])
+        assert len(out) == 1
+        b = out[0]
+        assert b.server_edge == Edge.RIGHT
+        assert b.axis_start == pytest.approx(200 / 1080)
+        assert b.axis_end == pytest.approx(920 / 1080)
+
+    def test_top_abutment_uses_x_axis(self):
+        # Client monitor sitting on top of the server: TOP edge,
+        # axis_start/end normalized over the server's WIDTH.
+        server = _mon(0, 0, 0, 1920, 1080)
+        # Client 1280x720 placed flush above the server at x=320.
+        placement = self._placement(0, 320, -720, 1280, 720)
+        out = compute_edge_bindings(placement, [server])
+        assert len(out) == 1
+        b = out[0]
+        assert b.server_edge == Edge.TOP
+        assert b.axis_start == pytest.approx(320 / 1920)
+        assert b.axis_end == pytest.approx((320 + 1280) / 1920)
+
+    def test_no_binding_when_separated_by_gap(self):
+        # 100 px gap on the right -> no abutment.
+        server = _mon(0, 0, 0, 1920, 1080)
+        placement = self._placement(0, 2020, 0, 1280, 1080)
+        assert compute_edge_bindings(placement, [server]) == []
+
+    def test_pixel_tolerance_allows_one_pixel_gap(self):
+        # 1-pixel gap is still considered an abutment so GUI rounding
+        # doesn't silently disconnect adjacent boxes.
+        server = _mon(0, 0, 0, 1920, 1080)
+        placement = self._placement(0, 1921, 0, 1280, 1080)
+        out = compute_edge_bindings(placement, [server])
+        assert len(out) == 1
+        assert out[0].server_edge == Edge.RIGHT
+
+    def test_corner_straddle_produces_two_bindings(self):
+        # Client monitor wraps the right+bottom corner of a server
+        # monitor: it abuts on RIGHT and on TOP of the lower-right
+        # server monitor at the same time.
+        upper = _mon(0, 0, 0, 1920, 1080)
+        lower_right = _mon(1, 1920, 1080, 1920, 1080)
+        # Placement sits at (1920, 1080) flush against both.
+        placement = self._placement(0, 1920, 540, 1280, 540)
+        out = compute_edge_bindings(placement, [upper, lower_right])
+        # Two bindings: right of `upper` and top of `lower_right`.
+        edges = sorted((b.server_monitor_id, b.server_edge.value) for b in out)
+        assert (0, "right") in edges
+        assert (1, "top") in edges
+
+    def test_invalid_zero_size_placement_returns_empty(self):
+        server = _mon(0, 0, 0, 1920, 1080)
+        placement = self._placement(0, 1920, 0, 0, 0)
+        assert compute_edge_bindings(placement, [server]) == []
+
+    def test_edge_binding_contains_secondary_half_open(self):
+        b = EdgeBinding(
+            server_monitor_id=0,
+            server_edge=Edge.RIGHT,
+            axis_start=0.0,
+            axis_end=0.5,
+            client_monitor_id=0,
+        )
+        assert b.contains_secondary(0.0) is True
+        assert b.contains_secondary(0.49) is True
+        # Upper bound exclusive so split boundaries route deterministically.
+        assert b.contains_secondary(0.5) is False
+
+    def test_edge_binding_roundtrip_dict(self):
+        b = EdgeBinding(
+            server_monitor_id=3,
+            server_edge=Edge.TOP,
+            axis_start=0.25,
+            axis_end=0.75,
+            client_monitor_id=1,
+        )
+        d = b.to_dict()
+        assert d == {
+            "server_monitor_id": 3,
+            "server_edge": "top",
+            "axis_start": 0.25,
+            "axis_end": 0.75,
+            "client_monitor_id": 1,
+        }
+
+
+class TestClientObjPlacements:
+    """``ClientObj.placements`` round-trip + ``get_edge_bindings``
+    bridge into the runtime data model."""
+
+    def _make_client(self, placements):
+        from model.client import ClientObj
+        return ClientObj(
+            uid="client-A",
+            ip_addresses=["10.0.0.1"],
+            hostname="client-a.local",
+            placements=placements,
+        )
+
+    def test_placements_roundtrip_through_dict(self):
+        placements = [
+            {
+                "client_monitor_id": 0,
+                "workspace_x": 1920,
+                "workspace_y": 0,
+                "width": 1280,
+                "height": 1080,
+            }
+        ]
+        c = self._make_client(placements)
+        from model.client import ClientObj
+        restored = ClientObj.from_dict(c.to_dict())
+        assert restored.placements == placements
+
+    def test_get_edge_bindings_uses_server_monitors(self):
+        placements = [
+            {
+                "client_monitor_id": 0,
+                "workspace_x": 1920,
+                "workspace_y": 200,
+                "width": 1280,
+                "height": 720,
+            }
+        ]
+        c = self._make_client(placements)
+        server_monitors = [_mon(0, 0, 0, 1920, 1080)]
+        bindings = c.get_edge_bindings(server_monitors)
+        assert len(bindings) == 1
+        assert bindings[0].server_monitor_id == 0
+        assert bindings[0].server_edge == Edge.RIGHT
+        assert bindings[0].client_monitor_id == 0
+
+    def test_get_edge_bindings_empty_when_no_placements(self):
+        c = self._make_client([])
+        server_monitors = [_mon(0, 0, 0, 1920, 1080)]
+        assert c.get_edge_bindings(server_monitors) == []

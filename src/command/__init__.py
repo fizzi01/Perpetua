@@ -97,11 +97,15 @@ class CommandHandler:
                 ),
             )
         else:
-            # Dispatch CLIENT_ACTIVE event to notify that client itself is now active
+            # Dispatch CLIENT_ACTIVE event to notify that client itself
+            # is now active. Forward the target monitor id (if any) so
+            # the client mouse controller can pin incoming positions to
+            # the correct physical screen on multi-monitor setups.
             await self.event_bus.dispatch(
                 event_type=BusEventType.CLIENT_ACTIVE,
                 data=ClientActiveEvent(
                     client_screen=event.target,
+                    client_monitor_id=crs_event.get_client_monitor_id(),
                 ),
             )
 

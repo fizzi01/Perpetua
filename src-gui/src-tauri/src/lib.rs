@@ -392,6 +392,7 @@ pub fn run(daemon_config: Option<DaemonConfig>) {
             commands::deny_client,
             commands::remove_client,
             commands::set_server_config,
+            commands::set_client_layout,
             // -- Client Commands --
             commands::start_client,
             commands::stop_client,

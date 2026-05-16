@@ -86,6 +86,7 @@ class ClientObj:
         conn_socket: Optional[ClientConnection] = None,
         additional_params: Optional[dict] = None,
         monitors: Optional[list[dict]] = None,
+        placements: Optional[list[dict]] = None,
     ):
         self.uid = uid
 
@@ -124,6 +125,20 @@ class ClientObj:
         # round-trips without importing ``utils.screen`` in the model
         # layer; consumers build :class:`MonitorInfo` on demand.
         self.monitors: list[dict] = list(monitors) if monitors else []
+        # Per-monitor placements in the SERVER's virtual workspace.
+        # Each dict shape (mirrors the GUI's ``MonitorPlacement``):
+        #   {
+        #     "client_monitor_id": int,   # index into self.monitors
+        #     "workspace_x": int,         # top-left in server workspace coords
+        #     "workspace_y": int,
+        #     "width": int,
+        #     "height": int,
+        #   }
+        # The runtime adjacency (which server-monitor edge crosses INTO
+        # which of this client's monitors and over which axis range) is
+        # NOT stored here — it's derived on demand via
+        # :meth:`get_edge_bindings` so the source of truth stays simple.
+        self.placements: list[dict] = list(placements) if placements else []
         self.ssl = ssl
         self.conn_socket = conn_socket
         self.is_connected = is_connected
@@ -269,6 +284,26 @@ class ClientObj:
         """
         return self.host_name if self.host_name is not None else self.ip_address
 
+    def get_edge_bindings(self, server_monitors) -> list:
+        """Derive the per-placement :class:`EdgeBinding` list from this
+        client's ``placements`` and the given ``server_monitors`` list.
+
+        Empty when the client hasn't been positioned on the workspace
+        yet (e.g. just-added clients before the admin runs the layout
+        editor) or when the OS backend couldn't enumerate displays.
+
+        Local import to avoid pulling ``utils.screen`` into the model
+        layer at module load.
+        """
+        if not self.placements:
+            return []
+        from utils.screen import compute_edge_bindings
+
+        out: list = []
+        for p in self.placements:
+            out.extend(compute_edge_bindings(p, server_monitors))
+        return out
+
     def to_dict(self) -> dict:
         return self.__dict__()
 
@@ -293,6 +328,7 @@ class ClientObj:
             ssl=data.get("ssl", False),
             additional_params=data.get("additional_params", {}),
             monitors=data.get("monitors", []),
+            placements=data.get("placements", []),
         )
 
     def __dict__(self) -> dict:
@@ -308,6 +344,7 @@ class ClientObj:
             "is_connected": self.is_connected,
             "additional_params": self.additional_params,
             "monitors": list(self.monitors),
+            "placements": list(self.placements),
         }
 
     def __repr__(self):

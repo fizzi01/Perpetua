@@ -34,6 +34,7 @@ import {ActionType} from './store/actions';
 import {ScrollArea} from './components/ui/scrollbar';
 import {DaemonLogDialog} from './components/ui/DaemonLogDialog';
 import {SplashScreen} from './Splash';
+import LayoutEditorWindow from './LayoutEditorWindow';
 
 export function Main() {
     var r = document.querySelector(':root') as HTMLElement;
@@ -203,6 +204,7 @@ export default function App() {
             <Routes>
                 <Route path="/" element={<Main/>}/>
                 <Route path="/splashscreen" element={<SplashScreen/>}/>
+                <Route path="/layout-editor" element={<LayoutEditorWindow/>}/>
             </Routes>
         </BrowserRouter>
     )

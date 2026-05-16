@@ -46,6 +46,7 @@ from event import (
     BusEventType,
     ClientConnectedEvent,
     ClientDisconnectedEvent,
+    ClientLayoutUpdatedEvent,
     ClientStreamReconnectedEvent,
 )
 from network.connection.server import ConnectionHandler
@@ -645,6 +646,149 @@ class Server:
         return self.config.get_client(
             ip_address=ip_address, hostname=hostname, screen_position=screen_position
         )
+
+    async def set_client_layout(
+        self,
+        placements: list[dict],
+        uid: Optional[str] = None,
+        hostname: Optional[str] = None,
+        ip_address: Optional[str] = None,
+        auto_save: bool = True,
+    ) -> ClientObj:
+        """Replace the multi-monitor placements of one client.
+
+        Validates the new list against:
+
+        - basic placement shape (positive width/height, non-negative
+          ``client_monitor_id``);
+        - no overlap among the client's own placements;
+        - no overlap with the server's monitors;
+        - no overlap with the placements of OTHER clients (the workspace
+          must stay a partition of disjoint rectangles).
+
+        On success the new placements are persisted on the ClientObj
+        and (if ``auto_save``) on disk. Subsequent ``CLIENT_CONNECTED``
+        events will carry the refreshed :class:`EdgeBinding` list to
+        the mouse listener.
+        """
+        client = self.config.get_client(
+            uid=uid,
+            ip_address=ip_address,
+            hostname=hostname,
+        )
+        if not client:
+            raise ValueError(
+                f"Client [uid={uid}, ip={ip_address}, host={hostname}] not found"
+            )
+
+        # ------------------------------------------------------------------
+        # Validation
+        # ------------------------------------------------------------------
+        from utils.screen import Screen
+
+        normalized: list[dict] = []
+        for raw in placements or []:
+            try:
+                width = int(raw["width"])
+                height = int(raw["height"])
+            except (KeyError, TypeError, ValueError):
+                raise ValueError(f"Placement missing width/height: {raw!r}")
+            if width <= 0 or height <= 0:
+                raise ValueError(
+                    f"Placement has non-positive size: {raw!r}"
+                )
+            normalized.append({
+                "client_monitor_id": int(raw.get("client_monitor_id", 0)),
+                "workspace_x": int(raw.get("workspace_x", 0)),
+                "workspace_y": int(raw.get("workspace_y", 0)),
+                "width": width,
+                "height": height,
+            })
+
+        def _rects_overlap(a: dict, b: dict) -> bool:
+            ax2 = a["workspace_x"] + a["width"]
+            ay2 = a["workspace_y"] + a["height"]
+            bx2 = b["workspace_x"] + b["width"]
+            by2 = b["workspace_y"] + b["height"]
+            return not (
+                ax2 <= b["workspace_x"]
+                or bx2 <= a["workspace_x"]
+                or ay2 <= b["workspace_y"]
+                or by2 <= a["workspace_y"]
+            )
+
+        # Self-overlap.
+        for i, a in enumerate(normalized):
+            for b in normalized[i + 1:]:
+                if _rects_overlap(a, b):
+                    raise ValueError(
+                        f"Placements of {client.get_net_id()} overlap each other: "
+                        f"{a} vs {b}"
+                    )
+
+        # Overlap with server monitors.
+        try:
+            server_monitors = Screen.get_monitors()
+        except Exception:
+            server_monitors = []
+        for m in server_monitors:
+            sm = {
+                "workspace_x": m.min_x,
+                "workspace_y": m.min_y,
+                "width": m.max_x - m.min_x,
+                "height": m.max_y - m.min_y,
+            }
+            for p in normalized:
+                if _rects_overlap(p, sm):
+                    raise ValueError(
+                        f"Placement {p} overlaps server monitor #{m.monitor_id}"
+                    )
+
+        # Overlap with OTHER clients' placements.
+        for other in self.config.get_clients():
+            if other.get_net_id() == client.get_net_id():
+                continue
+            for op in other.placements:
+                op_norm = {
+                    "workspace_x": int(op.get("workspace_x", 0)),
+                    "workspace_y": int(op.get("workspace_y", 0)),
+                    "width": int(op.get("width", 0)),
+                    "height": int(op.get("height", 0)),
+                }
+                if op_norm["width"] <= 0 or op_norm["height"] <= 0:
+                    continue
+                for p in normalized:
+                    if _rects_overlap(p, op_norm):
+                        raise ValueError(
+                            f"Placement {p} overlaps {other.get_net_id()}'s "
+                            f"placement {op_norm}"
+                        )
+
+        # Commit.
+        client.placements = normalized
+        self.clients_manager.update_client(client)
+        if auto_save:
+            await self.save_config()
+
+        # Hot-reload the mouse listener's routing cache so the new
+        # placements take effect on the very next mouse crossing,
+        # without requiring the client to reconnect.
+        edge_bindings = [
+            eb.to_dict() for eb in client.get_edge_bindings(server_monitors)
+        ]
+        await self.event_bus.dispatch(
+            event_type=BusEventType.CLIENT_LAYOUT_UPDATED,
+            data=ClientLayoutUpdatedEvent(
+                client_screen=client.get_screen_position(),
+                edge_bindings=edge_bindings,
+            ),
+        )
+
+        self._logger.info(
+            f"Set layout for client {client.get_net_id()}: "
+            f"{len(normalized)} placement(s)"
+        )
+        return client
 
     async def edit_client(
         self,
@@ -1473,10 +1617,28 @@ class Server:
 
     async def _on_client_connected(self, client: ClientObj, streams: list[int]):
         """Handle client connection event"""
+        # Derive the spatial cross-screen contract from the client's
+        # placements + this server's monitor list. The mouse listener
+        # uses these to route ``(server_monitor, edge, axis_norm)``
+        # crossings to the right client monitor. Empty when the layout
+        # editor hasn't been used yet — routing then falls back to the
+        # legacy ``screen_position`` enum.
+        try:
+            from utils.screen import Screen
+
+            server_monitors = Screen.get_monitors()
+        except Exception:
+            server_monitors = []
+        edge_bindings = [
+            eb.to_dict() for eb in client.get_edge_bindings(server_monitors)
+        ]
+
         await self.event_bus.dispatch(
             event_type=BusEventType.CLIENT_CONNECTED,
             data=ClientConnectedEvent(
-                client_screen=client.get_screen_position(), streams=streams
+                client_screen=client.get_screen_position(),
+                streams=streams,
+                edge_bindings=edge_bindings,
             ),
         )
         # Save config on new connection

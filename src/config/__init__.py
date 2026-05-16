@@ -495,6 +495,7 @@ class ServerConfig:
         ip_address: Optional[str] = None,
         hostname: Optional[str] = None,
         screen_position: Optional[str] = None,
+        uid: Optional[str] = None,
     ) -> Optional[ClientObj]:
         """
         Get a specific client.
@@ -503,12 +504,17 @@ class ServerConfig:
             ip_address: IP address of the client
             hostname: Hostname of the client
             screen_position: Screen position of the client
+            uid: Stable client UID (preferred lookup key for the GUI,
+                which has it from the status payload)
 
         Returns:
             ClientObj if found, None otherwise
         """
         return self.clients_manager.get_client(
-            ip_address=ip_address, hostname=hostname, screen_position=screen_position
+            ip_address=ip_address,
+            hostname=hostname,
+            screen_position=screen_position,
+            uid=uid,
         )
 
     def get_clients(self) -> List[ClientObj]:

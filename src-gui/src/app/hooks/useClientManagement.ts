@@ -18,7 +18,7 @@
  */
 
 import {useCallback, useState} from 'react';
-import {ClientObj} from '../api/Interface';
+import {ClientObj, MonitorInfo, MonitorPlacement} from '../api/Interface';
 
 interface Client {
     id: string;
@@ -28,6 +28,14 @@ interface Client {
     status: 'online' | 'offline';
     position: 'top' | 'bottom' | 'left' | 'right';
     connectedAt?: Date;
+    // Per-monitor info the client advertised on its last handshake.
+    // Forwarded to the layout editor so each monitor can be placed
+    // individually in the shared workspace.
+    monitors?: MonitorInfo[];
+    // Workspace placements persisted on the daemon. Used to seed the
+    // layout editor on startup so the user doesn't see an empty canvas
+    // before the first save.
+    placements?: MonitorPlacement[];
 }
 
 /**
@@ -94,6 +102,8 @@ export function useClientManagement() {
             connectedAt: connected
                 ? new Date(clientData.last_connection_date || clientData.first_connection_date)
                 : undefined,
+            monitors: clientData.monitors,
+            placements: clientData.placements,
         };
     }, [generateClientId]);
 
@@ -121,6 +131,13 @@ export function useClientManagement() {
                             connectedAt: connected
                                 ? new Date(clientData.last_connection_date || clientData.first_connection_date)
                                 : c.connectedAt,
+                            // Refresh the monitor list whenever the
+                            // status payload carries one; preserve the
+                            // previous cache otherwise so a transient
+                            // status without ``monitors`` doesn't wipe
+                            // the layout editor's data.
+                            monitors: clientData.monitors ?? c.monitors,
+                            placements: clientData.placements ?? c.placements,
                         };
                     }
                     return c;
