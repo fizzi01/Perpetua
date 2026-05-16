@@ -18,7 +18,7 @@
 import asyncio
 from collections import deque
 from typing import Optional
-from time import time, sleep
+from time import time
 from threading import Event, Lock
 
 from event import (
@@ -306,7 +306,7 @@ class ServerMouseListener(object):
                     is_dragging=self._is_dragging,
                 )
                 if edge is None:
-                    sleep(0)
+                    # No edge reached yet; nothing more to do for this event.
                     return True
 
                 mouse_event = MouseEvent(x=x, y=y, action=MouseEvent.POSITION_ACTION)
