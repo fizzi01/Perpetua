@@ -26,6 +26,8 @@ from event import (
     CommandEvent,
     EventMapper,
     ActiveScreenChangedEvent,
+    ClientTopologyCommandEvent,
+    ClientTopologyUpdatedEvent,
     CrossScreenCommandEvent,
     ClientActiveEvent,
     ForceScreenChangeCommandEvent,
@@ -69,6 +71,8 @@ class CommandHandler:
                 await asyncio.create_task(self.handle_cross_screen(event))
             elif event.command == CommandEvent.FORCE_SCREEN_CHANGE:
                 await asyncio.create_task(self.handle_force_screen_change(event))
+            elif event.command == CommandEvent.CLIENT_TOPOLOGY:
+                await asyncio.create_task(self.handle_client_topology(event))
             else:
                 self._logger.warning(f"Unknown command received -> {event.command}")
                 return
@@ -109,6 +113,7 @@ class CommandHandler:
                 ),
             )
 
+
     async def handle_force_screen_change(self, event: CommandEvent):
         """
         Async handler for force screen change command by dispatching a client inactive event if we are client.
@@ -119,3 +124,20 @@ class CommandHandler:
             await self.event_bus.dispatch(
                 event_type=BusEventType.CLIENT_INACTIVE, data=None
             )
+
+    async def handle_client_topology(self, event: CommandEvent):
+        """Async handler for the topology push from server → client.
+
+        Translates the wire payload into a
+        :class:`ClientTopologyUpdatedEvent` on the local bus so the
+        client mouse controller can refresh its return-to-server
+        routing without coupling to the network layer.
+        """
+        topo = ClientTopologyCommandEvent.from_command_event(event)
+        await self.event_bus.dispatch(
+            event_type=BusEventType.CLIENT_TOPOLOGY_UPDATED,
+            data=ClientTopologyUpdatedEvent(
+                reverse_bindings=topo.get_reverse_bindings(),
+                server_bbox=topo.get_server_bbox(),
+            ),
+        )

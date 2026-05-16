@@ -27,7 +27,9 @@ from ._monitor import (
     LayoutValidator,
     MonitorInfo,
     MonitorLayout,
+    ReverseEdgeBinding,
     compute_edge_bindings,
+    compute_reverse_edge_bindings,
     reconcile_bindings_with_client_monitors,
 )
 
@@ -52,4 +54,6 @@ __all__ = [
     "reconcile_bindings_with_client_monitors",
     "EdgeBinding",
     "compute_edge_bindings",
+    "ReverseEdgeBinding",
+    "compute_reverse_edge_bindings",
 ]

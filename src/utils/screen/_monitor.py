@@ -565,3 +565,166 @@ def compute_edge_bindings(
                 )
 
     return out
+
+
+@dataclass(frozen=True)
+class ReverseEdgeBinding:
+    """One adjacency seen from the CLIENT's side.
+
+    Mirrors :class:`EdgeBinding` but pivoted so the client (which does
+    not know about its placement in the server's workspace) can resolve
+    return-to-server crossings purely from a cursor position on one of
+    ITS monitors. ``client_axis_*`` covers the slice of the client
+    monitor's edge that abuts the server; ``server_axis_*`` covers the
+    matching slice of the server monitor's edge. The mapping between
+    them is a linear scale (the abutment is a 1D overlap).
+
+    ``server_monitor_*`` carry the absolute bounds of the target server
+    monitor in OS pixels so the client can land the cursor at the right
+    spot without re-syncing the server's monitor list.
+    """
+
+    client_monitor_id: int
+    client_edge: Edge
+    client_axis_start: float
+    client_axis_end: float
+    server_monitor_id: int
+    server_edge: Edge
+    server_axis_start: float
+    server_axis_end: float
+    server_monitor_min_x: int
+    server_monitor_min_y: int
+    server_monitor_max_x: int
+    server_monitor_max_y: int
+
+    def to_dict(self) -> dict:
+        return {
+            "client_monitor_id": self.client_monitor_id,
+            "client_edge": self.client_edge.value,
+            "client_axis_start": self.client_axis_start,
+            "client_axis_end": self.client_axis_end,
+            "server_monitor_id": self.server_monitor_id,
+            "server_edge": self.server_edge.value,
+            "server_axis_start": self.server_axis_start,
+            "server_axis_end": self.server_axis_end,
+            "server_monitor_min_x": self.server_monitor_min_x,
+            "server_monitor_min_y": self.server_monitor_min_y,
+            "server_monitor_max_x": self.server_monitor_max_x,
+            "server_monitor_max_y": self.server_monitor_max_y,
+        }
+
+
+def compute_reverse_edge_bindings(
+    placement: dict,
+    server_monitors: "Iterable[MonitorInfo] | list[MonitorInfo]",
+) -> list[ReverseEdgeBinding]:
+    """Mirror of :func:`compute_edge_bindings` from the client's
+    perspective. Each abutment between the placement and a server
+    monitor yields one binding describing where on the CLIENT
+    monitor's edge the cursor must reach to cross back to the server,
+    and which server monitor + axis range it lands on.
+    """
+    px = int(placement.get("workspace_x", 0))
+    py = int(placement.get("workspace_y", 0))
+    pw = int(placement.get("width", 0))
+    ph = int(placement.get("height", 0))
+    if pw <= 0 or ph <= 0:
+        return []
+    client_monitor_id = int(placement.get("client_monitor_id", 0))
+    out: list[ReverseEdgeBinding] = []
+
+    for s in server_monitors:
+        sw = s.max_x - s.min_x
+        sh = s.max_y - s.min_y
+        if sw <= 0 or sh <= 0:
+            continue
+
+        # Placement's LEFT edge abuts server's RIGHT edge.
+        if abs(px - s.max_x) <= _ABUTMENT_TOLERANCE_PX:
+            y_start = max(py, s.min_y)
+            y_end = min(py + ph, s.max_y)
+            if y_end > y_start:
+                out.append(
+                    ReverseEdgeBinding(
+                        client_monitor_id=client_monitor_id,
+                        client_edge=Edge.LEFT,
+                        client_axis_start=(y_start - py) / ph,
+                        client_axis_end=(y_end - py) / ph,
+                        server_monitor_id=s.monitor_id,
+                        server_edge=Edge.RIGHT,
+                        server_axis_start=(y_start - s.min_y) / sh,
+                        server_axis_end=(y_end - s.min_y) / sh,
+                        server_monitor_min_x=s.min_x,
+                        server_monitor_min_y=s.min_y,
+                        server_monitor_max_x=s.max_x,
+                        server_monitor_max_y=s.max_y,
+                    )
+                )
+
+        # Placement's RIGHT edge abuts server's LEFT edge.
+        if abs((px + pw) - s.min_x) <= _ABUTMENT_TOLERANCE_PX:
+            y_start = max(py, s.min_y)
+            y_end = min(py + ph, s.max_y)
+            if y_end > y_start:
+                out.append(
+                    ReverseEdgeBinding(
+                        client_monitor_id=client_monitor_id,
+                        client_edge=Edge.RIGHT,
+                        client_axis_start=(y_start - py) / ph,
+                        client_axis_end=(y_end - py) / ph,
+                        server_monitor_id=s.monitor_id,
+                        server_edge=Edge.LEFT,
+                        server_axis_start=(y_start - s.min_y) / sh,
+                        server_axis_end=(y_end - s.min_y) / sh,
+                        server_monitor_min_x=s.min_x,
+                        server_monitor_min_y=s.min_y,
+                        server_monitor_max_x=s.max_x,
+                        server_monitor_max_y=s.max_y,
+                    )
+                )
+
+        # Placement's BOTTOM edge abuts server's TOP edge.
+        if abs((py + ph) - s.min_y) <= _ABUTMENT_TOLERANCE_PX:
+            x_start = max(px, s.min_x)
+            x_end = min(px + pw, s.max_x)
+            if x_end > x_start:
+                out.append(
+                    ReverseEdgeBinding(
+                        client_monitor_id=client_monitor_id,
+                        client_edge=Edge.BOTTOM,
+                        client_axis_start=(x_start - px) / pw,
+                        client_axis_end=(x_end - px) / pw,
+                        server_monitor_id=s.monitor_id,
+                        server_edge=Edge.TOP,
+                        server_axis_start=(x_start - s.min_x) / sw,
+                        server_axis_end=(x_end - s.min_x) / sw,
+                        server_monitor_min_x=s.min_x,
+                        server_monitor_min_y=s.min_y,
+                        server_monitor_max_x=s.max_x,
+                        server_monitor_max_y=s.max_y,
+                    )
+                )
+
+        # Placement's TOP edge abuts server's BOTTOM edge.
+        if abs(py - s.max_y) <= _ABUTMENT_TOLERANCE_PX:
+            x_start = max(px, s.min_x)
+            x_end = min(px + pw, s.max_x)
+            if x_end > x_start:
+                out.append(
+                    ReverseEdgeBinding(
+                        client_monitor_id=client_monitor_id,
+                        client_edge=Edge.TOP,
+                        client_axis_start=(x_start - px) / pw,
+                        client_axis_end=(x_end - px) / pw,
+                        server_monitor_id=s.monitor_id,
+                        server_edge=Edge.BOTTOM,
+                        server_axis_start=(x_start - s.min_x) / sw,
+                        server_axis_end=(x_end - s.min_x) / sw,
+                        server_monitor_min_x=s.min_x,
+                        server_monitor_min_y=s.min_y,
+                        server_monitor_max_x=s.max_x,
+                        server_monitor_max_y=s.max_y,
+                    )
+                )
+
+    return out

@@ -304,6 +304,21 @@ class ClientObj:
             out.extend(compute_edge_bindings(p, server_monitors))
         return out
 
+    def get_reverse_edge_bindings(self, server_monitors) -> list:
+        """Derive the :class:`ReverseEdgeBinding` list — the dual of
+        :meth:`get_edge_bindings`, but pivoted so the client can resolve
+        a return-to-server crossing from a cursor position on one of
+        its own monitors. Pushed to the client via the topology command.
+        """
+        if not self.placements:
+            return []
+        from utils.screen import compute_reverse_edge_bindings
+
+        out: list = []
+        for p in self.placements:
+            out.extend(compute_reverse_edge_bindings(p, server_monitors))
+        return out
+
     def to_dict(self) -> dict:
         return self.__dict__()
 

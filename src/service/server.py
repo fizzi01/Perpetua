@@ -776,11 +776,15 @@ class Server:
         edge_bindings = [
             eb.to_dict() for eb in client.get_edge_bindings(server_monitors)
         ]
+        reverse_bindings = [
+            rb.to_dict() for rb in client.get_reverse_edge_bindings(server_monitors)
+        ]
         await self.event_bus.dispatch(
             event_type=BusEventType.CLIENT_LAYOUT_UPDATED,
             data=ClientLayoutUpdatedEvent(
                 client_screen=client.get_screen_position(),
                 edge_bindings=edge_bindings,
+                reverse_bindings=reverse_bindings,
             ),
         )
 
@@ -1619,10 +1623,10 @@ class Server:
         """Handle client connection event"""
         # Derive the spatial cross-screen contract from the client's
         # placements + this server's monitor list. The mouse listener
-        # uses these to route ``(server_monitor, edge, axis_norm)``
-        # crossings to the right client monitor. Empty when the layout
-        # editor hasn't been used yet — routing then falls back to the
-        # legacy ``screen_position`` enum.
+        # uses ``edge_bindings`` to route ``(server_monitor, edge,
+        # axis_norm)`` crossings to the right client monitor.
+        # ``reverse_bindings`` is the mirror image, pushed to the
+        # client so it can resolve return-to-server crossings.
         try:
             from utils.screen import Screen
 
@@ -1632,6 +1636,9 @@ class Server:
         edge_bindings = [
             eb.to_dict() for eb in client.get_edge_bindings(server_monitors)
         ]
+        reverse_bindings = [
+            rb.to_dict() for rb in client.get_reverse_edge_bindings(server_monitors)
+        ]
 
         await self.event_bus.dispatch(
             event_type=BusEventType.CLIENT_CONNECTED,
@@ -1639,6 +1646,7 @@ class Server:
                 client_screen=client.get_screen_position(),
                 streams=streams,
                 edge_bindings=edge_bindings,
+                reverse_bindings=reverse_bindings,
             ),
         )
         # Save config on new connection
