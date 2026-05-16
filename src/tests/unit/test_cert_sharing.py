@@ -755,9 +755,7 @@ class TestCertificateManagerAtomicWrites(unittest.TestCase):
 
         self.assertTrue(self.cert_manager.generate_ca())
         mode = stat.S_IMODE(os.stat(self.cert_manager.ca_cert_path).st_mode)
-        self.assertEqual(
-            mode, 0o644, f"CA cert has perms {oct(mode)}, expected 0o644"
-        )
+        self.assertEqual(mode, 0o644, f"CA cert has perms {oct(mode)}, expected 0o644")
 
     @unittest.skipIf(os.name == "nt", "POSIX-only chmod semantics")
     def test_generate_server_cert_sets_key_mode_0o600(self):

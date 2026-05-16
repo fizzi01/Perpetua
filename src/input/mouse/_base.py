@@ -409,7 +409,7 @@ class ServerMouseListener(object):
                     self._button_pressed.add(button)
                 else:
                     return True  # Ignore this event
-                
+
                 self._schedule_async(self.stream.send(mouse_event))
             except Exception as e:
                 self._logger.error(f"Failed to dispatch mouse click event ({e})")

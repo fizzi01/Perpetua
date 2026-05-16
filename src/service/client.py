@@ -232,9 +232,9 @@ class Client:
         # spamming notifications when nothing changed AND to detect when a
         # known UID's address shifts so the
         # persisted server config can be updated in place.
-        self._last_discovery_snapshot: set[
-            tuple[Optional[str], str, Optional[int]]
-        ] = set()
+        self._last_discovery_snapshot: set[tuple[Optional[str], str, Optional[int]]] = (
+            set()
+        )
 
         # Strong refs for fire-and-forget tasks (config saves, notifications,
         # stale-cert teardown).
@@ -567,7 +567,9 @@ class Client:
                 # only end up here for manual-config or daemon-restart
                 # scenarios where the UID never made it to disk.
                 self.config.set_server_connection(uid=primary_id)
-                self._bg_tasks.spawn(self.config.save(), name="config_save_fallback_uid")
+                self._bg_tasks.spawn(
+                    self.config.save(), name="config_save_fallback_uid"
+                )
                 self._logger.warning(
                     f"Server UID was empty; using fallback {primary_id!r} "
                     f"as both source_id and persisted server UID"
@@ -810,7 +812,9 @@ class Client:
                 # re-instantiation) keeps the server UID. Without this, the
                 # next pairing flow would save the certificate with an empty
                 # source_id (producing ``ca_.crt`` and orphan mapping rows).
-                self._bg_tasks.spawn(self.config.save(), name="config_save_choose_server")
+                self._bg_tasks.spawn(
+                    self.config.save(), name="config_save_choose_server"
+                )
                 # Set the server future result in case someone is waiting for it
                 if not self._server.done():
                     self._server.set_result(service)
@@ -848,9 +852,7 @@ class Client:
             # field for the same UID — typically the address after a DHCP
             # renewal or interface switch — must propagate to the persisted
             # server config so reconnections target the fresh IP.
-            current_snapshot: set[
-                tuple[Optional[str], str, Optional[int]]
-            ] = {
+            current_snapshot: set[tuple[Optional[str], str, Optional[int]]] = {
                 (svc.uid, svc.address, svc.port) for svc in self._found_services
             }
 

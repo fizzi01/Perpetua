@@ -49,7 +49,7 @@ import os
 from datetime import datetime, timezone
 from typing import Optional, Tuple
 
-from utils.fs import atomic_write_bytes, atomic_write_text
+from utils.fs import atomic_write_text
 
 ENDPOINT_DIR_NAME = "runtime"
 ENDPOINT_FILE_NAME = "daemon.endpoint"

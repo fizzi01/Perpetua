@@ -57,7 +57,12 @@ class StreamWrapper:
             try:
                 self._writer.close()
                 await self._writer.wait_closed()
-            except (BrokenPipeError, ConnectionResetError, ConnectionAbortedError, OSError):
+            except (
+                BrokenPipeError,
+                ConnectionResetError,
+                ConnectionAbortedError,
+                OSError,
+            ):
                 # If the connection is already closed, we can ignore the error
                 pass
 

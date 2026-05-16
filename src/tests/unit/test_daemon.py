@@ -59,6 +59,7 @@ _REAL_DELAYED_EXIT = Daemon.delayed_exit
 def _get_real_delayed_exit():
     return _REAL_DELAYED_EXIT
 
+
 _encoder = msgspec.json.Encoder()
 _decoder = msgspec.json.Decoder()
 
@@ -240,9 +241,10 @@ class TestDaemonLifecycleUnix:
         # The autouse `disable_delayed_exit` fixture has already replaced
         # ``Daemon.delayed_exit`` with a MagicMock. Bind the real method as
         # an attribute on a fresh subclass so we can exercise it.
-        real_delayed_exit = daemon_module.Daemon.__dict__.get(
-            "_real_delayed_exit"
-        ) or _get_real_delayed_exit()
+        real_delayed_exit = (
+            daemon_module.Daemon.__dict__.get("_real_delayed_exit")
+            or _get_real_delayed_exit()
+        )
 
         monkeypatch.setenv("PERPETUA_DAEMON_FORCE_EXIT", "1")
 

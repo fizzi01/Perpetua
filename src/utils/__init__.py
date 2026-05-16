@@ -201,7 +201,9 @@ class BackgroundTasks:
         self._tasks: Set[asyncio.Task] = set()
 
     def spawn(self, coro: Coroutine, name: Optional[str] = None) -> asyncio.Task:
-        task = asyncio.create_task(coro, name=name) if name else asyncio.create_task(coro)
+        task = (
+            asyncio.create_task(coro, name=name) if name else asyncio.create_task(coro)
+        )
         self._tasks.add(task)
         task.add_done_callback(self._on_task_done)
         return task
@@ -217,8 +219,7 @@ class BackgroundTasks:
         if exc is not None:
             task_name = task.get_name() if hasattr(task, "get_name") else "<task>"
             _bg_logger.warning(
-                f"Background task {task_name!r} failed: "
-                f"{type(exc).__name__}: {exc}"
+                f"Background task {task_name!r} failed: {type(exc).__name__}: {exc}"
             )
 
     def __len__(self) -> int:

@@ -501,9 +501,7 @@ class CertificateSharing:
                     async with self._otp_lock:
                         self._otp = None
                         self._otp_expiry = None
-                writer.write(
-                    f"{RESP_ERROR}:{ERR_CALLBACK_FAILED}\n".encode("utf-8")
-                )
+                writer.write(f"{RESP_ERROR}:{ERR_CALLBACK_FAILED}\n".encode("utf-8"))
                 await writer.drain()
                 return
 
