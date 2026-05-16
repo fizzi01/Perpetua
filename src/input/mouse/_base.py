@@ -542,10 +542,11 @@ class ServerMouseController(object):
             w, h = self._screen_size
             if w <= 0 or h <= 0:
                 return
-            x *= w
-            y *= h
-            x = int(x)
-            y = int(y)
+            # round() over int(): int() truncates and accumulates sub-pixel
+            # bias on repeated cross-screen round-trips. Clamp to [0, w-1] / [0, h-1] so a peer that sends
+            # values slightly >1.0 (rounding noise) doesn't land off-screen.
+            x = max(0, min(w - 1, round(x * w)))
+            y = max(0, min(h - 1, round(y * h)))
         except ValueError:
             self._logger.log(f"Invalid x or y values: x={x}, y={y}", Logger.ERROR)
             return
@@ -882,14 +883,15 @@ class ClientMouseController(object):
         Position the mouse cursor to the specified (x, y) coordinates.
         """
         try:
-            # Denormalize coordinates by mapping into the client screen size
+            # Denormalize coordinates by mapping into the client screen size.
+            # round() + clamp: int() truncation introduces sub-pixel jitter
+            # on every cross-screen round-trip; clamping prevents off-screen
+            # positions when a peer sends slightly out-of-range floats.
             w, h = self._screen_size
             if w <= 0 or h <= 0:
                 return
-            x *= w
-            y *= h
-            x = int(x)
-            y = int(y)
+            x = max(0, min(w - 1, round(x * w)))
+            y = max(0, min(h - 1, round(y * h)))
         except ValueError:
             return
 
@@ -919,14 +921,13 @@ class ClientMouseController(object):
             self._controller.move(dx=dx, dy=dy)
         else:
             try:
-                # Denormalize coordinates by mapping into the client screen size
+                # Denormalize coordinates by mapping into the client screen
+                # size. round() + clamp for smooth, in-bounds positioning.
                 w, h = self._screen_size
                 if w <= 0 or h <= 0:
                     return
-                x *= w
-                y *= h
-                x = int(x)
-                y = int(y)
+                x = max(0, min(w - 1, round(x * w)))
+                y = max(0, min(h - 1, round(y * h)))
             except ValueError:
                 return
 
