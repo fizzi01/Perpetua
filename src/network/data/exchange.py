@@ -258,12 +258,18 @@ class MessageExchange:
             buffer_len = len(persistent_buffer)
             offset = 0
 
+            # Wrap the buffer once in a memoryview so prefix/body slicing
+            # below stays zero-copy. msgspec and struct.unpack* accept
+            # memoryview directly, avoiding a `bytes()` alloc per message
+            # (hot on mouse-stream at high event rates).
+            buffer_view = memoryview(persistent_buffer)
+
             # Process all complete messages in the buffer
             while offset + prefix_len <= buffer_len:
                 try:
                     # If prefix is invalid, this will raise ValueError and we will skip 1 byte
                     msg_length = ProtocolMessage.read_lenght_prefix(
-                        bytes(persistent_buffer[offset : offset + prefix_len]), False
+                        buffer_view[offset : offset + prefix_len], False
                     )
 
                     if msg_length > max_msg_size:
@@ -288,12 +294,11 @@ class MessageExchange:
                             )
                         break
 
-                    # Extract and process the complete message
-                    message_data = bytes(
-                        persistent_buffer[offset : offset + total_length]
-                    )
+                    # Extract and process the complete message (zero-copy slice).
                     message = ProtocolMessage.from_bytes(
-                        message_data, validate=False, length=msg_length
+                        buffer_view[offset : offset + total_length],
+                        validate=False,
+                        length=msg_length,
                     )
                     # message.timestamp = time()
                     if message.timestamp:
@@ -334,6 +339,9 @@ class MessageExchange:
                         self._metrics.connection_errors += 1
                     await asyncio.sleep(0)
                     continue
+
+            # Release the memoryview
+            buffer_view.release()
 
             # Remove processed data from buffer
             if offset > 0:

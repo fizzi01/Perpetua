@@ -23,9 +23,15 @@ Structured message format for improved data handling and ordering.
 import struct
 import time
 import uuid
-from typing import Dict, Any, Optional, List, ClassVar
+from typing import Dict, Any, Optional, List, ClassVar, Union
 from enum import StrEnum
 import msgspec
+
+# Anything that satisfies the buffer protocol: bytes, bytearray,
+# memoryview, mmap, etc. Used by the receive path so we can pass a
+# zero-copy `memoryview` slice instead of allocating a fresh `bytes`
+# per inbound message.
+WireBytes = Union[bytes, bytearray, memoryview]
 
 
 # Wire encoder/decoder: msgpack is binary, faster than JSON, and natively
@@ -100,7 +106,7 @@ class ProtocolMessage(msgspec.Struct):
         return msgspec.json.decode(json_str.encode("utf-8"), type=cls)
 
     @classmethod
-    def read_lenght_prefix(cls, data: bytes, auto_slice: bool = True) -> int:
+    def read_lenght_prefix(cls, data: WireBytes, auto_slice: bool = True) -> int:
         """
         Read length prefix from binary data.
 
@@ -122,7 +128,10 @@ class ProtocolMessage(msgspec.Struct):
 
     @classmethod
     def from_bytes(
-        cls, data: bytes, validate: bool = True, length: Optional[int] = None
+        cls,
+        data: WireBytes,
+        validate: bool = True,
+        length: Optional[int] = None,
     ) -> "ProtocolMessage":
         """
         Deserialize message from the binary wire format (msgpack + length prefix).
