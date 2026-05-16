@@ -275,6 +275,15 @@ class Daemon:
     # GUI keeps finding us regardless of the fallback choice.
     TCP_FALLBACK_PORT_RANGE = 10
 
+    # How long ``delayed_exit`` waits after a clean ``stop()`` before
+    # force-killing the process. Long enough to cover bg-task drain (2s) +
+    # mDNS de-announce + config save. Tests override this to a small value.
+    DELAYED_EXIT_TIMEOUT = 30.0
+    # Env var that opts back into the legacy hard-exit fallback. Off by
+    # default so a hung shutdown surfaces in diagnostics instead of being
+    # silently masked by ``os._exit(0)``.
+    FORCE_EXIT_ENV_VAR = "PERPETUA_DAEMON_FORCE_EXIT"
+
     _encoder = msgspec.json.Encoder()
     _decoder = msgspec.json.Decoder()
 
@@ -352,18 +361,33 @@ class Daemon:
         # Limit concurrent command tasks regardless of how fast they arrive.
         self._command_semaphore = asyncio.Semaphore(self.MAX_CONCURRENT_COMMANDS)
 
-        # Setup signal handlers for graceful shutdown
-        self._setup_signal_handlers()
+        # Signal handlers are registered in ``start()`` once an event loop is
+        # actually running. Registering in ``__init__`` would
+        # rely on ``asyncio.get_event_loop()``, which is deprecated and
+        # unsafe outside a running loop.
         self._shutdown_calls = 0
 
     def _setup_signal_handlers(self):
-        """Setup signal handlers for graceful shutdown"""
+        """Setup signal handlers for graceful shutdown.
+
+        Must be called from inside the event loop (e.g. from ``start()``).
+        The handlers spawn ``_signal_shutdown`` via the daemon's
+        ``BackgroundTasks`` set so the task is retained against GC.
+        """
+        try:
+            loop = asyncio.get_running_loop()
+        except RuntimeError:
+            return
         for sig in (signal.SIGTERM, signal.SIGINT):
             try:
-                asyncio.get_event_loop().add_signal_handler(
-                    sig, lambda: asyncio.create_task(self._signal_shutdown())
+                loop.add_signal_handler(
+                    sig,
+                    lambda: self._bg_tasks.spawn(
+                        self._signal_shutdown(), name="signal_shutdown"
+                    ),
                 )
             except NotImplementedError:
+                # Windows asyncio does not support add_signal_handler.
                 pass
 
     async def _permission_watchdog(self, interval: float = 5.0):
@@ -527,6 +551,9 @@ class Daemon:
                 await self._start_unix_server()
 
             self._running = True
+            # Register signal handlers now that we have a running loop and the
+            # daemon owns its bg_tasks set
+            self._setup_signal_handlers()
             self._logger.info(f"Daemon started, listening on {self.socket_path}")
             self._logger.info(
                 f"Platform: {'Windows (TCP Socket)' if IS_WINDOWS else 'Unix (Socket)'}"
@@ -638,12 +665,18 @@ class Daemon:
                             )
                             raise
 
-        # Create new Unix socket server
-        self._socket_server = await asyncio.start_unix_server(
-            self._handle_client_connection, path=self.socket_path
-        )
+        # Create new Unix socket server. We tighten the process umask around
+        # the bind so the socket inode is created with mode 0o600 atomically
+        prev_umask = os.umask(0o077)
+        try:
+            self._socket_server = await asyncio.start_unix_server(
+                self._handle_client_connection, path=self.socket_path
+            )
+        finally:
+            os.umask(prev_umask)
 
-        # Set socket permissions (owner read/write only)
+        # ensure the perm bits really are 0o600 even if a
+        # future asyncio implementation overrides the umask.
         os.chmod(self.socket_path, 0o600)
         self._logger.info(f"Unix socket server created at {self.socket_path}")
         self._endpoint_url = format_unix_endpoint(self.socket_path)
@@ -742,6 +775,20 @@ class Daemon:
 
         self._running = False
 
+        # Unregister signal handlers so a future ``start()`` on the same
+        # process (e.g. tests, hot-restart) can install fresh ones without
+        # double-firing. NotImplementedError covers Windows where signal
+        # handlers were never registered.
+        try:
+            loop = asyncio.get_running_loop()
+            for sig in (signal.SIGTERM, signal.SIGINT):
+                try:
+                    loop.remove_signal_handler(sig)
+                except (NotImplementedError, ValueError):
+                    pass
+        except RuntimeError:
+            pass
+
         # Cancel permission watchdog
         if self._permission_watchdog_task and not self._permission_watchdog_task.done():
             self._permission_watchdog_task.cancel()
@@ -807,13 +854,40 @@ class Daemon:
         self._shutdown_event.set()
         self._logger.info("Daemon stopped")
 
-        # Start a thread that checks after 5 second if the daemon is still running and force exit
+        # Start a watchdog thread that, after ``DELAYED_EXIT_TIMEOUT``, checks
+        # whether the loop is genuinely idle. If so it exits silently; if
+        # there are stranded tasks it logs diagnostics. ``os._exit`` is only
+        # called when the operator opts in via ``FORCE_EXIT_ENV_VAR``
+        # Masking a stuck shutdown by exit-code-0 lies about
+        # success and loses state on the way out.
         threading.Thread(target=self.delayed_exit, daemon=True).start()
 
     def delayed_exit(self):
-        time.sleep(5)
-        self._logger.error("Daemon still running, forcing exit")
-        os._exit(0)
+        time.sleep(self.DELAYED_EXIT_TIMEOUT)
+        # If shutdown completed cleanly and the loop has nothing left,
+        # there is nothing to escalate. Skip silently.
+        try:
+            loop = asyncio.get_event_loop()
+            pending = [t for t in asyncio.all_tasks(loop) if not t.done()]
+        except RuntimeError:
+            pending = []
+        bg_count = len(self._bg_tasks)
+        if self._shutdown_event.is_set() and not pending and bg_count == 0:
+            return
+
+        self._logger.error(
+            "Daemon still has work in flight after shutdown timeout",
+            timeout=self.DELAYED_EXIT_TIMEOUT,
+            pending_tasks=[t.get_name() for t in pending][:20],
+            pending_task_count=len(pending),
+            bg_task_count=bg_count,
+            shutdown_event_set=self._shutdown_event.is_set(),
+        )
+        if os.environ.get(self.FORCE_EXIT_ENV_VAR) == "1":
+            self._logger.warning(
+                f"{self.FORCE_EXIT_ENV_VAR}=1 set, calling os._exit(1)"
+            )
+            os._exit(1)
 
     async def wait_for_shutdown(self):
         """Wait until daemon is shutdown"""

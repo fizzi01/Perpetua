@@ -80,6 +80,7 @@ class ServerMouseListener(object):
         self._cross_screen_event = Event()
         self._cross_screen_lock = asyncio.Lock()
         self._handling_cross_screen = False
+        self._button_pressed: set[int] = set()  # Track pressed buttons
 
         # Check platform to set appropriate mouse filter
         self._filter_args = {}
@@ -392,18 +393,27 @@ class ServerMouseListener(object):
 
     def on_click(self, x, y, button: Button, pressed):
         if self._listening:
+            button = ButtonMapping[button.name].value
             mouse_event = MouseEvent(
                 x=x / self._screen_size[0],
                 y=y / self._screen_size[1],
-                button=ButtonMapping[button.name].value,
+                button=button,
                 action=MouseEvent.CLICK_ACTION,
                 is_presed=pressed,
             )
             try:
                 # Schedule async send
+                if not pressed and button in self._button_pressed:
+                    self._button_pressed.remove(button)
+                elif pressed:
+                    self._button_pressed.add(button)
+                else:
+                    return True  # Ignore this event
+                
                 self._schedule_async(self.stream.send(mouse_event))
             except Exception as e:
                 self._logger.error(f"Failed to dispatch mouse click event ({e})")
+
         else:
             # Track dragging state to avoid edge crossing
             self._is_dragging = pressed and ButtonMapping[button.name].value in [

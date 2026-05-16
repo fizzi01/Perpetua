@@ -50,6 +50,15 @@ from daemon import (  # noqa: E402
     IS_WINDOWS,
 )
 
+# Capture the real ``delayed_exit`` at import time, BEFORE the autouse fixture
+# that mocks it can run. Tests that want to exercise the real implementation
+# call this directly with the daemon instance as the first arg.
+_REAL_DELAYED_EXIT = Daemon.delayed_exit
+
+
+def _get_real_delayed_exit():
+    return _REAL_DELAYED_EXIT
+
 _encoder = msgspec.json.Encoder()
 _decoder = msgspec.json.Decoder()
 
@@ -155,6 +164,121 @@ class TestDaemonLifecycleUnix:
 
         # Check that only owner has read/write permissions
         assert stat.S_IMODE(mode) == 0o600
+
+    @pytest.mark.anyio
+    @pytest.mark.skipif(sys.platform == "win32", reason="Unix-socket only test")
+    async def test_socket_permissions_umask_fallback(
+        self, app_config, daemon_unix_socket_path
+    ):
+        """Even if the explicit chmod is somehow skipped, the
+        umask wrap around ``start_unix_server`` keeps group/other locked out
+        from creation — eliminating the TOCTOU window between bind and chmod.
+        """
+        import stat
+        from unittest.mock import patch
+
+        # Make the explicit chmod a no-op so we measure only the umask path.
+        with patch("os.chmod"):
+            with patch("os._exit"):
+                daemon = Daemon(
+                    socket_path=daemon_unix_socket_path,
+                    app_config=app_config,
+                    auto_load_config=False,
+                )
+                await daemon.start()
+                try:
+                    mode = stat.S_IMODE(os.stat(daemon.socket_path).st_mode)
+                    group_other_bits = mode & 0o077
+                    assert group_other_bits == 0, (
+                        f"socket exposed to group/other via TOCTOU window: "
+                        f"got {oct(mode)}"
+                    )
+                finally:
+                    await daemon.stop()
+
+    @pytest.mark.anyio
+    async def test_delayed_exit_skips_exit_after_clean_shutdown(
+        self, app_config, daemon_unix_socket_path, monkeypatch
+    ):
+        """``delayed_exit`` must NOT call os._exit when the
+        shutdown completed cleanly (default behaviour; the legacy hard-kill
+        is now opt-in via PERPETUA_DAEMON_FORCE_EXIT)."""
+        from unittest.mock import patch
+
+        # Disable the autouse fixture that mocks delayed_exit entirely so we
+        # can exercise the real implementation in this single test.
+        from daemon import Daemon as _Daemon
+
+        original = _Daemon.delayed_exit
+        # The autouse fixture patched delayed_exit with a MagicMock; restore.
+        monkeypatch.setattr("daemon.Daemon.delayed_exit", original)
+        monkeypatch.delenv("PERPETUA_DAEMON_FORCE_EXIT", raising=False)
+
+        with patch("os._exit") as mock_exit:
+            daemon = Daemon(
+                socket_path=daemon_unix_socket_path,
+                app_config=app_config,
+                auto_load_config=False,
+            )
+            daemon.DELAYED_EXIT_TIMEOUT = 0.05
+
+            await daemon.start()
+            await daemon.stop()
+            # Give the watchdog thread enough time to fire.
+            await asyncio.sleep(0.3)
+
+            mock_exit.assert_not_called()
+
+    def test_delayed_exit_calls_exit_only_when_env_var_set(
+        self, app_config, daemon_unix_socket_path, monkeypatch
+    ):
+        """Finding 22: opt-in force-exit fires only when there is stranded
+        work AND the operator explicitly enables it via env var."""
+        from unittest.mock import patch
+        import daemon as daemon_module
+
+        # The autouse `disable_delayed_exit` fixture has already replaced
+        # ``Daemon.delayed_exit`` with a MagicMock. Bind the real method as
+        # an attribute on a fresh subclass so we can exercise it.
+        real_delayed_exit = daemon_module.Daemon.__dict__.get(
+            "_real_delayed_exit"
+        ) or _get_real_delayed_exit()
+
+        monkeypatch.setenv("PERPETUA_DAEMON_FORCE_EXIT", "1")
+
+        daemon = Daemon(
+            socket_path=daemon_unix_socket_path,
+            app_config=app_config,
+            auto_load_config=False,
+        )
+        daemon.DELAYED_EXIT_TIMEOUT = 0.05
+        daemon._shutdown_event = asyncio.Event()
+
+        with patch("daemon.os._exit") as mock_exit:
+            real_delayed_exit(daemon)
+            mock_exit.assert_called_once_with(1)
+
+    def test_delayed_exit_does_not_call_exit_without_env_var(
+        self, app_config, daemon_unix_socket_path, monkeypatch
+    ):
+        """Default (env var unset) leaves os._exit untouched even when the
+        watchdog detects stranded work — the noisy log alone is the alert."""
+        from unittest.mock import patch
+
+        real_delayed_exit = _get_real_delayed_exit()
+        monkeypatch.delenv("PERPETUA_DAEMON_FORCE_EXIT", raising=False)
+
+        daemon = Daemon(
+            socket_path=daemon_unix_socket_path,
+            app_config=app_config,
+            auto_load_config=False,
+        )
+        daemon.DELAYED_EXIT_TIMEOUT = 0.05
+        daemon._shutdown_event = asyncio.Event()
+
+        with patch("daemon.os._exit") as mock_exit:
+            real_delayed_exit(daemon)
+            mock_exit.assert_not_called()
 
     @pytest.mark.anyio
     async def test_daemon_already_running_exception(self, running_daemon: Daemon):

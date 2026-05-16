@@ -25,6 +25,7 @@ import time
 import asyncio
 import json
 import sys
+from collections import OrderedDict
 from dataclasses import dataclass, field
 from typing import Optional, Dict, Any, List
 import msgspec.json
@@ -40,10 +41,28 @@ _encoder = msgspec.json.Encoder()
 _decoder = msgspec.json.Decoder()
 
 
-# Module-level cache for parsed config files: path -> (mtime_ns, parsed_dict).
+# Module-level LRU cache for parsed config files: path -> (mtime_ns, parsed_dict).
 # Multiple components (ApplicationConfig, ServerConfig, ClientConfig) read the
 # same file to pull their own section; without a cache each one re-parses.
-_config_cache: Dict[str, "tuple[int, Dict[str, Any]]"] = {}
+# Bounded to avoid unbounded growth in long-running daemons / CI parallel runs.
+_CONFIG_CACHE_MAX = 32
+_config_cache: "OrderedDict[str, tuple[int, Dict[str, Any]]]" = OrderedDict()
+
+
+def _cache_get(file_path: str) -> Optional["tuple[int, Dict[str, Any]]"]:
+    """Return the cached entry and mark it most-recently-used."""
+    entry = _config_cache.get(file_path)
+    if entry is not None:
+        _config_cache.move_to_end(file_path)
+    return entry
+
+
+def _cache_put(file_path: str, value: "tuple[int, Dict[str, Any]]") -> None:
+    """Insert (or refresh) an entry and evict the LRU one if over capacity."""
+    _config_cache[file_path] = value
+    _config_cache.move_to_end(file_path)
+    while len(_config_cache) > _CONFIG_CACHE_MAX:
+        _config_cache.popitem(last=False)
 
 
 def _get_cached_or_load_sync(file_path: str) -> Optional[Dict[str, Any]]:
@@ -52,12 +71,12 @@ def _get_cached_or_load_sync(file_path: str) -> Optional[Dict[str, Any]]:
         mtime_ns = os.stat(file_path).st_mtime_ns
     except OSError:
         return None
-    cached = _config_cache.get(file_path)
+    cached = _cache_get(file_path)
     if cached is not None and cached[0] == mtime_ns:
         return cached[1]
     with open(file_path, "rb") as f:
         parsed = _decoder.decode(f.read())
-    _config_cache[file_path] = (mtime_ns, parsed)
+    _cache_put(file_path, (mtime_ns, parsed))
     return parsed
 
 
@@ -67,13 +86,13 @@ async def _get_cached_or_load(file_path: str) -> Optional[Dict[str, Any]]:
         mtime_ns = os.stat(file_path).st_mtime_ns
     except OSError:
         return None
-    cached = _config_cache.get(file_path)
+    cached = _cache_get(file_path)
     if cached is not None and cached[0] == mtime_ns:
         return cached[1]
     async with aiofiles.open(file_path, "rb") as f:
         raw = await f.read()
     parsed = _decoder.decode(raw)
-    _config_cache[file_path] = (mtime_ns, parsed)
+    _cache_put(file_path, (mtime_ns, parsed))
     return parsed
 
 
@@ -213,6 +232,7 @@ class ApplicationConfig:
         try:
             with open(config_file, "w") as f:
                 json.dump(default_config, f, indent=2)
+            invalidate_config_cache(config_file)
             return True
         except Exception as e:
             print(f"Error creating config file {config_file}: {e}")
@@ -593,6 +613,9 @@ class ServerConfig:
 
                 # Atomically rename (overwrites the original file)
                 os.replace(temp_file, file_path)
+                # Drop the cached parse so the next read picks up our write
+                # even if mtime granularity hasn't ticked (NFS, fast SSDs).
+                invalidate_config_cache(file_path)
             except Exception as e:
                 # Remove the temporary file in case of error
                 if os.path.exists(temp_file):
@@ -894,6 +917,9 @@ class ClientConfig:
 
                 # Atomically rename (overwrites the original file)
                 os.replace(temp_file, file_path)
+                # Drop the cached parse so the next read picks up our write
+                # even if mtime granularity hasn't ticked (NFS, fast SSDs).
+                invalidate_config_cache(file_path)
             except Exception as e:
                 # Remove the temporary file in case of error
                 if os.path.exists(temp_file):

@@ -890,11 +890,13 @@ class Server:
             await self._resolve_pending_approval(peer_ip, None, reason="timeout")
             return None
         finally:
+            # ``_resolve_pending_approval`` already
+            # pops the entries, but if the waiter was cancelled mid-flight
+            # the resolver may never run. Unconditional pop here closes that
+            # leak path.
             async with self._pending_approvals_lock:
-                # Clean up only if this Future is still the one we stored.
-                if self._pending_approvals.get(peer_ip) is fut:
-                    self._pending_approvals.pop(peer_ip, None)
-                    self._pending_approval_meta.pop(peer_ip, None)
+                self._pending_approvals.pop(peer_ip, None)
+                self._pending_approval_meta.pop(peer_ip, None)
 
     async def _resolve_pending_approval(
         self,
@@ -903,10 +905,15 @@ class Server:
         screen_position: str = "",
         reason: str = "",
     ) -> bool:
-        """Resolve a pending approval Future. Returns True if a Future existed."""
+        """Resolve a pending approval Future. Returns True if a Future existed.
+
+        Pops the entry from both ``_pending_approvals`` and
+        ``_pending_approval_meta`` under the lock so a cancelled waiter can't
+        leave stale state behind.
+        """
         async with self._pending_approvals_lock:
-            fut = self._pending_approvals.get(peer_ip)
-            meta = self._pending_approval_meta.get(peer_ip, {})
+            fut = self._pending_approvals.pop(peer_ip, None)
+            meta = self._pending_approval_meta.pop(peer_ip, None) or {}
         if fut is None or fut.done():
             return False
         fut.set_result(client)

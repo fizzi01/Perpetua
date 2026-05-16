@@ -88,7 +88,7 @@ class Clipboard:
     def _hash_content(content: str) -> str:
         """
         Create a fast hash of the clipboard content for change detection.
-        Using MD5 for speed (not security).
+        Using blake2b for speed (not security; only used for change detection).
         """
         if not content:
             return ""

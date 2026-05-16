@@ -49,6 +49,8 @@ import os
 from datetime import datetime, timezone
 from typing import Optional, Tuple
 
+from utils.fs import atomic_write_bytes, atomic_write_text
+
 ENDPOINT_DIR_NAME = "runtime"
 ENDPOINT_FILE_NAME = "daemon.endpoint"
 ENDPOINT_TXT_NAME = "daemon.endpoint.txt"
@@ -99,21 +101,11 @@ def write_endpoint(
     if version:
         payload["version"] = version
 
-    # Write JSON atomically so a partial read never lands on a torn file.
-    tmp_json = json_path + ".tmp"
-    with open(tmp_json, "w", encoding="utf-8") as f:
-        json.dump(payload, f, indent=2)
-        f.flush()
-        try:
-            os.fsync(f.fileno())
-        except OSError:
-            pass
-    os.replace(tmp_json, json_path)
-
-    tmp_txt = txt_path + ".tmp"
-    with open(tmp_txt, "w", encoding="utf-8") as f:
-        f.write(endpoint + "\n")
-    os.replace(tmp_txt, txt_path)
+    # Write JSON and TXT atomically so a partial read never lands on a torn
+    # file and both fsync'd so a crash can't strand the .txt fallback in a
+    # different state than the .json
+    atomic_write_text(json_path, json.dumps(payload, indent=2))
+    atomic_write_text(txt_path, endpoint + "\n")
 
     return json_path, txt_path
 

@@ -623,7 +623,7 @@ class TestServiceDiscoveryMethods:
             "service.AsyncServiceBrowser", side_effect=Exception("Discovery failed")
         ):
             with pytest.raises(
-                RuntimeError, match=r"^Failed to start mDNS service discovery"
+                RuntimeError, match=r"^Failed to discover mDNS services"
             ):
                 service_discovery._async_zercnf = AsyncMock()
                 service_discovery._async_zercnf.zeroconf = Mock()

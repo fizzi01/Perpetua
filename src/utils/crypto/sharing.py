@@ -46,6 +46,10 @@ ERR_NO_ACTIVE_OTP = "NO_ACTIVE_OTP"
 ERR_OTP_EXPIRED = "OTP_EXPIRED"
 ERR_RATE_LIMITED = "RATE_LIMITED"
 ERR_UNKNOWN_REQUEST = "UNKNOWN_REQUEST"
+# Returned when a pairing_request_callback raises (e.g. GUI not reachable).
+# The fresh OTP generated for the request is invalidated server-side so it
+# cannot be guessed in the 6-digit window.
+ERR_CALLBACK_FAILED = "CALLBACK_FAILED"
 
 # Read at most this many bytes before the first newline on a pre-auth connection,
 # to avoid a hostile client tying up resources with a never-ending header.
@@ -464,7 +468,7 @@ class CertificateSharing:
                 self._otp_expiry = time.time() + self._timeout
                 self._shared = False
                 self._logger.log(
-                    f"Generated OTP {self._otp} (valid {self._timeout}s) "
+                    f"Generated OTP {self._otp}, valid {self._timeout}s) "
                     f"on pairing request from {peer_ip}",
                     Logger.INFO,
                 )
@@ -484,7 +488,24 @@ class CertificateSharing:
                     }
                 )
             except Exception as e:
-                self._logger.log(f"pairing_request_callback failed: {e}", Logger.ERROR)
+                # Surface the failure to the peer instead of silently letting
+                # the client wait for an OTP that was never delivered to the
+                # admin. Also invalidate the freshly-generated OTP so a brute
+                # force in the 6-digit window can't backdoor in.
+                self._logger.log(
+                    f"pairing_request_callback failed for {peer_ip} ({e}); "
+                    "denying request and invalidating OTP",
+                    Logger.WARNING,
+                )
+                if not otp_was_active:
+                    async with self._otp_lock:
+                        self._otp = None
+                        self._otp_expiry = None
+                writer.write(
+                    f"{RESP_ERROR}:{ERR_CALLBACK_FAILED}\n".encode("utf-8")
+                )
+                await writer.drain()
+                return
 
         writer.write(f"{RESP_OK}:{remaining}\n".encode("utf-8"))
         await writer.drain()
@@ -550,7 +571,8 @@ class CertificateSharing:
                 Logger.INFO,
             )
             self._logger.log(
-                f"OTP: {self._otp} (valid for {self._timeout}s)", Logger.INFO
+                f"OTP generated (len={len(self._otp)}, valid for {self._timeout}s)",
+                Logger.INFO,
             )
 
             self._auto_shutdown_task = asyncio.create_task(self._auto_shutdown())
@@ -624,7 +646,8 @@ class CertificateSharing:
             self._otp_expiry = time.time() + ttl
             self._shared = False
             self._logger.log(
-                f"Generated OTP {self._otp} (valid {ttl}s) via ensure_active_otp",
+                f"Generated OTP (len={len(self._otp)}, valid {ttl}s) "
+                "via ensure_active_otp",
                 Logger.INFO,
             )
             return self._otp, ttl
@@ -739,7 +762,10 @@ class CertificateReceiver:
             Tuple of (success, otp_validity_seconds, error_code).
             ``otp_validity_seconds`` is meaningful only on success; it tells
             the caller how long the user has to enter the OTP.
-            ``error_code`` is set on failure (e.g. ``RATE_LIMITED:3``).
+            ``error_code`` is set on failure. Possible values include
+            ``RATE_LIMITED:<seconds>``, ``CALLBACK_FAILED`` (server admin GUI
+            could not be reached so the request was denied), ``TIMEOUT`` and
+            ``CONNECTION_REFUSED``.
         """
         try:
             self._logger.log(
@@ -754,7 +780,16 @@ class CertificateReceiver:
             try:
                 sock = writer.get_extra_info("socket")
                 if sock:
-                    self._resolved_host = sock.getpeername()[0]
+                    try:
+                        self._resolved_host = sock.getpeername()[0]
+                    except OSError as e:
+                        # Half-closed sockets can fail here; keep going with
+                        # _resolved_host=None and let the caller fall back to
+                        # the configured host.
+                        self._logger.log(
+                            f"getpeername failed during pairing request ({e})",
+                            Logger.DEBUG,
+                        )
 
                 request = f"{REQ_REQUEST_PAIRING}\n"
                 if hostname:
@@ -832,13 +867,22 @@ class CertificateReceiver:
             )
             self.__writer = writer
 
-            # Get resolved host
+            # Get resolved host. ``getpeername`` can raise OSError on a
+            # half-closed socket; treat the resolved host as unknown rather
+            # than letting the failure bubble up and mask the real cert
+            # receive error path.
             sock = writer.get_extra_info("socket")
             if sock:
-                self._resolved_host = sock.getpeername()[0]
-                self._logger.log(
-                    f"Resolved server host: {self._resolved_host}", Logger.DEBUG
-                )
+                try:
+                    self._resolved_host = sock.getpeername()[0]
+                    self._logger.log(
+                        f"Resolved server host: {self._resolved_host}", Logger.DEBUG
+                    )
+                except OSError as e:
+                    self._logger.log(
+                        f"getpeername failed during cert receive ({e})",
+                        Logger.DEBUG,
+                    )
 
             # Explicit request keeps the protocol unambiguous on the new
             # always-on listener. Legacy servers that connect-and-send still

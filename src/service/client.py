@@ -64,6 +64,7 @@ from utils.crypto.sharing import (
     CertificateReceiveError,
     CertificateSharingError,
 )
+from utils import BackgroundTasks
 from utils.metrics import MetricsCollector, PerformanceMonitor
 from utils.screen import Screen
 from utils.logging import get_logger
@@ -226,6 +227,18 @@ class Client:
         # mDNS Service Discovery
 
         self._found_services: list[Service] = []
+        # Snapshot of (uid, address, port) tuples last surfaced to the GUI.
+        # The periodic re-discovery loop compares against this both to avoid
+        # spamming notifications when nothing changed AND to detect when a
+        # known UID's address shifts so the
+        # persisted server config can be updated in place.
+        self._last_discovery_snapshot: set[
+            tuple[Optional[str], str, Optional[int]]
+        ] = set()
+
+        # Strong refs for fire-and-forget tasks (config saves, notifications,
+        # stale-cert teardown).
+        self._bg_tasks = BackgroundTasks()
 
         # Connection handler
         self.connection_handler: Optional[ConnectionHandler] = None
@@ -463,15 +476,18 @@ class Client:
             self._logger.error(f"Invalid OTP format. Must be {OTP_LENGTH} digits")
             return False
 
-        if not self._otp_received.done():
+        # Serialize with ``_futures_cleanup`` so a concurrent cancel-and-reset
+        # cannot move the future from "not done" to "cancelled" between the
+        # check and ``set_result``.
+        async with self._state_lock:
+            if self._otp_received.done():
+                self._logger.warning("OTP has already been set")
+                return False
             self._otp_received.set_result(otp)
-            # Give the event loop a chance to process the result
-            await asyncio.sleep(0)
-            self._logger.info("OTP set successfully")
-            return True
-        else:
-            self._logger.warning("OTP has already been set")
-            return False
+        # Yield outside the lock so other coroutines can pick up the result.
+        await asyncio.sleep(0)
+        self._logger.info("OTP set successfully")
+        return True
 
     async def receive_certificate(
         self,
@@ -551,7 +567,7 @@ class Client:
                 # only end up here for manual-config or daemon-restart
                 # scenarios where the UID never made it to disk.
                 self.config.set_server_connection(uid=primary_id)
-                asyncio.create_task(self.config.save())
+                self._bg_tasks.spawn(self.config.save(), name="config_save_fallback_uid")
                 self._logger.warning(
                     f"Server UID was empty; using fallback {primary_id!r} "
                     f"as both source_id and persisted server UID"
@@ -794,13 +810,13 @@ class Client:
                 # re-instantiation) keeps the server UID. Without this, the
                 # next pairing flow would save the certificate with an empty
                 # source_id (producing ``ca_.crt`` and orphan mapping rows).
-                asyncio.create_task(self.config.save())
+                self._bg_tasks.spawn(self.config.save(), name="config_save_choose_server")
                 # Set the server future result in case someone is waiting for it
                 if not self._server.done():
                     self._server.set_result(service)
 
                 # Send notification
-                asyncio.create_task(
+                self._bg_tasks.spawn(
                     self._send_notification(
                         ServerChoiceMadeEvent(
                             server_host=service.address,
@@ -808,11 +824,14 @@ class Client:
                             hostname=service.hostname,
                             uid=service.uid,
                         )
-                    )
+                    ),
+                    name="notify_server_choice",
                 )
                 return
 
         self._logger.error("Server not found among discovered services", uid=uid)
+
+    DISCOVERY_REFRESH_INTERVAL = 60.0
 
     async def discover_servers(self) -> None:
         """
@@ -825,11 +844,80 @@ class Client:
             # changes: Recreate ServiceDiscovery instance to avoid stale cache
             self._found_services = await ServiceDiscovery().discover_services()
 
-            # Send notification about found servers
-            servers_info = [service.as_dict() for service in self._found_services]
-            await self._send_notification(ServerListFoundEvent(servers=servers_info))
+            # Build a snapshot keyed on (uid, address, port). A change in any
+            # field for the same UID — typically the address after a DHCP
+            # renewal or interface switch — must propagate to the persisted
+            # server config so reconnections target the fresh IP.
+            current_snapshot: set[
+                tuple[Optional[str], str, Optional[int]]
+            ] = {
+                (svc.uid, svc.address, svc.port) for svc in self._found_services
+            }
+
+            # If the currently chosen server's address/port shifted, update
+            # the persisted config in place so the next reconnect targets the
+            # new IP without needing the user to re-pair.
+            saved_uid = self.config.get_server_uid()
+            if saved_uid:
+                for svc in self._found_services:
+                    if svc.uid != saved_uid:
+                        continue
+                    saved_host = self.config.get_server_host()
+                    saved_port = self.config.get_server_port()
+                    if svc.address != saved_host or (
+                        svc.port is not None and svc.port != saved_port
+                    ):
+                        self._logger.info(
+                            "Saved server changed network coordinates; "
+                            f"updating config (uid={saved_uid}, "
+                            f"old={saved_host}:{saved_port}, "
+                            f"new={svc.address}:{svc.port})"
+                        )
+                        self.config.set_server_connection(
+                            host=svc.address,
+                            hostname=svc.hostname,
+                            port=svc.port,
+                        )
+                        self._bg_tasks.spawn(
+                            self.config.save(),
+                            name="config_save_discovery_refresh",
+                        )
+                    break
+
+            # Surface the list to the GUI when any (uid, address, port) tuple
+            # changed — not just on UID set delta, so an IP change for the
+            # same UID still propagates to the UI.
+            if current_snapshot != self._last_discovery_snapshot:
+                self._last_discovery_snapshot = current_snapshot
+                servers_info = [service.as_dict() for service in self._found_services]
+                await self._send_notification(
+                    ServerListFoundEvent(servers=servers_info)
+                )
         except Exception as e:
             self._logger.error(f"Error during server discovery ({e})")
+
+    async def _discovery_refresh_loop(self) -> None:
+        """Periodically refresh the mDNS server list while the client is up.
+
+        Handles network-interface changes without
+        needing to plumb platform-specific listeners: the periodic poll picks
+        up new server addresses transparently. Events are throttled by UID
+        set so steady-state networks don't spam notifications.
+        """
+        try:
+            while self._running:
+                try:
+                    await asyncio.sleep(self.DISCOVERY_REFRESH_INTERVAL)
+                except asyncio.CancelledError:
+                    return
+                if not self._running:
+                    return
+                try:
+                    await self.discover_servers()
+                except Exception as e:
+                    self._logger.debug(f"Periodic discovery refresh failed ({e})")
+        except asyncio.CancelledError:
+            return
 
     async def _handle_certificate_check(self) -> Optional[str]:
         """
@@ -1067,6 +1155,11 @@ class Client:
                 return False
 
             self._running = True
+            # Keep the mDNS server list fresh in the background so the GUI
+            # can react to network-interface changes without manual refresh
+            self._bg_tasks.spawn(
+                self._discovery_refresh_loop(), name="discovery_refresh"
+            )
             server_host = self.config.get_server_host()
             server_port = self.config.get_server_port()
             self._logger.info(
@@ -1124,6 +1217,13 @@ class Client:
 
                 # Wait a moment to ensure everything is cleaned up
                 await asyncio.sleep(self.CLEANUP_DELAY)
+                # Drain any in-flight fire-and-forget tasks (config saves,
+                # notifications) so we don't leave them orphaned across the
+                # stop boundary.
+                try:
+                    await asyncio.wait_for(self._bg_tasks.drain(), timeout=2.0)
+                except asyncio.TimeoutError:
+                    await self._bg_tasks.drain(cancel=True)
                 # Cleanup resources
                 self.cleanup()
                 self._running = False
@@ -1138,17 +1238,19 @@ class Client:
         # await self._futures_cleanup()
 
     async def _futures_cleanup(self):
-        # Release futures
-        for future in (
-            self._otp_needed,
-            self._otp_received,
-            self._server,
-            self._need_server_choice,
-        ):
-            if not future.done():
-                future.cancel()
-
+        # Cancel + reset under the same lock that ``set_otp`` (and other state
+        # mutators) take. Without this the cleanup could cancel a future that
+        # a concurrent ``set_otp`` has just decided to ``set_result`` on,
+        # raising InvalidStateError.
         async with self._state_lock:
+            for future in (
+                self._otp_needed,
+                self._otp_received,
+                self._server,
+                self._need_server_choice,
+            ):
+                if not future.done():
+                    future.cancel()
             self._otp_needed = asyncio.Future()  # Reset for future use
             self._otp_received = asyncio.Future()  # Reset for future use
             self._server = asyncio.Future()  # Reset for future use
@@ -1563,7 +1665,9 @@ class Client:
         # as a separate task avoids deadlocking the ConnectionHandler core
         # loop, which is the task currently invoking this callback.
         if self._running:
-            asyncio.create_task(self._stop_after_stale_cert())
+            self._bg_tasks.spawn(
+                self._stop_after_stale_cert(), name="stop_after_stale_cert"
+            )
 
     async def _stop_after_stale_cert(self) -> None:
         """Run ``stop()`` outside the ConnectionHandler's call stack.

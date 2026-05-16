@@ -594,5 +594,214 @@ class TestCertificateSharingIntegration(unittest.TestCase):
         asyncio.run(run_test())
 
 
+class TestPairingCallbackFailure(unittest.TestCase):
+    """A raising pairing_request_callback must surface
+    CALLBACK_FAILED to the peer and invalidate the freshly-generated OTP."""
+
+    def setUp(self):
+        self.temp_dir = tempfile.mkdtemp()
+        self.cert_manager = CertificateManager(Path(self.temp_dir))
+        self.cert_manager.generate_ca()
+        self.cert_manager.generate_server_certificate(
+            ip_addresses=["127.0.0.1"], hostname="test.local"
+        )
+        ca_cert_path = self.cert_manager.get_ca_cert_path()
+        with open(ca_cert_path, "rb") as f:
+            self.cert_data = f.read()
+
+        self.test_host = "127.0.0.1"
+        self.test_port = 15558
+        self.test_timeout = 5
+
+    def tearDown(self):
+        import shutil
+
+        shutil.rmtree(self.temp_dir, ignore_errors=True)
+
+    def test_callback_exception_returns_callback_failed(self):
+        async def run_test():
+            async def boom(_info):
+                raise RuntimeError("GUI not reachable")
+
+            sharing = CertificateSharing(
+                cert_data=self.cert_data,
+                host=self.test_host,
+                port=self.test_port,
+                timeout=self.test_timeout,
+                pairing_request_callback=boom,
+            )
+
+            ok = await sharing.start_service()
+            self.assertTrue(ok)
+
+            try:
+                await asyncio.sleep(0.2)
+                receiver = CertificateReceiver(
+                    server_host=self.test_host,
+                    server_port=self.test_port,
+                    timeout=3,
+                )
+                success, remaining, code = await receiver.request_pairing(
+                    hostname="testhost"
+                )
+                self.assertFalse(success)
+                self.assertEqual(remaining, 0)
+                self.assertEqual(code, "CALLBACK_FAILED")
+
+                # OTP must be invalidated so it can't be brute-forced in the
+                # 6-digit window before expiry.
+                self.assertIsNone(sharing.get_otp())
+            finally:
+                await sharing.stop_sharing()
+
+        asyncio.run(run_test())
+
+
+class TestOtpNeverLogged(unittest.TestCase):
+    """The OTP value must never appear in logs at any level."""
+
+    def setUp(self):
+        self.temp_dir = tempfile.mkdtemp()
+        self.cert_manager = CertificateManager(Path(self.temp_dir))
+        self.cert_manager.generate_ca()
+        ca_cert_path = self.cert_manager.get_ca_cert_path()
+        with open(ca_cert_path, "rb") as f:
+            self.cert_data = f.read()
+
+    def tearDown(self):
+        import shutil
+
+        shutil.rmtree(self.temp_dir, ignore_errors=True)
+
+    def test_start_sharing_does_not_log_otp_value(self):
+        async def run_test():
+            sharing = CertificateSharing(
+                cert_data=self.cert_data,
+                host="127.0.0.1",
+                port=15559,
+                timeout=4,
+            )
+            collected = []
+
+            class _CaptureLogger:
+                def log(self, msg, level, **kw):
+                    collected.append(str(msg))
+
+                def info(self, msg, **kw):
+                    collected.append(str(msg))
+
+                def warning(self, msg, **kw):
+                    collected.append(str(msg))
+
+                def error(self, msg, **kw):
+                    collected.append(str(msg))
+
+                def debug(self, msg, **kw):
+                    collected.append(str(msg))
+
+                def exception(self, msg, **kw):
+                    collected.append(str(msg))
+
+            sharing._logger = _CaptureLogger()
+
+            ok, otp = await sharing.start_sharing()
+            try:
+                self.assertTrue(ok)
+                self.assertIsNotNone(otp)
+                for line in collected:
+                    self.assertNotIn(
+                        otp,
+                        line,
+                        f"OTP value leaked in log line: {line!r}",
+                    )
+                # Regression guard: the length info should still surface so
+                # we don't silently lose all OTP audit signals.
+                self.assertTrue(
+                    any("len=" in line for line in collected),
+                    f"expected len= in logs, got: {collected}",
+                )
+            finally:
+                await sharing.stop_sharing()
+
+        asyncio.run(run_test())
+
+
+class TestCertificateManagerAtomicWrites(unittest.TestCase):
+    """Verify CA/server key/cert files are written atomically with
+    appropriate POSIX modes (0o600 for private keys, 0o644 for public certs)."""
+
+    def setUp(self):
+        self.temp_dir = tempfile.mkdtemp()
+        self.cert_manager = CertificateManager(Path(self.temp_dir))
+
+    def tearDown(self):
+        import shutil
+
+        shutil.rmtree(self.temp_dir, ignore_errors=True)
+
+    @unittest.skipIf(os.name == "nt", "POSIX-only chmod semantics")
+    def test_generate_ca_sets_key_mode_0o600(self):
+        import stat
+
+        self.assertTrue(self.cert_manager.generate_ca())
+        mode = stat.S_IMODE(os.stat(self.cert_manager.ca_key_path).st_mode)
+        self.assertEqual(
+            mode, 0o600, f"CA private key has perms {oct(mode)}, expected 0o600"
+        )
+
+    @unittest.skipIf(os.name == "nt", "POSIX-only chmod semantics")
+    def test_generate_ca_sets_cert_mode_0o644(self):
+        import stat
+
+        self.assertTrue(self.cert_manager.generate_ca())
+        mode = stat.S_IMODE(os.stat(self.cert_manager.ca_cert_path).st_mode)
+        self.assertEqual(
+            mode, 0o644, f"CA cert has perms {oct(mode)}, expected 0o644"
+        )
+
+    @unittest.skipIf(os.name == "nt", "POSIX-only chmod semantics")
+    def test_generate_server_cert_sets_key_mode_0o600(self):
+        import stat
+
+        self.assertTrue(self.cert_manager.generate_ca())
+        self.assertTrue(
+            self.cert_manager.generate_server_certificate(
+                hostname="test.local", ip_addresses=["127.0.0.1"]
+            )
+        )
+        mode = stat.S_IMODE(os.stat(self.cert_manager.server_key_path).st_mode)
+        self.assertEqual(
+            mode, 0o600, f"server private key has perms {oct(mode)}, expected 0o600"
+        )
+
+    def test_atomic_write_preserves_old_cert_on_crash(self):
+        """A failing rename leaves the previous CA on disk intact (atomicity)."""
+        import unittest.mock as mock
+
+        # First successful generation as a baseline.
+        self.assertTrue(self.cert_manager.generate_ca())
+        original_key = self.cert_manager.ca_key_path.read_bytes()
+
+        # Force a regeneration; mock os.replace to fail mid-flight on the key.
+        original_replace = os.replace
+        ca_key_str = str(self.cert_manager.ca_key_path)
+
+        def failing_replace(src, dst):
+            if str(dst) == ca_key_str:
+                raise OSError("simulated rename failure")
+            return original_replace(src, dst)
+
+        with mock.patch("utils.fs.os.replace", side_effect=failing_replace):
+            ok = self.cert_manager.generate_ca(force=True)
+            self.assertFalse(ok, "generate_ca should report failure")
+
+        # Old key is intact, no torn temp left behind.
+        self.assertEqual(self.cert_manager.ca_key_path.read_bytes(), original_key)
+        leftovers = [
+            p for p in self.cert_manager.cert_dir.iterdir() if p.name.endswith(".tmp")
+        ]
+        self.assertEqual(leftovers, [], f"temp files leaked: {leftovers}")
+
+
 if __name__ == "__main__":
     unittest.main()

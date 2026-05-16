@@ -359,33 +359,35 @@ class ServiceDiscovery:
         if self._async_zercnf is None:
             raise RuntimeError("Zeroconf instance is not initialized")
 
+        # Allocate the listener and browser handle outside the try so the
+        # ``finally`` cleanup is reachable on any exception path.
         listener = _ServiceListener()
-        try:
-            zconf = self._async_zercnf.zeroconf
-            if zconf is None:
-                raise RuntimeError("Zeroconf instance is not initialized")
+        browser: Optional[AsyncServiceBrowser] = None
+        zconf = self._async_zercnf.zeroconf
+        if zconf is None:
+            raise RuntimeError("Zeroconf instance is not initialized")
 
+        try:
             browser = AsyncServiceBrowser(
                 zeroconf=zconf, type_=self._service_type, listener=listener
             )
-        except Exception as e:
-            raise RuntimeError(f"Failed to start mDNS service discovery ({e})")
-        finally:
-            listener.clear()
-
-        try:
             await asyncio.sleep(self._mdns_timeout)
             self._logger.info(
                 f"Discovered {len(listener.get_services())} mDNS services."
             )
-
             return listener.get_services()
-
         except Exception as e:
             raise RuntimeError(f"Failed to discover mDNS services ({e})")
         finally:
-            await browser.async_cancel()
-            zconf.close()
+            if browser is not None:
+                try:
+                    await browser.async_cancel()
+                except Exception:
+                    pass
+            try:
+                zconf.close()
+            except Exception:
+                pass
             listener.clear()
 
     # async def _resolve_mdns(self):

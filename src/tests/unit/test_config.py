@@ -292,6 +292,100 @@ class TestServerConfigPersistence:
 
 
 # ============================================================================
+# Test config cache invalidation + LRU
+# ============================================================================
+
+
+@pytest.mark.anyio
+class TestConfigCacheInvalidation:
+    """Cache invalidation on save() and LRU eviction."""
+
+    async def test_save_invalidates_cache(self, server_config, temp_dir):
+        """After save() the cached parse for the same file is dropped."""
+        from config import _config_cache
+
+        config_file = os.path.join(str(temp_dir), "cache_inval.json")
+        server_config.set_connection_params(host="1.2.3.4", port=4242)
+        await server_config.save(config_file)
+
+        # Prime the cache by loading once.
+        new_config = ServerConfig()
+        await new_config.load(config_file)
+        assert config_file in _config_cache
+
+        # Save again; the entry must be evicted regardless of mtime granularity.
+        server_config.set_connection_params(host="5.6.7.8", port=5252)
+        await server_config.save(config_file)
+        assert config_file not in _config_cache
+
+    async def test_save_then_load_sees_fresh_state(self, server_config, temp_dir):
+        """Concurrent load after save returns the value written, not the cached one."""
+        config_file = os.path.join(str(temp_dir), "fresh.json")
+
+        server_config.set_connection_params(host="10.0.0.1", port=1111)
+        await server_config.save(config_file)
+
+        first = ServerConfig()
+        await first.load(config_file)
+        assert first.host == "10.0.0.1"
+        assert first.port == 1111
+
+        # Overwrite without changing mtime granularity (fast successive save).
+        server_config.set_connection_params(host="10.0.0.2", port=2222)
+        await server_config.save(config_file)
+
+        second = ServerConfig()
+        await second.load(config_file)
+        assert second.host == "10.0.0.2"
+        assert second.port == 2222
+
+    def test_cache_evicts_lru_when_over_capacity(self, server_config, temp_dir):
+        """OrderedDict eviction kicks in once `_CONFIG_CACHE_MAX` is exceeded."""
+        import json
+
+        from config import _CONFIG_CACHE_MAX, _config_cache, _get_cached_or_load_sync
+
+        _config_cache.clear()
+
+        files = []
+        for i in range(_CONFIG_CACHE_MAX + 5):
+            p = os.path.join(str(temp_dir), f"cfg_{i}.json")
+            with open(p, "w") as f:
+                json.dump({"i": i}, f)
+            files.append(p)
+            _get_cached_or_load_sync(p)
+
+        assert len(_config_cache) == _CONFIG_CACHE_MAX
+        # The earliest inserts have been evicted; the last MAX entries remain.
+        for evicted in files[:5]:
+            assert evicted not in _config_cache
+        for kept in files[5:]:
+            assert kept in _config_cache
+
+    def test_cache_hit_promotes_entry(self, temp_dir):
+        """Touching an entry moves it to most-recently-used end of the LRU."""
+        import json
+
+        from config import _config_cache, _get_cached_or_load_sync
+
+        _config_cache.clear()
+
+        p1 = os.path.join(str(temp_dir), "a.json")
+        p2 = os.path.join(str(temp_dir), "b.json")
+        for p in (p1, p2):
+            with open(p, "w") as f:
+                json.dump({}, f)
+
+        _get_cached_or_load_sync(p1)
+        _get_cached_or_load_sync(p2)
+        assert list(_config_cache.keys())[-1] == p2
+
+        # Hit p1: it should become the MRU end.
+        _get_cached_or_load_sync(p1)
+        assert list(_config_cache.keys())[-1] == p1
+
+
+# ============================================================================
 # Test ClientConfig - Hostname Management
 # ============================================================================
 

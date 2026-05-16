@@ -28,6 +28,7 @@ import datetime
 import ipaddress
 
 from config import ApplicationConfig
+from utils.fs import atomic_write_bytes
 from utils.logging import Logger, get_logger
 
 _encoder = msgspec.json.Encoder()
@@ -89,18 +90,23 @@ class CertificateManager:
                 .sign(ca_key, hashes.SHA256(), default_backend())
             )
 
-            # Save CA key and certificate
-            with open(self.ca_key_path, "wb") as f:
-                f.write(
-                    ca_key.private_bytes(
-                        encoding=serialization.Encoding.PEM,
-                        format=serialization.PrivateFormat.PKCS8,
-                        encryption_algorithm=serialization.NoEncryption(),
-                    )
-                )
+            # Save CA key and certificate atomically. The private key is
+            # written with mode 0o600 so it never appears with wider perms.
+            atomic_write_bytes(
+                self.ca_key_path,
+                ca_key.private_bytes(
+                    encoding=serialization.Encoding.PEM,
+                    format=serialization.PrivateFormat.PKCS8,
+                    encryption_algorithm=serialization.NoEncryption(),
+                ),
+                mode=0o600,
+            )
 
-            with open(self.ca_cert_path, "wb") as f:
-                f.write(ca_cert.public_bytes(serialization.Encoding.PEM))
+            atomic_write_bytes(
+                self.ca_cert_path,
+                ca_cert.public_bytes(serialization.Encoding.PEM),
+                mode=0o644,
+            )
 
             return True
         except Exception as e:
@@ -169,18 +175,22 @@ class CertificateManager:
                 .sign(ca_key, hashes.SHA256(), default_backend())  # ty:ignore[invalid-argument-type]
             )
 
-            # Save server key and certificate
-            with open(self.server_key_path, "wb") as f:
-                f.write(
-                    server_key.private_bytes(
-                        encoding=serialization.Encoding.PEM,
-                        format=serialization.PrivateFormat.PKCS8,
-                        encryption_algorithm=serialization.NoEncryption(),
-                    )
-                )
+            # Save server key and certificate atomically.
+            atomic_write_bytes(
+                self.server_key_path,
+                server_key.private_bytes(
+                    encoding=serialization.Encoding.PEM,
+                    format=serialization.PrivateFormat.PKCS8,
+                    encryption_algorithm=serialization.NoEncryption(),
+                ),
+                mode=0o600,
+            )
 
-            with open(self.server_cert_path, "wb") as f:
-                f.write(server_cert.public_bytes(serialization.Encoding.PEM))
+            atomic_write_bytes(
+                self.server_cert_path,
+                server_cert.public_bytes(serialization.Encoding.PEM),
+                mode=0o644,
+            )
 
             return True
         except Exception as e:
@@ -264,12 +274,11 @@ class CertificateManager:
             cert_filename = f"ca_{source_id.replace(':', '_').replace('.', '_')}.crt"
             cert_path = self.cert_dir / cert_filename
 
-            # Save certificate data
+            # Save certificate data atomically (public cert from a peer).
             if isinstance(data, str):
                 data = data.encode()
 
-            with open(cert_path, "wb") as f:
-                f.write(data)
+            atomic_write_bytes(cert_path, data, mode=0o644)
 
             # Update mapping
             mapping = self._load_cert_mapping()
@@ -402,9 +411,10 @@ class CertificateManager:
     def _save_cert_mapping(self, mapping: Dict[str, str]) -> bool:
         """Save the certificate mapping to file"""
         try:
-            with open(self._get_cert_mapping_path(), "w") as f:
-                encoded = _encoder.encode(mapping)
-                f.write(encoded.decode())
+            atomic_write_bytes(
+                self._get_cert_mapping_path(),
+                _encoder.encode(mapping),
+            )
             return True
         except Exception as e:
             self._logger.log(f"Error saving cert mapping: {e}", Logger.ERROR)
