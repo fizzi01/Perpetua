@@ -58,7 +58,13 @@ class BusEventType(IntEnum):
 class BusEvent(ABC):
     """
     Base class for events dispatched on the EventBus.
+
+    ``__slots__ = ()`` on the base lets concrete subclasses opt into real
+    slot-based instances (no per-event ``__dict__`` allocation) without
+    fighting the ABC metaclass.
     """
+
+    __slots__ = ()
 
     def to_dict(self):
         raise NotImplementedError
@@ -149,7 +155,13 @@ class ClientActiveEvent(BusEvent):
 class Event(ABC):
     """
     Base event class.
+
+    ``__slots__ = ()`` lets concrete subclasses (e.g. :class:`MouseEvent`)
+    opt into real slot-based instances — no per-event ``__dict__`` alloc on
+    a hot path that creates 1000s of events per second under heavy mouse use.
     """
+
+    __slots__ = ()
 
     def to_dict(self):
         raise NotImplementedError
@@ -158,7 +170,12 @@ class Event(ABC):
 class MouseEvent(Event):
     """
     Mouse event data structure.
+
+    Slot-based: each event is the hottest allocation in the project (one per
+    mouse move on a fast pointer = thousands per second).
     """
+
+    __slots__ = ("x", "y", "dx", "dy", "button", "action", "is_pressed", "timestamp")
 
     MOVE_ACTION = "move"
     POSITION_ACTION = "position"
@@ -202,7 +219,12 @@ class MouseEvent(Event):
 class KeyboardEvent(Event):
     """
     Keyboard event data structure.
+
+    Slot-based for the same reason as :class:`MouseEvent`: high allocation
+    rate when keys are held / repeated.
     """
+
+    __slots__ = ("key", "action")
 
     PRESS_ACTION = "press"
     RELEASE_ACTION = "release"
