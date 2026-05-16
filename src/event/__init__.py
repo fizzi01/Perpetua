@@ -224,7 +224,7 @@ class KeyboardEvent(Event):
     rate when keys are held / repeated.
     """
 
-    __slots__ = ("key", "action")
+    __slots__ = ("key", "action", "timestamp")
 
     PRESS_ACTION = "press"
     RELEASE_ACTION = "release"

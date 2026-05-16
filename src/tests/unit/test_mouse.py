@@ -620,6 +620,10 @@ class TestServerMouseListener:
         )
         listener._listening = False
 
+        # Stub _screen_size_valid to bypass the
+        # early-return guard so on_move populates the movement history.
+        listener._screen_size_valid = lambda: True  # type: ignore[method-assign]
+
         listener.on_move(100, 200)
 
         assert len(listener._movement_history) == 1
@@ -676,18 +680,21 @@ class TestServerMouseController:
     async def test_position_cursor_clamps_to_screen_bounds(
         self, event_bus, mock_mouse_controller
     ):
-        """Test that position_cursor clamps coordinates to screen bounds."""
+        """Out-of-range normalized values land at the screen edge, not past it."""
         with patch(
             "input.mouse._base.MouseController", return_value=mock_mouse_controller
         ):
             with patch("input.mouse._base.Screen.get_size", return_value=(1920, 1080)):
                 controller = ServerMouseController(event_bus)
 
-                # Test normalized values beyond 1.0
+                # Normalized 2.0 > 1.0: must clamp to last on-screen pixel
+                # (w-1, h-1) rather than land off-screen at (3840, 2160).
                 controller.position_cursor(2.0, 2.0)
+                assert mock_mouse_controller.position == (1919, 1079)
 
-                # Should denormalize: 2.0 * 1920 = 3840, 2.0 * 1080 = 2160
-                assert mock_mouse_controller.position == (3840, 2160)
+                # Negative values clamp to (0, 0) as well.
+                controller.position_cursor(-0.5, -0.5)
+                assert mock_mouse_controller.position == (0, 0)
 
 
 # ============================================================================
@@ -1123,7 +1130,7 @@ class TestClientMouseController:
         mock_stream_handler,
         mock_mouse_controller,
     ):
-        """Test that position_cursor clamps coordinates to screen bounds."""
+        """Out-of-range normalized values clamp to the last on-screen pixel."""
         with patch(
             "input.mouse._base.MouseController", return_value=mock_mouse_controller
         ):
@@ -1134,11 +1141,14 @@ class TestClientMouseController:
                     mock_stream_handler,
                 )
 
-                # Normalized coordinates beyond 1.0
+                # Normalized 2.0 > 1.0: clamp to (w-1, h-1) rather than
+                # land off-screen at (3840, 2160).
                 await controller._position_cursor(2.0, 2.0)
+                assert mock_mouse_controller.position == (1919, 1079)
 
-                # Should denormalize: 2.0 * 1920 = 3840, 2.0 * 1080 = 2160
-                assert mock_mouse_controller.position == (3840, 2160)
+                # Negative input clamps to origin.
+                await controller._position_cursor(-1.0, -1.0)
+                assert mock_mouse_controller.position == (0, 0)
 
     @pytest.mark.anyio
     async def test_worker_processes_queue_events(
