@@ -76,7 +76,18 @@ class ServerMouseListener(object):
 
         self._listening = False
         self._active_screens = {}
+        # Primary monitor size kept for backward compatibility / scroll
+        # events. Edge detection uses the full MonitorLayout so the
+        # outer edges of EACH monitor count (asymmetric multi-monitor
+        # layouts where the primary's edges are interior to the union
+        # bbox would otherwise miss crossings).
         self._screen_size: tuple[int, int] = Screen.get_size()
+        self._monitor_layout = Screen.get_monitor_layout()
+        self._screen_bbox: tuple[int, int, int, int] = (
+            self._monitor_layout.virtual_bbox
+            if self._monitor_layout.monitors
+            else Screen.get_virtual_bbox()
+        )
         self._cross_screen_event = Event()
         self._cross_screen_lock = asyncio.Lock()
         self._handling_cross_screen = False
@@ -262,6 +273,14 @@ class ServerMouseListener(object):
         """
         return self._screen_size[0] > 0 and self._screen_size[1] > 0
 
+    def _bbox_span(self) -> "tuple[int, int, int, int, int, int]":
+        """Return ``(min_x, min_y, max_x, max_y, width, height)`` of the
+        virtual desktop bbox. Width/height are guaranteed >= 1 so callers
+        can divide without checking again.
+        """
+        min_x, min_y, max_x, max_y = self._screen_bbox
+        return min_x, min_y, max_x, max_y, max(1, max_x - min_x), max(1, max_y - min_y)
+
     def _darwin_mouse_suppress_filter(self, event_type, event):
         raise NotImplementedError("Mouse suppress filter not implemented yet.")
 
@@ -297,12 +316,16 @@ class ServerMouseListener(object):
         # The border check has to take in account only when we are moving forward and not backward or staying still
         if not self._listening:
             if history_ready:
-                # Check all the previous movements to determine the direction
+                # Per-monitor edge detection: each monitor's outer edge
+                # (an edge with no neighbour at this orthogonal coord)
+                # counts as a candidate crossing point. Necessary for
+                # asymmetric layouts where the primary monitor's edges
+                # are INTERIOR to the union bbox.
                 edge = EdgeDetector.is_at_edge(
                     movement_history=self._movement_history,
                     x=x,
                     y=y,
-                    screen_size=self._screen_size,
+                    screen_size=self._monitor_layout,
                     is_dragging=self._is_dragging,
                 )
                 if edge is None:
@@ -310,6 +333,9 @@ class ServerMouseListener(object):
                     return True
 
                 mouse_event = MouseEvent(x=x, y=y, action=MouseEvent.POSITION_ACTION)
+                min_x, min_y, _max_x, _max_y, width, height = self._bbox_span()
+                x_norm = (x - min_x) / width
+                y_norm = (y - min_y) / height
 
                 try:
                     self._cross_screen_event.set()
@@ -318,7 +344,7 @@ class ServerMouseListener(object):
                     ):
                         # Normalize position to avoid sticking
                         mouse_event.x = 1
-                        mouse_event.y = y / self._screen_size[1]
+                        mouse_event.y = y_norm
                         # Schedule async operations
                         self._schedule_async(
                             self._handle_cross_screen(
@@ -329,7 +355,7 @@ class ServerMouseListener(object):
                         ScreenPosition.RIGHT, False
                     ):
                         mouse_event.x = 0
-                        mouse_event.y = y / self._screen_size[1]
+                        mouse_event.y = y_norm
                         self._schedule_async(
                             self._handle_cross_screen(
                                 edge, mouse_event, ScreenPosition.RIGHT
@@ -338,7 +364,7 @@ class ServerMouseListener(object):
                     elif edge == ScreenEdge.TOP and self._active_screens.get(
                         ScreenPosition.TOP, False
                     ):
-                        mouse_event.x = x / self._screen_size[0]
+                        mouse_event.x = x_norm
                         mouse_event.y = 1
                         self._schedule_async(
                             self._handle_cross_screen(
@@ -348,7 +374,7 @@ class ServerMouseListener(object):
                     elif edge == ScreenEdge.BOTTOM and self._active_screens.get(
                         ScreenPosition.BOTTOM, False
                     ):
-                        mouse_event.x = x / self._screen_size[0]
+                        mouse_event.x = x_norm
                         mouse_event.y = 0
                         self._schedule_async(
                             self._handle_cross_screen(
@@ -443,9 +469,13 @@ class ServerMouseListener(object):
             if not self._screen_size_valid():
                 return True
             button = ButtonMapping[button.name].value
+            # Normalize click coordinates over the virtual-desktop bbox so a
+            # click on a secondary monitor doesn't end up mapped past the
+            # primary's [0, 1] range.
+            min_x, min_y, _max_x, _max_y, width, height = self._bbox_span()
             mouse_event = MouseEvent(
-                x=x / self._screen_size[0],
-                y=y / self._screen_size[1],
+                x=(x - min_x) / width,
+                y=(y - min_y) / height,
                 button=button,
                 action=MouseEvent.CLICK_ACTION,
                 is_presed=pressed,
@@ -499,6 +529,9 @@ class ServerMouseController(object):
         self.event_bus = event_bus
 
         self._screen_size: tuple[int, int] = Screen.get_size()
+        # bbox spans every connected monitor; used when the server has to
+        # re-position its own cursor after a return-from-client event.
+        self._screen_bbox: tuple[int, int, int, int] = Screen.get_virtual_bbox()
 
         # Screen.hide_icon()
         self._controller = MouseController()
@@ -534,19 +567,19 @@ class ServerMouseController(object):
     def position_cursor(self, x: float | int, y: float | int):
         """
         Position the mouse cursor to the specified (x, y) coordinates.
+
+        Denormalizes against the virtual-desktop bbox so the cursor can land
+        on any monitor of a multi-display server (e.g. when control returns
+        from a client and we need to put the cursor on the second monitor).
         """
         try:
-            # Denormalize coordinates by mapping into the client screen size.
-            # Skip silently if screen size is unknown (display disconnected /
-            # not yet probed) to avoid pinning the cursor at (0,0).
-            w, h = self._screen_size
-            if w <= 0 or h <= 0:
+            min_x, min_y, max_x, max_y = self._screen_bbox
+            width = max_x - min_x
+            height = max_y - min_y
+            if width <= 0 or height <= 0:
                 return
-            # round() over int(): int() truncates and accumulates sub-pixel
-            # bias on repeated cross-screen round-trips. Clamp to [0, w-1] / [0, h-1] so a peer that sends
-            # values slightly >1.0 (rounding noise) doesn't land off-screen.
-            x = max(0, min(w - 1, round(x * w)))
-            y = max(0, min(h - 1, round(y * h)))
+            x = max(min_x, min(max_x - 1, round(min_x + x * width)))
+            y = max(min_y, min(max_y - 1, round(min_y + y * height)))
         except ValueError:
             self._logger.log(f"Invalid x or y values: x={x}, y={y}", Logger.ERROR)
             return
@@ -598,6 +631,16 @@ class ClientMouseController(object):
         self._is_active = False
         self._current_screen = None
         self._screen_size: tuple[int, int] = Screen.get_size()
+        # Full per-monitor layout for edge detection on the mirror-back
+        # crossing path; the bbox below is derived from it and kept for
+        # denormalisation (mapping incoming positions across the whole
+        # virtual desktop instead of pinning them to the primary).
+        self._monitor_layout = Screen.get_monitor_layout()
+        self._screen_bbox: tuple[int, int, int, int] = (
+            self._monitor_layout.virtual_bbox
+            if self._monitor_layout.monitors
+            else Screen.get_virtual_bbox()
+        )
         # Screen.hide_icon()  # On macOs calling controller.position can spawn a dock icon...
 
         # Instead of creating a listener, we just check edge cases after a mouse move event is received
@@ -823,13 +866,15 @@ class ClientMouseController(object):
                     movement_history=self._movement_history,
                     x=x,
                     y=y,
-                    screen_size=self._screen_size,
+                    screen_size=self._monitor_layout,
                     is_dragging=False,  # Force to false, we will handle it separately
                 )
 
                 if edge:
-                    # Clamp cursor position to screen bounds
-                    cx, cy = EdgeDetector.clamp_to_screen(x, y, self._screen_size)
+                    # Clamp cursor position to the virtual-desktop bounds
+                    # so a cursor that overshoots past a secondary-monitor
+                    # edge snaps back into a valid pixel.
+                    cx, cy = EdgeDetector.clamp_to_screen(x, y, self._screen_bbox)
                     if (cx, cy) != (x, y):
                         try:
                             self._controller.position = (cx, cy)
@@ -846,7 +891,7 @@ class ClientMouseController(object):
                     x, y = EdgeDetector.get_crossing_coords(
                         x=x,
                         y=y,
-                        screen_size=self._screen_size,
+                        screen_size=self._screen_bbox,
                         edge=edge,
                         screen=self._current_screen,
                     )
@@ -881,17 +926,19 @@ class ClientMouseController(object):
     async def _position_cursor(self, x: float | int, y: float | int):
         """
         Position the mouse cursor to the specified (x, y) coordinates.
+
+        Denormalizes against the virtual-desktop bbox so an incoming
+        ``(x, y)`` in ``[0, 1]`` can land on any monitor of the multi-display
+        client (secondary monitors with non-zero origins included).
         """
         try:
-            # Denormalize coordinates by mapping into the client screen size.
-            # round() + clamp: int() truncation introduces sub-pixel jitter
-            # on every cross-screen round-trip; clamping prevents off-screen
-            # positions when a peer sends slightly out-of-range floats.
-            w, h = self._screen_size
-            if w <= 0 or h <= 0:
+            min_x, min_y, max_x, max_y = self._screen_bbox
+            width = max_x - min_x
+            height = max_y - min_y
+            if width <= 0 or height <= 0:
                 return
-            x = max(0, min(w - 1, round(x * w)))
-            y = max(0, min(h - 1, round(y * h)))
+            x = max(min_x, min(max_x - 1, round(min_x + x * width)))
+            y = max(min_y, min(max_y - 1, round(min_y + y * height)))
         except ValueError:
             return
 
@@ -921,13 +968,15 @@ class ClientMouseController(object):
             self._controller.move(dx=dx, dy=dy)
         else:
             try:
-                # Denormalize coordinates by mapping into the client screen
-                # size. round() + clamp for smooth, in-bounds positioning.
-                w, h = self._screen_size
-                if w <= 0 or h <= 0:
+                # Denormalize against the virtual-desktop bbox so the cursor
+                # can be placed on any monitor of the multi-display client.
+                min_x, min_y, max_x, max_y = self._screen_bbox
+                width = max_x - min_x
+                height = max_y - min_y
+                if width <= 0 or height <= 0:
                     return
-                x = max(0, min(w - 1, round(x * w)))
-                y = max(0, min(h - 1, round(y * h)))
+                x = max(min_x, min(max_x - 1, round(min_x + x * width)))
+                y = max(min_y, min(max_y - 1, round(min_y + y * height)))
             except ValueError:
                 return
 

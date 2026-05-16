@@ -47,6 +47,49 @@ from input.mouse._base import (  # noqa: E402
     ClientMouseController,
     ButtonMapping,
 )
+from utils.screen import MonitorLayout  # noqa: E402
+
+
+def _patch_screen_geometry(w: int, h: int):
+    """Patch every Screen accessor used by the mouse code so the listener /
+    controller sees a single (w, h) display at origin (0, 0).
+
+    Tests historically patched only ``Screen.get_size``; after the Phase 2
+    multi-monitor refactor the mouse code also reads
+    ``Screen.get_monitor_layout`` and ``Screen.get_virtual_bbox``, so they
+    need to be patched together to keep the test geometry consistent.
+    """
+    layout = MonitorLayout.from_bboxes([(0, 0, w, h)])
+    return [
+        patch("input.mouse._base.Screen.get_size", return_value=(w, h)),
+        patch(
+            "input.mouse._base.Screen.get_virtual_bbox",
+            return_value=(0, 0, w, h),
+        ),
+        patch(
+            "input.mouse._base.Screen.get_monitor_layout",
+            return_value=layout,
+        ),
+    ]
+
+
+from contextlib import ExitStack  # noqa: E402
+
+
+class _ScreenGeometry:
+    """Context manager bundling :func:`_patch_screen_geometry` patches."""
+
+    def __init__(self, w: int, h: int):
+        self._patches = _patch_screen_geometry(w, h)
+        self._stack = ExitStack()
+
+    def __enter__(self):
+        for p in self._patches:
+            self._stack.enter_context(p)
+        return self
+
+    def __exit__(self, exc_type, exc_val, exc_tb):
+        self._stack.close()
 
 
 # ============================================================================
@@ -561,16 +604,14 @@ class TestServerMouseListener:
         Button = MagicMock()
         Button.left.name = "left"
 
-        listener = ServerMouseListener(
-            event_bus,
-            mock_stream_handler,
-            mock_stream_handler,
-            filtering=False,
-        )
-        listener._listening = True
-
-        with patch("input.mouse._base.Screen.get_size", return_value=(1920, 1080)):
-            listener._screen_size = (1920, 1080)
+        with _ScreenGeometry(1920, 1080):
+            listener = ServerMouseListener(
+                event_bus,
+                mock_stream_handler,
+                mock_stream_handler,
+                filtering=False,
+            )
+            listener._listening = True
             listener.on_click(100, 200, Button.left, True)
 
         mock_stream_handler.send.assert_called_once()
@@ -654,7 +695,7 @@ class TestServerMouseController:
                 position=(0.5, 0.3),
             )
 
-            with patch("input.mouse._base.Screen.get_size", return_value=(1920, 1080)):
+            with _ScreenGeometry(1920, 1080):
                 await controller._on_active_screen_changed(event)
 
             mock_mouse_controller.position = (960, 324)
@@ -667,7 +708,7 @@ class TestServerMouseController:
         with patch(
             "input.mouse._base.MouseController", return_value=mock_mouse_controller
         ):
-            with patch("input.mouse._base.Screen.get_size", return_value=(1920, 1080)):
+            with _ScreenGeometry(1920, 1080):
                 controller = ServerMouseController(event_bus)
 
                 # Coordinates are normalized (0-1 range)
@@ -684,7 +725,7 @@ class TestServerMouseController:
         with patch(
             "input.mouse._base.MouseController", return_value=mock_mouse_controller
         ):
-            with patch("input.mouse._base.Screen.get_size", return_value=(1920, 1080)):
+            with _ScreenGeometry(1920, 1080):
                 controller = ServerMouseController(event_bus)
 
                 # Normalized 2.0 > 1.0: must clamp to last on-screen pixel
@@ -856,7 +897,7 @@ class TestClientMouseController:
         with patch(
             "input.mouse._base.MouseController", return_value=mock_mouse_controller
         ):
-            with patch("input.mouse._base.Screen.get_size", return_value=(1920, 1080)):
+            with _ScreenGeometry(1920, 1080):
                 controller = ClientMouseController(
                     event_bus,
                     mock_stream_handler,
@@ -1066,7 +1107,7 @@ class TestClientMouseController:
         with patch(
             "input.mouse._base.MouseController", return_value=mock_mouse_controller
         ):
-            with patch("input.mouse._base.Screen.get_size", return_value=(1920, 1080)):
+            with _ScreenGeometry(1920, 1080):
                 controller = ClientMouseController(
                     event_bus,
                     mock_stream_handler,
@@ -1102,7 +1143,7 @@ class TestClientMouseController:
         with patch(
             "input.mouse._base.MouseController", return_value=mock_mouse_controller
         ):
-            with patch("input.mouse._base.Screen.get_size", return_value=(1920, 1080)):
+            with _ScreenGeometry(1920, 1080):
                 controller = ClientMouseController(
                     event_bus,
                     mock_stream_handler,
@@ -1134,7 +1175,7 @@ class TestClientMouseController:
         with patch(
             "input.mouse._base.MouseController", return_value=mock_mouse_controller
         ):
-            with patch("input.mouse._base.Screen.get_size", return_value=(1920, 1080)):
+            with _ScreenGeometry(1920, 1080):
                 controller = ClientMouseController(
                     event_bus,
                     mock_stream_handler,
