@@ -535,8 +535,14 @@ class MessageBuilder:
         source: Optional[str] = None,
         target: Optional[str] = None,
         server_uid: Optional[str] = None,
+        monitors: Optional[List[Dict[str, Any]]] = None,
     ) -> ProtocolMessage:
-        """Create a handshake message with timestamp."""
+        """Create a handshake message with timestamp.
+
+        ``monitors`` is the optional per-monitor layout introduced for
+        the multi-monitor work; legacy peers ignore unknown payload
+        keys, so the field is wire-compatible with older builds.
+        """
         return ProtocolMessage(
             message_type=MessageType.EXCHANGE,
             timestamp=time.time(),
@@ -550,6 +556,7 @@ class MessageBuilder:
                 "streams": streams or [],
                 "additional_params": additional_params or {},
                 "server_uid": server_uid,
+                "monitors": monitors or [],
             },
             source=source,
             target=target,

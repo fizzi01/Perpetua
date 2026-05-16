@@ -38,6 +38,7 @@ without touching the input layer.
 from __future__ import annotations
 
 from dataclasses import dataclass, field
+from enum import StrEnum
 from typing import Iterable, Optional
 
 
@@ -94,10 +95,6 @@ class MonitorLayout:
     monitors: tuple[MonitorInfo, ...] = field(default_factory=tuple)
     edge_routes: dict[tuple[int, str], str] = field(default_factory=dict)
 
-    # ------------------------------------------------------------------
-    # Construction
-    # ------------------------------------------------------------------
-
     @classmethod
     def from_bboxes(
         cls,
@@ -121,10 +118,6 @@ class MonitorLayout:
             )
         return cls(monitors=tuple(monitors))
 
-    # ------------------------------------------------------------------
-    # Geometric helpers
-    # ------------------------------------------------------------------
-
     @property
     def virtual_bbox(self) -> tuple[int, int, int, int]:
         """Union rect of every monitor (degenerate ``(0, 0, 0, 0)`` if
@@ -143,10 +136,6 @@ class MonitorLayout:
             if m.contains(x, y):
                 return m
         return None
-
-    # ------------------------------------------------------------------
-    # Per-monitor outer-edge detection
-    # ------------------------------------------------------------------
 
     def has_neighbor_left(self, monitor: MonitorInfo, y: float) -> bool:
         """``True`` if another monitor abuts ``monitor`` on its LEFT
@@ -188,3 +177,246 @@ class MonitorLayout:
                 if m.min_y - monitor.max_y <= 2:
                     return True
         return False
+
+
+class Edge(StrEnum):
+    """The four sides of a monitor that can host a crossing slot.
+
+    Kept as :class:`StrEnum` so :class:`LayoutSlot` serializes cleanly
+    to JSON / msgpack for the handshake payload.
+    """
+
+    LEFT = "left"
+    RIGHT = "right"
+    TOP = "top"
+    BOTTOM = "bottom"
+
+
+@dataclass(frozen=True)
+class LayoutSlot:
+    """A reservable slice of one server-monitor edge.
+
+    The current 1-client-per-direction model is the trivial case where a
+    slot covers the whole edge (``segment_start=0.0, segment_end=1.0``).
+    The future GUI will let the user split a single edge across multiple
+    clients (top half of monitor 1 right edge -> client A, bottom half
+    -> client B), which is why slots carry a normalized segment range
+    along the edge's secondary axis (Y for LEFT/RIGHT, X for TOP/BOTTOM).
+
+    Invariant enforced by :class:`LayoutValidator`: no two slots in a
+    single layout may overlap. This is the guarantee the runtime needs so
+    a cursor reaching ``(monitor_id, edge)`` at a given secondary
+    coordinate routes to exactly one client (or none).
+    """
+
+    monitor_id: int
+    edge: Edge
+    segment_start: float = 0.0
+    segment_end: float = 1.0
+
+    def __post_init__(self) -> None:
+        if not (0.0 <= self.segment_start < self.segment_end <= 1.0):
+            raise ValueError(
+                f"LayoutSlot segment must satisfy 0 <= start < end <= 1, "
+                f"got start={self.segment_start}, end={self.segment_end}"
+            )
+
+    def is_full_edge(self) -> bool:
+        return self.segment_start == 0.0 and self.segment_end == 1.0
+
+    def overlaps(self, other: "LayoutSlot") -> bool:
+        """Two slots are disjoint when they cover different monitors,
+        different edges, or non-overlapping segments. Touching at a
+        single point (``self.end == other.start``) counts as disjoint so
+        a clean split at 0.5 is allowed."""
+        if self.monitor_id != other.monitor_id or self.edge != other.edge:
+            return False
+        return not (
+            self.segment_end <= other.segment_start
+            or other.segment_end <= self.segment_start
+        )
+
+    def contains_secondary(self, axis_norm: float) -> bool:
+        """``True`` if the given normalized secondary-axis coord (0..1)
+        falls inside this slot's segment range."""
+        return self.segment_start <= axis_norm < self.segment_end
+
+    def to_dict(self) -> dict:
+        return {
+            "monitor_id": self.monitor_id,
+            "edge": self.edge.value,
+            "segment_start": self.segment_start,
+            "segment_end": self.segment_end,
+        }
+
+    @classmethod
+    def from_dict(cls, data: dict) -> "LayoutSlot":
+        return cls(
+            monitor_id=int(data["monitor_id"]),
+            edge=Edge(data["edge"]),
+            segment_start=float(data.get("segment_start", 0.0)),
+            segment_end=float(data.get("segment_end", 1.0)),
+        )
+
+
+@dataclass(frozen=True)
+class LayoutBinding:
+    """Pairs a :class:`LayoutSlot` (server-side edge slice) with a routing
+    target — a client UID, optionally pinned to a specific monitor on
+    that client. ``client_monitor_id`` defaults to ``None`` meaning
+    "let the client pick its target monitor"; future GUI work will fill
+    it in for per-monitor routing."""
+
+    slot: LayoutSlot
+    client_uid: str
+    client_monitor_id: Optional[int] = None
+
+    def to_dict(self) -> dict:
+        return {
+            "slot": self.slot.to_dict(),
+            "client_uid": self.client_uid,
+            "client_monitor_id": self.client_monitor_id,
+        }
+
+    @classmethod
+    def from_dict(cls, data: dict) -> "LayoutBinding":
+        return cls(
+            slot=LayoutSlot.from_dict(data["slot"]),
+            client_uid=str(data["client_uid"]),
+            client_monitor_id=data.get("client_monitor_id"),
+        )
+
+
+@dataclass
+class LayoutValidator:
+    """Validates the no-overlap invariant on a list of bindings.
+
+    Kept as a class (rather than a free function) so callers can extend
+    it with monitor-existence checks once we wires it into the GUI.
+    ``known_monitor_ids`` is optional and only enforced when set.
+    """
+
+    known_monitor_ids: Optional[set[int]] = None
+
+    def validate(self, bindings: Iterable[LayoutBinding]) -> tuple[bool, list[str]]:
+        """Return ``(ok, errors)``. Enumerates every conflict instead of
+        short-circuiting so a future GUI can surface every broken
+        constraint in a single pass."""
+        bindings = list(bindings)
+        errors: list[str] = []
+
+        if self.known_monitor_ids is not None:
+            for b in bindings:
+                if b.slot.monitor_id not in self.known_monitor_ids:
+                    errors.append(
+                        f"Unknown monitor_id={b.slot.monitor_id} in binding "
+                        f"for client {b.client_uid!r}"
+                    )
+
+        for i, a in enumerate(bindings):
+            for b in bindings[i + 1 :]:
+                if a.slot.overlaps(b.slot):
+                    errors.append(
+                        f"Overlapping slots: {a.slot} (client "
+                        f"{a.client_uid!r}) intersects {b.slot} "
+                        f"(client {b.client_uid!r})"
+                    )
+
+        return (not errors, errors)
+
+    def slot_for(
+        self,
+        bindings: Iterable[LayoutBinding],
+        monitor_id: int,
+        edge: Edge,
+        axis_norm: float,
+    ) -> Optional[LayoutBinding]:
+        """Route ``(monitor_id, edge, axis_norm)`` to a single binding.
+
+        The listener knows which monitor's edge was hit and the
+        normalized secondary coordinate; this picks the binding owning
+        that segment, or ``None`` if unassigned. Invariant: at most one
+        binding matches thanks to :meth:`validate`.
+        """
+        for b in bindings:
+            if (
+                b.slot.monitor_id == monitor_id
+                and b.slot.edge == edge
+                and b.slot.contains_secondary(axis_norm)
+            ):
+                return b
+        return None
+
+
+@dataclass(frozen=True)
+class LayoutReconciliation:
+    """Result of comparing a pre-configured layout against the monitor
+    list a client advertised on its latest handshake.
+
+    On reconnection a client may have FEWER monitors than when the
+    layout was configured (a display was unplugged, an external dock was
+    disconnected, the user changed arrangement). Existing bindings that
+    reference monitors no longer present need to be either dropped or
+    surfaced for user resolution; bindings that still match are kept
+    verbatim so the rest of the system keeps working.
+
+    Fields:
+        kept: bindings whose ``client_monitor_id`` either is ``None``
+            (target was implicit) or points to a monitor still present.
+        dropped: bindings that referenced a now-missing client monitor.
+            Caller decides whether to fall back to "any monitor" routing
+            or prompt the user to re-bind.
+        missing_monitor_ids: set of monitor ids that the layout
+            references but the client no longer advertises.
+    """
+
+    kept: tuple["LayoutBinding", ...]
+    dropped: tuple["LayoutBinding", ...]
+    missing_monitor_ids: frozenset[int]
+
+    @property
+    def is_clean(self) -> bool:
+        """``True`` when every binding is still valid against the
+        client's current monitor list."""
+        return not self.dropped and not self.missing_monitor_ids
+
+
+def reconcile_bindings_with_client_monitors(
+    bindings: Iterable[LayoutBinding],
+    client_uid: str,
+    client_monitor_ids: Iterable[int],
+) -> LayoutReconciliation:
+    """Filter ``bindings`` against the monitors a specific client now has.
+
+    Only bindings targeting ``client_uid`` are considered for dropping —
+    bindings for OTHER clients are kept verbatim regardless of this
+    client's monitor list. Bindings with ``client_monitor_id=None``
+    (implicit "any monitor") survive because the client picks the
+    target at landing time.
+
+    Use case: server receives the client's monitor list on reconnect;
+    feed it here together with the previously-configured bindings; any
+    binding that pinned this client to a no-longer-present monitor
+    surfaces in :attr:`LayoutReconciliation.dropped` so the GUI can ask
+    the user to re-bind it.
+    """
+    known = set(client_monitor_ids)
+    kept: list[LayoutBinding] = []
+    dropped: list[LayoutBinding] = []
+    missing: set[int] = set()
+
+    for b in bindings:
+        if b.client_uid != client_uid or b.client_monitor_id is None:
+            kept.append(b)
+            continue
+        if b.client_monitor_id in known:
+            kept.append(b)
+        else:
+            dropped.append(b)
+            missing.add(b.client_monitor_id)
+
+    return LayoutReconciliation(
+        kept=tuple(kept),
+        dropped=tuple(dropped),
+        missing_monitor_ids=frozenset(missing),
+    )

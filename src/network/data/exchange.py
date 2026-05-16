@@ -577,8 +577,13 @@ class MessageExchange:
         source: Optional[str] = None,
         target: Optional[str] = None,
         server_uid: Optional[str] = None,
+        monitors: Optional[List[Dict[str, Any]]] = None,
     ):
-        """Send handshake message."""
+        """Send handshake message.
+
+        ``monitors`` carries the client's per-monitor layout. Legacy peers that don't know about it
+        simply ignore the field.
+        """
         message = self.builder.create_handshake_message(
             client_name,
             screen_resolution,
@@ -590,6 +595,7 @@ class MessageExchange:
             source=source,
             target=target,
             server_uid=server_uid,
+            monitors=monitors,
         )
         await self._send_message(message)
 
