@@ -332,8 +332,6 @@ class ConnectionHandler(BaseConnectionHandler):
                 await self._clean_on_connection_lost(writer)
                 return
 
-            # TODO: Move client allowlist verification here and let user allow/block before handshake
-
             # Handshake. _handshake() logs the specific failure reason
             # (timeout, allowlist miss, uid/hostname mismatch, probe, ...);
             # we only need to ensure the socket is cleaned up here.

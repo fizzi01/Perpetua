@@ -94,7 +94,7 @@ class Clipboard:
             return ""
         # Ensure we're encoding to bytes properly
         content_bytes = content.encode("utf-8", errors="ignore")
-        return hashlib.md5(content_bytes).hexdigest()
+        return hashlib.blake2b(content_bytes, digest_size=16).hexdigest()
 
     @staticmethod
     def _is_file(content: str) -> bool:
