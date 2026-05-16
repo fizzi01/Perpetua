@@ -23,6 +23,8 @@ import time
 import random
 from typing import Coroutine, Optional, Set
 
+from utils.logging import get_logger
+
 
 def backend_module(package: str, platform_map: Optional[dict] = None):
     """
@@ -182,9 +184,15 @@ class ExponentialBackoff:
         return min(self._current_delay, self.max_delay)
 
 
+_bg_logger = get_logger("BackgroundTasks")
+
+
 class BackgroundTasks:
     """
-    Holds strong refs to fire-and-forget asyncio.Tasks
+    Holds strong refs to fire-and-forget asyncio.Tasks.
+
+    Failed tasks (non-cancellation exceptions) are logged at WARNING via the
+    discard callback so silent failures are visible.
     """
 
     __slots__ = ("_tasks",)
@@ -192,11 +200,26 @@ class BackgroundTasks:
     def __init__(self) -> None:
         self._tasks: Set[asyncio.Task] = set()
 
-    def spawn(self, coro: Coroutine) -> asyncio.Task:
-        task = asyncio.create_task(coro)
+    def spawn(self, coro: Coroutine, name: Optional[str] = None) -> asyncio.Task:
+        task = asyncio.create_task(coro, name=name) if name else asyncio.create_task(coro)
         self._tasks.add(task)
-        task.add_done_callback(self._tasks.discard)
+        task.add_done_callback(self._on_task_done)
         return task
+
+    def _on_task_done(self, task: asyncio.Task) -> None:
+        self._tasks.discard(task)
+        if task.cancelled():
+            return
+        try:
+            exc = task.exception()
+        except asyncio.CancelledError:
+            return
+        if exc is not None:
+            task_name = task.get_name() if hasattr(task, "get_name") else "<task>"
+            _bg_logger.warning(
+                f"Background task {task_name!r} failed: "
+                f"{type(exc).__name__}: {exc}"
+            )
 
     def __len__(self) -> int:
         return len(self._tasks)
