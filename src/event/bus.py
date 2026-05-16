@@ -23,7 +23,7 @@ import inspect
 from utils import BackgroundTasks
 from utils.logging import get_logger
 
-from . import BusEvent
+from . import BusEvent, BusEventType
 
 T = TypeVar("T", bound=BusEvent)
 
@@ -136,6 +136,18 @@ class AsyncEventBus(EventBus):
         Executes all callbacks concurrently for maximum performance.
         Supports both sync and async callbacks.
         """
+        # Warn on dispatch of an unknown event_type. Without this the
+        # missing-subscriber path is indistinguishable from a typo / stale
+        # int constant.
+        try:
+            BusEventType(event_type)
+        except ValueError:
+            self._logger.warning(
+                f"dispatch() called with unknown event_type={event_type!r}; "
+                "no listeners will be invoked"
+            )
+            return
+
         # Fast path: get listeners without lock (dict access is atomic in CPython)
         listeners = tuple(self._subscribers.get(event_type, ()))
 

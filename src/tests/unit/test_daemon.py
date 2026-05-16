@@ -233,7 +233,7 @@ class TestDaemonLifecycleUnix:
     def test_delayed_exit_calls_exit_only_when_env_var_set(
         self, app_config, daemon_unix_socket_path, monkeypatch
     ):
-        """Finding 22: opt-in force-exit fires only when there is stranded
+        """Opt-in force-exit fires only when there is stranded
         work AND the operator explicitly enables it via env var."""
         from unittest.mock import patch
         import daemon as daemon_module
