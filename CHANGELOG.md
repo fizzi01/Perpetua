@@ -1,5 +1,74 @@
 # Changelog
 
+## [1.5.0](https://github.com/fizzi01/Perpetua/compare/v1.4.0...v1.5.0) (2026-05-16)
+
+
+### Features
+
+* add atomic file write utilities, add exception loggin in background tasks util ([8ea1d8f](https://github.com/fizzi01/Perpetua/commit/8ea1d8fdfbcc68501dfa21420c858c3c4b897259))
+* add support for stale certificate handling and notification ([#69](https://github.com/fizzi01/Perpetua/issues/69)) ([2e20f0d](https://github.com/fizzi01/Perpetua/commit/2e20f0d9147d2ae5b6572766af07435421a6b987))
+* **config:** implement caching for config file loading to improve performance ([cbf4462](https://github.com/fizzi01/Perpetua/commit/cbf4462aa0dc6f18e243a70bc33b2b6f40e66c99))
+* **daemon:** implement live accessibility permission checks on macOS ([#62](https://github.com/fizzi01/Perpetua/issues/62)) ([7d19528](https://github.com/fizzi01/Perpetua/commit/7d19528e053e294625c11ac69ced7cddd726450d))
+* dynamic client approval and better OTP pairing process ([#66](https://github.com/fizzi01/Perpetua/issues/66)) ([0ed955a](https://github.com/fizzi01/Perpetua/commit/0ed955a219b8aa7cce9c07b0db56e26cd330a22b))
+* implement pairing port configuration and runtime endpoint discovery ([#67](https://github.com/fizzi01/Perpetua/issues/67)) ([d0826d4](https://github.com/fizzi01/Perpetua/commit/d0826d4a4945ad3272a694ab8c89bb75cd9dfe4c))
+
+
+### Bug Fixes
+
+* **client:** enhance server discovery and background task management ([8ea1d8f](https://github.com/fizzi01/Perpetua/commit/8ea1d8fdfbcc68501dfa21420c858c3c4b897259))
+* **clipboard:** update hash function to use blake2b ([86d8224](https://github.com/fizzi01/Perpetua/commit/86d82245d568dfc968deb5662c652549b6f8b66b))
+* **config:** implement LRU caching for parsed config files and improve cache management ([8ea1d8f](https://github.com/fizzi01/Perpetua/commit/8ea1d8fdfbcc68501dfa21420c858c3c4b897259))
+* **connection, exchange:** handle additional network-level disconnect  exceptions in stream and message processing ([8ea1d8f](https://github.com/fizzi01/Perpetua/commit/8ea1d8fdfbcc68501dfa21420c858c3c4b897259))
+* **connection:** add EOF polling during handshake to handle TCP probes and improve connection reliability ([cbf4462](https://github.com/fizzi01/Perpetua/commit/cbf4462aa0dc6f18e243a70bc33b2b6f40e66c99))
+* **crypto, runtime:** implement atomic file writes for certificate and endpoint data ([8ea1d8f](https://github.com/fizzi01/Perpetua/commit/8ea1d8fdfbcc68501dfa21420c858c3c4b897259))
+* **crypto:** move PBKDF2 key derivation off the event loop  ([cbf4462](https://github.com/fizzi01/Perpetua/commit/cbf4462aa0dc6f18e243a70bc33b2b6f40e66c99))
+* **cursor:** enhance mouse data handling with dedicated thread ([cbf4462](https://github.com/fizzi01/Perpetua/commit/cbf4462aa0dc6f18e243a70bc33b2b6f40e66c99))
+* **daemon:** enhance delayed exit handling and logging for shutdown process ([8ea1d8f](https://github.com/fizzi01/Perpetua/commit/8ea1d8fdfbcc68501dfa21420c858c3c4b897259))
+* **daemon:** force exit when process remain pending on stop ([7d19528](https://github.com/fizzi01/Perpetua/commit/7d19528e053e294625c11ac69ced7cddd726450d))
+* **daemon:** improve signal handler registration and management for graceful shutdown ([8ea1d8f](https://github.com/fizzi01/Perpetua/commit/8ea1d8fdfbcc68501dfa21420c858c3c4b897259))
+* **daemon:** limit concurrent command executions to prevent task accumulation ([cbf4462](https://github.com/fizzi01/Perpetua/commit/cbf4462aa0dc6f18e243a70bc33b2b6f40e66c99))
+* **eventbus:** add warning for unknown event types in dispatch method ([8ea1d8f](https://github.com/fizzi01/Perpetua/commit/8ea1d8fdfbcc68501dfa21420c858c3c4b897259))
+* **eventbus:** implement auto-disable for callbacks after consecutivefailures ([cbf4462](https://github.com/fizzi01/Perpetua/commit/cbf4462aa0dc6f18e243a70bc33b2b6f40e66c99))
+* **event:** isolate event payloads from concurrent subscriber mutation ([cbf4462](https://github.com/fizzi01/Perpetua/commit/cbf4462aa0dc6f18e243a70bc33b2b6f40e66c99))
+* **event:** track fire-and-forget tasks and surface dropped events ([cbf4462](https://github.com/fizzi01/Perpetua/commit/cbf4462aa0dc6f18e243a70bc33b2b6f40e66c99))
+* **exchange:** implement message queue management with backpressure policy ([cbf4462](https://github.com/fizzi01/Perpetua/commit/cbf4462aa0dc6f18e243a70bc33b2b6f40e66c99))
+* **exchange:** raise error if no send callbacks are configured to ensure transport layer is set ([cbf4462](https://github.com/fizzi01/Perpetua/commit/cbf4462aa0dc6f18e243a70bc33b2b6f40e66c99))
+* **gui:** fix titlebar buttons not working on Wayland ([#60](https://github.com/fizzi01/Perpetua/issues/60)) ([7475b39](https://github.com/fizzi01/Perpetua/commit/7475b39eac65fd382e37a7be7ea59386ea5f29c4))
+* improve the efficiency and reliability ([#64](https://github.com/fizzi01/Perpetua/issues/64)) ([cbf4462](https://github.com/fizzi01/Perpetua/commit/cbf4462aa0dc6f18e243a70bc33b2b6f40e66c99))
+* **input:** always re-capture running loop on listener start ([cbf4462](https://github.com/fizzi01/Perpetua/commit/cbf4462aa0dc6f18e243a70bc33b2b6f40e66c99))
+* missing server UID without auto-discovery ([2e20f0d](https://github.com/fizzi01/Perpetua/commit/2e20f0d9147d2ae5b6572766af07435421a6b987))
+* **mouse, keyboard:** improve thread handling and state management ([8ea1d8f](https://github.com/fizzi01/Perpetua/commit/8ea1d8fdfbcc68501dfa21420c858c3c4b897259))
+* **mouse:** fix clicks being lost and improved double-click logic ([#68](https://github.com/fizzi01/Perpetua/issues/68)) ([5d38d54](https://github.com/fizzi01/Perpetua/commit/5d38d544c9a446aba5b8b0c809c5c3ae12fe0b18))
+* **mouse:** fix cursor slowdown when dragging by avoiding same event spam ([8ea1d8f](https://github.com/fizzi01/Perpetua/commit/8ea1d8fdfbcc68501dfa21420c858c3c4b897259))
+* **network:** drop stale chunk-reassembly buffers via TT ([cbf4462](https://github.com/fizzi01/Perpetua/commit/cbf4462aa0dc6f18e243a70bc33b2b6f40e66c99))
+* **protocol:** optimize to_dict method using msgspec's asdict for improved performance ([cbf4462](https://github.com/fizzi01/Perpetua/commit/cbf4462aa0dc6f18e243a70bc33b2b6f40e66c99))
+* **protocol:** replace base64 with msgpack for efficient binary payload handling ([cbf4462](https://github.com/fizzi01/Perpetua/commit/cbf4462aa0dc6f18e243a70bc33b2b6f40e66c99))
+* **server:** ensure proper cleanup of pending approvals to avoid stale state ([8ea1d8f](https://github.com/fizzi01/Perpetua/commit/8ea1d8fdfbcc68501dfa21420c858c3c4b897259))
+* **server:** set transport before signaling send readiness to prevent silent drops ([cbf4462](https://github.com/fizzi01/Perpetua/commit/cbf4462aa0dc6f18e243a70bc33b2b6f40e66c99))
+* **service-discovery:** improve error handling and cleanup in mDNS service discovery ([8ea1d8f](https://github.com/fizzi01/Perpetua/commit/8ea1d8fdfbcc68501dfa21420c858c3c4b897259))
+* **sharing:** handle OSError when retrieving resolved host from socket ([8ea1d8f](https://github.com/fizzi01/Perpetua/commit/8ea1d8fdfbcc68501dfa21420c858c3c4b897259))
+* **sharing:** improve error handling for pairing request failures and update OTP logging ([8ea1d8f](https://github.com/fizzi01/Perpetua/commit/8ea1d8fdfbcc68501dfa21420c858c3c4b897259))
+* **stream:** reset active state on stop to allow proper reconfiguration after reconnect, fixes clipboard stream drop ([cbf4462](https://github.com/fizzi01/Perpetua/commit/cbf4462aa0dc6f18e243a70bc33b2b6f40e66c99))
+
+
+### Performance Improvements
+
+* **config:** write config in one call instead of char by char ([cbf4462](https://github.com/fizzi01/Perpetua/commit/cbf4462aa0dc6f18e243a70bc33b2b6f40e66c99))
+* **event:** cache callback async flag and dedupe subscribers ([cbf4462](https://github.com/fizzi01/Perpetua/commit/cbf4462aa0dc6f18e243a70bc33b2b6f40e66c99))
+* **event:** optimize event classes with slot-based instances to reduce memory allocation ([8ea1d8f](https://github.com/fizzi01/Perpetua/commit/8ea1d8fdfbcc68501dfa21420c858c3c4b897259))
+* **exchange, message:** optimize message processing with zero-copy memoryview ([8ea1d8f](https://github.com/fizzi01/Perpetua/commit/8ea1d8fdfbcc68501dfa21420c858c3c4b897259))
+* **metrics:** track running latency sum for O(1) average ([cbf4462](https://github.com/fizzi01/Perpetua/commit/cbf4462aa0dc6f18e243a70bc33b2b6f40e66c99))
+* **model:** cache hostname-validation regex to module scope ([cbf4462](https://github.com/fizzi01/Perpetua/commit/cbf4462aa0dc6f18e243a70bc33b2b6f40e66c99))
+* **model:** drop empty-write probe from StreamWriter.is_closed ([cbf4462](https://github.com/fizzi01/Perpetua/commit/cbf4462aa0dc6f18e243a70bc33b2b6f40e66c99))
+* **net:** cache get_local_ip with a 30s TTL ([cbf4462](https://github.com/fizzi01/Perpetua/commit/cbf4462aa0dc6f18e243a70bc33b2b6f40e66c99))
+* **network:** cache SSLContext per cert/key pair ([cbf4462](https://github.com/fizzi01/Perpetua/commit/cbf4462aa0dc6f18e243a70bc33b2b6f40e66c99))
+* **network:** set TCP_NODELAY on stream sockets ([cbf4462](https://github.com/fizzi01/Perpetua/commit/cbf4462aa0dc6f18e243a70bc33b2b6f40e66c99))
+
+
+### Documentation
+
+* add first-time setup, troubleshooting tips and improved structure ([d0826d4](https://github.com/fizzi01/Perpetua/commit/d0826d4a4945ad3272a694ab8c89bb75cd9dfe4c))
+
 ## [1.4.0](https://github.com/fizzi01/Perpetua/compare/v1.3.0...v1.4.0) (2026-03-10)
 
 
