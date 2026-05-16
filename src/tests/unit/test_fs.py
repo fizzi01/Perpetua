@@ -35,7 +35,7 @@ def test_atomic_write_bytes_round_trip(tmp_path):
 
 def test_atomic_write_text_round_trip(tmp_path):
     target = tmp_path / "note.txt"
-    text = "ciao — utf-8 €"
+    text = "ciao - utf-8 €"
 
     atomic_write_text(target, text)
 

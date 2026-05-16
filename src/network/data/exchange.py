@@ -391,7 +391,7 @@ class MessageExchange:
 
         Network-level disconnect exceptions are swallowed at the loop
         boundary so the task does not surface "Task exception was never
-        retrieved" — the connection layer is responsible for handling
+        retrieved" - the connection layer is responsible for handling
         teardown; this loop just stops cleanly.
         """
         buffers: Dict[str, bytearray] = {}

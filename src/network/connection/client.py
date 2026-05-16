@@ -349,7 +349,7 @@ class ConnectionHandler(BaseConnectionHandler):
                     Logger.WARNING,
                 )
                 # Full disconnection path: closes streams, marks the client
-                # as disconnected and — critically — fires
+                # as disconnected and - critically - fires
                 # disconnected_callback so the upper layer transitions out
                 # of the "connecting" UI state instead of staying pending.
                 await self._handle_disconnection(err=e)

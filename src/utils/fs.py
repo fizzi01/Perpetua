@@ -22,7 +22,7 @@ filesystem, fsynced, optionally chmod'd, then renamed into place via
 ``os.replace`` (atomic on POSIX and Windows for same-volume renames).
 
 On Windows ``os.chmod`` only toggles the read-only bit; real access control
-needs DACL manipulation — use :mod:`utils.permissions` for that.
+needs DACL manipulation - use :mod:`utils.permissions` for that.
 """
 
 from __future__ import annotations

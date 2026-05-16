@@ -172,7 +172,7 @@ export function ServerTab({onStatusChange, state}: ServerTabProps) {
     }, [otp, otpExpiresAt]);
 
     // Single source of truth for OTP expiration: whoever sets otpExpiresAt
-    // triggers exactly one expiry — no race between the pairing path and the
+    // triggers exactly one expiry - no race between the pairing path and the
     // manual share path, no double-fire under React StrictMode.
     useEffect(() => {
         if (!otp || otpExpiresAt === null) return;
@@ -287,7 +287,7 @@ export function ServerTab({onStatusChange, state}: ServerTabProps) {
                 listeners.addListenerOnce('pairing-requested', unlisten);
             });
 
-            // An unknown client is trying to connect — server is holding the
+            // An unknown client is trying to connect - server is holding the
             // handshake open until we allow or deny via the inline card.
             listenGeneralEvent(EventType.ClientApprovalRequested, false, (event) => {
                 const info = event.data as ClientApprovalRequest | undefined;
@@ -370,7 +370,7 @@ export function ServerTab({onStatusChange, state}: ServerTabProps) {
     const handlePairingRequest = (info: PairingRequestInfo) => {
         // If we already have an OTP displayed (manual share in progress) and
         // the server reports the OTP was already active, the daemon just
-        // mirrored the same code — don't bounce the UI.
+        // mirrored the same code - don't bounce the UI.
         if (otp !== '' && info.was_active) return;
 
         const who = info.hostname || info.peer_ip || 'a client';
@@ -388,7 +388,7 @@ export function ServerTab({onStatusChange, state}: ServerTabProps) {
     // lifetime. Previously these were re-registered per click, which caused
     // two compounding bugs: a race between the in-callback ``removeListener``
     // and the async ``addListener``, plus ``addListener`` refcounting that
-    // dropped the new unlisten — leaking Tauri handlers that fired on
+    // dropped the new unlisten - leaking Tauri handlers that fired on
     // subsequent events.
     //
     // Under React StrictMode this useEffect itself runs mount→cleanup→mount.

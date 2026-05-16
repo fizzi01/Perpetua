@@ -375,7 +375,7 @@ class PairingRequestEvent(NotificationEvent):
 
     The OTP is included so the GUI can surface it to the admin without a
     second event. The OTP still travels only inside the daemon→GUI IPC
-    channel — it never leaves the server host over the network.
+    channel - it never leaves the server host over the network.
     """
 
     def __init__(

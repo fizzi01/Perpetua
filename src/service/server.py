@@ -469,7 +469,7 @@ class Server:
         Start (or refresh) certificate sharing with an OTP.
 
         If the always-on pairing service is running, this just ensures an OTP
-        is active and returns it — no new socket is opened. Otherwise it falls
+        is active and returns it - no new socket is opened. Otherwise it falls
         back to the legacy one-shot flow that opens a temporary server.
 
         Args:
@@ -492,7 +492,7 @@ class Server:
 
         bind_port = port if port is not None else self.config.get_pairing_port()
 
-        # Fast path: pairing service already up — just refresh the OTP.
+        # Fast path: pairing service already up - just refresh the OTP.
         if self._cert_sharing and self._cert_sharing.is_sharing_active():
             otp, remaining = await self._cert_sharing.ensure_active_otp(timeout=timeout)
             if otp:
@@ -885,7 +885,7 @@ class Server:
             return result
         except asyncio.TimeoutError:
             self._logger.warning(
-                f"Approval request for {peer_ip} timed out — denying by default"
+                f"Approval request for {peer_ip} timed out - denying by default"
             )
             await self._resolve_pending_approval(peer_ip, None, reason="timeout")
             return None
@@ -1071,7 +1071,7 @@ class Server:
         # Bring up the pairing/cert-sharing listener BEFORE mDNS so the
         # service record advertises the port we actually bound (the listener
         # may have fallen back to an adjacent port if the preferred one was
-        # busy). Failure is non-fatal — the rest of the server keeps running
+        # busy). Failure is non-fatal - the rest of the server keeps running
         # and the admin can still share certs manually via
         # share_certificate().
         if self.config.ssl_enabled:

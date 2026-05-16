@@ -248,7 +248,7 @@ class ServerKeyboardListener(object):
             if self._listener.is_alive():
                 self._logger.warning(
                     "Keyboard listener thread still alive after "
-                    f"{self.LISTENER_JOIN_TIMEOUT}s — proceeding without join"
+                    f"{self.LISTENER_JOIN_TIMEOUT}s - proceeding without join"
                 )
 
         self._logger.debug("Stopped.")

@@ -98,7 +98,7 @@ struct EndpointPayload {
 ///
 /// The IPC pipeline is generic over a single transport per platform (TCP on
 /// Windows, Unix socket elsewhere), so endpoints not matching the host
-/// platform's transport are rejected — callers fall back to the platform
+/// platform's transport are rejected - callers fall back to the platform
 /// default instead of producing an unreachable variant.
 fn parse_endpoint(s: &str) -> Option<DefaultPath> {
     let s = s.trim();
@@ -132,7 +132,7 @@ fn parse_endpoint(s: &str) -> Option<DefaultPath> {
 
 /// Try to discover the daemon's IPC endpoint via the runtime file the daemon
 /// writes after a successful bind. Returns None if the file is absent or
-/// malformed — callers should then fall back to the legacy default.
+/// malformed - callers should then fall back to the legacy default.
 fn discover_endpoint_file() -> Option<DefaultPath> {
     let dir = runtime_dir().ok()?;
     let path = dir.join(ENDPOINT_FILE);
@@ -158,7 +158,7 @@ fn default_path() -> Result<DefaultPath, SocketPathError> {
         return Ok(found);
     }
 
-    // 3. Platform default — same as before.
+    // 3. Platform default - same as before.
     #[cfg(unix)]
     {
         let home = env::var("HOME").map_err(SocketPathError::HomeDirNotFound)?;

@@ -548,7 +548,7 @@ class Client:
 
             # Save certificate. Falling back to the resolved server host
             # when the UID is missing prevents the cert from being saved
-            # as ``ca_.crt`` (empty source_id) — a degenerate state that
+            # as ``ca_.crt`` (empty source_id) - a degenerate state that
             # collides with every other empty-uid client and breaks the
             # mapping lookup. The UID stays the preferred key when known.
             primary_id = self.config.get_server_uid()
@@ -849,8 +849,8 @@ class Client:
             self._found_services = await ServiceDiscovery().discover_services()
 
             # Build a snapshot keyed on (uid, address, port). A change in any
-            # field for the same UID — typically the address after a DHCP
-            # renewal or interface switch — must propagate to the persisted
+            # field for the same UID - typically the address after a DHCP
+            # renewal or interface switch - must propagate to the persisted
             # server config so reconnections target the fresh IP.
             current_snapshot: set[tuple[Optional[str], str, Optional[int]]] = {
                 (svc.uid, svc.address, svc.port) for svc in self._found_services
@@ -887,7 +887,7 @@ class Client:
                     break
 
             # Surface the list to the GUI when any (uid, address, port) tuple
-            # changed — not just on UID set delta, so an IP change for the
+            # changed - not just on UID set delta, so an IP change for the
             # same UID still propagates to the UI.
             if current_snapshot != self._last_discovery_snapshot:
                 self._last_discovery_snapshot = current_snapshot
@@ -1625,7 +1625,7 @@ class Client:
         try:
             # The cert mapping may carry multiple aliases for the same file
             # (UID, resolved IP, hostname). Pass every identifier we know
-            # so ``remove_ca_data`` wipes file + every alias in one pass —
+            # so ``remove_ca_data`` wipes file + every alias in one pass -
             # if we only matched the UID, an orphan IP/hostname alias would
             # keep pointing at a deleted file and confuse later lookups.
             removed = self._cert_manager.remove_ca_data(
@@ -1648,7 +1648,7 @@ class Client:
         # Force-reset the pairing futures unconditionally: in a successful
         # previous run ``_otp_needed`` ends with result False (done state),
         # but a fresh ``set_result(True)`` on a done future raises
-        # InvalidStateError. Replacing them outright is safe — anyone still
+        # InvalidStateError. Replacing them outright is safe - anyone still
         # awaiting them would have been cancelled already by the
         # disconnection that just preceded this callback.
         async with self._state_lock:

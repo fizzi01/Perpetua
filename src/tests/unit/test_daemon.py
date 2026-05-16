@@ -173,7 +173,7 @@ class TestDaemonLifecycleUnix:
     ):
         """Even if the explicit chmod is somehow skipped, the
         umask wrap around ``start_unix_server`` keeps group/other locked out
-        from creation — eliminating the TOCTOU window between bind and chmod.
+        from creation - eliminating the TOCTOU window between bind and chmod.
         """
         import stat
         from unittest.mock import patch
@@ -264,7 +264,7 @@ class TestDaemonLifecycleUnix:
         self, app_config, daemon_unix_socket_path, monkeypatch
     ):
         """Default (env var unset) leaves os._exit untouched even when the
-        watchdog detects stranded work — the noisy log alone is the alert."""
+        watchdog detects stranded work - the noisy log alone is the alert."""
         from unittest.mock import patch
 
         real_delayed_exit = _get_real_delayed_exit()

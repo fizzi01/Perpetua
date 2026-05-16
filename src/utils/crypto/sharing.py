@@ -336,14 +336,14 @@ class CertificateSharing:
 
         Protocol (plaintext, line-oriented, terminated by empty line):
 
-        - ``REQUEST_PAIRING\\n[HOSTNAME:<name>\\n]\\n`` — ask the server to
+        - ``REQUEST_PAIRING\\n[HOSTNAME:<name>\\n]\\n`` - ask the server to
           generate (or refresh) an OTP and surface it to the local admin via
           ``pairing_request_callback``. The server replies with
           ``OK:<remaining_seconds>\\n``. The OTP itself is never sent over the
-          wire — it must reach the client out-of-band (e.g. read off the
+          wire - it must reach the client out-of-band (e.g. read off the
           server's GUI by a human).
 
-        - ``GET_CERTIFICATE\\n\\n`` — request the encrypted CA bundle. Replies
+        - ``GET_CERTIFICATE\\n\\n`` - request the encrypted CA bundle. Replies
           with ``TOKEN:<jwt>\\n`` or ``ERROR:<code>\\n``.
 
         Legacy clients that immediately read without sending a request are
@@ -749,7 +749,7 @@ class CertificateReceiver:
 
         The server will auto-generate an OTP and surface it to its local admin
         (e.g. on the server's GUI). The OTP itself is **not** returned over the
-        wire — it must be communicated out-of-band to the human running this
+        wire - it must be communicated out-of-band to the human running this
         client.
 
         Args:

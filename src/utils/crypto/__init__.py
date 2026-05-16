@@ -322,7 +322,7 @@ class CertificateManager:
                     files_to_remove.add(cert_filename)
                     ids_removed.append(sid)
 
-            # Also drop any alias pointing at one of those files — handles
+            # Also drop any alias pointing at one of those files - handles
             # the resolved-IP alias added by extend_mapping.
             if files_to_remove:
                 for key, filename in list(mapping.items()):

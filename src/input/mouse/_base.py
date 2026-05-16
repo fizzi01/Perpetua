@@ -173,7 +173,7 @@ class ServerMouseListener(object):
         self._logger.debug("Started.")
         return True
 
-    LISTENER_JOIN_TIMEOUT = 2.0  # sec — cap how long stop() will wait
+    LISTENER_JOIN_TIMEOUT = 2.0  # sec - cap how long stop() will wait
 
     def stop(self) -> bool:
         """
@@ -190,7 +190,7 @@ class ServerMouseListener(object):
             if self._listener.is_alive():
                 self._logger.warning(
                     "Mouse listener thread still alive after "
-                    f"{self.LISTENER_JOIN_TIMEOUT}s — proceeding without join"
+                    f"{self.LISTENER_JOIN_TIMEOUT}s - proceeding without join"
                 )
         self._logger.debug("Stopped.")
         return True
@@ -277,7 +277,7 @@ class ServerMouseListener(object):
         if not self._screen_size_valid():
             return True
         # Snapshot the cross-screen guard atomically under the shared state
-        # lock — `_handling_cross_screen` is mutated by `_handle_cross_screen`
+        # lock - `_handling_cross_screen` is mutated by `_handle_cross_screen`
         # on the event loop, and concurrent moves must observe a consistent
         # value to avoid two simultaneous cross-screen handlers.
         with self._server_state_lock:
@@ -400,7 +400,7 @@ class ServerMouseListener(object):
         """Async handler for cross-screen events"""
         # Mark the cross-screen handler as in-flight under the shared state
         # lock so concurrent `on_move` calls observe it. The flag is reset
-        # in the finally block — also under the lock.
+        # in the finally block - also under the lock.
         with self._server_state_lock:
             self._handling_cross_screen = True
         try:
