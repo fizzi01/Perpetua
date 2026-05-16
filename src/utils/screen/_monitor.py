@@ -16,7 +16,7 @@
 #
 """Multi-monitor data model.
 
-instead of treating the virtual desktop as a single bbox, 
+instead of treating the virtual desktop as a single bbox,
 each connected display is represented by a
 :class:`MonitorInfo` carrying enough metadata to:
 
@@ -114,7 +114,9 @@ class MonitorLayout:
                     min_y=int(min_y),
                     max_x=int(max_x),
                     max_y=int(max_y),
-                    is_primary=(idx == 0 if primary_index is None else idx == primary_index),
+                    is_primary=(
+                        idx == 0 if primary_index is None else idx == primary_index
+                    ),
                 )
             )
         return cls(monitors=tuple(monitors))
