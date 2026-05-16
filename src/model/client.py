@@ -85,6 +85,7 @@ class ClientObj:
         ssl: bool = False,
         conn_socket: Optional[ClientConnection] = None,
         additional_params: Optional[dict] = None,
+        monitors: Optional[list[dict]] = None,
     ):
         self.uid = uid
 
@@ -115,6 +116,14 @@ class ClientObj:
             raise ValueError(f"Invalid screen position: {screen_position}")
 
         self.screen_resolution = screen_resolution
+        # Serialized per-monitor info sent by the client during handshake
+        # (list of MonitorInfo.to_dict()-style dicts). Empty list means
+        # the client did not advertise any monitor list (legacy / pre-
+        # multi-monitor build): callers fall back to ``screen_resolution``.
+        # Kept as plain dicts here so the field survives JSON / msgpack
+        # round-trips without importing ``utils.screen`` in the model
+        # layer; consumers build :class:`MonitorInfo` on demand.
+        self.monitors: list[dict] = list(monitors) if monitors else []
         self.ssl = ssl
         self.conn_socket = conn_socket
         self.is_connected = is_connected
@@ -283,6 +292,7 @@ class ClientObj:
             screen_resolution=data.get("screen_resolution", "1x1"),
             ssl=data.get("ssl", False),
             additional_params=data.get("additional_params", {}),
+            monitors=data.get("monitors", []),
         )
 
     def __dict__(self) -> dict:
@@ -297,6 +307,7 @@ class ClientObj:
             "ssl": self.ssl,
             "is_connected": self.is_connected,
             "additional_params": self.additional_params,
+            "monitors": list(self.monitors),
         }
 
     def __repr__(self):

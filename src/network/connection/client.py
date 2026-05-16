@@ -464,6 +464,36 @@ class ConnectionHandler(BaseConnectionHandler):
             if self._client_obj is None:
                 raise Exception("Client object is None during handshake")
 
+            # Advertise the full per-monitor layout so the server can
+            # build edge-routing slots (uture GUI). Built
+            # lazily here because Screen probes are platform syscalls;
+            # if anything fails we still send the legacy
+            # screen_resolution and let the server fall back to the
+            # single-monitor assumption.
+            monitors_payload: list[dict] = []
+            try:
+                from utils.screen import Screen
+
+                monitors_payload = [
+                    {
+                        "monitor_id": m.monitor_id,
+                        "min_x": m.min_x,
+                        "min_y": m.min_y,
+                        "max_x": m.max_x,
+                        "max_y": m.max_y,
+                        "is_primary": m.is_primary,
+                        "name": m.name,
+                        "scaling_factor": m.scaling_factor,
+                    }
+                    for m in Screen.get_monitors()
+                ]
+            except Exception as e:
+                self._logger.log(
+                    f"Failed to probe monitor list for handshake ({e}); "
+                    "server will fall back to single-monitor mode",
+                    Logger.DEBUG,
+                )
+
             # Send handshake response
             await self._msg_exchange.send_handshake_message(
                 ack=True,
@@ -474,6 +504,7 @@ class ConnectionHandler(BaseConnectionHandler):
                 screen_position=self._client_obj.screen_position,
                 screen_resolution=self._client_obj.screen_resolution,
                 ssl=self.use_ssl,
+                monitors=monitors_payload,
             )
 
             self._logger.debug(

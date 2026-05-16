@@ -54,8 +54,7 @@ def _patch_screen_geometry(w: int, h: int):
     """Patch every Screen accessor used by the mouse code so the listener /
     controller sees a single (w, h) display at origin (0, 0).
 
-    Tests historically patched only ``Screen.get_size``; after the Phase 2
-    multi-monitor refactor the mouse code also reads
+    Tests historically patched only ``Screen.get_size``;
     ``Screen.get_monitor_layout`` and ``Screen.get_virtual_bbox``, so they
     need to be patched together to keep the test geometry consistent.
     """

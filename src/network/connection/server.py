@@ -618,6 +618,18 @@ class ConnectionHandler(BaseConnectionHandler):
                 )
                 client.additional_params = response.payload.get("additional_params", {})
                 client.ssl = response.payload.get("ssl", False)
+                # Multi-monitor payload: list of MonitorInfo-like dicts. The
+                # server stores them verbatim on the ClientObj so future GUI
+                # work (per-monitor edge slots, allow/deny with layout
+                # preview) has the data it needs without another round
+                # trip. Legacy clients omit the field; we fall back to the
+                # empty list, which the rest of the pipeline interprets as
+                # "single monitor with size = screen_resolution".
+                raw_monitors = response.payload.get("monitors", [])
+                if isinstance(raw_monitors, list):
+                    client.monitors = [m for m in raw_monitors if isinstance(m, dict)]
+                else:
+                    client.monitors = []
                 requested_streams = response.payload.get("streams", [])
 
                 self._logger.log(
