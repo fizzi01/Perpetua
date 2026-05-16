@@ -232,12 +232,24 @@ class ServerKeyboardListener(object):
                 pass
         return key
 
+    LISTENER_JOIN_TIMEOUT = 2.0  # sec
+
     def stop(self) -> bool:
         """
-        Stops the keyboard listener.
+        Stops the keyboard listener. ``pynput.Listener.stop`` returns
+        immediately; we explicitly join the OS-level listener thread.
         """
         if self._listener and self.is_alive():
             self._listener.stop()
+            try:
+                self._listener.join(timeout=self.LISTENER_JOIN_TIMEOUT)
+            except RuntimeError:
+                pass
+            if self._listener.is_alive():
+                self._logger.warning(
+                    "Keyboard listener thread still alive after "
+                    f"{self.LISTENER_JOIN_TIMEOUT}s — proceeding without join"
+                )
 
         self._logger.debug("Stopped.")
         return True
