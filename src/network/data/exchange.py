@@ -388,24 +388,45 @@ class MessageExchange:
         """
         Core loop for receiving and processing incoming messages.
         Handles chunk reassembly and dispatching to registered handlers.
+
+        Network-level disconnect exceptions are swallowed at the loop
+        boundary so the task does not surface "Task exception was never
+        retrieved" — the connection layer is responsible for handling
+        teardown; this loop just stops cleanly.
         """
         buffers: Dict[str, bytearray] = {}
         prefix_len = ProtocolMessage.prefix_lenght
         max_msg_size = self.config.max_chunk_size * 100
 
-        while self._running:
-            await asyncio.sleep(0)
-            callbacks_snapshot = list(self._receive_callbacks.items())
-            for tr_id, receive_callback in callbacks_snapshot:
-                if tr_id not in buffers:
-                    buffers[tr_id] = bytearray()
-                await self._receive_logic(
-                    receive_callback,
-                    buffers[tr_id],
-                    prefix_len,
-                    max_msg_size,
-                )
+        try:
+            while self._running:
                 await asyncio.sleep(0)
+                callbacks_snapshot = list(self._receive_callbacks.items())
+                for tr_id, receive_callback in callbacks_snapshot:
+                    if tr_id not in buffers:
+                        buffers[tr_id] = bytearray()
+                    await self._receive_logic(
+                        receive_callback,
+                        buffers[tr_id],
+                        prefix_len,
+                        max_msg_size,
+                    )
+                    await asyncio.sleep(0)
+        except asyncio.CancelledError:
+            raise
+        except (
+            ConnectionResetError,
+            ConnectionAbortedError,
+            BrokenPipeError,
+            ConnectionError,
+            OSError,
+        ) as e:
+            self._logger.log(
+                f"Receive loop {self._id} ended on disconnect "
+                f"(exc_type={type(e).__name__}, exc={e!r})",
+                Logger.DEBUG,
+            )
+            self._running = False
 
     async def set_transport(
         self,
