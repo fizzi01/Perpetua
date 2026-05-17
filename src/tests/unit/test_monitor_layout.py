@@ -425,14 +425,16 @@ class TestLayoutReconciliation:
 
 
 class TestComputeEdgeBindings:
-    """The runtime contract derived from a client's placements +
-    server's monitor list.
+    """The unified runtime contract derived from a client's placements
+    + server's monitor list.
 
     Each placement that abuts a server monitor on at least one side
     yields one :class:`EdgeBinding` per touched edge. The
-    ``axis_start`` / ``axis_end`` range is normalized over the SERVER
-    monitor's secondary axis so the mouse listener can match against
-    the cursor position directly.
+    ``server_axis_*`` range is normalised over the server monitor's
+    edge length (used by the server listener for forward routing);
+    ``client_axis_*`` is the mirror over the client monitor's edge
+    length (used by the client controller for return-to-server
+    crossings). A single binding therefore drives both directions.
     """
 
     @staticmethod
@@ -447,7 +449,7 @@ class TestComputeEdgeBindings:
 
     def test_full_right_abutment_produces_full_segment(self):
         # Server monitor at origin 1920x1080; client monitor flush to
-        # the right, same height -> full [0, 1] segment on RIGHT edge.
+        # the right, same height -> full [0, 1] segment on both sides.
         server = _mon(0, 0, 0, 1920, 1080, primary=True)
         placement = self._placement(0, 1920, 0, 1280, 1080)
         out = compute_edge_bindings(placement, [server])
@@ -456,26 +458,37 @@ class TestComputeEdgeBindings:
         assert isinstance(b, EdgeBinding)
         assert b.server_monitor_id == 0
         assert b.server_edge == Edge.RIGHT
-        assert b.axis_start == 0.0
-        assert b.axis_end == 1.0
+        assert b.server_axis_start == 0.0
+        assert b.server_axis_end == 1.0
         assert b.client_monitor_id == 0
+        assert b.client_edge == Edge.LEFT
+        assert b.client_axis_start == 0.0
+        assert b.client_axis_end == 1.0
+        # Server monitor bounds embedded for client-side absolute
+        # positioning.
+        assert (b.server_monitor_min_x, b.server_monitor_min_y) == (0, 0)
+        assert (b.server_monitor_max_x, b.server_monitor_max_y) == (1920, 1080)
 
     def test_partial_right_abutment_produces_partial_segment(self):
         # Client monitor smaller than server, vertically centered:
         # Y range [200, 920) of server's 1080 -> normalized
-        # ~[0.185, 0.852).
+        # ~[0.185, 0.852); the same overlap on the client (height 720)
+        # covers the whole client edge (0..720 / 720).
         server = _mon(0, 0, 0, 1920, 1080)
         placement = self._placement(0, 1920, 200, 1280, 720)
         out = compute_edge_bindings(placement, [server])
         assert len(out) == 1
         b = out[0]
         assert b.server_edge == Edge.RIGHT
-        assert b.axis_start == pytest.approx(200 / 1080)
-        assert b.axis_end == pytest.approx(920 / 1080)
+        assert b.client_edge == Edge.LEFT
+        assert b.server_axis_start == pytest.approx(200 / 1080)
+        assert b.server_axis_end == pytest.approx(920 / 1080)
+        assert b.client_axis_start == pytest.approx(0.0)
+        assert b.client_axis_end == pytest.approx(1.0)
 
     def test_top_abutment_uses_x_axis(self):
         # Client monitor sitting on top of the server: TOP edge,
-        # axis_start/end normalized over the server's WIDTH.
+        # axis range normalized over the server's WIDTH.
         server = _mon(0, 0, 0, 1920, 1080)
         # Client 1280x720 placed flush above the server at x=320.
         placement = self._placement(0, 320, -720, 1280, 720)
@@ -483,8 +496,11 @@ class TestComputeEdgeBindings:
         assert len(out) == 1
         b = out[0]
         assert b.server_edge == Edge.TOP
-        assert b.axis_start == pytest.approx(320 / 1920)
-        assert b.axis_end == pytest.approx((320 + 1280) / 1920)
+        assert b.client_edge == Edge.BOTTOM
+        assert b.server_axis_start == pytest.approx(320 / 1920)
+        assert b.server_axis_end == pytest.approx((320 + 1280) / 1920)
+        assert b.client_axis_start == pytest.approx(0.0)
+        assert b.client_axis_end == pytest.approx(1.0)
 
     def test_no_binding_when_separated_by_gap(self):
         # 100 px gap on the right -> no abutment.
@@ -520,35 +536,46 @@ class TestComputeEdgeBindings:
         placement = self._placement(0, 1920, 0, 0, 0)
         assert compute_edge_bindings(placement, [server]) == []
 
-    def test_edge_binding_contains_secondary_half_open(self):
-        b = EdgeBinding(
-            server_monitor_id=0,
-            server_edge=Edge.RIGHT,
-            axis_start=0.0,
-            axis_end=0.5,
-            client_monitor_id=0,
-        )
-        assert b.contains_secondary(0.0) is True
-        assert b.contains_secondary(0.49) is True
-        # Upper bound exclusive so split boundaries route deterministically.
-        assert b.contains_secondary(0.5) is False
+    def test_edge_binding_contains_server_axis_half_open(self):
+        # Half-open server_axis range so split boundaries route
+        # deterministically.
+        b = compute_edge_bindings(
+            self._placement(0, 1920, 0, 1280, 540),
+            [_mon(0, 0, 0, 1920, 1080)],
+        )[0]
+        assert b.contains_server_axis(b.server_axis_start) is True
+        assert b.contains_server_axis(b.server_axis_end) is False
+
+    def test_edge_binding_axis_mapping_inverts(self):
+        # The forward/reverse axis maps are exact inverses by
+        # construction — round-trip a few sample points.
+        b = compute_edge_bindings(
+            self._placement(0, 1920, 200, 1280, 720),
+            [_mon(0, 0, 0, 1920, 1080)],
+        )[0]
+        for s in (b.server_axis_start, 0.5 * (b.server_axis_start + b.server_axis_end)):
+            mapped = b.map_server_to_client_axis(s)
+            assert b.map_client_to_server_axis(mapped) == pytest.approx(s)
 
     def test_edge_binding_roundtrip_dict(self):
-        b = EdgeBinding(
-            server_monitor_id=3,
-            server_edge=Edge.TOP,
-            axis_start=0.25,
-            axis_end=0.75,
-            client_monitor_id=1,
-        )
+        b = compute_edge_bindings(
+            self._placement(1, 1920, 0, 1280, 1080),
+            [_mon(3, 0, 0, 1920, 1080)],
+        )[0]
         d = b.to_dict()
-        assert d == {
-            "server_monitor_id": 3,
-            "server_edge": "top",
-            "axis_start": 0.25,
-            "axis_end": 0.75,
-            "client_monitor_id": 1,
-        }
+        # Keys present on both sides — the client reads ``client_*``,
+        # the server reads ``server_*``, both off the same dict.
+        for k in (
+            "server_monitor_id", "server_edge",
+            "server_axis_start", "server_axis_end",
+            "server_monitor_min_x", "server_monitor_min_y",
+            "server_monitor_max_x", "server_monitor_max_y",
+            "client_monitor_id", "client_edge",
+            "client_axis_start", "client_axis_end",
+        ):
+            assert k in d
+        assert d["server_edge"] == "right"
+        assert d["client_edge"] == "left"
 
 
 class TestClientObjPlacements:
@@ -598,6 +625,94 @@ class TestClientObjPlacements:
         assert bindings[0].client_monitor_id == 0
 
     def test_get_edge_bindings_empty_when_no_placements(self):
+        # Default screen_position is CENTER → no synthetic placement,
+        # no bindings. Pre-layout clients with a legacy direction get a
+        # synthetic placement instead (see the tests below).
         c = self._make_client([])
         server_monitors = [_mon(0, 0, 0, 1920, 1080)]
         assert c.get_edge_bindings(server_monitors) == []
+
+
+class TestEffectivePlacementSynthesis:
+    """Pre-layout clients should still cross-screen via the unified
+    bindings: ``get_effective_placements`` synthesizes a 1:1 placement
+    next to the server's primary monitor on the side indicated by the
+    legacy ``screen_position``. This replaces the old parallel
+    ScreenPosition routing path on the mouse listener.
+    """
+
+    def _make_client(self, screen_position, monitors=None):
+        from model.client import ClientObj
+        return ClientObj(
+            uid="client-X",
+            ip_addresses=["10.0.0.2"],
+            hostname="client-x.local",
+            screen_position=screen_position,
+            monitors=monitors or [],
+        )
+
+    def test_center_returns_empty(self):
+        c = self._make_client("center")
+        assert c.get_effective_placements([_mon(0, 0, 0, 1920, 1080)]) == []
+
+    def test_right_synthesizes_flush_right_placement(self):
+        server = _mon(0, 0, 0, 1920, 1080, primary=True)
+        c = self._make_client("right")
+        ps = c.get_effective_placements([server])
+        assert len(ps) == 1
+        # Flush against the server's right edge at the same Y origin.
+        assert ps[0]["workspace_x"] == 1920
+        assert ps[0]["workspace_y"] == 0
+        # The resulting binding covers the server's RIGHT edge fully.
+        bindings = c.get_edge_bindings([server])
+        assert len(bindings) == 1
+        assert bindings[0].server_edge == Edge.RIGHT
+        assert bindings[0].server_axis_start == 0.0
+        assert bindings[0].server_axis_end == 1.0
+
+    def test_left_synthesizes_above_server_origin(self):
+        server = _mon(0, 0, 0, 1920, 1080, primary=True)
+        c = self._make_client("left")
+        ps = c.get_effective_placements([server])
+        assert ps[0]["workspace_x"] == -ps[0]["width"]
+        assert ps[0]["workspace_y"] == 0
+
+    def test_top_synthesizes_above_server(self):
+        server = _mon(0, 0, 0, 1920, 1080, primary=True)
+        c = self._make_client("top")
+        ps = c.get_effective_placements([server])
+        assert ps[0]["workspace_x"] == 0
+        assert ps[0]["workspace_y"] == -ps[0]["height"]
+
+    def test_bottom_synthesizes_below_server(self):
+        server = _mon(0, 0, 0, 1920, 1080, primary=True)
+        c = self._make_client("bottom")
+        ps = c.get_effective_placements([server])
+        assert ps[0]["workspace_x"] == 0
+        assert ps[0]["workspace_y"] == 1080
+
+    def test_synthesis_uses_client_primary_monitor_dims(self):
+        # When the client advertises monitor info we mirror its
+        # primary's dimensions so denormalisation stays accurate.
+        server = _mon(0, 0, 0, 1920, 1080, primary=True)
+        client_mon = _mon(7, 0, 0, 1280, 720, primary=True)
+        c = self._make_client("right", monitors=[client_mon])
+        ps = c.get_effective_placements([server])
+        assert ps[0]["client_monitor_id"] == 7
+        assert ps[0]["width"] == 1280
+        assert ps[0]["height"] == 720
+
+    def test_real_placements_take_precedence_over_screen_position(self):
+        # If both placements AND screen_position are set, placements win:
+        # the editor's explicit layout is the source of truth.
+        server = _mon(0, 0, 0, 1920, 1080, primary=True)
+        c = self._make_client("right")
+        c.placements = [{
+            "client_monitor_id": 0,
+            "workspace_x": 0,
+            "workspace_y": -720,
+            "width": 1280,
+            "height": 720,
+        }]
+        ps = c.get_effective_placements([server])
+        assert ps == c.placements

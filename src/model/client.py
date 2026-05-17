@@ -284,39 +284,86 @@ class ClientObj:
         """
         return self.host_name if self.host_name is not None else self.ip_address
 
+    def get_effective_placements(self, server_monitors) -> list[dict]:
+        """Return the placements that should drive cross-screen routing.
+
+        If the client has been positioned on the workspace via the
+        layout editor, return ``self.placements`` verbatim. Otherwise
+        synthesize a single 1:1 placement next to the server's primary
+        monitor on the side indicated by the legacy ``screen_position``
+        — that way pre-layout clients keep working through the unified
+        spatial routing instead of a parallel ``ScreenPosition`` code
+        path. Returns an empty list only when the legacy position is
+        ``CENTER`` / unset or the server has no monitors to anchor to.
+        """
+        if self.placements:
+            return list(self.placements)
+
+        if not server_monitors:
+            return []
+        primary = next(
+            (m for m in server_monitors if getattr(m, "is_primary", False)),
+            server_monitors[0],
+        )
+        pw = primary.max_x - primary.min_x
+        ph = primary.max_y - primary.min_y
+        if pw <= 0 or ph <= 0:
+            return []
+        # Use the client's primary monitor dims when known so the
+        # synthetic placement keeps the right aspect ratio for the
+        # client-side denormalisation. Fall back to the server primary's
+        # size for legacy clients that haven't advertised a monitor list.
+        cw, ch = pw, ph
+        cm_id = 0
+        if self.monitors:
+            cm = next(
+                (m for m in self.monitors if getattr(m, "is_primary", False)),
+                self.monitors[0],
+            )
+            cw = max(1, cm.max_x - cm.min_x)
+            ch = max(1, cm.max_y - cm.min_y)
+            cm_id = cm.monitor_id
+
+        pos = (self.screen_position or "").lower()
+        if pos == ScreenPosition.LEFT:
+            wx, wy = primary.min_x - cw, primary.min_y
+        elif pos == ScreenPosition.RIGHT:
+            wx, wy = primary.max_x, primary.min_y
+        elif pos == ScreenPosition.TOP:
+            wx, wy = primary.min_x, primary.min_y - ch
+        elif pos == ScreenPosition.BOTTOM:
+            wx, wy = primary.min_x, primary.max_y
+        else:
+            return []
+        return [{
+            "client_monitor_id": cm_id,
+            "workspace_x": wx,
+            "workspace_y": wy,
+            "width": cw,
+            "height": ch,
+        }]
+
     def get_edge_bindings(self, server_monitors) -> list:
         """Derive the per-placement :class:`EdgeBinding` list from this
-        client's ``placements`` and the given ``server_monitors`` list.
+        client's effective placements (real or synthesized from
+        ``screen_position``) and the given ``server_monitors`` list.
 
-        Empty when the client hasn't been positioned on the workspace
-        yet (e.g. just-added clients before the admin runs the layout
-        editor) or when the OS backend couldn't enumerate displays.
+        The unified bindings drive routing in BOTH directions: the
+        server side reads ``server_*`` fields, the client side reads
+        ``client_*`` fields. Empty only when both placements and the
+        legacy position are unset.
 
         Local import to avoid pulling ``utils.screen`` into the model
         layer at module load.
         """
-        if not self.placements:
+        placements = self.get_effective_placements(server_monitors)
+        if not placements:
             return []
         from utils.screen import compute_edge_bindings
 
         out: list = []
-        for p in self.placements:
+        for p in placements:
             out.extend(compute_edge_bindings(p, server_monitors))
-        return out
-
-    def get_reverse_edge_bindings(self, server_monitors) -> list:
-        """Derive the :class:`ReverseEdgeBinding` list — the dual of
-        :meth:`get_edge_bindings`, but pivoted so the client can resolve
-        a return-to-server crossing from a cursor position on one of
-        its own monitors. Pushed to the client via the topology command.
-        """
-        if not self.placements:
-            return []
-        from utils.screen import compute_reverse_edge_bindings
-
-        out: list = []
-        for p in self.placements:
-            out.extend(compute_reverse_edge_bindings(p, server_monitors))
         return out
 
     def to_dict(self) -> dict:

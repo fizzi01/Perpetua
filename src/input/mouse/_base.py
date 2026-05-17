@@ -35,7 +35,6 @@ from event import (
     ClientLayoutUpdatedEvent,
 )
 from event.bus import EventBus
-from model.client import ScreenPosition
 
 from network.stream import StreamType
 from network.stream.handler import StreamHandler
@@ -88,12 +87,6 @@ class ServerMouseListener(object):
         # the legacy ``_active_screens`` lookup so multi-monitor
         # placements drive routing.
         self._edge_bindings_by_client: dict[str, list[dict]] = {}
-        # Mirror of ``_edge_bindings_by_client``: the same abutments
-        # serialised from the CLIENT's perspective. Pushed to each
-        # client via ``ClientTopologyCommandEvent`` so the client can
-        # resolve its own return-to-server crossings spatially instead
-        # of through the legacy ScreenPosition lookup.
-        self._reverse_bindings_by_client: dict[str, list[dict]] = {}
         # Primary monitor size kept for backward compatibility / scroll
         # events. Edge detection uses the full MonitorLayout so the
         # outer edges of EACH monitor count (asymmetric multi-monitor
@@ -251,14 +244,11 @@ class ServerMouseListener(object):
             # Cache the spatial routing table for this client. Each
             # entry is a serialized EdgeBinding dict — we keep them as
             # dicts on the hot path to avoid an extra import on the
-            # pynput thread.
+            # pynput thread. The same dicts are pushed verbatim to the
+            # client (via ``ClientTopologyCommandEvent``) so the client
+            # can resolve return-to-server crossings spatially.
             self._edge_bindings_by_client[client_screen] = list(
                 getattr(data, "edge_bindings", []) or []
-            )
-            # Cache the dual (client-side) view so we can push it to
-            # the client right before the next cross-screen activation.
-            self._reverse_bindings_by_client[client_screen] = list(
-                getattr(data, "reverse_bindings", []) or []
             )
 
         await asyncio.sleep(0)
@@ -278,7 +268,6 @@ class ServerMouseListener(object):
         # stale bindings never accidentally route a crossing into a
         # client that's no longer reachable.
         self._edge_bindings_by_client.pop(client, None)
-        self._reverse_bindings_by_client.pop(client, None)
 
         # if active screens is empty, we stop listening
         if len(self._active_screens.items()) == 0:
@@ -297,9 +286,6 @@ class ServerMouseListener(object):
         if data.client_screen in self._active_screens:
             self._edge_bindings_by_client[data.client_screen] = list(
                 data.edge_bindings or []
-            )
-            self._reverse_bindings_by_client[data.client_screen] = list(
-                getattr(data, "reverse_bindings", []) or []
             )
         await asyncio.sleep(0)
 
@@ -338,20 +324,14 @@ class ServerMouseListener(object):
         min_x, min_y, max_x, max_y = self._screen_bbox
         return min_x, min_y, max_x, max_y, max(1, max_x - min_x), max(1, max_y - min_y)
 
-    # Lookup tables for the ScreenEdge <-> Edge-string mapping used by
-    # ``_resolve_cross_screen_target``. Done at class scope so the hot
-    # path doesn't allocate a fresh dict per crossing.
+    # Class-level lookup for the ScreenEdge → Edge.value string used by
+    # the spatial resolver. Defined at class scope so the hot path
+    # doesn't allocate a fresh dict per crossing.
     _EDGE_TO_STRING: dict = {
         ScreenEdge.LEFT: "left",
         ScreenEdge.RIGHT: "right",
         ScreenEdge.TOP: "top",
         ScreenEdge.BOTTOM: "bottom",
-    }
-    _EDGE_TO_LEGACY_POSITION: dict = {
-        ScreenEdge.LEFT: ScreenPosition.LEFT,
-        ScreenEdge.RIGHT: ScreenPosition.RIGHT,
-        ScreenEdge.TOP: ScreenPosition.TOP,
-        ScreenEdge.BOTTOM: ScreenPosition.BOTTOM,
     }
 
     def _resolve_cross_screen_target(
@@ -359,80 +339,63 @@ class ServerMouseListener(object):
         edge: ScreenEdge,
         cursor_x: float,
         cursor_y: float,
-        bbox_x_norm: float,
-        bbox_y_norm: float,
-    ) -> Optional[tuple[str, Optional[int]]]:
-        """Pick the target ``(client_screen, client_monitor_id)`` for an
-        edge crossing.
+    ) -> Optional[tuple[str, dict, float]]:
+        """Match the current edge crossing against a cached
+        :class:`EdgeBinding` and return ``(client_screen, binding_dict,
+        server_axis_norm)`` for the caller to use when computing the
+        exit ``(x, y)``.
 
-        Priority:
+        The server monitor under the cursor is hit-tested first; if
+        the cursor sits in a dead zone (e.g. L-shape gap) we snap to
+        the nearest monitor so a crossing at the very corner of the
+        union bbox still resolves cleanly. ``server_axis_norm`` is
+        normalised over THAT monitor's edge length.
 
-        1. **Spatial routing** via ``_edge_bindings_by_client``: locate
-           the server monitor currently under the cursor, project the
-           cursor onto that monitor's secondary axis, and pick the
-           client whose :class:`EdgeBinding` owns the resulting
-           ``(server_monitor_id, edge, axis_norm)`` tuple. Returns the
-           matched binding's ``client_monitor_id`` so the receiving
-           client can land the cursor on the right physical screen.
-
-        2. **Legacy fallback**: if no binding matches, route via the
-           old ``_active_screens[ScreenPosition.X]`` lookup so clients
-           that haven't been positioned on the workspace yet keep
-           working with their ``screen_position`` enum. ``client_monitor_id``
-           is ``None`` in this path.
-
-        Returns ``None`` when neither path applies (no target).
+        Returns ``None`` when no binding matches — the caller should
+        treat that as "no adjacency here, stay on the server" rather
+        than fall through to a legacy direction lookup. Synthetic
+        placements (from :meth:`ClientObj.get_effective_placements`)
+        ensure pre-layout clients still have at least one binding,
+        which is why this path no longer needs a ScreenPosition
+        fallback.
         """
         edge_str = self._EDGE_TO_STRING.get(edge)
-        legacy_pos = self._EDGE_TO_LEGACY_POSITION.get(edge)
+        if not edge_str or not self._edge_bindings_by_client:
+            return None
 
-        if edge_str and self._edge_bindings_by_client:
-            # Find the server monitor whose edge was hit. We use the
-            # MonitorLayout's hit-test; if the cursor is in a dead
-            # zone (L-shape gap), fall back to the closest monitor.
-            monitor = self._monitor_layout.find_monitor_at(cursor_x, cursor_y)
-            if monitor is None and self._monitor_layout.monitors:
-                # Cursor at the outer bbox edge but not strictly inside
-                # any monitor; snap to the closest one.
-                best = None
-                best_dist = None
-                for m in self._monitor_layout.monitors:
-                    cx = max(m.min_x, min(cursor_x, m.max_x - 1))
-                    cy = max(m.min_y, min(cursor_y, m.max_y - 1))
-                    dist = (cx - cursor_x) ** 2 + (cy - cursor_y) ** 2
-                    if best_dist is None or dist < best_dist:
-                        best = m
-                        best_dist = dist
-                monitor = best
+        monitor = self._monitor_layout.find_monitor_at(cursor_x, cursor_y)
+        if monitor is None and self._monitor_layout.monitors:
+            best = None
+            best_dist = None
+            for m in self._monitor_layout.monitors:
+                cx = max(m.min_x, min(cursor_x, m.max_x - 1))
+                cy = max(m.min_y, min(cursor_y, m.max_y - 1))
+                dist = (cx - cursor_x) ** 2 + (cy - cursor_y) ** 2
+                if best_dist is None or dist < best_dist:
+                    best = m
+                    best_dist = dist
+            monitor = best
+        if monitor is None:
+            return None
 
-            if monitor is not None:
-                m_w = max(1, monitor.max_x - monitor.min_x)
-                m_h = max(1, monitor.max_y - monitor.min_y)
-                if edge == ScreenEdge.LEFT or edge == ScreenEdge.RIGHT:
-                    axis_norm = (cursor_y - monitor.min_y) / m_h
-                else:
-                    axis_norm = (cursor_x - monitor.min_x) / m_w
-                axis_norm = max(0.0, min(1.0, axis_norm))
+        m_w = max(1, monitor.max_x - monitor.min_x)
+        m_h = max(1, monitor.max_y - monitor.min_y)
+        if edge == ScreenEdge.LEFT or edge == ScreenEdge.RIGHT:
+            axis_norm = (cursor_y - monitor.min_y) / m_h
+        else:
+            axis_norm = (cursor_x - monitor.min_x) / m_w
+        axis_norm = max(0.0, min(1.0, axis_norm))
 
-                for client_screen, bindings in self._edge_bindings_by_client.items():
-                    for b in bindings:
-                        if (
-                            b.get("server_monitor_id") == monitor.monitor_id
-                            and b.get("server_edge") == edge_str
-                            and b.get("axis_start", 0.0)
-                            <= axis_norm
-                            < b.get("axis_end", 0.0)
-                        ):
-                            cm = b.get("client_monitor_id")
-                            return client_screen, int(cm) if cm is not None else None
-
-        # Legacy fallback: virtual-desktop normalized coordinate is
-        # only used as a tie-breaker for logging; the actual decision
-        # is whether _any_ client is registered at that side.
-        _ = bbox_x_norm
-        _ = bbox_y_norm
-        if legacy_pos and self._active_screens.get(legacy_pos, False):
-            return legacy_pos, None
+        for client_screen, bindings in self._edge_bindings_by_client.items():
+            for b in bindings:
+                if b.get("server_monitor_id") != monitor.monitor_id:
+                    continue
+                if b.get("server_edge") != edge_str:
+                    continue
+                s_start = b.get("server_axis_start", 0.0)
+                s_end = b.get("server_axis_end", 0.0)
+                if s_start <= axis_norm < s_end:
+                    return client_screen, b, axis_norm
 
         return None
 
@@ -488,38 +451,60 @@ class ServerMouseListener(object):
                     return True
 
                 mouse_event = MouseEvent(x=x, y=y, action=MouseEvent.POSITION_ACTION)
-                min_x, min_y, _max_x, _max_y, width, height = self._bbox_span()
-                x_norm = (x - min_x) / width
-                y_norm = (y - min_y) / height
 
-                # Per-monitor routing using the placements coming from
-                # each ClientObj. The target (server_monitor_id, edge,
-                # axis_norm) is matched against the cached EdgeBindings;
-                # a hit overrides the legacy ScreenPosition fallback.
+                # Per-monitor routing: match the (server_monitor, edge,
+                # axis_norm) tuple against the cached EdgeBindings. The
+                # matched binding's ``client_axis_*`` fields tell us
+                # exactly where to land on the destination client
+                # monitor's edge — that's how the cursor honours an
+                # asymmetric layout where, e.g., the client monitor is
+                # vertically offset from the server's.
                 resolved = self._resolve_cross_screen_target(
-                    edge=edge,
-                    cursor_x=x,
-                    cursor_y=y,
-                    bbox_x_norm=x_norm,
-                    bbox_y_norm=y_norm,
+                    edge=edge, cursor_x=x, cursor_y=y,
                 )
                 if resolved is None:
                     return True
-                target_screen, target_monitor_id = resolved
+                target_screen, binding, server_axis_norm = resolved
+                target_monitor_id = binding.get("client_monitor_id")
+                if target_monitor_id is not None:
+                    target_monitor_id = int(target_monitor_id)
+
+                # Linear map from the server-edge axis_norm to the
+                # client-edge axis_norm. Centralised math in EdgeBinding,
+                # but inlined here to keep the pynput thread off the
+                # import path.
+                c_start = binding.get("client_axis_start", 0.0)
+                c_end = binding.get("client_axis_end", 0.0)
+                s_start = binding.get("server_axis_start", 0.0)
+                s_end = binding.get("server_axis_end", 0.0)
+                span = s_end - s_start
+                if span > 0:
+                    local = (server_axis_norm - s_start) / span
+                    if local < 0.0:
+                        local = 0.0
+                    elif local > 1.0:
+                        local = 1.0
+                    client_axis_norm = c_start + local * (c_end - c_start)
+                else:
+                    client_axis_norm = c_start
 
                 try:
                     self._cross_screen_event.set()
+                    # The client denormalizes against the matched client
+                    # monitor's bbox (see ``ClientMouseController._target_bbox``),
+                    # so the (x, y) we send here is in [0, 1] OVER THAT
+                    # MONITOR — never the full client virtual desktop.
                     if edge == ScreenEdge.LEFT:
                         mouse_event.x = 1
-                        mouse_event.y = y_norm
+                        mouse_event.y = client_axis_norm
                     elif edge == ScreenEdge.RIGHT:
                         mouse_event.x = 0
-                        mouse_event.y = y_norm
+                        mouse_event.y = client_axis_norm
                     elif edge == ScreenEdge.TOP:
-                        mouse_event.x = x_norm
+                        mouse_event.x = client_axis_norm
                         mouse_event.y = 1
                     elif edge == ScreenEdge.BOTTOM:
-                        mouse_event.x = x_norm
+                        mouse_event.x = client_axis_norm
                         mouse_event.y = 0
                     self._schedule_async(
                         self._handle_cross_screen(
@@ -604,12 +589,12 @@ class ServerMouseListener(object):
                 # The BidirectionalStreamHandler routes both this and
                 # the CrossScreenCommandEvent below to the same active
                 # client (set by the SCREEN_CHANGE_GUARD dispatch above).
-                reverse_bindings = self._reverse_bindings_by_client.get(screen) or []
-                if reverse_bindings:
+                bindings = self._edge_bindings_by_client.get(screen) or []
+                if bindings:
                     await self.command_stream.send(
                         ClientTopologyCommandEvent(
                             target=screen,
-                            reverse_bindings=reverse_bindings,
+                            edge_bindings=bindings,
                             server_bbox=self._screen_bbox,
                         )
                     )
@@ -802,12 +787,16 @@ class ClientMouseController(object):
         # CrossScreenCommandEvent. ``None`` falls back to the virtual
         # desktop bbox below (legacy / single-monitor client).
         self._active_monitor_id: Optional[int] = None
-        # Reverse topology pushed by the server (one entry per
-        # client-monitor edge that abuts a server monitor). Used by
-        # ``_check_edge`` to resolve return-to-server crossings
-        # spatially. Empty list = legacy ``EdgeDetector.get_crossing_coords``
-        # fallback driven by ``screen_position``.
-        self._reverse_bindings: list[dict] = []
+        # Unified topology pushed by the server: one entry per
+        # client-monitor edge that abuts a server monitor. Each entry
+        # carries both server-side and client-side axis ranges, so the
+        # same dict drives the server's forward routing (server-side
+        # cache) AND the client's return-to-server lookup here (read
+        # via the ``client_*`` fields). Empty = no return path; the
+        # client never crosses back to the server until the server
+        # pushes a topology (which it always does on first activation
+        # via ``ClientTopologyCommandEvent``).
+        self._edge_bindings: list[dict] = []
         # Server's virtual desktop bbox; the return-to-server (x, y)
         # is normalised over this so the server lands the cursor at
         # the right pixel.
@@ -1011,7 +1000,7 @@ class ClientMouseController(object):
         """
         if data is None:
             return
-        self._reverse_bindings = list(data.reverse_bindings or [])
+        self._edge_bindings = list(data.edge_bindings or [])
         if data.server_bbox:
             try:
                 self._server_bbox = (
@@ -1024,23 +1013,39 @@ class ClientMouseController(object):
                 self._server_bbox = None
         await asyncio.sleep(0)
 
+    # Class-level lookup for the ScreenEdge → Edge.value string. Defined
+    # at class scope so the worker hot path doesn't allocate per call.
+    _EDGE_TO_STRING_CLIENT: dict = {
+        ScreenEdge.LEFT: "left",
+        ScreenEdge.RIGHT: "right",
+        ScreenEdge.TOP: "top",
+        ScreenEdge.BOTTOM: "bottom",
+    }
+
     def _resolve_return_to_server(
         self,
         edge: ScreenEdge,
         x: float,
         y: float,
     ) -> Optional[tuple[float, float]]:
-        """Spatial lookup mirror of ``ServerMouseListener._resolve_cross_screen_target``.
+        """Dual of ``ServerMouseListener._resolve_cross_screen_target``.
 
-        Given a client-side edge crossing at ``(x, y)``, find the matching
-        :class:`ReverseEdgeBinding` and translate it to the server-bbox
-        normalised position the server's cursor must land on. Returns
-        ``None`` when no spatial topology applies (caller should fall
-        back to the legacy logic).
+        Given a client-side edge crossing at ``(x, y)``, find the
+        :class:`EdgeBinding` whose ``client_*`` fields cover it and
+        translate to the matching server-bbox-normalised position the
+        server's cursor must land on. Returns ``None`` when no binding
+        matches — caller stays on the client (no spurious crossing
+        into empty space).
         """
-        if not self._reverse_bindings or not self._monitor_layout.monitors:
+        if (
+            not self._edge_bindings
+            or not self._monitor_layout.monitors
+            or self._server_bbox is None
+        ):
             return None
-        if self._server_bbox is None:
+
+        edge_str = self._EDGE_TO_STRING_CLIENT.get(edge)
+        if edge_str is None:
             return None
 
         # Identify which of our monitors the cursor sits on (mirror of
@@ -1060,8 +1065,6 @@ class ClientMouseController(object):
         if monitor is None:
             return None
 
-        # Map the cursor's secondary coord to a [0, 1] axis_norm along
-        # the matched monitor edge.
         m_w = max(1, monitor.max_x - monitor.min_x)
         m_h = max(1, monitor.max_y - monitor.min_y)
         if edge == ScreenEdge.LEFT or edge == ScreenEdge.RIGHT:
@@ -1070,25 +1073,21 @@ class ClientMouseController(object):
             axis_norm = (x - monitor.min_x) / m_w
         axis_norm = max(0.0, min(1.0, axis_norm))
 
-        edge_str = self._EDGE_TO_STRING_CLIENT.get(edge)
-        if edge_str is None:
-            return None
-
-        for b in self._reverse_bindings:
+        for b in self._edge_bindings:
             if b.get("client_monitor_id") != monitor.monitor_id:
                 continue
             if b.get("client_edge") != edge_str:
                 continue
-            c_start = float(b.get("client_axis_start", 0.0))
-            c_end = float(b.get("client_axis_end", 0.0))
-            if c_end <= c_start or not (c_start <= axis_norm < c_end):
+            c_start = b.get("client_axis_start", 0.0)
+            c_end = b.get("client_axis_end", 0.0)
+            c_span = c_end - c_start
+            if c_span <= 0 or not (c_start <= axis_norm < c_end):
                 continue
 
-            # Linear map: position along client edge → position along
-            # the matching server-edge slot.
-            local_norm = (axis_norm - c_start) / (c_end - c_start)
-            s_start = float(b.get("server_axis_start", 0.0))
-            s_end = float(b.get("server_axis_end", 0.0))
+            # Map cursor position along client edge → server edge.
+            local_norm = (axis_norm - c_start) / c_span
+            s_start = b.get("server_axis_start", 0.0)
+            s_end = b.get("server_axis_end", 0.0)
             server_axis = s_start + local_norm * (s_end - s_start)
 
             s_min_x = int(b.get("server_monitor_min_x", 0))
@@ -1096,19 +1095,21 @@ class ClientMouseController(object):
             s_max_x = int(b.get("server_monitor_max_x", 0))
             s_max_y = int(b.get("server_monitor_max_y", 0))
             s_edge = b.get("server_edge")
+            s_w = max(1, s_max_x - s_min_x)
+            s_h = max(1, s_max_y - s_min_y)
             # Cursor must land just inside the destination edge so the
             # server's edge detector doesn't immediately re-trigger.
             if s_edge == "right":
                 target_x = s_max_x - 1
-                target_y = s_min_y + server_axis * max(1, s_max_y - s_min_y)
+                target_y = s_min_y + server_axis * s_h
             elif s_edge == "left":
                 target_x = s_min_x
-                target_y = s_min_y + server_axis * max(1, s_max_y - s_min_y)
+                target_y = s_min_y + server_axis * s_h
             elif s_edge == "bottom":
-                target_x = s_min_x + server_axis * max(1, s_max_x - s_min_x)
+                target_x = s_min_x + server_axis * s_w
                 target_y = s_max_y - 1
             elif s_edge == "top":
-                target_x = s_min_x + server_axis * max(1, s_max_x - s_min_x)
+                target_x = s_min_x + server_axis * s_w
                 target_y = s_min_y
             else:
                 continue
@@ -1118,21 +1119,17 @@ class ClientMouseController(object):
             bh = max(1, by1 - by0)
             x_norm = (target_x - bx0) / bw
             y_norm = (target_y - by0) / bh
-            return (
-                max(0.0, min(1.0, x_norm)),
-                max(0.0, min(1.0, y_norm)),
-            )
+            if x_norm < 0.0:
+                x_norm = 0.0
+            elif x_norm > 1.0:
+                x_norm = 1.0
+            if y_norm < 0.0:
+                y_norm = 0.0
+            elif y_norm > 1.0:
+                y_norm = 1.0
+            return x_norm, y_norm
 
         return None
-
-    # Mirror lookup table to avoid per-call dict allocation (used by
-    # ``_resolve_return_to_server`` on the worker hot path).
-    _EDGE_TO_STRING_CLIENT: dict = {
-        ScreenEdge.LEFT: "left",
-        ScreenEdge.RIGHT: "right",
-        ScreenEdge.TOP: "top",
-        ScreenEdge.BOTTOM: "bottom",
-    }
 
     async def _mouse_event_callback(self, message):
         """
@@ -1214,33 +1211,19 @@ class ClientMouseController(object):
                 if (
                     edge and not self._is_dragging
                 ):  # Don't trigger edge crossing if dragging
-                    # Spatial lookup first: if the server pushed a
-                    # topology, use it. The reverse bindings cover
-                    # exactly the abutments that exist between this
-                    # client's monitors and the server's monitors —
-                    # any other edge crossing is into empty space and
-                    # must NOT route back to the server.
+                    # Spatial lookup: the bindings cover every abutment
+                    # between this client's monitors and the server's
+                    # monitors. Any edge crossing that doesn't match a
+                    # binding is into empty workspace space and must
+                    # NOT route back to the server. The server always
+                    # pushes a topology on first activation (since
+                    # pre-layout clients use a synthesized placement),
+                    # so the "no topology" case is functionally just
+                    # "this client has no adjacency anywhere".
                     resolved = self._resolve_return_to_server(edge, x, y)
-                    if resolved is not None:
-                        target_x, target_y = resolved
-                    elif self._reverse_bindings:
-                        # Topology is present but no binding matched
-                        # this edge / cursor position — there's no
-                        # adjacency here, so stay on the client.
+                    if resolved is None:
                         return None
-                    else:
-                        # No topology pushed yet (legacy server, hotkey
-                        # path, or pairing without layout): fall back to
-                        # the ScreenPosition-based mapping.
-                        target_x, target_y = EdgeDetector.get_crossing_coords(
-                            x=x,
-                            y=y,
-                            screen_size=self._screen_bbox,
-                            edge=edge,
-                            screen=self._current_screen,
-                        )
-                        if target_x == -1 and target_y == -1:
-                            return None
+                    target_x, target_y = resolved
 
                     # Set event BEFORE clearing history to block concurrent checks
                     self._cross_screen_event.set()

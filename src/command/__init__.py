@@ -137,7 +137,7 @@ class CommandHandler:
         await self.event_bus.dispatch(
             event_type=BusEventType.CLIENT_TOPOLOGY_UPDATED,
             data=ClientTopologyUpdatedEvent(
-                reverse_bindings=topo.get_reverse_bindings(),
+                edge_bindings=topo.get_edge_bindings(),
                 server_bbox=topo.get_server_bbox(),
             ),
         )

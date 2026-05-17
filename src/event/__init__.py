@@ -136,20 +136,14 @@ class ClientConnectedEvent(BusEvent):
     Event dispatched when a new client connects.
 
     ``edge_bindings`` carries the spatial cross-screen contract derived
-    from the client's ``placements`` and the server's monitor list. The
-    mouse listener consumes these directly so it doesn't have to import
-    the model layer or run geometry math on the hot path. Empty list
-    when the client hasn't been positioned on the workspace yet (in
-    which case the legacy ``screen_position`` fallback drives routing).
-
-    Each entry is a serialized :class:`utils.screen.EdgeBinding`
-    (``EdgeBinding.to_dict()``) so the event payload survives plain
-    JSON / msgpack round-trips downstream.
-
-    ``reverse_bindings`` is the mirror: :class:`utils.screen.ReverseEdgeBinding`
-    dicts. The mouse listener pushes these to the client (via the
-    ``CLIENT_TOPOLOGY`` command) so the client can resolve
-    return-to-server crossings spatially.
+    from the client's effective placements (real or synthesized from
+    the legacy ``screen_position``) and the server's monitor list. Each
+    entry is a serialized :class:`utils.screen.EdgeBinding` and carries
+    both server-side and client-side axis info — the same record drives
+    forward routing on the server AND return-to-server routing on the
+    client (pushed via the ``CLIENT_TOPOLOGY`` command). Empty only
+    when the client has no placement and no legacy position to anchor
+    to (e.g. ``screen_position == "center"``).
     """
 
     def __init__(
@@ -157,21 +151,16 @@ class ClientConnectedEvent(BusEvent):
         client_screen: str,
         streams: Optional[list[int]] = None,
         edge_bindings: Optional[list[dict]] = None,
-        reverse_bindings: Optional[list[dict]] = None,
     ):
         self.client_screen = client_screen
         self.streams = streams
         self.edge_bindings: list[dict] = list(edge_bindings) if edge_bindings else []
-        self.reverse_bindings: list[dict] = (
-            list(reverse_bindings) if reverse_bindings else []
-        )
 
     def to_dict(self) -> dict:
         return {
             "client_screen": self.client_screen,
             "streams": self.streams,
             "edge_bindings": list(self.edge_bindings),
-            "reverse_bindings": list(self.reverse_bindings),
         }
 
 
@@ -185,25 +174,25 @@ class ClientDisconnectedEvent(ClientConnectedEvent):
 
 class ClientTopologyUpdatedEvent(BusEvent):
     """Dispatched on the CLIENT after the server pushes a topology
-    update. Carries the reverse edge bindings (one per abutment between
-    a client monitor and a server monitor, in client-side coordinates)
-    plus the server's virtual bbox so the client can normalize the
-    return-to-server cursor position over it.
+    update. Carries the unified edge bindings (the client reads the
+    ``client_*`` fields of each entry) plus the server's virtual bbox
+    so the client can normalize the return-to-server cursor position
+    over it.
     """
 
     def __init__(
         self,
-        reverse_bindings: Optional[list[dict]] = None,
+        edge_bindings: Optional[list[dict]] = None,
         server_bbox: Optional[tuple[int, int, int, int]] = None,
     ):
-        self.reverse_bindings: list[dict] = (
-            list(reverse_bindings) if reverse_bindings else []
+        self.edge_bindings: list[dict] = (
+            list(edge_bindings) if edge_bindings else []
         )
         self.server_bbox = server_bbox
 
     def to_dict(self) -> dict:
         return {
-            "reverse_bindings": list(self.reverse_bindings),
+            "edge_bindings": list(self.edge_bindings),
             "server_bbox": list(self.server_bbox) if self.server_bbox else None,
         }
 
@@ -211,28 +200,23 @@ class ClientTopologyUpdatedEvent(BusEvent):
 class ClientLayoutUpdatedEvent(BusEvent):
     """Dispatched when a client's workspace placements are mutated at
     runtime (typically from the GUI's layout editor). Carries the
-    refreshed serialized EdgeBindings and ReverseEdgeBindings so the
-    mouse listener can hot-swap its routing cache (and push the new
-    topology to the client) without forcing it to disconnect.
+    refreshed serialized EdgeBindings so the mouse listener can hot-swap
+    its routing cache (and push the new topology to the client) without
+    forcing it to disconnect.
     """
 
     def __init__(
         self,
         client_screen: str,
         edge_bindings: Optional[list[dict]] = None,
-        reverse_bindings: Optional[list[dict]] = None,
     ):
         self.client_screen = client_screen
         self.edge_bindings: list[dict] = list(edge_bindings) if edge_bindings else []
-        self.reverse_bindings: list[dict] = (
-            list(reverse_bindings) if reverse_bindings else []
-        )
 
     def to_dict(self) -> dict:
         return {
             "client_screen": self.client_screen,
             "edge_bindings": list(self.edge_bindings),
-            "reverse_bindings": list(self.reverse_bindings),
         }
 
 
@@ -444,17 +428,18 @@ class ClientTopologyCommandEvent(CommandEvent):
     this into a :class:`ClientTopologyUpdatedEvent` on the bus, which
     the mouse controller listens to.
 
-    ``reverse_bindings`` is a list of :class:`utils.screen.ReverseEdgeBinding`
-    dicts. ``server_bbox`` is a 4-tuple ``(min_x, min_y, max_x, max_y)``
-    of the server's virtual desktop, used to normalise the return-to-
-    server cursor position.
+    ``edge_bindings`` is a list of :class:`utils.screen.EdgeBinding`
+    dicts — the client reads the ``client_*`` fields to find the local
+    edge / axis range that returns to the server. ``server_bbox`` is
+    a 4-tuple ``(min_x, min_y, max_x, max_y)`` of the server's virtual
+    desktop, used to normalise the return-to-server cursor position.
     """
 
     def __init__(
         self,
         source: str = "",
         target: str = "",
-        reverse_bindings: Optional[list[dict]] = None,
+        edge_bindings: Optional[list[dict]] = None,
         server_bbox: Optional[tuple[int, int, int, int]] = None,
     ):
         super().__init__(
@@ -462,13 +447,13 @@ class ClientTopologyCommandEvent(CommandEvent):
             source=source,
             target=target,
             params={
-                "reverse_bindings": list(reverse_bindings) if reverse_bindings else [],
+                "edge_bindings": list(edge_bindings) if edge_bindings else [],
                 "server_bbox": list(server_bbox) if server_bbox else None,
             },
         )
 
-    def get_reverse_bindings(self) -> list[dict]:
-        return list(self.params.get("reverse_bindings") or [])
+    def get_edge_bindings(self) -> list[dict]:
+        return list(self.params.get("edge_bindings") or [])
 
     def get_server_bbox(self) -> Optional[tuple[int, int, int, int]]:
         raw = self.params.get("server_bbox")
@@ -482,7 +467,7 @@ class ClientTopologyCommandEvent(CommandEvent):
         return cls(
             source=event.source,
             target=event.target,
-            reverse_bindings=event.params.get("reverse_bindings") or [],
+            edge_bindings=event.params.get("edge_bindings") or [],
             server_bbox=tuple(raw_bbox) if raw_bbox and len(raw_bbox) == 4 else None,
         )
 
@@ -491,7 +476,7 @@ class ClientTopologyCommandEvent(CommandEvent):
         return {
             "command": self.command,
             "params": {
-                "reverse_bindings": list(self.params.get("reverse_bindings") or []),
+                "edge_bindings": list(self.params.get("edge_bindings") or []),
                 "server_bbox": list(bbox) if bbox else None,
             },
         }

@@ -49,6 +49,7 @@ from event import (
     ClientLayoutUpdatedEvent,
     ClientStreamReconnectedEvent,
 )
+
 from network.connection.server import ConnectionHandler
 from network.stream.handler.server import (
     UnidirectionalStreamHandler,
@@ -776,15 +777,11 @@ class Server:
         edge_bindings = [
             eb.to_dict() for eb in client.get_edge_bindings(server_monitors)
         ]
-        reverse_bindings = [
-            rb.to_dict() for rb in client.get_reverse_edge_bindings(server_monitors)
-        ]
         await self.event_bus.dispatch(
             event_type=BusEventType.CLIENT_LAYOUT_UPDATED,
             data=ClientLayoutUpdatedEvent(
                 client_screen=client.get_screen_position(),
                 edge_bindings=edge_bindings,
-                reverse_bindings=reverse_bindings,
             ),
         )
 
@@ -1621,12 +1618,12 @@ class Server:
 
     async def _on_client_connected(self, client: ClientObj, streams: list[int]):
         """Handle client connection event"""
-        # Derive the spatial cross-screen contract from the client's
-        # placements + this server's monitor list. The mouse listener
-        # uses ``edge_bindings`` to route ``(server_monitor, edge,
-        # axis_norm)`` crossings to the right client monitor.
-        # ``reverse_bindings`` is the mirror image, pushed to the
-        # client so it can resolve return-to-server crossings.
+        # Derive the unified spatial cross-screen contract from the
+        # client's effective placements (real or synthesized from the
+        # legacy ``screen_position``) and this server's monitor list.
+        # The same binding list drives both forward routing (server
+        # listener) and reverse routing (pushed to the client via the
+        # ``CLIENT_TOPOLOGY`` command).
         try:
             from utils.screen import Screen
 
@@ -1636,9 +1633,6 @@ class Server:
         edge_bindings = [
             eb.to_dict() for eb in client.get_edge_bindings(server_monitors)
         ]
-        reverse_bindings = [
-            rb.to_dict() for rb in client.get_reverse_edge_bindings(server_monitors)
-        ]
 
         await self.event_bus.dispatch(
             event_type=BusEventType.CLIENT_CONNECTED,
@@ -1646,7 +1640,6 @@ class Server:
                 client_screen=client.get_screen_position(),
                 streams=streams,
                 edge_bindings=edge_bindings,
-                reverse_bindings=reverse_bindings,
             ),
         )
         # Save config on new connection
