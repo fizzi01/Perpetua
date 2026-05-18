@@ -994,6 +994,16 @@ class ClientMouseController(object):
         # so subsequent ticks within the same monitor skip the linear
         # scan. Invalidated when the cursor crosses outside its bbox.
         self._cached_monitor = None
+        # Latest relative ``MOVE_ACTION`` delta forwarded by the server.
+        # Used as a direction fallback in ``_check_edge`` when the OS
+        # clamps the cursor against a monitor bound: the position
+        # history shows no movement, but the delta still reveals which
+        # edge the user is pushing toward. Critical for the case where
+        # a client monitor placed at the SERVER's RIGHT edge has its
+        # own LEFT edge as the cross-screen return path AND no other
+        # client monitor at the same Y, so OS-level clamping pins the
+        # cursor at ``x = monitor.min_x`` indefinitely.
+        self._last_move_delta: tuple[int, int] = (0, 0)
         # Server's virtual desktop bbox; the return-to-server (x, y)
         # is normalised over this so the server lands the cursor at
         # the right pixel.
@@ -1182,8 +1192,11 @@ class ClientMouseController(object):
             # the very first ``_check_edge`` doesn't mistake the landing
             # for an unauthorized drift.
             self._last_known_monitor_id = self._active_monitor_id
-        # Reset movement history
+        # Reset movement history and last delta so a stale push-direction
+        # from a previous session doesn't trigger a spurious crossing on
+        # the very first tick of this one.
         self._movement_history.clear()
+        self._last_move_delta = (0, 0)
 
         self._is_active = True
         self._cross_screen_event.clear()
@@ -1206,6 +1219,7 @@ class ClientMouseController(object):
         self._active_monitor_id = None
         self._active_target_bbox = self._screen_bbox
         self._last_known_monitor_id = None
+        self._last_move_delta = (0, 0)
 
     async def _on_client_topology_updated(
         self, data: Optional[ClientTopologyUpdatedEvent]
@@ -1288,6 +1302,38 @@ class ClientMouseController(object):
         if best is not None:
             self._cached_monitor = best
         return best
+
+    def _detect_edge_via_delta(
+        self,
+        x: float,
+        y: float,
+        monitor,
+    ) -> Optional[ScreenEdge]:
+        """Edge detection that consults the latest ``MOVE_ACTION``
+        delta instead of the position history.
+
+        The position history can stall when the OS clamps the cursor
+        against a monitor bound: every tick reports the same
+        ``(x, y)``, the direction-ratio check returns ``None``, and the
+        return-to-server / intra-warp logic never fires. The forwarded
+        delta is the user's actual intent; if it points outward through
+        an edge the cursor is already touching, treat that edge as
+        approached.
+        """
+        if monitor is None:
+            return None
+        dx, dy = self._last_move_delta
+        if dx == 0 and dy == 0:
+            return None
+        if x <= monitor.min_x and dx < 0:
+            return ScreenEdge.LEFT
+        if x >= monitor.max_x - 1 and dx > 0:
+            return ScreenEdge.RIGHT
+        if y <= monitor.min_y and dy < 0:
+            return ScreenEdge.TOP
+        if y >= monitor.max_y - 1 and dy > 0:
+            return ScreenEdge.BOTTOM
+        return None
 
     @staticmethod
     def _detect_directed_edge(
@@ -1696,16 +1742,31 @@ class ClientMouseController(object):
                 if current_monitor is not None:
                     self._last_known_monitor_id = current_monitor.monitor_id
 
-                # Need at least N samples to assess direction.
-                if len(self._movement_history) < self.MOVEMENT_HISTORY_N_THRESHOLD:
-                    return None
+                # Direction-based edge detection on the position
+                # history. Requires at least ``MOVEMENT_HISTORY_N_THRESHOLD``
+                # samples to assess; below the threshold we still try
+                # the delta fallback below so the cursor never gets
+                # stuck pushing against an OS-clamped edge.
+                edge = None
+                if len(self._movement_history) >= self.MOVEMENT_HISTORY_N_THRESHOLD:
+                    edge = self._detect_directed_edge(
+                        movement_history=self._movement_history,
+                        x=x,
+                        y=y,
+                        monitor=current_monitor,
+                    )
 
-                edge = self._detect_directed_edge(
-                    movement_history=self._movement_history,
-                    x=x,
-                    y=y,
-                    monitor=current_monitor,
-                )
+                # Delta fallback. When the OS clamps the cursor against
+                # the monitor bound (e.g. user keeps pushing left on a
+                # client monitor that owns the LEFT-edge return-to-
+                # server binding and has no neighbour at that Y), the
+                # position history stops advancing and the directional
+                # check above returns ``None``. The latest forwarded
+                # delta still reveals which edge the user is pressing
+                # toward, so we use it as a secondary signal.
+                if edge is None:
+                    edge = self._detect_edge_via_delta(x, y, current_monitor)
+
                 if edge is None or self._is_dragging:
                     return None
 
@@ -1816,6 +1877,11 @@ class ClientMouseController(object):
                 dx = 0
                 dy = 0
 
+            # Remember the latest forwarded delta so ``_check_edge``
+            # can still detect "push toward an edge" when the OS has
+            # clamped the cursor against a monitor bound and the
+            # position history shows no movement.
+            self._last_move_delta = (dx, dy)
             self._controller.move(dx=dx, dy=dy)
         else:
             try:

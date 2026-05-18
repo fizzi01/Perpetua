@@ -1187,6 +1187,61 @@ class TestClientMouseController:
                 mock_stream_handler.send.assert_not_called()
 
     @pytest.mark.anyio
+    async def test_check_edge_uses_delta_fallback_when_clamped(
+        self,
+        event_bus,
+        mock_stream_handler,
+        mock_mouse_controller,
+    ):
+        """When the OS clamps the cursor against the monitor bound,
+        the position history shows no movement but the latest
+        ``MOVE_ACTION`` delta still reveals the user's push direction.
+        ``_check_edge`` must use the delta as a fallback signal so the
+        return-to-server crossing fires even with a stalled history.
+        """
+        with patch(
+            "input.mouse._base.MouseController", return_value=mock_mouse_controller
+        ):
+            with _ScreenGeometry(1920, 1080):
+                controller = ClientMouseController(
+                    event_bus,
+                    mock_stream_handler,
+                    mock_stream_handler,
+                )
+                controller._is_active = True
+                controller._edge_bindings = [
+                    {
+                        "server_monitor_id": 0,
+                        "server_edge": "right",
+                        "server_axis_start": 0.0,
+                        "server_axis_end": 1.0,
+                        "server_monitor_min_x": 0,
+                        "server_monitor_min_y": 0,
+                        "server_monitor_max_x": 1920,
+                        "server_monitor_max_y": 1080,
+                        "client_monitor_id": 0,
+                        "client_edge": "left",
+                        "client_axis_start": 0.0,
+                        "client_axis_end": 1.0,
+                    }
+                ]
+                controller._server_bbox = (0, 0, 1920, 1080)
+
+                # Simulate the OS-clamped state: cursor pinned at the
+                # left edge, history full of the same (0, y) tuples
+                # because previous MOVE_ACTIONs all hit the bound.
+                for _ in range(8):
+                    controller._movement_history.append((0, 500))
+                mock_mouse_controller.position = (0, 500)
+                # User keeps pushing left → last delta is leftward.
+                controller._last_move_delta = (-3, 0)
+
+                await controller._check_edge()
+
+                # Fallback fired → cross-screen dispatched.
+                assert controller.command_stream.send.called
+
+    @pytest.mark.anyio
     async def test_check_edge_warps_intra_client(
         self,
         event_bus,

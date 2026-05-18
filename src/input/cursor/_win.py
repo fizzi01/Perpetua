@@ -22,7 +22,7 @@ Logic to handle cursor visibility on Windows systems.
 
 from typing import Optional
 import wx
-from wx import Size
+from wx import Point, Size
 import win32gui
 
 from multiprocessing.connection import PipeConnection
@@ -84,6 +84,32 @@ class CursorHandlerWindow(_base.CursorHandlerWindow):
                 self.previous_window_handle = win32gui.GetForegroundWindow()
         except Exception as e:
             self._logger.error(f"Error forcing overlay ({e})")
+
+    def _get_centered_coords(self) -> Point:
+        """Anchor the overlay at the centre of the display under the
+        cursor instead of next to the cursor itself.
+
+        ``WarpPointer`` on Windows does NOT dissociate the visible
+        cursor from OS-level clamping the way ``CGDisplayHideCursor``
+        does on macOS. If the warp target lands within
+        ``WINDOW_SIZE/2`` px of a display edge, every subsequent user
+        motion toward that edge is silently clamped by the OS and
+        ``EVT_MOTION`` reports ``delta = 0`` along that axis. Anchoring
+        the overlay at the display centre guarantees the warp target is
+        always ``≥ WINDOW_SIZE/2`` px from every edge, so motion in all
+        four directions is captured before the OS gets a chance to
+        clamp it. The overlay is fully transparent in production builds
+        so the position change is invisible to the user.
+        """
+        cursor_pos = wx.GetMousePosition()
+        display_index = wx.Display.GetFromPoint(cursor_pos)
+        if display_index == wx.NOT_FOUND:
+            display_index = 0
+        display = wx.Display(display_index)
+        screen_rect = display.GetClientArea()
+        x = screen_rect.x + (screen_rect.width - self.WINDOW_SIZE[0]) // 2
+        y = screen_rect.y + (screen_rect.height - self.WINDOW_SIZE[1]) // 2
+        return Point(x, y)
 
     def HideOverlay(self, startup: bool = False):
         try:
