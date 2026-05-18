@@ -151,6 +151,25 @@ class ServerMouseListener(object):
 
         self._hotkey_cycle_index = -1
 
+        # UID of the currently active client (mirror of the most recent
+        # ``ActiveScreenChangedEvent.active_screen``). ``None`` means
+        # the cursor is on the server. Used by ``_on_hotkey_directional``
+        # to pick a server-workspace reference when the cursor itself
+        # is no longer on the server (the OS-level position is stale in
+        # that state).
+        self._active_client_uid: Optional[str] = None
+        # Last known server-side cursor coordinates, refreshed by every
+        # ``on_move`` tick. Replaces the stale ``getattr(self,
+        # "_current_x", 0.0)`` fallback in ``_on_hotkey_directional``:
+        # if ``MouseController().position`` fails (headless backend,
+        # transient OS error) we still have a meaningful "from" anchor
+        # for the spatial resolver. Initialised to the centre of the
+        # virtual desktop bbox so the very first hotkey press has a
+        # plausible default instead of (0, 0).
+        cx = (self._screen_bbox[0] + self._screen_bbox[2]) // 2
+        cy = (self._screen_bbox[1] + self._screen_bbox[3]) // 2
+        self._last_server_cursor_pos: tuple[float, float] = (float(cx), float(cy))
+
         # Subscribe with async callbacks
         self.event_bus.subscribe(
             event_type=BusEventType.ACTIVE_SCREEN_CHANGED,
@@ -305,32 +324,66 @@ class ServerMouseListener(object):
 
     async def _on_hotkey_directional(self, data: Optional[ScreenSwitchDirectionalRequestEvent]):
         """
-        Respond to a directional hotkey by querying the cursor position
-        and resolving the appropriate screen based on the layout topology.
+        Respond to a directional hotkey by resolving the appropriate
+        adjacent screen against the layout topology.
         """
         if data is None:
             return
-        
-        # Determine cursor position reliably without recreating MouseController.
-        # If we are strictly listening, we use tracked coordinates. But if not listening 
-        # (e.g., active on client), we can fallback to the singleton controller or tracked last state.
-        try:
-            from input.mouse.backend import MouseController
-            pos = MouseController().position
-            x, y = (float(pos[0]), float(pos[1])) if pos and len(pos) == 2 else (0.0, 0.0)
-        except Exception:
-            x, y = getattr(self, "_current_x", 0.0), getattr(self, "_current_y", 0.0)
+
+        # Anchor for the spatial resolver. Two distinct sources depending
+        # on where the cursor physically is:
+        #
+        # 1. Cursor on the server (``_listening == False``) — query the
+        #    OS controller; ``_last_server_cursor_pos`` is the fallback
+        #    when the controller call fails (headless backend, transient
+        #    OS error). The controller call is what the original commit
+        #    used; the broken ``getattr(_current_x, 0.0)`` fallback would
+        #    silently route to (0, 0) when it failed.
+        # 2. Cursor on a client (``_listening == True``) — the OS-level
+        #    position is stale (it's the server's last position before
+        #    the crossing). Use the cached ``_last_server_cursor_pos``
+        #    as the anchor: the user's intent is "go to the neighbour
+        #    of where I came from", which is exactly that point. This
+        #    is the fix for the bug where pressing the directional
+        #    hotkey while already on a client routed via stale OS coords
+        #    and landed on the wrong screen.
+        if self._listening:
+            x, y = self._last_server_cursor_pos
+        else:
+            x, y = self._last_server_cursor_pos
+            try:
+                from input.mouse.backend import MouseController
+                pos = MouseController().position
+                if pos and len(pos) == 2:
+                    x, y = float(pos[0]), float(pos[1])
+                    self._last_server_cursor_pos = (x, y)
+            except Exception as e:
+                self._logger.debug(
+                    f"MouseController().position failed in hotkey resolver, "
+                    f"using last tracked cursor position ({e})"
+                )
 
         client_uid = self.resolve_neighbour(data.edge, x, y)
-        if client_uid:
-            try:
-                await self.event_bus.dispatch(
-                    event_type=BusEventType.SCREEN_CHANGE_GUARD,
-                    data=ActiveScreenChangedEvent(active_screen=client_uid),
-                )
-                await self.command_stream.send(CrossScreenCommandEvent(target=client_uid))
-            except Exception as e:
-                self._logger.error(f"Error during hotkey directional switch ({e})")
+        if not client_uid:
+            self._logger.debug(
+                f"Directional hotkey {data.edge} from ({x:.0f}, {y:.0f}) "
+                f"resolved no neighbour - no-op."
+            )
+            return
+
+        # Don't bounce to ourselves when the resolver happens to pick
+        # the currently active client (e.g. the user is already on it).
+        if client_uid == self._active_client_uid:
+            return
+
+        try:
+            await self.event_bus.dispatch(
+                event_type=BusEventType.SCREEN_CHANGE_GUARD,
+                data=ActiveScreenChangedEvent(active_screen=client_uid),
+            )
+            await self.command_stream.send(CrossScreenCommandEvent(target=client_uid))
+        except Exception as e:
+            self._logger.error(f"Error during hotkey directional switch ({e})")
 
     async def _on_hotkey_cycle(self, data: Optional[ScreenSwitchCycleRequestEvent]):
         """
@@ -367,9 +420,11 @@ class ServerMouseListener(object):
             with self._server_state_lock:
                 self._movement_history.clear()
             self._listening = True
+            self._active_client_uid = active_screen
             self._cross_screen_event.clear()
         else:
             self._listening = False
+            self._active_client_uid = None
 
         await asyncio.sleep(0)
 
@@ -511,6 +566,13 @@ class ServerMouseListener(object):
                     self._movement_history.append((x, y))
                 except Exception:
                     pass
+                # Track the last server-side coordinate so the directional
+                # hotkey resolver has a usable "from" anchor even when
+                # ``MouseController().position`` fails. Only update while
+                # NOT listening: when the cursor is on a client the OS
+                # position is the server's last-known-before-crossing
+                # position, not the client's live cursor.
+                self._last_server_cursor_pos = (float(x), float(y))
             history_ready = (
                 should_buffer
                 and len(self._movement_history) >= self.MOVEMENT_HISTORY_N_THRESHOLD
@@ -576,7 +638,7 @@ class ServerMouseListener(object):
                 try:
                     self._cross_screen_event.set()
                     # The client denormalizes against the matched client
-                    # monitor's bbox (see ``ClientMouseController._target_bbox``),
+                    # monitor's bbox (cached as ``_active_target_bbox`` on the client),
                     # so the (x, y) we send here is in [0, 1] OVER THAT
                     # MONITOR — never the full client virtual desktop.
                     if edge == ScreenEdge.LEFT:
@@ -1346,30 +1408,22 @@ class ClientMouseController(object):
 
         return await asyncio.sleep(0)
 
-    def _target_bbox(self) -> tuple[int, int, int, int]:
-        """Return the bbox that incoming normalized ``(x, y)`` coords
-        should be denormalized against.
-
-        When the server's spatial routing has pinned a specific monitor
-        on this client (via the most recent ``ClientActiveEvent``), use
-        that monitor's bounds — otherwise fall back to the full virtual
-        desktop bbox (legacy single-monitor behaviour).
-        """
-        if self._active_monitor_id is not None and self._monitor_layout.monitors:
-            for m in self._monitor_layout.monitors:
-                if m.monitor_id == self._active_monitor_id:
-                    return (m.min_x, m.min_y, m.max_x, m.max_y)
-        return self._screen_bbox
-
     async def _position_cursor(self, x: float | int, y: float | int):
         """
         Position the mouse cursor to the specified (x, y) coordinates.
 
         Denormalizes against the active target monitor when the server
-        signalled one; otherwise against the full virtual-desktop bbox.
+        signalled one (mirrored in ``_active_target_bbox`` on every
+        ``ClientActiveEvent``); otherwise against the full virtual
+        desktop bbox.
+
+        ``POSITION_ACTION`` invokes this method 10× per event to make
+        absolute placement converge across platforms, so the cached
+        bbox replaces the previous O(N) per-call monitor scan and
+        keeps the result consistent with ``_move_cursor``.
         """
         try:
-            min_x, min_y, max_x, max_y = self._target_bbox()
+            min_x, min_y, max_x, max_y = self._active_target_bbox
             width = max_x - min_x
             height = max_y - min_y
             if width <= 0 or height <= 0:

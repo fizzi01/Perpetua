@@ -15,13 +15,21 @@
 #  along with this program.  If not, see <https://www.gnu.org/licenses/>.
 #
 
-import enum
 from abc import ABC
 from enum import IntEnum
 from time import time
-from typing import Optional, Self
+from typing import Optional, Self, TYPE_CHECKING
 
 from network.protocol.message import ProtocolMessage, MessageType
+
+if TYPE_CHECKING:
+    # ``ScreenEdge`` lives in ``input.utils`` — keep the runtime import
+    # out of this module to preserve the event-layer / input-layer
+    # separation. ``TYPE_CHECKING`` makes the symbol available to
+    # mypy / ty / ``get_type_hints`` while staying ABSENT at runtime;
+    # the field carries a real ``ScreenEdge`` instance assigned by the
+    # listener, which is all the runtime cares about.
+    from input.utils import ScreenEdge
 
 
 class BusEventType(IntEnum):
@@ -150,6 +158,12 @@ class ScreenSwitchDirectionalRequestEvent(BusEvent):
         super().__init__()
         self.edge = edge
 
+    def to_dict(self) -> dict:
+        # ``edge`` is an ``input.utils.ScreenEdge`` enum at runtime;
+        # ``.name`` keeps the payload bus-instrumentation friendly
+        # without leaking the enum type across the layer boundary.
+        return {"edge": getattr(self.edge, "name", str(self.edge))}
+
 
 class ScreenSwitchCycleRequestEvent(BusEvent):
     """
@@ -158,6 +172,9 @@ class ScreenSwitchCycleRequestEvent(BusEvent):
     def __init__(self, direction: int):
         super().__init__()
         self.direction = direction
+
+    def to_dict(self) -> dict:
+        return {"direction": self.direction}
 
 
 class ClientConnectedEvent(BusEvent):

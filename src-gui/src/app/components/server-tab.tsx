@@ -563,11 +563,11 @@ export function ServerTab({onStatusChange, state}: ServerTabProps) {
             const detail =
                 placementCount > 0
                     ? `${placementCount} monitor${placementCount === 1 ? '' : 's'} placed`
-                    : 'Unplaced - open the Layout Editor to place it';
+                    : 'Unplaced, open the Layout Editor to place it';
             addNotification(
                 connected ? 'success' : 'warning',
                 connected ? 'Client Connected' : 'Client Disconnected',
-                `${label} · ${detail}`,
+                `${label} - ${detail}`,
             );
         }
         clientManager.updateClientStatus(clientData, connected);
