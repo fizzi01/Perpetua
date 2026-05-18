@@ -34,7 +34,7 @@ from os import path
 
 import aiofiles
 
-from model.client import ClientObj, ClientsManager
+from model.client import ClientObj, ClientsManager, ScreenPosition
 from utils.logging import Logger
 
 _encoder = msgspec.json.Encoder()
@@ -435,25 +435,20 @@ class ServerConfig:
         client: Optional[ClientObj] = None,
         ip_addresses: Optional[list[str] | str] = None,
         hostname: Optional[str] = None,
-        screen_position: str = "top",
+        screen_position: Optional[str] = None,
     ) -> ClientObj:
-        """
-        Add a client to the authorized list.
+        """Add a client to the authorized list.
 
-        Args:
-            client: ClientObj instance to add (if provided, other params are ignored)
-            ip_addresses: IP address(es) of the client (single str or list)
-            hostname: Hostname of the client
-            screen_position: Screen position relative to server
-
-        Returns:
-            The ClientObj instance that was added
+        ``screen_position`` is optional. ``None`` (or empty) creates
+        an unplaced client; the legacy directional value is still
+        honoured for pre-migration tooling and feeds the synthesis
+        shim in :meth:`ClientObj.get_effective_placements`.
         """
         if client is None:
             client = ClientObj(
                 ip_addresses=ip_addresses,
                 hostname=hostname,
-                screen_position=screen_position,
+                screen_position=screen_position or ScreenPosition.CENTER,
             )
 
         self.clients_manager.add_client(client)

@@ -255,7 +255,11 @@ export interface ClientObj {
     uid: string;
     host_name: string;
     ip_addresses: string[];
-    screen_position: string;
+    // Legacy directional hint (top/right/bottom/left/center). Retained
+    // as optional metadata for backwards compatibility with older
+    // configs; the runtime uses ``placements`` for routing and the
+    // GUI no longer renders or prompts for this value.
+    screen_position?: string;
     ssl: boolean;
     streams_enabled: number[];
     is_connected: boolean;
@@ -348,7 +352,10 @@ export interface ClientApprovalResolved {
     peer_ip: string;
     approved: boolean;
     request_id: string;
-    screen_position: string;
+    // Legacy field — kept optional for backward compatibility. New
+    // approvals don't carry a position; the GUI auto-opens the Layout
+    // Editor instead.
+    screen_position?: string;
     reason: string;
 }
 

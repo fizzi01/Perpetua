@@ -98,15 +98,10 @@ pub async fn stop_server(s: tauri::State<'_, AtomicAsyncWriter>) -> Result<(), S
 pub async fn add_client(
     hostname: String,
     ip_addresses: Vec<String>,
-    screen_position: String,
     s: tauri::State<'_, AtomicAsyncWriter>,
 ) -> Result<(), String> {
     if hostname.is_empty() && ip_addresses.iter().all(|ip| ip.is_empty()) {
         return Err("Either hostname or ip address must be provided".to_string());
-    }
-
-    if screen_position.is_empty() {
-        return Err("Screen position must be provided".to_string());
     }
 
     let ip_addresses_json = format!(
@@ -119,13 +114,16 @@ pub async fn add_client(
             .join(", ")
     );
 
+    // ``screen_position`` was retired as a load-bearing field: the
+    // admin places clients via the Layout Editor instead of picking
+    // a direction here. The daemon accepts ``add_client`` payloads
+    // without it.
     let command = CommandEvent::build(
         CommandType::AddClient,
         &format!(
-            r#"{{ "hostname": {}, "ip_addresses": {}, "screen_position": {} }}"#,
+            r#"{{ "hostname": {}, "ip_addresses": {} }}"#,
             handle_string_param(hostname),
             ip_addresses_json,
-            handle_string_param(screen_position)
         ),
     );
 
@@ -146,18 +144,20 @@ pub async fn add_client(
 #[tauri::command]
 pub async fn approve_client(
     peer_ip: String,
-    screen_position: String,
     s: tauri::State<'_, AtomicAsyncWriter>,
 ) -> Result<(), String> {
     if peer_ip.is_empty() {
         return Err("peer_ip must be provided".to_string());
     }
+    // ``screen_position`` is no longer part of the approval payload
+    // (see ``add_client``). Approved clients land unplaced; the GUI
+    // auto-opens the Layout Editor preselected to the new client so
+    // the admin can position its monitors visually.
     let command = CommandEvent::build(
         CommandType::ApproveClient,
         &format!(
-            r#"{{ "peer_ip": {}, "screen_position": {} }}"#,
+            r#"{{ "peer_ip": {} }}"#,
             handle_string_param(peer_ip),
-            handle_string_param(screen_position),
         ),
     );
     let command = EventParser::serialize(&command).map_err(|e| {

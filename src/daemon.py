@@ -1509,7 +1509,7 @@ class Daemon:
                 "running": self._server.is_running(),
                 "start_time": self._state["server"].get_timestamp(),
                 "monitors": server_monitors,
-            }
+            }  # ty:ignore[invalid-assignment]
 
         if self._client_config and self._client:
             status["client_info"] = {
@@ -1519,10 +1519,10 @@ class Daemon:
                 "start_time": self._state["client"].get_timestamp(),
                 "otp_needed": await self._client.otp_needed(),
                 "service_choice_needed": await self._client.server_choice_needed(),
-            }
+            }  # ty:ignore[invalid-assignment]
 
             if await self._client.server_choice_needed():
-                status["client_info"]["available_servers"] = [
+                status["client_info"]["available_servers"] = [  # ty:ignore[invalid-assignment]
                     s.as_dict() for s in self._client.get_found_servers()
                 ]
 
@@ -1886,21 +1886,27 @@ class Daemon:
                 )
                 return
 
-            if not screen_position:
-                await self._notification_manager.notify_command_error(
-                    command, "Must provide screen_position"
-                )
-                return
-
+            # screen_position is now optional. When absent the client
+            # is added "unplaced": cross-screen routing won't reach it
+            # until the admin positions its monitors via the Layout
+            # Editor (which calls ``set_client_layout``). The synthesis
+            # fallback in :meth:`ClientObj.get_effective_placements`
+            # still kicks in for clients that arrived through legacy
+            # tooling with a non-empty ``screen_position``.
             await self._server.add_client(
                 hostname=hostname,
                 ip_addresses=ip_addresses,
                 screen_position=screen_position,
             )
 
+            placement_hint = (
+                f"at position {screen_position}"
+                if screen_position
+                else "(unplaced — open the Layout Editor to place its monitors)"
+            )
             await self._notification_manager.notify_command_success(
                 command,
-                f"Client added at position {screen_position}",
+                f"Client added {placement_hint}",
                 result_data={
                     "hostname": hostname,
                     "ip_addresses": ip_addresses,
@@ -1954,7 +1960,9 @@ class Daemon:
 
         try:
             peer_ip = params.get("peer_ip") or params.get("ip_address")
-            screen_position = params.get("screen_position", "top")
+            # ``screen_position`` is optional — when absent the client
+            # lands unplaced and the GUI auto-opens the Layout Editor.
+            screen_position = params.get("screen_position")
             if not peer_ip:
                 await self._notification_manager.notify_command_error(
                     command, "Must provide peer_ip"
@@ -2041,9 +2049,9 @@ class Daemon:
         """Edit a client configuration (server only)"""
         command = DaemonCommand.EDIT_CLIENT.value
 
-        if not self._server or not self._server.is_running():
+        if not self._server:
             await self._notification_manager.notify_command_error(
-                command, "Server is not running"
+                command, "Server is not enabled"
             )
             return
 
@@ -2102,9 +2110,9 @@ class Daemon:
         """
         command = DaemonCommand.SET_CLIENT_LAYOUT.value
 
-        if not self._server or not self._server.is_running():
+        if not self._server:
             await self._notification_manager.notify_command_error(
-                command, "Server is not running"
+                command, "Server is not enabled"
             )
             return
 

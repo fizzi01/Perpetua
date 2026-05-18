@@ -458,13 +458,44 @@ class ClientsManager:
         raise ValueError("Client not found to update.")
 
     def add_client(self, client: "ClientObj") -> "ClientsManager":
-        """
-        Avoids screen_position duplication when adding a new client.
+        """Register a client, enforcing identity uniqueness only.
+
+        Post-migration to free-form 2D placements, the number of
+        clients is no longer capped at 4 (one per ScreenPosition).
+        Uniqueness is enforced on the **identity** axes that actually
+        identify a client: UID (when known) and the hostname/IP tuple
+        used during discovery. Spatial placement overlaps are checked
+        separately in :meth:`Server.set_client_layout` where the
+        admin actively positions the client.
+
+        Two unplaced clients sharing the legacy ``screen_position``
+        (e.g. both arriving with the historical ``"top"`` default) are
+        allowed: routing happens through the placement-derived
+        :class:`EdgeBinding` cache, and the synthesized fallback in
+        :meth:`ClientObj.get_effective_placements` would still pick
+        one consistently.
         """
         for existing_client in self.clients:
-            if existing_client.screen_position == client.screen_position:
+            if (
+                client.uid
+                and existing_client.uid
+                and existing_client.uid == client.uid
+            ):
                 raise ValueError(
-                    f"Client with screen position '{client.screen_position}' already exists."
+                    f"Client with uid '{client.uid}' already exists."
+                )
+            if (
+                client.host_name
+                and existing_client.host_name
+                and existing_client.host_name == client.host_name
+                and any(
+                    ip in existing_client.ip_addresses
+                    for ip in client.ip_addresses
+                )
+            ):
+                raise ValueError(
+                    f"Client '{client.host_name}' with overlapping IPs "
+                    f"already exists."
                 )
         self.clients.append(client)
         return self
@@ -496,30 +527,26 @@ class ClientsManager:
         uid: Optional[str] = None,
     ) -> Optional["ClientObj"]:
         """
-        Returns a specific client from the list of available clients based on the given criteria.
-        The method primarily supports client filtering by `hostname`, `ip_address`, or `screen_position`.
-        When the mode is client mode, it will return the first client if one exists since there should
-        only be one client in this mode.
+        Look a client up by one of: UID, hostname, IP address,
+        ``screen_position`` (legacy). UID takes precedence — it's the
+        stable identifier used by the bus / routing layer post-migration.
+        Hostname, IP and ``screen_position`` are kept for legacy paths
+        (config lookups, hand-rolled CLI tooling, etc.).
 
-        If multiple criteria are provided, the method gives priority to `hostname` followed by `ip_address`
-        and then `screen_position`.
+        When the manager is in client mode it always returns the sole
+        client regardless of the filter.
 
-        Parameters:
-            ip_address (Optional[str]): The IP address of the desired client. Used for filtering if provided.
-            hostname (Optional[str]): The hostname of the desired client. If present, this filter is
-                prioritized over other criteria.
-            screen_position (Optional[str]): The screen position of the desired client. Considered if
-                other filters are not specified.
-
-        Returns:
-            Optional[ClientObj]: The client object matching the given criteria, or `None` if no client
-            matches the provided conditions or if no clients exist.
+        Returns ``None`` when no match is found.
         """
 
         if self._is_client_main:  # Return the only client in client mode
             return self.clients[0] if self.clients else None
 
         for client in self.clients:
+            if uid:
+                if client.uid == uid:
+                    return client
+                continue
             if hostname:  # Prioritize hostname if provided
                 if client.host_name and client.host_name == hostname:
                     return client
@@ -531,9 +558,4 @@ class ClientsManager:
             elif screen_position:
                 if client.screen_position == screen_position:
                     return client
-            elif uid:
-                if client.uid == uid:
-                    return client
-            # else:
-            #     raise ValueError("Either ip_address or screen_position must be provided to get a client.")
         return None

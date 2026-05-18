@@ -38,8 +38,15 @@ class ServerKeyboardListener(_base.ServerKeyboardListener):
         stream_handler: StreamHandler,
         command_stream: StreamHandler,
         filtering: bool = True,
+        mouse_listener=None,
     ):
-        super().__init__(event_bus, stream_handler, command_stream, filtering)
+        super().__init__(
+            event_bus,
+            stream_handler,
+            command_stream,
+            filtering,
+            mouse_listener=mouse_listener,
+        )
 
     @staticmethod
     def _get_lock_state() -> bool:

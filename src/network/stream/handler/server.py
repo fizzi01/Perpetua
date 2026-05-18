@@ -56,10 +56,10 @@ class UnidirectionalStreamHandler(_ServerStreamHandler):
 
         self._logger.debug(f"Stream {self.stream_type} reconnected")
 
-        client_screen = data.client_screen
+        client_uid = data.client_uid
         if (
             self._active_client is not None
-            and self._active_client.get_screen_position() == client_screen
+            and self._active_client.uid == client_uid
         ):
             try:
                 if not await self._configure_stream_transport_for_client(
@@ -84,10 +84,10 @@ class UnidirectionalStreamHandler(_ServerStreamHandler):
         if data is None:
             return
 
-        client_screen = data.client_screen
+        client_uid = data.client_uid
         if (
             self._active_client is not None
-            and self._active_client.get_screen_position() == client_screen
+            and self._active_client.uid == client_uid
         ):
             try:
                 self._active_client = None
@@ -101,16 +101,18 @@ class UnidirectionalStreamHandler(_ServerStreamHandler):
     async def _on_active_screen_changed(self, data: Optional[ActiveScreenChangedEvent]):
         """
         Async event handler for when the active screen changes.
+
+        ``data.active_screen`` now carries the active client's UID (or
+        ``None`` for the server).
         """
         if data is None:
             return
 
         try:
-            # Get current active screen from event data
-            active_screen = data.active_screen
+            active_uid = data.active_screen
 
-            # Find corresponding client
-            c = self.clients.get_client(screen_position=active_screen)
+            # Find corresponding client by UID
+            c = self.clients.get_client(uid=active_uid)
 
             # Set message exchange active client
             if c is not None:
@@ -202,14 +204,13 @@ class BidirectionalStreamHandler(_ServerStreamHandler):
         if data is None:
             return
 
-        client_screen = data.client_screen
+        client_uid = data.client_uid
         if (
             self._active_client is not None
-            and self._active_client.screen_position == client_screen
+            and self._active_client.uid == client_uid
         ):
             self._active_client = None
             self._notify_send_not_ready()
-            # self.logger.debug(f"Active client disconnected {client_screen}")
             await self.msg_exchange.set_transport(
                 send_callback=None, receive_callback=None
             )
@@ -229,10 +230,10 @@ class BidirectionalStreamHandler(_ServerStreamHandler):
 
         self._logger.debug(f"Stream {self.stream_type} reconnected")
 
-        client_screen = data.client_screen
+        client_uid = data.client_uid
         if (
             self._active_client is not None
-            and self._active_client.get_screen_position() == client_screen
+            and self._active_client.uid == client_uid
         ):
             try:
                 if not await self._configure_stream_transport_for_client(
@@ -251,16 +252,18 @@ class BidirectionalStreamHandler(_ServerStreamHandler):
     async def _on_active_screen_changed(self, data: Optional[ActiveScreenChangedEvent]):
         """
         Async event handler for when the active screen changes.
+
+        ``data.active_screen`` carries the active client's UID (or
+        ``None`` for the server).
         """
         if data is None:
             return
 
         try:
-            # Get current active screen from event data
-            active_screen = data.active_screen
+            active_uid = data.active_screen
 
-            # Find corresponding client
-            c = self.clients.get_client(screen_position=active_screen)
+            # Find corresponding client by UID
+            c = self.clients.get_client(uid=active_uid)
 
             # Set message exchange active client
             if c is not None:
@@ -383,9 +386,9 @@ class MulticastStreamHandler(_ServerStreamHandler):
 
         self._logger.debug(f"Stream {self.stream_type} reconnected")
 
-        client_screen = data.client_screen
+        client_uid = data.client_uid
         try:
-            client = self.clients.get_client(screen_position=client_screen)
+            client = self.clients.get_client(uid=client_uid)
             if client is not None:
                 cl_conn = client.get_connection()
                 if cl_conn is not None:
@@ -397,7 +400,7 @@ class MulticastStreamHandler(_ServerStreamHandler):
                     await self.msg_exchange.set_transport(
                         send_callback=cl_stream.get_writer_call(),
                         receive_callback=cl_stream.get_reader_call(),
-                        tr_id=client_screen,
+                        tr_id=client_uid,
                     )
         except Exception as e:
             self._logger.error(
@@ -416,9 +419,9 @@ class MulticastStreamHandler(_ServerStreamHandler):
         transport_configured = False
         try:
             if data is not None:
-                client_screen = data.client_screen
+                client_uid = data.client_uid
                 # Because multicast, we set_transport for each connected client
-                client = self.clients.get_client(screen_position=client_screen)
+                client = self.clients.get_client(uid=client_uid)
                 if client is not None:
                     cl_conn = client.get_connection()
                     if cl_conn is not None:
@@ -427,7 +430,7 @@ class MulticastStreamHandler(_ServerStreamHandler):
                             await self.msg_exchange.set_transport(
                                 send_callback=cl_stream.get_writer_call(),
                                 receive_callback=cl_stream.get_reader_call(),
-                                tr_id=client_screen,
+                                tr_id=client_uid,
                             )
                             transport_configured = True
         finally:
@@ -447,11 +450,10 @@ class MulticastStreamHandler(_ServerStreamHandler):
         if data is None:
             return
 
-        client_screen = data.client_screen
+        client_uid = data.client_uid
         try:
-            # self.logger.log(f"Active client disconnected {client_screen}", Logger.INFO)
             await self.msg_exchange.set_transport(
-                send_callback=None, receive_callback=None, tr_id=client_screen
+                send_callback=None, receive_callback=None, tr_id=client_uid
             )
         finally:
             if self._clients_connected == 0:
@@ -462,16 +464,18 @@ class MulticastStreamHandler(_ServerStreamHandler):
     async def _on_active_screen_changed(self, data: Optional[ActiveScreenChangedEvent]):
         """
         Async event handler for when the active screen changes.
+
+        ``data.active_screen`` carries the active client's UID (or
+        ``None`` for the server).
         """
         if data is None:
             return
 
         try:
-            # Get current active screen from event data
-            active_screen = data.active_screen
+            active_uid = data.active_screen
 
-            # Find corresponding client
-            self._active_client = self.clients.get_client(screen_position=active_screen)
+            # Find corresponding client by UID
+            self._active_client = self.clients.get_client(uid=active_uid)
 
             # Set message exchange active client
             if self._active_client is not None:

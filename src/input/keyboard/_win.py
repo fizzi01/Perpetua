@@ -28,8 +28,15 @@ class ServerKeyboardListener(_base.ServerKeyboardListener):
         stream_handler: StreamHandler,
         command_stream: StreamHandler,
         filtering: bool = True,
+        mouse_listener=None,
     ):
-        super().__init__(event_bus, stream_handler, command_stream, filtering)
+        super().__init__(
+            event_bus,
+            stream_handler,
+            command_stream,
+            filtering,
+            mouse_listener=mouse_listener,
+        )
 
     def _win32_suppress_filter(self, msg, data):
         if self._listener is not None:

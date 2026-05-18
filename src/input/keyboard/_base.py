@@ -18,7 +18,7 @@
 import asyncio
 import os
 import signal
-from typing import Optional
+from typing import Any, Optional
 
 from event import (
     BusEventType,
@@ -35,15 +35,13 @@ from event import (
 )
 from event.bus import EventBus
 
-from model.client import ScreenPosition
-
 from network.stream.handler import StreamHandler
 from network.protocol.message import MessageType
 
 from utils.logging import get_logger
 from utils.screen import Screen
 
-from input.utils import KeyUtilities
+from input.utils import KeyUtilities, ScreenEdge
 from .backend import KeyboardListener, Key, KeyCode, HotKey, KeyboardController, BACKEND
 
 
@@ -58,6 +56,7 @@ class ServerKeyboardListener(object):
         stream_handler: StreamHandler,
         command_stream: StreamHandler,
         filtering: bool = True,
+        mouse_listener: Optional[Any] = None,
     ):
         """
         Initializes the server keyboard listener.
@@ -67,14 +66,26 @@ class ServerKeyboardListener(object):
             stream_handler (StreamHandler): The stream handler for sending keyboard events.
             command_stream (StreamHandler): The command stream handler.
             filtering (bool): Whether to apply platform-specific filtering.
+            mouse_listener: Reference to the :class:`ServerMouseListener` so
+                the directional hotkeys can resolve targets spatially
+                (``resolve_neighbour``) and the cycling hotkey can read
+                the active-clients set. Optional — when ``None`` the
+                hotkeys gracefully no-op.
         """
 
         self.stream = stream_handler  # Should be a keyboard stream
         self.command_stream = command_stream
         self.event_bus = event_bus
+        self._mouse_listener = mouse_listener
+        # Insertion-ordered index into ``_active_clients`` used by the
+        # Tab/Shift+Tab cycling hotkey to remember where we are.
+        self._hotkey_cycle_index: int = -1
 
         self._listening = False
-        self._active_screens = {}
+        # Presence map of active client UIDs (see migration to UID-keyed
+        # routing in src/input/mouse/_base.py for the equivalent dict
+        # on the mouse listener).
+        self._active_clients: dict[str, bool] = {}
         self._screen_size: tuple[int, int] = Screen.get_size()
         self._caps_lock_state = self._get_lock_state()
 
@@ -186,20 +197,24 @@ class ServerKeyboardListener(object):
         entries = [
             (
                 "<ctrl>+<shift>+p+<left>",
-                make_cb(self._hotkey_switch_screen, ScreenPosition.LEFT),
+                make_cb(self._hotkey_switch_direction, ScreenEdge.LEFT),
             ),
             (
                 "<ctrl>+<shift>+p+<right>",
-                make_cb(self._hotkey_switch_screen, ScreenPosition.RIGHT),
+                make_cb(self._hotkey_switch_direction, ScreenEdge.RIGHT),
             ),
             (
                 "<ctrl>+<shift>+p+<up>",
-                make_cb(self._hotkey_switch_screen, ScreenPosition.TOP),
+                make_cb(self._hotkey_switch_direction, ScreenEdge.TOP),
             ),
             (
                 "<ctrl>+<shift>+p+<down>",
-                make_cb(self._hotkey_switch_screen, ScreenPosition.BOTTOM),
+                make_cb(self._hotkey_switch_direction, ScreenEdge.BOTTOM),
             ),
+            # Cycle through every active client regardless of layout —
+            # useful when clients sit in disjoint locations the
+            # directional hotkeys can't reach from the current cursor.
+            ("<ctrl>+<shift>+p+<tab>", make_cb(self._hotkey_cycle_client, 1)),
             ("<ctrl>+<shift>+p+<esc>", make_cb(self._hotkey_switch_to_server)),
             ("<ctrl>+<shift>+q", make_cb(self._hotkey_panic)),
         ]
@@ -285,8 +300,9 @@ class ServerKeyboardListener(object):
         if data is None:
             return
 
-        client_screen = data.client_screen
-        self._active_screens[client_screen] = True
+        client_uid = data.client_uid
+        if client_uid:
+            self._active_clients[client_uid] = True
         await asyncio.sleep(0)
 
     async def _on_client_disconnected(self, data: Optional[ClientDisconnectedEvent]):
@@ -296,13 +312,12 @@ class ServerKeyboardListener(object):
         if data is None:
             return
 
-        # try to get client from data to remove from active screens
-        client = data.client_screen
-        if client and client in self._active_screens:
-            del self._active_screens[client]
+        client_uid = data.client_uid
+        if client_uid and client_uid in self._active_clients:
+            del self._active_clients[client_uid]
 
-        # if active screens is empty, we stop listening
-        if len(self._active_screens.items()) == 0:
+        # if no clients are active anymore, stop listening
+        if not self._active_clients:
             self._listening = False
 
         await asyncio.sleep(0)
@@ -443,22 +458,87 @@ class ServerKeyboardListener(object):
         except Exception as e:
             self._logger.error(f"Error handling key release ({e})")
 
-    async def _hotkey_switch_screen(self, screen: str) -> None:
+    def _query_cursor_position(self) -> Optional[tuple[float, float]]:
+        """Best-effort read of the current cursor position for the
+        spatial hotkey resolver. Returns ``None`` if pynput can't be
+        loaded (e.g. headless test).
         """
-        Hotkey handler: switch input focus to the given client screen.
-        Only acts if the target screen is currently connected and active.
-        Combination: Ctrl+Shift+P+<Arrow>
+        try:
+            from input.mouse.backend import MouseController
+
+            ctl = MouseController()
+            pos = ctl.position
+            if pos is None or len(pos) != 2:
+                return None
+            return float(pos[0]), float(pos[1])
+        except Exception:
+            return None
+
+    async def _hotkey_switch_direction(self, edge: ScreenEdge) -> None:
+        """Directional hotkey: resolve the client UID that lives off
+        ``edge`` of the server monitor currently under the cursor (via
+        the mouse listener's spatial topology) and switch focus to it.
+
+        Combination: ``Ctrl+Shift+P+<Arrow>``. No-op when the mouse
+        listener isn't available, the cursor can't be queried, or no
+        client owns that direction at this position — preferable to
+        the old behaviour of routing to a fixed legacy ScreenPosition
+        regardless of layout.
         """
-        if screen not in self._active_screens:
-            self._logger.debug(f"Hotkey switch ignored: screen '{screen}' not active.")
+        if self._mouse_listener is None:
+            self._logger.debug("Hotkey direction ignored: no mouse listener wired.")
+            return
+        cursor = self._query_cursor_position()
+        if cursor is None:
+            self._logger.debug("Hotkey direction ignored: cursor position unavailable.")
+            return
+        client_uid = self._mouse_listener.resolve_neighbour(edge, cursor[0], cursor[1])
+        if not client_uid:
+            self._logger.debug(
+                f"Hotkey direction {edge.name}: no spatial neighbour at cursor."
+            )
+            return
+        await self._hotkey_switch_screen(client_uid)
+
+    async def _hotkey_cycle_client(self, direction: int) -> None:
+        """Cycle the active client forward (``direction=1``) or
+        backward (``direction=-1``) through the mouse listener's
+        ``_active_clients`` insertion order.
+
+        Combination: ``Ctrl+Shift+P+Tab`` / ``Shift+Tab``. Wraps at
+        the boundaries and stays a no-op when no clients are connected.
+        Used when the topology is too disjoint for the directional
+        hotkeys to reach a client from the current cursor position.
+        """
+        if self._mouse_listener is not None:
+            uids = self._mouse_listener.get_active_client_uids()
+        else:
+            uids = list(self._active_clients.keys())
+        if not uids:
+            return
+        self._hotkey_cycle_index = (self._hotkey_cycle_index + direction) % len(uids)
+        await self._hotkey_switch_screen(uids[self._hotkey_cycle_index])
+
+    async def _hotkey_switch_screen(self, client_uid: str) -> None:
+        """
+        Hotkey handler: switch input focus to the given client by UID.
+        Only acts if the target client is currently connected and active.
+        Combination: Ctrl+Shift+P+<Arrow>. The direction-to-UID
+        resolution is performed by the caller via the spatial topology
+        (see ``ServerMouseListener.resolve_neighbour``).
+        """
+        if not client_uid or client_uid not in self._active_clients:
+            self._logger.debug(
+                f"Hotkey switch ignored: client '{client_uid}' not active."
+            )
             return
 
         try:
             await self.event_bus.dispatch(
                 event_type=BusEventType.SCREEN_CHANGE_GUARD,
-                data=ActiveScreenChangedEvent(active_screen=screen),
+                data=ActiveScreenChangedEvent(active_screen=client_uid),
             )
-            await self.command_stream.send(CrossScreenCommandEvent(target=screen))
+            await self.command_stream.send(CrossScreenCommandEvent(target=client_uid))
         except Exception as e:
             self._logger.error(f"Error during hotkey screen switch ({e})")
 

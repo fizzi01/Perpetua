@@ -452,14 +452,14 @@ class TestServerMouseListener:
         )
 
         event = ClientConnectedEvent(
-            client_screen="client1",
+            client_uid="client1",
             streams=[StreamType.MOUSE, StreamType.KEYBOARD],
         )
 
         await listener._on_client_connected(event)
 
-        assert "client1" in listener._active_screens
-        assert listener._active_screens["client1"] is True
+        assert "client1" in listener._active_clients
+        assert listener._active_clients["client1"] is True
 
     @pytest.mark.anyio
     async def test_on_client_connected_ignores_without_mouse_stream(
@@ -476,13 +476,13 @@ class TestServerMouseListener:
         )
 
         event = ClientConnectedEvent(
-            client_screen="client1",
+            client_uid="client1",
             streams=[StreamType.KEYBOARD],  # No MOUSE stream
         )
 
         await listener._on_client_connected(event)
 
-        assert "client1" not in listener._active_screens
+        assert "client1" not in listener._active_clients
 
     @pytest.mark.anyio
     async def test_on_client_disconnected_removes_from_active_screens(
@@ -499,17 +499,17 @@ class TestServerMouseListener:
                 mock_stream_handler,
                 filtering=False,
             )
-            listener._active_screens["client1"] = True
+            listener._active_clients["client1"] = True
             listener._listening = True
 
             event = ClientDisconnectedEvent(
-                client_screen="client1",
+                client_uid="client1",
                 streams=[StreamType.MOUSE],
             )
 
             await listener._on_client_disconnected(event)
 
-            assert "client1" not in listener._active_screens
+            assert "client1" not in listener._active_clients
 
     @pytest.mark.anyio
     async def test_on_client_disconnected_stops_listening_when_empty(
@@ -526,11 +526,11 @@ class TestServerMouseListener:
                 mock_stream_handler,
                 filtering=False,
             )
-            listener._active_screens["client1"] = True
+            listener._active_clients["client1"] = True
             listener._listening = True
 
             event = ClientDisconnectedEvent(
-                client_screen="client1",
+                client_uid="client1",
                 streams=[StreamType.MOUSE],
             )
 
@@ -810,7 +810,7 @@ class TestClientMouseController:
                 mock_stream_handler,
             )
 
-            event = ClientActiveEvent(client_screen="server")
+            event = ClientActiveEvent(client_uid="server")
 
             await controller._on_client_active(event)
 
@@ -838,7 +838,7 @@ class TestClientMouseController:
             controller._is_active = True
             controller._movement_history.append((100, 200))
 
-            event = ClientActiveEvent(client_screen="server")
+            event = ClientActiveEvent(client_uid="server")
 
             await controller._on_client_inactive(event)
 

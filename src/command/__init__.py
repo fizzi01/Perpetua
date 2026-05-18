@@ -108,7 +108,7 @@ class CommandHandler:
             await self.event_bus.dispatch(
                 event_type=BusEventType.CLIENT_ACTIVE,
                 data=ClientActiveEvent(
-                    client_screen=event.target,
+                    client_uid=event.target,
                     client_monitor_id=crs_event.get_client_monitor_id(),
                 ),
             )

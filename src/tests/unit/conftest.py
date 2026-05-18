@@ -223,7 +223,7 @@ def active_screen_changed_event():
 def client_connected_event():
     """Provide a sample ClientConnectedEvent."""
     return ClientConnectedEvent(
-        client_screen="client1",
+        client_uid="client1",
         streams=[0, 1, 4, 12],
     )
 
@@ -232,7 +232,7 @@ def client_connected_event():
 def client_disconnected_event():
     """Provide a sample ClientDisconnectedEvent."""
     return ClientDisconnectedEvent(
-        client_screen="client1",
+        client_uid="client1",
         streams=[0, 1, 4, 12],
     )
 
@@ -240,7 +240,7 @@ def client_disconnected_event():
 @pytest.fixture
 def client_active_event():
     """Provide a sample ClientActiveEvent."""
-    return ClientActiveEvent(client_screen="client1")
+    return ClientActiveEvent(client_uid="client1")
 
 
 @pytest.fixture

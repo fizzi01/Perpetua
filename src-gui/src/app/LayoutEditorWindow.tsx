@@ -22,6 +22,7 @@ import {getCurrentWindow} from "@tauri-apps/api/window";
 
 import {LayoutEditor, type LayoutEditorClient} from "./components/LayoutEditor";
 import type {MonitorInfo, MonitorPlacement} from "./api/Interface";
+import {platform} from '@tauri-apps/plugin-os';
 
 // Payload exchanged with the main window. The main window emits
 // "layout-editor:init" right after the editor window is shown; the
@@ -32,6 +33,10 @@ export interface LayoutEditorInitPayload {
     serverMonitors: MonitorInfo[];
     clients: LayoutEditorClient[];
     placements: MonitorPlacement[];
+    // UID of the client to highlight in the sidebar on open. Used by
+    // the approve/add flow so a freshly-onboarded client's monitors
+    // are obvious as soon as the editor appears.
+    preselectClientUid?: string;
 }
 
 export interface LayoutEditorSavePayload {
@@ -48,8 +53,22 @@ export default function LayoutEditorWindow() {
     const [serverMonitors, setServerMonitors] = useState<MonitorInfo[]>([]);
     const [clients, setClients] = useState<LayoutEditorClient[]>([]);
     const [placements, setPlacements] = useState<MonitorPlacement[]>([]);
+    const [preselectClientUid, setPreselectClientUid] = useState<
+        string | undefined
+    >(undefined);
     const [valid, setValid] = useState(true);
+    const [windowHeight, setWindowHeight] = useState(window.innerHeight);
     const initialPlacementsRef = useRef<MonitorPlacement[]>([]);
+
+    const currentPlatform = platform();
+    const root = document.documentElement;
+    root.style.setProperty('--border-radius', currentPlatform === 'windows' ? '0px' : '14px');
+
+    useEffect(() => {
+        const handleResize = () => setWindowHeight(window.innerHeight);
+        window.addEventListener('resize', handleResize);
+        return () => window.removeEventListener('resize', handleResize);
+    }, []);
 
     useEffect(() => {
         let unlisten: UnlistenFn | null = null;
@@ -61,6 +80,7 @@ export default function LayoutEditorWindow() {
                     setServerMonitors(data.serverMonitors || []);
                     setClients(data.clients || []);
                     setPlacements(data.placements || []);
+                    setPreselectClientUid(data.preselectClientUid);
                     initialPlacementsRef.current = data.placements || [];
                     setInitialised(true);
                 },
@@ -98,40 +118,29 @@ export default function LayoutEditorWindow() {
 
     return (
         <div
+            data-tauri-drag-region
+            className="w-screen h-screen p-4 box-border flex flex-col gap-3"
             style={{
-                width: "100vw",
-                height: "100vh",
-                padding: 10,
-                boxSizing: "border-box",
-                display: "flex",
-                flexDirection: "column",
-                gap: 8,
                 backgroundColor: "var(--app-bg-secondary)",
                 color: "var(--app-text-primary)",
-                fontFamily: "system-ui, sans-serif",
             }}
         >
-            <div style={{display: "flex", alignItems: "center", gap: 8}}>
+            <div data-tauri-drag-region className="flex items-center gap-3 select-none">
                 <span
-                    style={{
-                        fontSize: 13,
-                        fontWeight: 600,
-                        color: "var(--app-text-primary)",
-                    }}
+                    className="text-lg font-bold"
+                    style={{ color: "var(--app-text-primary)" }}
                 >
-                    Layout
+                    Layout Configuration
                 </span>
-                <div style={{flex: 1}}/>
+                <div data-tauri-drag-region style={{ flex: 1, height: "100%" }} />
                 <button
                     onClick={handleCancel}
+                    className="px-4 py-2 rounded-lg border text-sm font-medium transition-colors"
                     style={{
-                        padding: "5px 10px",
-                        borderRadius: 5,
-                        border: "1px solid var(--app-card-border)",
+                        borderColor: "var(--app-card-border)",
                         backgroundColor: "transparent",
                         color: "var(--app-text-primary)",
                         cursor: "pointer",
-                        fontSize: 12,
                     }}
                 >
                     Cancel
@@ -139,42 +148,31 @@ export default function LayoutEditorWindow() {
                 <button
                     onClick={handleSave}
                     disabled={!valid}
+                    className="px-4 py-2 rounded-lg border-none text-sm font-semibold transition-colors shadow-sm"
                     style={{
-                        padding: "5px 12px",
-                        borderRadius: 5,
-                        border: "none",
                         backgroundColor: valid
                             ? "var(--app-primary)"
                             : "var(--app-bg-tertiary)",
                         color: valid ? "white" : "var(--app-text-muted)",
                         cursor: valid ? "pointer" : "not-allowed",
-                        fontSize: 12,
-                        fontWeight: 600,
                     }}
                 >
-                    Save
+                    Save Layout
                 </button>
             </div>
 
             <div
+                className="flex-1 flex overflow-hidden rounded-xl border shadow-sm"
                 style={{
-                    flex: 1,
                     minHeight: 0,
-                    border: "1px solid var(--app-card-border)",
-                    borderRadius: 8,
-                    padding: 8,
-                    overflow: "hidden",
+                    borderColor: "var(--app-card-border)",
                     backgroundColor: "var(--app-card-bg)",
-                    display: "flex",
                 }}
             >
                 {!initialised ? (
                     <div
-                        style={{
-                            fontSize: 12,
-                            color: "var(--app-text-muted)",
-                            margin: "auto",
-                        }}
+                        className="m-auto text-sm font-medium"
+                        style={{ color: "var(--app-text-muted)" }}
                     >
                         Waiting for layout…
                     </div>
@@ -183,9 +181,10 @@ export default function LayoutEditorWindow() {
                         serverMonitors={serverMonitors}
                         clients={clients}
                         placements={placements}
+                        preselectClientUid={preselectClientUid}
                         onChange={setPlacements}
                         onValidityChange={(ok) => setValid(ok)}
-                        height={Math.max(360, window.innerHeight - 80)}
+                        height={Math.max(360, windowHeight - 90)}
                     />
                 )}
             </div>

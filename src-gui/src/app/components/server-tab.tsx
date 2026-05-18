@@ -19,8 +19,6 @@
 
 import {useEffect, useRef, useState} from 'react';
 
-import {Select, SelectContent, SelectGroup, SelectItem, SelectLabel, SelectTrigger, SelectValue,} from "./ui/select";
-
 import {Switch} from "./ui/switch";
 
 import {ScrollArea} from './ui/scrollbar';
@@ -64,7 +62,6 @@ import {
 import {ServerTabProps} from '../commons/Tab'
 import {isValidIpAddress, parseStreams} from '../api/Utility'
 import {abbreviateText, CopyableBadge} from './ui/copyable-badge';
-import {SelectPortal, SelectViewport} from '@radix-ui/react-select';
 import {ActionButton} from './ui/action-button';
 import type {LayoutEditorClient} from './LayoutEditor';
 import type {MonitorInfo, MonitorPlacement} from '../api/Interface';
@@ -153,10 +150,8 @@ export function ServerTab({onStatusChange, state}: ServerTabProps) {
     // the admin must allow/deny. Keyed by peer_ip so duplicate handshakes
     // collapse onto the same prompt.
     const [pendingApprovals, setPendingApprovals] = useState<ClientApprovalRequest[]>([]);
-    const [firstInit, setFirstInit] = useState(true);
     const [clientIpTags, setClientIpTags] = useState<string[]>([]);
     const [clientIpInput, setClientIpInput] = useState('');
-    const [newClientPosition, setNewClientPosition] = useState<'top' | 'bottom' | 'left' | 'right'>('top');
     const [isAddingClient, setIsAddingClient] = useState(false);
 
     const [uptime, setUptime] = useState(() => {
@@ -200,34 +195,68 @@ export function ServerTab({onStatusChange, state}: ServerTabProps) {
     // tauri.conf.json so we don't need extra create-window permissions),
     // pushes the current state to it once it signals readiness, and
     // listens for the save / cancel reply.
-    const openLayoutEditorWindow = async () => {
+    //
+    // ``preselectClientUid`` (optional) tells the editor which client
+    // to highlight in the sidebar — used by the approve/add flow so
+    // a freshly-onboarded client's monitors are immediately visible.
+    const openLayoutEditorWindow = async (preselectClientUid?: string) => {
         const editorWindow = await Window.getByLabel('layout-editor');
         if (!editorWindow) {
             addNotification('error', 'Layout editor window not available');
             return;
         }
 
-        const buildPayload = (): LayoutEditorInitPayload => ({
-            serverMonitors: serverMonitors.length > 0
+        const buildPayload = (): LayoutEditorInitPayload => {
+            console.log('Building layout editor payload with', {
+                serverMonitors,
+            });
+            const rawServer = serverMonitors.length > 0
                 ? serverMonitors
-                : [{
+                : ([{
                     monitor_id: 0,
                     min_x: 0,
                     min_y: 0,
                     max_x: 1920,
                     max_y: 1080,
                     is_primary: true,
-                }] as MonitorInfo[],
-            clients: clientManager.clients.map<LayoutEditorClient>((c) => ({
-                uid: c.id,
-                name: c.name || c.ips?.join(', ') || c.id,
-                // Forward the monitor list advertised by the client on
-                // its handshake so the editor can render one draggable
-                // box per client monitor.
-                monitors: c.monitors,
-            })),
-            placements: layoutPlacements,
-        });
+                }] as MonitorInfo[]);
+
+            // Extract ONLY the exact primitive fields we need to absolutely
+            // guarantee there are no hidden cyclic dependencies or getters/proxies
+            // from the framework's reactivity system.
+            const stripMonitor = (m: any) => ({
+                monitor_id: m.monitor_id ?? 0,
+                min_x: m.min_x ?? 0,
+                min_y: m.min_y ?? 0,
+                max_x: m.max_x ?? 0,
+                max_y: m.max_y ?? 0,
+                is_primary: !!m.is_primary,
+                name: typeof m.name === 'string' ? m.name : '',
+                scaling_factor: m.scaling_factor ?? 1,
+            });
+
+            const stripPlacement = (p: any) => ({
+                client_uid: p.client_uid ?? '',
+                client_monitor_id: p.client_monitor_id ?? 0,
+                workspace_x: p.workspace_x ?? 0,
+                workspace_y: p.workspace_y ?? 0,
+                width: p.width ?? 0,
+                height: p.height ?? 0,
+            });
+
+            const draft = {
+                serverMonitors: rawServer.map(stripMonitor),
+                clients: clientManager.clients.map((c) => ({
+                    uid: c.id ?? '',
+                    name: c.name || (c.ips ? c.ips.join(', ') : '') || c.id || '',
+                    monitors: c.monitors ? c.monitors.map(stripMonitor) : [],
+                })),
+                placements: layoutPlacements.map(stripPlacement),
+                preselectClientUid: typeof preselectClientUid === 'string' ? preselectClientUid : undefined,
+            };
+
+            return draft as LayoutEditorInitPayload;
+        };
 
         // Wire the response listeners BEFORE showing the window so the
         // ready event from the editor (fired as soon as it mounts) is
@@ -251,28 +280,40 @@ export function ServerTab({onStatusChange, state}: ServerTabProps) {
                     const next = event.payload.placements || [];
                     setLayoutPlacements(next);
 
-                    // Per-client dispatch: group placements by client_uid
-                    // (including clients with an empty list so the
-                    // daemon can clear a previously-set layout) and
-                    // send one ``SetClientLayout`` per client. Errors
-                    // surface as separate notifications so a single
-                    // bad client doesn't hide the others' success.
+                    // Per-client dispatch: each known client gets a
+                    // ``SetClientLayout`` call — including those with an
+                    // empty resulting list, so the daemon can clear a
+                    // previously-set layout. The canonical grouping
+                    // key is the client's daemon UID (``c.uid``); the
+                    // local fallback ``c.id`` is used only for clients
+                    // that haven't paired yet (no daemon UID). The
+                    // editor's placements carry the daemon UID via
+                    // ``client_uid``, so we look up the client by UID
+                    // first and fall back to ``c.id`` only when needed.
+                    const groupKey = (c: typeof clientManager.clients[number]) =>
+                        c.uid || c.id;
                     const grouped = new Map<string, MonitorPlacement[]>();
                     for (const c of clientManager.clients) {
-                        grouped.set(c.id, []);
+                        grouped.set(groupKey(c), []);
                     }
                     for (const p of next) {
-                        const existing = grouped.get(p.client_uid) ?? [];
+                        const key = p.client_uid || '';
+                        const existing = grouped.get(key) ?? [];
                         existing.push(p);
-                        grouped.set(p.client_uid, existing);
+                        grouped.set(key, existing);
                     }
 
                     let saved = 0;
                     let failed = 0;
-                    for (const [clientUid, placements] of grouped) {
+                    for (const [clientKey, placements] of grouped) {
                         const client = clientManager.clients.find(
-                            (c) => c.id === clientUid,
+                            (c) => groupKey(c) === clientKey,
                         );
+                        if (!client && placements.length === 0) {
+                            // Stale empty entry for a client that's
+                            // gone — skip silently, nothing to clear.
+                            continue;
+                        }
                         try {
                             await setClientLayout(
                                 client?.uid || undefined,
@@ -287,12 +328,12 @@ export function ServerTab({onStatusChange, state}: ServerTabProps) {
                             failed += 1;
                             console.error(
                                 'SetClientLayout failed for',
-                                clientUid,
+                                clientKey,
                                 err,
                             );
                             addNotification(
                                 'error',
-                                `Layout rejected for ${client?.name ?? clientUid}`,
+                                `Layout rejected for ${client?.name ?? clientKey}`,
                                 String(err),
                             );
                         }
@@ -446,10 +487,18 @@ export function ServerTab({onStatusChange, state}: ServerTabProps) {
     const handleClientConnected = (clientData: ClientObj, connected: boolean, notify: boolean = false) => {
         console.log("Processing client connection event:", clientData, connected);
         if (notify) {
+            const label = clientData.host_name
+                ? clientData.host_name
+                : clientData.ip_addresses.join(', ');
+            const placementCount = clientData.placements?.length ?? 0;
+            const detail =
+                placementCount > 0
+                    ? `${placementCount} monitor${placementCount === 1 ? '' : 's'} placed`
+                    : 'Unplaced — open the Layout Editor to place it';
             addNotification(
                 connected ? 'success' : 'warning',
                 connected ? 'Client Connected' : 'Client Disconnected',
-                `${clientData.host_name ? clientData.host_name : clientData.ip_addresses.join(', ')} (${clientData.screen_position.toUpperCase()})`
+                `${label} · ${detail}`,
             );
         }
         clientManager.updateClientStatus(clientData, connected);
@@ -538,13 +587,21 @@ export function ServerTab({onStatusChange, state}: ServerTabProps) {
         );
     };
 
-    const handleApproveClient = (req: ClientApprovalRequest, position: string) => {
+    const handleApproveClient = (req: ClientApprovalRequest) => {
         // Optimistically remove the card; the resolved-event will also remove
         // it but we want immediate UI feedback.
         setPendingApprovals((prev) =>
             prev.filter((r) => r.peer_ip !== req.peer_ip)
         );
-        approveClientCommand(req.peer_ip, position).catch((err) => {
+        approveClientCommand(req.peer_ip).then(() => {
+            // Auto-open the Layout Editor so the admin can position
+            // the freshly-approved client's monitors right away.
+            // ``req.uid`` is the client's stable UID announced during
+            // the pairing handshake — pass it as the preselect hint.
+            openLayoutEditorWindow(req.uid || undefined).catch((err) => {
+                console.error('Failed to auto-open layout editor', err);
+            });
+        }).catch((err) => {
             console.error('Error approving client:', err);
             addNotification('error', 'Failed to approve client');
             // Restore the card so the admin can retry.
@@ -764,11 +821,6 @@ export function ServerTab({onStatusChange, state}: ServerTabProps) {
             return;
         }
 
-        if (firstInit) {
-            addNotification('info', "Choose a position for the new client");
-            return;
-        }
-
         // Confirm any pending input before submitting
         let tags = [...clientIpTags];
         const pendingRaw = clientIpInput.trim();
@@ -781,8 +833,8 @@ export function ServerTab({onStatusChange, state}: ServerTabProps) {
             }
         }
 
-        if (tags.length === 0 || !newClientPosition) {
-            addNotification('error', 'Missing information');
+        if (tags.length === 0) {
+            addNotification('error', 'Add a hostname or at least one IP');
             return;
         }
 
@@ -807,13 +859,28 @@ export function ServerTab({onStatusChange, state}: ServerTabProps) {
             console.log(`Client added successfully: ${event.message}`);
             let result = event.data?.result as ClientEditObj;
             if (result) {
-                addNotification('info', 'Client added', `${hostname || ips.join(', ')} (${newClientPosition.toUpperCase()})`);
+                addNotification(
+                    'info',
+                    'Client added',
+                    `${hostname || ips.join(', ')} — open the Layout Editor to place its monitors`,
+                );
                 setClientIpTags([]);
                 setClientIpInput('');
-                setNewClientPosition('top');
-                setFirstInit(true);
 
-                clientManager.addClient(hostname, ips, newClientPosition);
+                clientManager.addClient(hostname, ips);
+
+                // Auto-open the Layout Editor so the admin can place
+                // the freshly-added client's monitors immediately.
+                // The daemon may not yet have echoed back the client's
+                // monitor list; the editor still highlights the row
+                // and will receive the placements via the next status
+                // tick.
+                const newClientUid =
+                    clientManager.clients.find(c => c.name === hostname
+                        || (c.ips ?? []).some(ip => ips.includes(ip)))?.uid;
+                openLayoutEditorWindow(newClientUid).catch((err) => {
+                    console.error('Failed to auto-open layout editor', err);
+                });
 
                 listeners.removeListener('add-client');
                 listeners.removeListener('add-client-error');
@@ -826,14 +893,13 @@ export function ServerTab({onStatusChange, state}: ServerTabProps) {
         listenCommand(EventType.CommandError, CommandType.AddClient, (event) => {
             addNotification('error', 'Failed to add client', event.data?.error || '');
             setIsAddingClient(false);
-            setFirstInit(true);
             listeners.removeListener('add-client-error');
             listeners.removeListener('add-client');
         }).then(unlisten => {
             listeners.addListenerOnce('add-client-error', unlisten);
         });
 
-        addClientCommand(hostname, ips.length > 0 ? ips : [], newClientPosition).catch((err) => {
+        addClientCommand(hostname, ips.length > 0 ? ips : []).catch((err) => {
             console.error('Error adding client:', err);
             addNotification('error', err.toString());
             setIsAddingClient(false);
@@ -1029,17 +1095,20 @@ export function ServerTab({onStatusChange, state}: ServerTabProps) {
                 )}
             </AnimatePresence>
 
-            {/* Pending client-approval prompts. One card per unknown client
-                attempting to connect; the admin chooses screen position and
-                clicks Allow, or denies. The handshake on the server is held
-                open until one of the buttons is pressed (or the request
-                times out, in which case the resolved event removes the card). */}
+            {/* Pending client-approval prompts. One card per unknown
+                client attempting to connect; the admin clicks Allow or
+                Deny — no position picker, since approved clients are
+                placed visually in the Layout Editor (auto-opened post-
+                approval). The handshake on the server is held open
+                until one of the buttons is pressed (or the request
+                times out, in which case the resolved event removes
+                the card). */}
             <AnimatePresence>
                 {pendingApprovals.map((req) => (
                     <PendingApprovalCard
                         key={`${req.peer_ip}-${req.request_id}`}
                         request={req}
-                        onApprove={(position) => handleApproveClient(req, position)}
+                        onApprove={() => handleApproveClient(req)}
                         onDeny={() => handleDenyClient(req)}
                     />
                 ))}
@@ -1246,37 +1315,10 @@ export function ServerTab({onStatusChange, state}: ServerTabProps) {
                                         className="flex-1 min-w-[120px] bg-transparent border-none outline-none"
                                     />
                                 </div>
-                                {/* Position Selector */}
-                                <Select value={firstInit ? '' : newClientPosition} onValueChange={(v) => {
-                                    if (firstInit) setFirstInit(false);
-                                    setNewClientPosition(v as 'top' | 'bottom' | 'left' | 'right');
-                                }}>
-                                    <SelectTrigger className="SelectTrigger">
-                                        <SelectValue placeholder="Select Position"/>
-                                    </SelectTrigger>
-                                    <SelectPortal>
-                                        <SelectContent className="SelectContent">
-                                            <SelectViewport className="SelectViewport">
-                                                <SelectGroup>
-                                                    <SelectLabel className="SelectLabel"> Screen Position</SelectLabel>
-                                                    <SelectItem className="SelectItem"
-                                                                disabled={clientManager.clients.some(c => c.position === 'top')}
-                                                                value="top">Top</SelectItem>
-                                                    <SelectItem className="SelectItem"
-                                                                disabled={clientManager.clients.some(c => c.position === 'bottom')}
-                                                                value="bottom">Bottom</SelectItem>
-                                                    <SelectItem className="SelectItem"
-                                                                disabled={clientManager.clients.some(c => c.position === 'left')}
-                                                                value="left">Left</SelectItem>
-                                                    <SelectItem className="SelectItem"
-                                                                disabled={clientManager.clients.some(c => c.position === 'right')}
-                                                                value="right">Right</SelectItem>
-                                                </SelectGroup>
-                                            </SelectViewport>
-                                        </SelectContent>
-                                    </SelectPortal>
-
-                                </Select>
+                                {/* Position picker removed — clients are placed
+                                    free-form in the Layout Editor (auto-opens
+                                    after add/approve). The 4-client cap is gone:
+                                    any number of clients can be onboarded. */}
 
                                 <motion.button
                                     whileHover={{scale: 1.02}}
@@ -1327,14 +1369,47 @@ export function ServerTab({onStatusChange, state}: ServerTabProps) {
                                         {/* Badges Section */}
                                         <div className="flex flex-col items-end gap-2">
                                             <div className="flex items-center gap-2">
-                        <span className="px-2 py-1 text-xs rounded min-w-[64px] text-center"
-                              style={{
-                                  backgroundColor: client.status === 'offline' ? 'var(--app-bg-tertiary)' : 'var(--app-input-bg)',
-                                  color: 'var(--app-primary-light)'
-                              }}
-                        >
-                          {client.position.charAt(0).toUpperCase() + client.position.slice(1)}
-                        </span>
+                                                {(() => {
+                                                    const placementCount = client.placements?.length ?? 0;
+                                                    const placed = placementCount > 0;
+                                                    return (
+                                                        <button
+                                                            onClick={() =>
+                                                                openLayoutEditorWindow(
+                                                                    client.uid,
+                                                                ).catch((err) =>
+                                                                    console.error(
+                                                                        'Failed to open layout editor',
+                                                                        err,
+                                                                    ),
+                                                                )
+                                                            }
+                                                            className="px-2 py-1 text-xs rounded min-w-[96px] text-center cursor-pointer"
+                                                            style={{
+                                                                backgroundColor: placed
+                                                                    ? 'var(--app-success-bg)'
+                                                                    : 'var(--app-warning-bg, var(--app-bg-tertiary))',
+                                                                color: placed
+                                                                    ? 'var(--app-success)'
+                                                                    : 'var(--app-warning, var(--app-text-muted))',
+                                                                border: `1px solid ${
+                                                                    placed
+                                                                        ? 'var(--app-success)'
+                                                                        : 'var(--app-warning, var(--app-input-border))'
+                                                                }`,
+                                                            }}
+                                                            title={
+                                                                placed
+                                                                    ? `Open Layout Editor for ${client.name}`
+                                                                    : `Unplaced — open Layout Editor to place ${client.name}`
+                                                            }
+                                                        >
+                                                            {placed
+                                                                ? `${placementCount} placed`
+                                                                : 'Unplaced'}
+                                                        </button>
+                                                    );
+                                                })()}
                                                 <span className="px-2 py-1 rounded text-xs min-w-[56px] text-center"
                                                       style={{
                                                           backgroundColor: client.status === 'online' ? 'var(--app-input-bg)' : 'var(--app-bg-tertiary)',

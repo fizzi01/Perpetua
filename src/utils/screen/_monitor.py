@@ -99,10 +99,10 @@ class MonitorLayout:
 
     ``edge_routes`` is the placeholder hook for future user-configurable
     arrangements: it will map ``(monitor_id, edge_name)`` to a routing
-    target (typically a :class:`model.client.ScreenPosition`). Today it
-    is empty and edge routing falls back to the global
-    ``ServerMouseListener._active_screens`` lookup; the field is reserved
-    so the data shape is stable for downstream GUIs / config files.
+    target (a client UID). Today it is empty and edge routing is
+    driven by the unified :class:`EdgeBinding` cache on the mouse
+    listener; the field is reserved so the data shape is stable for
+    downstream GUIs / config files.
     """
 
     monitors: tuple[MonitorInfo, ...] = field(default_factory=tuple)

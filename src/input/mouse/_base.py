@@ -77,15 +77,16 @@ class ServerMouseListener(object):
         self.event_bus = event_bus
 
         self._listening = False
-        self._active_screens = {}
+        # Set of UIDs of clients currently connected with the mouse
+        # stream enabled. Used as a presence check by the cross-screen
+        # resolver and the topology pusher.
+        self._active_clients: dict[str, bool] = {}
         # Spatial cross-screen routing table populated by
-        # ``_on_client_connected``: one entry per ``client_screen`` (the
-        # client's identifier in the bus events), value is the list of
-        # serialized EdgeBindings derived from that client's placements.
-        # When an edge crossing fires we look up the binding owning
-        # ``(server_monitor_id, edge, axis_norm)`` and prefer it over
-        # the legacy ``_active_screens`` lookup so multi-monitor
-        # placements drive routing.
+        # ``_on_client_connected``: one entry per ``client_uid``, value is
+        # the list of serialized EdgeBindings derived from that client's
+        # placements. When an edge crossing fires we look up the binding
+        # owning ``(server_monitor_id, server_edge, axis_norm)`` and route
+        # the cursor to that client's UID.
         self._edge_bindings_by_client: dict[str, list[dict]] = {}
         # Primary monitor size kept for backward compatibility / scroll
         # events. Edge detection uses the full MonitorLayout so the
@@ -232,22 +233,22 @@ class ServerMouseListener(object):
         if data is None:
             return
 
-        client_screen = data.client_screen
+        client_uid = data.client_uid
         # We need this check in order to not dispatch cross-screen events to clients without mouse stream
         client_streams = data.streams  # We check if client has mouse stream enabled
         if client_streams is None:
             await asyncio.sleep(0)
             return
 
-        if client_screen and StreamType.MOUSE in client_streams:  # If not, we ignore
-            self._active_screens[client_screen] = True
+        if client_uid and StreamType.MOUSE in client_streams:  # If not, we ignore
+            self._active_clients[client_uid] = True
             # Cache the spatial routing table for this client. Each
             # entry is a serialized EdgeBinding dict — we keep them as
             # dicts on the hot path to avoid an extra import on the
             # pynput thread. The same dicts are pushed verbatim to the
             # client (via ``ClientTopologyCommandEvent``) so the client
             # can resolve return-to-server crossings spatially.
-            self._edge_bindings_by_client[client_screen] = list(
+            self._edge_bindings_by_client[client_uid] = list(
                 getattr(data, "edge_bindings", []) or []
             )
 
@@ -260,17 +261,16 @@ class ServerMouseListener(object):
         if data is None:
             return
 
-        # try to get client from data to remove from active screens
-        client = data.client_screen
-        if client and client in self._active_screens:
-            del self._active_screens[client]
+        client_uid = data.client_uid
+        if client_uid and client_uid in self._active_clients:
+            del self._active_clients[client_uid]
         # Drop the cached routing table for the disconnected client so
         # stale bindings never accidentally route a crossing into a
         # client that's no longer reachable.
-        self._edge_bindings_by_client.pop(client, None)
+        self._edge_bindings_by_client.pop(client_uid, None)
 
-        # if active screens is empty, we stop listening
-        if len(self._active_screens.items()) == 0:
+        # if no clients are active anymore, stop listening
+        if not self._active_clients:
             self._listening = False
 
         await asyncio.sleep(0)
@@ -281,10 +281,10 @@ class ServerMouseListener(object):
         after a successful save so the layout editor's changes take
         effect on the very next mouse crossing.
         """
-        if data is None or not data.client_screen:
+        if data is None or not data.client_uid:
             return
-        if data.client_screen in self._active_screens:
-            self._edge_bindings_by_client[data.client_screen] = list(
+        if data.client_uid in self._active_clients:
+            self._edge_bindings_by_client[data.client_uid] = list(
                 data.edge_bindings or []
             )
         await asyncio.sleep(0)
@@ -341,7 +341,7 @@ class ServerMouseListener(object):
         cursor_y: float,
     ) -> Optional[tuple[str, dict, float]]:
         """Match the current edge crossing against a cached
-        :class:`EdgeBinding` and return ``(client_screen, binding_dict,
+        :class:`EdgeBinding` and return ``(client_uid, binding_dict,
         server_axis_norm)`` for the caller to use when computing the
         exit ``(x, y)``.
 
@@ -386,7 +386,7 @@ class ServerMouseListener(object):
             axis_norm = (cursor_x - monitor.min_x) / m_w
         axis_norm = max(0.0, min(1.0, axis_norm))
 
-        for client_screen, bindings in self._edge_bindings_by_client.items():
+        for client_uid, bindings in self._edge_bindings_by_client.items():
             for b in bindings:
                 if b.get("server_monitor_id") != monitor.monitor_id:
                     continue
@@ -395,9 +395,30 @@ class ServerMouseListener(object):
                 s_start = b.get("server_axis_start", 0.0)
                 s_end = b.get("server_axis_end", 0.0)
                 if s_start <= axis_norm < s_end:
-                    return client_screen, b, axis_norm
+                    return client_uid, b, axis_norm
 
         return None
+
+    def resolve_neighbour(
+        self,
+        edge: ScreenEdge,
+        cursor_x: float,
+        cursor_y: float,
+    ) -> Optional[str]:
+        """Public read-only accessor: which client UID lives off the
+        given edge of the server monitor under ``(cursor_x, cursor_y)``?
+        Returns ``None`` if no binding matches.
+
+        Used by the keyboard hotkey handler to resolve directional
+        screen switches spatially through the active topology.
+        """
+        resolved = self._resolve_cross_screen_target(edge, cursor_x, cursor_y)
+        return resolved[0] if resolved is not None else None
+
+    def get_active_client_uids(self) -> list[str]:
+        """Snapshot of currently active client UIDs in insertion order.
+        Used by the keyboard hotkey handler for client cycling."""
+        return list(self._active_clients.keys())
 
     def _darwin_mouse_suppress_filter(self, event_type, event):
         raise NotImplementedError("Mouse suppress filter not implemented yet.")
@@ -963,7 +984,7 @@ class ClientMouseController(object):
         Async event handler for when client becomes active.
         """
         if data is not None:
-            self._current_screen = data.client_screen
+            self._current_screen = data.client_uid
             # Track which of our monitors the server's spatial routing
             # targeted. Used by ``_position_cursor`` / ``_move_cursor``
             # to pin the cursor to that physical screen instead of the

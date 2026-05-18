@@ -87,17 +87,22 @@ class ClientStreamReconnectedEvent(BusEvent):
     Event dispatched when a client stream reconnects.
     """
 
-    def __init__(self, client_screen: str, streams: list[int]):
-        self.client_screen = client_screen
+    def __init__(self, client_uid: str, streams: list[int]):
+        self.client_uid = client_uid
         self.streams = streams
 
     def to_dict(self) -> dict:
-        return {"client_screen": self.client_screen, "stream_id": self.streams}
+        return {"client_uid": self.client_uid, "stream_id": self.streams}
 
 
 class ActiveScreenChangedEvent(BusEvent):
     """
-    Event dispatched when the active screen changes.
+    Event dispatched when the active client changes.
+
+    ``active_screen`` now carries the active client's **UID** (or
+    ``None`` to mean "back to server"). The field name is preserved
+    for historical reasons but its contract changed in the UID-routing
+    migration — never set it to a ``ScreenPosition`` string.
     """
 
     def __init__(
@@ -107,11 +112,11 @@ class ActiveScreenChangedEvent(BusEvent):
         position: tuple[float, float] = (-1, -1),
     ):
         """
-        Represents a change in the active screen (e.g., when a server crosses to another client's screen).
+        Represents a change in the active client.
 
         Args:
             active_screen: Optional[str]
-                Identifier for the active screen. Can be None if no active screen is set (so the server).
+                UID of the active client; ``None`` means "back to server".
             source: str, optional
                 Source information related to the object. Defaults to an empty string.
             position: tuple[float, float], optional
@@ -135,6 +140,10 @@ class ClientConnectedEvent(BusEvent):
     """
     Event dispatched when a new client connects.
 
+    ``client_uid`` is the client's stable identifier (mirrored from
+    :attr:`model.client.ClientObj.uid`) and is the routing key used by
+    the mouse listener, stream handlers, and cursor worker.
+
     ``edge_bindings`` carries the spatial cross-screen contract derived
     from the client's effective placements (real or synthesized from
     the legacy ``screen_position``) and the server's monitor list. Each
@@ -148,17 +157,17 @@ class ClientConnectedEvent(BusEvent):
 
     def __init__(
         self,
-        client_screen: str,
+        client_uid: str,
         streams: Optional[list[int]] = None,
         edge_bindings: Optional[list[dict]] = None,
     ):
-        self.client_screen = client_screen
+        self.client_uid = client_uid
         self.streams = streams
         self.edge_bindings: list[dict] = list(edge_bindings) if edge_bindings else []
 
     def to_dict(self) -> dict:
         return {
-            "client_screen": self.client_screen,
+            "client_uid": self.client_uid,
             "streams": self.streams,
             "edge_bindings": list(self.edge_bindings),
         }
@@ -207,22 +216,25 @@ class ClientLayoutUpdatedEvent(BusEvent):
 
     def __init__(
         self,
-        client_screen: str,
+        client_uid: str,
         edge_bindings: Optional[list[dict]] = None,
     ):
-        self.client_screen = client_screen
+        self.client_uid = client_uid
         self.edge_bindings: list[dict] = list(edge_bindings) if edge_bindings else []
 
     def to_dict(self) -> dict:
         return {
-            "client_screen": self.client_screen,
+            "client_uid": self.client_uid,
             "edge_bindings": list(self.edge_bindings),
         }
 
 
 class ClientActiveEvent(BusEvent):
     """
-    Event dispatched when the client becomes active.
+    Event dispatched on the CLIENT side when the server activates it.
+
+    ``client_uid`` is the client's own UID (echoed by the server, used
+    for log correlation on the client side).
 
     ``client_monitor_id`` (optional) tells the receiving client which of
     its own monitors the server's cursor crossed into. When set, the
@@ -233,15 +245,15 @@ class ClientActiveEvent(BusEvent):
 
     def __init__(
         self,
-        client_screen: str,
+        client_uid: str,
         client_monitor_id: Optional[int] = None,
     ):
-        self.client_screen = client_screen
+        self.client_uid = client_uid
         self.client_monitor_id = client_monitor_id
 
     def to_dict(self) -> dict:
         return {
-            "client_screen": self.client_screen,
+            "client_uid": self.client_uid,
             "client_monitor_id": self.client_monitor_id,
         }
 

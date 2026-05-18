@@ -169,7 +169,7 @@ class CursorHandlerWorker(object):
         if data is None:
             return
 
-        if self._active_client and data.client_screen == self._active_client:
+        if self._active_client and data.client_uid == self._active_client:
             self._active_client = None
             await self.disable_capture()
             return

@@ -1582,7 +1582,7 @@ class Client:
         await self.event_bus.dispatch(
             event_type=BusEventType.CLIENT_STREAM_RECONNECTED,
             data=ClientStreamReconnectedEvent(
-                client_screen=client.get_screen_position(), streams=streams
+                client_uid=client.uid, streams=streams
             ),
         )
 

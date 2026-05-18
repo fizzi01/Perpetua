@@ -45,6 +45,10 @@ export interface LayoutEditorProps {
     serverMonitors: MonitorInfo[];
     clients: LayoutEditorClient[];
     placements: MonitorPlacement[];
+    // UID of a client to spotlight in the sidebar on mount. Used by
+    // the approve/add auto-open flow so the freshly-onboarded client's
+    // monitors are visually obvious.
+    preselectClientUid?: string;
     onChange: (placements: MonitorPlacement[]) => void;
     onValidityChange?: (ok: boolean, errors: string[]) => void;
     height?: number;
@@ -113,6 +117,11 @@ interface DragState {
     // corner at drag start, so the box follows the cursor cleanly.
     grabDx: number;
     grabDy: number;
+    // Original position captured at pointerdown — if the user drops on
+    // an invalid spot AND no nearby valid landing exists, we revert
+    // here instead of stranding the box outside the workspace.
+    originX: number;
+    originY: number;
 }
 
 const SNAP_THRESHOLD_PX = 12;
@@ -137,6 +146,7 @@ export function LayoutEditor({
     serverMonitors,
     clients,
     placements,
+    preselectClientUid,
     onChange,
     onValidityChange,
     height = 360,
@@ -236,10 +246,18 @@ export function LayoutEditor({
             placementIdx: idx,
             grabDx: ws.x - p.workspace_x,
             grabDy: ws.y - p.workspace_y,
+            originX: p.workspace_x,
+            originY: p.workspace_y,
         });
         (e.target as Element).setPointerCapture?.(e.pointerId);
     }
 
+    // Free-drag: the box follows the cursor 1:1, with snap-assist when
+    // the candidate is near a neighbour edge. Validation (adjacency +
+    // overlap) is NOT enforced during the move — the dragged box just
+    // gets a red-tinted outline (via ``validation.overlappingIndices``
+    // / the trailing snap check in ``onDragEnd``) so the user sees
+    // what's wrong without the box "freezing" mid-drag.
     const onDragMove = useCallback((ev: PointerEvent) => {
         if (!drag || !canvasRef.current) return;
         const rect = canvasRef.current.getBoundingClientRect();
@@ -258,30 +276,16 @@ export function LayoutEditor({
             height: target.height,
         };
 
-        // Snap to neighbouring monitors (server + other placements).
         const others = [
             ...serverMonitors.map(monitorAsRect),
             ...placements
                 .filter((_, i) => i !== drag.placementIdx)
                 .map(placementAsRect),
         ];
-        // Convert snap threshold from canvas px to workspace px.
+        // Snap-to-edge within a small threshold (in workspace px,
+        // derived from the canvas-px threshold for resolution
+        // independence). Purely visual feedback — no rejection.
         const snapped = snapRect(candidate, others, SNAP_THRESHOLD_PX / metrics.scale);
-        const snappedRect = {...candidate, x: snapped.x, y: snapped.y};
-
-        // Adjacency clamp: the box must always touch at least one
-        // server monitor or another placed client. Without this rule
-        // the user can drag the box into empty space arbitrarily far,
-        // which doesn't correspond to any meaningful spatial
-        // arrangement (no neighbour means no crossing). If the move
-        // would break adjacency, we simply don't commit it — the box
-        // stays at its last valid position and the cursor leads ahead
-        // of it until the user comes back near a neighbour.
-        if (!isAdjacentToAny(snappedRect, others)) return;
-        // Reject moves that produce overlaps too: keeping the previous
-        // valid position is less confusing than silently flagging an
-        // error every time the cursor crosses another monitor.
-        if (others.some((r) => rectsOverlap(snappedRect, r))) return;
 
         const next = placements.slice();
         next[drag.placementIdx] = {
@@ -292,9 +296,79 @@ export function LayoutEditor({
         onChange(next);
     }, [drag, metrics, placements, serverMonitors, onChange]);
 
+    // Snap-on-release: if the dropped position is invalid (not
+    // adjacent to any neighbour OR overlapping one), try the four
+    // flush-to-edge slots around every existing neighbour and pick
+    // the closest valid one. Falls back to the drag origin so the
+    // box is never stranded on an unreachable cell.
     const onDragEnd = useCallback(() => {
-        setDrag(null);
-    }, []);
+        setDrag((d) => {
+            if (!d) return null;
+            const target = placements[d.placementIdx];
+            if (!target) return null;
+
+            const others = [
+                ...serverMonitors.map(monitorAsRect),
+                ...placements
+                    .filter((_, i) => i !== d.placementIdx)
+                    .map(placementAsRect),
+            ];
+            const candidate = {
+                x: target.workspace_x,
+                y: target.workspace_y,
+                width: target.width,
+                height: target.height,
+            };
+
+            const isValid = (r: typeof candidate) =>
+                isAdjacentToAny(r, others)
+                && !others.some((o) => rectsOverlap(r, o));
+
+            if (!isValid(candidate)) {
+                // Search the flush-to-edge slots around every other
+                // rect and pick the one closest to where the user
+                // released. If none fit, revert to drag origin.
+                let bestDist = Infinity;
+                let bestX = d.originX;
+                let bestY = d.originY;
+                const cx = candidate.x + candidate.width / 2;
+                const cy = candidate.y + candidate.height / 2;
+                for (const r of others) {
+                    const slots = [
+                        {x: r.x + r.width, y: r.y},
+                        {x: r.x - candidate.width, y: r.y},
+                        {x: r.x, y: r.y + r.height},
+                        {x: r.x, y: r.y - candidate.height},
+                    ];
+                    for (const s of slots) {
+                        const test = {
+                            x: s.x,
+                            y: s.y,
+                            width: candidate.width,
+                            height: candidate.height,
+                        };
+                        if (!isValid(test)) continue;
+                        const dx = s.x + candidate.width / 2 - cx;
+                        const dy = s.y + candidate.height / 2 - cy;
+                        const d2 = dx * dx + dy * dy;
+                        if (d2 < bestDist) {
+                            bestDist = d2;
+                            bestX = s.x;
+                            bestY = s.y;
+                        }
+                    }
+                }
+                const next = placements.slice();
+                next[d.placementIdx] = {
+                    ...target,
+                    workspace_x: bestX,
+                    workspace_y: bestY,
+                };
+                onChange(next);
+            }
+            return null;
+        });
+    }, [placements, serverMonitors, onChange]);
 
     useEffect(() => {
         if (!drag) return;
@@ -610,82 +684,62 @@ export function LayoutEditor({
     }
 
     return (
-        <div style={{display: "flex", gap: 8, alignItems: "stretch", width: "100%", minHeight: 0}}>
-            <div
-                style={{
-                    flex: "0 0 150px",
-                    display: "flex",
-                    flexDirection: "column",
-                    gap: 6,
-                    minHeight: 0,
-                }}
-            >
+        <div className="flex gap-3 items-stretch w-full h-full min-h-0 p-3">
+            <div className="w-[150px] shrink-0 flex flex-col gap-2 min-h-0">
                 {unplaced.length === 0 ? (
-                    <div style={{fontSize: 11, opacity: 0.55, margin: "auto", textAlign: "center"}}>
+                    <div className="text-[11px] opacity-55 m-auto text-center">
                         All monitors placed
                     </div>
                 ) : (
-                    <div style={{display: "flex", flexDirection: "column", gap: 5, overflowY: "auto"}}>
-                        {unplaced.map((u, i) => (
-                            <div
-                                key={`${u.clientUid}:${u.monitor.monitor_id}:${i}`}
-                                onPointerDown={(e) =>
-                                    onSidebarPointerDown(
-                                        e,
-                                        u.clientUid,
-                                        u.clientName,
-                                        u.monitor,
-                                    )
-                                }
-                                style={{
-                                    padding: "5px 8px",
-                                    borderRadius: 5,
-                                    backgroundColor: clientColors[u.clientUid],
-                                    color: "white",
-                                    cursor: "grab",
-                                    fontSize: 11,
-                                    userSelect: "none",
-                                    touchAction: "none",
-                                    lineHeight: 1.3,
-                                }}
-                                title={`${u.clientName} · monitor #${u.monitor.monitor_id} · ${u.monitor.max_x - u.monitor.min_x}×${u.monitor.max_y - u.monitor.min_y}`}
-                            >
-                                <div style={{fontWeight: 600}}>{u.clientName}</div>
-                                <div style={{fontSize: 10, opacity: 0.85}}>
-                                    #{u.monitor.monitor_id}
+                    <div className="flex flex-col gap-2 overflow-y-auto p-1">
+                        {unplaced.map((u, i) => {
+                            const highlighted = !!preselectClientUid
+                                && u.clientUid === preselectClientUid;
+                            return (
+                                <div
+                                    key={`${u.clientUid}:${u.monitor.monitor_id}:${i}`}
+                                    onPointerDown={(e) =>
+                                        onSidebarPointerDown(
+                                            e,
+                                            u.clientUid,
+                                            u.clientName,
+                                            u.monitor,
+                                        )
+                                    }
+                                    className="px-2.5 py-2 rounded-lg text-white cursor-grab text-[11px] select-none leading-snug touch-none shadow-sm transition-all"
+                                    style={{
+                                        backgroundColor: clientColors[u.clientUid],
+                                        outline: highlighted
+                                            ? "2px solid var(--app-primary)"
+                                            : "2px solid transparent",
+                                        outlineOffset: highlighted ? "2px" : "0px",
+                                    }}
+                                    title={`${u.clientName} · monitor #${u.monitor.monitor_id} · ${u.monitor.max_x - u.monitor.min_x}×${u.monitor.max_y - u.monitor.min_y}`}
+                                >
+                                    <div className="font-semibold">{u.clientName}</div>
+                                    <div className="text-[10px] opacity-85">
+                                        #{u.monitor.monitor_id}
+                                    </div>
                                 </div>
-                            </div>
-                        ))}
+                            );
+                        })}
                     </div>
                 )}
             </div>
 
             <div
                 ref={canvasRef}
+                className="flex-1 relative rounded-xl border overflow-hidden"
                 style={{
-                    flex: 1,
                     minHeight: height,
                     height,
-                    position: "relative",
-                    borderRadius: 8,
                     background:
                         "repeating-linear-gradient(45deg, rgba(120,120,120,0.04) 0 10px, transparent 10px 20px)",
-                    border: "1px solid rgba(120,120,120,0.25)",
-                    overflow: "hidden",
+                    borderColor: "var(--app-card-border)",
                 }}
             >
                 {serverMonitors.length === 0 && (
-                    <div
-                        style={{
-                            position: "absolute",
-                            inset: 0,
-                            display: "flex",
-                            alignItems: "center",
-                            justifyContent: "center",
-                            fontSize: 12,
-                            opacity: 0.6,
-                        }}
-                    >
+                    <div className="absolute inset-0 flex items-center justify-center text-xs opacity-60">
                         No server monitors available.
                     </div>
                 )}
@@ -721,24 +775,12 @@ export function LayoutEditor({
                 {!validation.ok && (
                     <div
                         title={validation.errors.slice(0, 4).join("\n")}
+                        className="absolute top-2.5 left-2.5 flex items-center gap-1.5 px-2.5 py-1 rounded-full text-[11px] font-semibold text-white shadow-sm pointer-events-auto"
                         style={{
-                            position: "absolute",
-                            top: 6,
-                            left: 6,
-                            display: "flex",
-                            alignItems: "center",
-                            gap: 6,
-                            padding: "3px 8px",
-                            borderRadius: 999,
-                            fontSize: 11,
-                            fontWeight: 600,
-                            color: "white",
                             backgroundColor: "rgba(239, 68, 68, 0.92)",
-                            boxShadow: "0 1px 4px rgba(0,0,0,0.25)",
-                            pointerEvents: "auto",
                         }}
                     >
-                        <span style={{fontSize: 12, lineHeight: 1}}>⚠</span>
+                        <span className="text-xs leading-none">⚠</span>
                         <span>
                             {validation.errors.length} overlap
                             {validation.errors.length === 1 ? "" : "s"}

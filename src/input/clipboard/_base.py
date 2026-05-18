@@ -354,7 +354,9 @@ class ClipboardListener:
         )
         self.command_stream = command_stream
 
-        self._active_screens = {}
+        # Presence map of active client UIDs (mirrors the mouse/keyboard
+        # listeners' rekey to UID-keyed routing).
+        self._active_clients: dict[str, bool] = {}
         # Internal flag to track if we should be listening (When at least one client is active or connected)
         # This flag should not be set directly, but via event handlers
         self._listening = False
@@ -436,8 +438,9 @@ class ClipboardListener:
         if data is None:
             return
 
-        client_screen = data.client_screen
-        self._active_screens[client_screen] = True
+        client_uid = data.client_uid
+        if client_uid:
+            self._active_clients[client_uid] = True
         self._listening = True
 
         if not self.clipboard.is_listening():
@@ -453,13 +456,12 @@ class ClipboardListener:
         if data is None:
             return
 
-        # try to get client from data to remove from active screens
-        client = data.client_screen
-        if client and client in self._active_screens:
-            del self._active_screens[client]
+        client_uid = data.client_uid
+        if client_uid and client_uid in self._active_clients:
+            del self._active_clients[client_uid]
 
-        # if active screens is empty, we stop listening
-        if len(self._active_screens.items()) == 0:
+        # if no clients are active anymore, stop listening
+        if not self._active_clients:
             self._listening = False
             if self.clipboard.is_listening():
                 await self.clipboard.stop()

@@ -26,7 +26,6 @@ interface Client {
     name: string;
     ips?: string[];
     status: 'online' | 'offline';
-    position: 'top' | 'bottom' | 'left' | 'right';
     connectedAt?: Date;
     // Per-monitor info the client advertised on its last handshake.
     // Forwarded to the layout editor so each monitor can be placed
@@ -34,8 +33,13 @@ interface Client {
     monitors?: MonitorInfo[];
     // Workspace placements persisted on the daemon. Used to seed the
     // layout editor on startup so the user doesn't see an empty canvas
-    // before the first save.
+    // before the first save. A client is "placed" iff this list is
+    // non-empty (see ``isPlaced``).
     placements?: MonitorPlacement[];
+}
+
+export function isPlaced(client: {placements?: MonitorPlacement[]}): boolean {
+    return (client.placements?.length ?? 0) > 0;
 }
 
 /**
@@ -98,7 +102,6 @@ export function useClientManagement() {
             name: clientData.host_name,
             ips: clientData.ip_addresses,
             status: connected ? 'online' : 'offline' as const,
-            position: clientData.screen_position as 'top' | 'bottom' | 'left' | 'right',
             connectedAt: connected
                 ? new Date(clientData.last_connection_date || clientData.first_connection_date)
                 : undefined,
@@ -156,15 +159,17 @@ export function useClientManagement() {
     }, [findExistingClient, createClient]);
 
     /**
-     * Add a client manually (for authorization)
+     * Add a client manually (for authorization). The new client lands
+     * "unplaced": no ``placements`` yet, so cross-screen routing will
+     * not reach it until the admin positions its monitors via the
+     * Layout Editor (auto-opened by the caller).
      */
-    const addClient = useCallback((hostname: string, ips: string[], position: 'top' | 'bottom' | 'left' | 'right') => {
+    const addClient = useCallback((hostname: string, ips: string[]) => {
         const newClient: Client = {
             id: ips[0] || hostname,
             name: hostname,
             ips: ips,
             status: 'offline' as const,
-            position,
         };
 
         setClients(prev => {

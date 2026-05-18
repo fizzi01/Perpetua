@@ -38,6 +38,7 @@
         "focus": true,
         "hiddenTitle": true,
         "decorations": false,
+        "transparent": true,
         "url": "layout-editor"
       }
     ],

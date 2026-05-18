@@ -22,23 +22,21 @@ import {motion} from 'motion/react';
 import {Check, UserPlus, X} from 'lucide-react';
 import {ClientApprovalRequest} from '../../api/Interface';
 
-type ScreenPosition = 'top' | 'bottom' | 'left' | 'right';
-
-const POSITIONS: ScreenPosition[] = ['top', 'bottom', 'left', 'right'];
-
 interface PendingApprovalCardProps {
     request: ClientApprovalRequest;
-    onApprove: (position: ScreenPosition) => void;
+    onApprove: () => void;
     onDeny: () => void;
 }
 
 /**
- * Inline allow/deny prompt for an unknown client trying to connect. The
- * handshake on the server is held open until the admin makes a choice, so the
- * card surfaces a countdown derived from the timeout the server reported.
+ * Inline allow/deny prompt for an unknown client trying to connect.
+ * The handshake on the server is held open until the admin makes a
+ * choice; the card surfaces a countdown derived from the timeout the
+ * server reported. Approval no longer requires picking a direction —
+ * the GUI auto-opens the Layout Editor afterwards so the admin can
+ * place the client's monitors visually.
  */
 export function PendingApprovalCard({request, onApprove, onDeny}: PendingApprovalCardProps) {
-    const [position, setPosition] = useState<ScreenPosition>('top');
     const [remaining, setRemaining] = useState(request.timeout);
 
     useEffect(() => {
@@ -92,41 +90,6 @@ export function PendingApprovalCard({request, onApprove, onDeny}: PendingApprova
                 </div>
             </div>
 
-            <div className="mb-4">
-                <label className="block mb-2 text-sm font-semibold"
-                       style={{color: 'var(--app-text-primary)'}}
-                >
-                    Screen position
-                </label>
-                <div className="grid grid-cols-4 gap-1">
-                    {POSITIONS.map((p) => (
-                        <motion.button
-                            key={p}
-                            whileHover={{scale: 1.05}}
-                            whileTap={{scale: 0.95}}
-                            onClick={() => setPosition(p)}
-                            className="cursor-pointer px-2 py-2 rounded-lg text-xs font-semibold transition-all capitalize"
-                            style={{
-                                backgroundColor:
-                                    position === p
-                                        ? 'var(--app-primary)'
-                                        : 'var(--app-bg-secondary)',
-                                color:
-                                    position === p
-                                        ? 'white'
-                                        : 'var(--app-text-secondary)',
-                                border:
-                                    position === p
-                                        ? '1px solid var(--app-primary)'
-                                        : '1px solid var(--app-input-border)',
-                            }}
-                        >
-                            {p}
-                        </motion.button>
-                    ))}
-                </div>
-            </div>
-
             <div className="grid grid-cols-2 gap-2">
                 <motion.button
                     whileHover={{scale: 1.02}}
@@ -144,7 +107,7 @@ export function PendingApprovalCard({request, onApprove, onDeny}: PendingApprova
                 <motion.button
                     whileHover={{scale: 1.02}}
                     whileTap={{scale: 0.98}}
-                    onClick={() => onApprove(position)}
+                    onClick={onApprove}
                     className="cursor-pointer p-3 rounded-lg transition-all flex items-center justify-center gap-2"
                     style={{
                         backgroundColor: 'var(--app-success)',

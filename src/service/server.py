@@ -562,20 +562,18 @@ class Server:
         self,
         ip_addresses: Optional[list[str] | str] = None,
         hostname: Optional[str] = None,
-        screen_position: str = "top",
+        screen_position: Optional[str] = None,
         auto_save: bool = True,
     ) -> ClientObj:
-        """
-        Add a client to the authorized list.
+        """Add a client to the authorized list.
 
-        Args:
-            ip_addresses: IP address(es) of the client (single str or list)
-            hostname: Hostname of the client
-            screen_position: Screen position relative to server
-            auto_save: If True, automatically saves configuration after adding
-
-        Returns:
-            The created ClientObj
+        ``screen_position`` is optional; when ``None`` the client is
+        added unplaced and the admin is expected to position its
+        monitors via the Layout Editor. Pre-migration tooling that
+        still passes a legacy direction is honoured — the value is
+        stored verbatim on :attr:`ClientObj.screen_position` and the
+        synthesis shim in :meth:`ClientObj.get_effective_placements`
+        produces a default placement for it.
         """
         try:
             client = self.config.add_client(
@@ -587,8 +585,14 @@ class Server:
             if auto_save:
                 await self.save_config()
 
+            placement_hint = (
+                f"at position {screen_position}"
+                if screen_position
+                else "(unplaced)"
+            )
             self._logger.info(
-                f"Added client {ip_addresses if ip_addresses else hostname} at position {screen_position}"
+                f"Added client {ip_addresses if ip_addresses else hostname} "
+                f"{placement_hint}"
             )
             return client
         except ValueError as ve:
@@ -780,7 +784,7 @@ class Server:
         await self.event_bus.dispatch(
             event_type=BusEventType.CLIENT_LAYOUT_UPDATED,
             data=ClientLayoutUpdatedEvent(
-                client_screen=client.get_screen_position(),
+                client_uid=client.uid,
                 edge_bindings=edge_bindings,
             ),
         )
@@ -1074,12 +1078,15 @@ class Server:
         return True
 
     async def approve_pending_client(
-        self, peer_ip: str, screen_position: str = "top"
+        self, peer_ip: str, screen_position: Optional[str] = None
     ) -> bool:
         """Approve an unknown client that's waiting for the admin's OK.
 
-        Adds the client to the persistent allowlist with the chosen screen
-        position before unblocking the handshake.
+        Adds the client to the persistent allowlist before unblocking
+        the handshake. ``screen_position`` is optional and only kept
+        as legacy metadata — when omitted the client lands unplaced
+        and the GUI auto-opens the Layout Editor for the admin to
+        position its monitors visually.
         """
         async with self._pending_approvals_lock:
             meta = self._pending_approval_meta.get(peer_ip)
@@ -1106,7 +1113,10 @@ class Server:
             return False
 
         await self._resolve_pending_approval(
-            peer_ip, client, screen_position=screen_position, reason="approved"
+            peer_ip,
+            client,
+            screen_position=screen_position or "",
+            reason="approved",
         )
         return True
 
@@ -1527,13 +1537,17 @@ class Server:
         is_enabled = self.is_stream_enabled(StreamType.KEYBOARD)
         command_stream = self._stream_handlers[StreamType.COMMAND]
 
-        # Keyboard Listener - captures and sends keyboard events
+        # Keyboard Listener - captures and sends keyboard events.
+        # Wire the mouse listener (if present) so the directional
+        # hotkeys can resolve targets through the spatial topology
+        # instead of the retired ScreenPosition enum.
         keyboard_listener = self._components.get("keyboard_listener")
         if not keyboard_listener:
             keyboard_listener = ServerKeyboardListener(
                 event_bus=self.event_bus,
                 stream_handler=keyboard_stream,
                 command_stream=command_stream,
+                mouse_listener=self._components.get("mouse_listener"),
             )
             if is_enabled and not keyboard_listener.start():
                 raise RuntimeError("Failed to start keyboard listener")
@@ -1637,7 +1651,7 @@ class Server:
         await self.event_bus.dispatch(
             event_type=BusEventType.CLIENT_CONNECTED,
             data=ClientConnectedEvent(
-                client_screen=client.get_screen_position(),
+                client_uid=client.uid,
                 streams=streams,
                 edge_bindings=edge_bindings,
             ),
@@ -1660,7 +1674,7 @@ class Server:
         await self.event_bus.dispatch(
             event_type=BusEventType.CLIENT_DISCONNECTED,
             data=ClientDisconnectedEvent(
-                client_screen=client.get_screen_position(), streams=streams
+                client_uid=client.uid, streams=streams
             ),
         )
         await self.save_config()
@@ -1682,7 +1696,7 @@ class Server:
         await self.event_bus.dispatch(
             event_type=BusEventType.CLIENT_STREAM_RECONNECTED,
             data=ClientStreamReconnectedEvent(
-                client_screen=client.get_screen_position(), streams=streams
+                client_uid=client.uid, streams=streams
             ),
         )
 

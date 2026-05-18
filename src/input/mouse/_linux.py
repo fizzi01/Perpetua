@@ -54,13 +54,38 @@ class ServerMouseListener(_base.ServerMouseListener):
         super().__init__(*args, **kwargs)
 
         if self._barrier_mode:
+            # UID of the currently captured client (None while the
+            # server owns the cursor). Replaces the legacy
+            # screen-position string used by the X11 path.
             self._active_client_barrier: Optional[str] = None
             self._barrier_screen_size: tuple[int, int] = Screen.get_size()
+            # Edge → client UID map derived from the unified
+            # ``_edge_bindings_by_client`` cache. Built fresh whenever
+            # bindings change; lets ``_on_barrier_activated`` translate
+            # the edge name reported by the backend into the UID the
+            # rest of the routing pipeline expects.
+            self._edge_to_uid: dict[str, str] = {}
 
             self.event_bus.subscribe(
                 event_type=BusEventType.SCREEN_CHANGE_GUARD,
                 callback=self._on_screen_change_guard_wayland,
             )
+
+    def _refresh_edge_to_uid(self) -> dict[str, bool]:
+        """Recompute the edge → UID map from the current
+        ``_edge_bindings_by_client`` cache and return the ``{edge: True}``
+        snapshot the barrier backend expects. First binding wins when
+        multiple clients share the same server edge; full per-axis
+        partitioning is left to the X11 / spatial path.
+        """
+        edge_to_uid: dict[str, str] = {}
+        for client_uid, bindings in self._edge_bindings_by_client.items():
+            for b in bindings:
+                edge = b.get("server_edge")
+                if edge and edge not in edge_to_uid:
+                    edge_to_uid[edge] = client_uid
+        self._edge_to_uid = edge_to_uid
+        return {edge: True for edge in edge_to_uid}
 
     def _create_listener(self):
         if self._barrier_mode:
@@ -94,7 +119,7 @@ class ServerMouseListener(_base.ServerMouseListener):
             self._listener = self._create_listener()
 
         self._listener.start()
-        self._listener.update_clients(dict(self._active_screens))
+        self._listener.update_clients(self._refresh_edge_to_uid())
 
         self._logger.debug("Wayland barrier mode started")
         return True
@@ -118,12 +143,12 @@ class ServerMouseListener(_base.ServerMouseListener):
     async def _on_client_connected(self, data: Optional[ClientConnectedEvent]):
         await super()._on_client_connected(data)
         if self._barrier_mode and data is not None and self._listener:
-            self._listener.update_clients(dict(self._active_screens))
+            self._listener.update_clients(self._refresh_edge_to_uid())
 
     async def _on_client_disconnected(self, data: Optional[ClientDisconnectedEvent]):
         if self._barrier_mode and data is not None:
-            client = data.client_screen
-            if self._active_client_barrier and client == self._active_client_barrier:
+            client_uid = data.client_uid
+            if self._active_client_barrier and client_uid == self._active_client_barrier:
                 self._active_client_barrier = None
                 if self._listener:
                     self._listener.disable_capture()
@@ -135,7 +160,15 @@ class ServerMouseListener(_base.ServerMouseListener):
         await super()._on_client_disconnected(data)
 
         if self._barrier_mode and data is not None and self._listener:
-            self._listener.update_clients(dict(self._active_screens))
+            self._listener.update_clients(self._refresh_edge_to_uid())
+
+    async def _on_client_layout_updated(self, data):
+        # Bindings just changed → refresh the edge→UID map AND the
+        # barrier backend's active-edge set so the new topology takes
+        # effect immediately (parity with the X11 hot-reload path).
+        await super()._on_client_layout_updated(data)
+        if self._barrier_mode and data is not None and self._listener:
+            self._listener.update_clients(self._refresh_edge_to_uid())
 
     async def _on_screen_change_guard_wayland(self, data):
         """Handle SCREEN_CHANGE_GUARD on Wayland.
@@ -216,16 +249,22 @@ class ServerMouseListener(_base.ServerMouseListener):
         )
 
     async def _on_barrier_activated(self, edge: str, cursor_x: float, cursor_y: float):
-        """Dispatch cross-screen events when a barrier is hit."""
-        screen = edge
+        """Dispatch cross-screen events when a barrier is hit.
 
-        if not screen or not self._active_screens.get(screen, False):
+        The portal backend reports the edge name; we resolve it to the
+        UID of the client that owns that edge via ``_edge_to_uid``
+        (populated from ``_edge_bindings_by_client``). The X11 path
+        does the same translation through ``_resolve_cross_screen_target``;
+        this is the barrier-equivalent for Wayland.
+        """
+        target_uid = self._edge_to_uid.get(edge)
+        if not target_uid or target_uid not in self._active_clients:
             return
 
         if self._active_client_barrier is not None:
             return
 
-        self._active_client_barrier = screen
+        self._active_client_barrier = target_uid
 
         off = self._EDGE_OFFSET
         sw, sh = self._barrier_screen_size
@@ -246,15 +285,15 @@ class ServerMouseListener(_base.ServerMouseListener):
 
         self._logger.debug(
             f"[BARRIER_ACT] SENDING position x={mouse_event.x:.4f} y={mouse_event.y:.4f} "
-            f"to client={screen}"
+            f"to client_uid={target_uid} via edge={edge}"
         )
 
         try:
             await self.event_bus.dispatch(
                 event_type=BusEventType.ACTIVE_SCREEN_CHANGED,
-                data=ActiveScreenChangedEvent(active_screen=screen),
+                data=ActiveScreenChangedEvent(active_screen=target_uid),
             )
-            await self.command_stream.send(CrossScreenCommandEvent(target=screen))
+            await self.command_stream.send(CrossScreenCommandEvent(target=target_uid))
             await self.stream.send(mouse_event)
         except Exception as e:
             self._logger.error(f"Error dispatching cross-screen event: {e}")

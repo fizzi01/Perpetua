@@ -31,11 +31,14 @@ export function stopServer(): Promise<void> {
     return invoke(getType(CommandType, CommandType.StopServer));
 }
 
-export function addClient(hostname: string, ip_addresses: string[], screen_position: string): Promise<void> {
+export function addClient(hostname: string, ip_addresses: string[]): Promise<void> {
+    // The legacy ``screen_position`` argument has been retired; the
+    // Layout Editor now drives placement. The daemon stores the new
+    // client as unplaced and the GUI prompts the admin to position
+    // its monitors in the editor.
     return invoke(getType(CommandType, CommandType.AddClient), {
         hostname,
         ipAddresses: ip_addresses,
-        screenPosition: screen_position
     });
 }
 
@@ -43,10 +46,10 @@ export function removeClient(hostname: string, ip_address: string): Promise<void
     return invoke(getType(CommandType, CommandType.RemoveClient), {hostname, ipAddress: ip_address});
 }
 
-export function approveClient(peer_ip: string, screen_position: string): Promise<void> {
+export function approveClient(peer_ip: string): Promise<void> {
+    // Approval no longer carries a position — the editor handles it.
     return invoke(getType(CommandType, CommandType.ApproveClient), {
         peerIp: peer_ip,
-        screenPosition: screen_position,
     });
 }
 
