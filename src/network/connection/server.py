@@ -28,6 +28,7 @@ from typing import Optional, Callable, Any, Awaitable
 
 from model.client import ClientsManager, ClientObj
 from model.connection import StreamWrapper, ClientConnection
+from model.monitor import MonitorInfo
 
 from network.data.exchange import MessageExchange, MessageExchangeConfig
 from network.protocol.message import MessageType, ProtocolMessage
@@ -618,16 +619,30 @@ class ConnectionHandler(BaseConnectionHandler):
                 )
                 client.additional_params = response.payload.get("additional_params", {})
                 client.ssl = response.payload.get("ssl", False)
-                # Multi-monitor payload: list of MonitorInfo-like dicts. The
-                # server stores them verbatim on the ClientObj so future GUI
-                # work (per-monitor edge slots, allow/deny with layout
-                # preview) has the data it needs without another round
-                # trip. Legacy clients omit the field; we fall back to the
-                # empty list, which the rest of the pipeline interprets as
-                # "single monitor with size = screen_resolution".
+                # Multi-monitor payload: list of MonitorInfo-shaped dicts
+                # off the wire. Convert to :class:`MonitorInfo` once at
+                # ingress so the rest of the pipeline (routing, layout
+                # editor seeding, edge-binding computation) reads
+                # attributes rather than dict keys. Malformed entries
+                # are dropped silently — better to lose one stray
+                # monitor than poison the list. Legacy clients omit the
+                # field; the empty list signals "single monitor =
+                # screen_resolution" downstream.
                 raw_monitors = response.payload.get("monitors", [])
                 if isinstance(raw_monitors, list):
-                    client.monitors = [m for m in raw_monitors if isinstance(m, dict)]
+                    parsed_monitors: list[MonitorInfo] = []
+                    for m in raw_monitors:
+                        if not isinstance(m, dict):
+                            continue
+                        try:
+                            parsed_monitors.append(MonitorInfo.from_dict(m))
+                        except (KeyError, TypeError, ValueError) as exc:
+                            self._logger.log(
+                                f"Dropping malformed monitor entry from "
+                                f"{client.get_net_id()}: {exc}",
+                                Logger.DEBUG,
+                            )
+                    client.monitors = parsed_monitors
                 else:
                     client.monitors = []
                 requested_streams = response.payload.get("streams", [])

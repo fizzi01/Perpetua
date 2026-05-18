@@ -59,6 +59,12 @@ export default function LayoutEditorWindow() {
     const [valid, setValid] = useState(true);
     const [windowHeight, setWindowHeight] = useState(window.innerHeight);
     const initialPlacementsRef = useRef<MonitorPlacement[]>([]);
+    // Mirror of ``initialised`` for use inside the persistent listener
+    // closure: when the parent re-pushes INIT mid-session (e.g. a freshly
+    // approved client just arrived in the client list) we want to refresh
+    // the sidebar without clobbering the placements the user has been
+    // dragging around.
+    const initialisedRef = useRef(false);
 
     const currentPlatform = platform();
     const root = document.documentElement;
@@ -79,10 +85,17 @@ export default function LayoutEditorWindow() {
                     const data = event.payload;
                     setServerMonitors(data.serverMonitors || []);
                     setClients(data.clients || []);
-                    setPlacements(data.placements || []);
                     setPreselectClientUid(data.preselectClientUid);
-                    initialPlacementsRef.current = data.placements || [];
-                    setInitialised(true);
+                    // Seed placements only on the first INIT of the current
+                    // open session. Subsequent INITs are live refreshes
+                    // (new client connected, monitor list grew, etc.) and
+                    // must preserve the user's in-progress drags.
+                    if (!initialisedRef.current) {
+                        setPlacements(data.placements || []);
+                        initialPlacementsRef.current = data.placements || [];
+                        initialisedRef.current = true;
+                        setInitialised(true);
+                    }
                 },
             );
             // Tell the main window we're ready to receive state. Doing
@@ -105,6 +118,10 @@ export default function LayoutEditorWindow() {
             // Hiding might fail in dev with hot-reload; the main
             // window has the data anyway.
         }
+        // Reset so the next open session re-seeds placements from the
+        // parent's first INIT instead of carrying over stale state.
+        initialisedRef.current = false;
+        setInitialised(false);
     }
 
     async function handleCancel() {
@@ -114,6 +131,8 @@ export default function LayoutEditorWindow() {
         } catch (_) {
             // ignored
         }
+        initialisedRef.current = false;
+        setInitialised(false);
     }
 
     return (

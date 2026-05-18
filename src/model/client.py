@@ -89,6 +89,31 @@ class ClientObj:
         monitors: Optional[list[dict | MonitorInfo]] = None,
         placements: Optional[list[dict]] = None,
     ):
+        # ``monitors`` is stored canonically as ``list[MonitorInfo]``.
+        # Accepting raw dicts in the constructor lets legacy config
+        # files (which serialise monitors as JSON dicts) and the network
+        # ingress path round-trip without forcing every call site to
+        # convert. Anything else (str/None entries from a corrupted
+        # source) is dropped silently — the rest of the pipeline relies
+        # on attribute access (``.min_x``, ``.is_primary``) which would
+        # raise on a stray dict left in the list.
+        def _coerce_monitors(
+            raw: Optional[list[dict | MonitorInfo]],
+        ) -> list[MonitorInfo]:
+            if not raw:
+                return []
+            out: list[MonitorInfo] = []
+            for m in raw:
+                if isinstance(m, MonitorInfo):
+                    out.append(m)
+                elif isinstance(m, dict):
+                    try:
+                        out.append(MonitorInfo.from_dict(m))
+                    except (KeyError, TypeError, ValueError):
+                        # Malformed entry from disk / network — skip
+                        # rather than poison the list.
+                        continue
+            return out
         self.uid = uid
 
         if hostname is not None and not self._check_hostname(hostname):
@@ -118,14 +143,14 @@ class ClientObj:
             raise ValueError(f"Invalid screen position: {screen_position}")
 
         self.screen_resolution = screen_resolution
-        # Serialized per-monitor info sent by the client during handshake
-        # (list of MonitorInfo.to_dict()-style dicts). Empty list means
-        # the client did not advertise any monitor list (legacy / pre-
-        # multi-monitor build): callers fall back to ``screen_resolution``.
-        # Kept as plain dicts here so the field survives JSON / msgpack
-        # round-trips without importing ``utils.screen`` in the model
-        # layer; consumers build :class:`MonitorInfo` on demand.
-        self.monitors: list[dict | MonitorInfo] = list(monitors) if monitors else []
+        # Per-monitor info advertised by the client during handshake.
+        # Stored as :class:`MonitorInfo` so consumers (routing,
+        # ``get_effective_placements``, ``get_edge_bindings``) can rely
+        # on attribute access without re-parsing. Serialised back to
+        # plain dicts in :meth:`__dict__` for the config file and the
+        # daemon status payload. Empty list = legacy client that didn't
+        # advertise its monitor layout; fallback is ``screen_resolution``.
+        self.monitors: list[MonitorInfo] = _coerce_monitors(monitors)
         # Per-monitor placements in the SERVER's virtual workspace.
         # Each dict shape (mirrors the GUI's ``MonitorPlacement``):
         #   {
@@ -317,21 +342,16 @@ class ClientObj:
         cw, ch = pw, ph
         cm_id = 0
         if self.monitors:
+            # ``self.monitors`` is normalised to ``list[MonitorInfo]``
+            # by ``_coerce_monitors`` in :meth:`__init__`, so attribute
+            # access is safe without isinstance/dict guards.
             cm = next(
-                (m for m in self.monitors if getattr(m, "is_primary", False)),
+                (m for m in self.monitors if m.is_primary),
                 self.monitors[0],
             )
-            if isinstance(cm, dict):
-                cm = MonitorInfo.from_dict(cm)
-
-            try:
-                cw = max(1, cm.max_x - cm.min_x)
-                ch = max(1, cm.max_y - cm.min_y)
-                cm_id = cm.monitor_id
-            except (AttributeError, KeyError):
-                print("Warning: Client monitor info is missing expected fields. "
-                      "Falling back to server primary monitor size.")
-                pass
+            cw = max(1, cm.max_x - cm.min_x)
+            ch = max(1, cm.max_y - cm.min_y)
+            cm_id = cm.monitor_id
 
         pos = (self.screen_position or "").lower()
         if pos == ScreenPosition.LEFT:
@@ -414,7 +434,10 @@ class ClientObj:
             "ssl": self.ssl,
             "is_connected": self.is_connected,
             "additional_params": self.additional_params,
-            "monitors": list(self.monitors),
+            # MonitorInfo is a frozen dataclass — JSON / msgpack can't
+            # serialise it directly, so flatten via ``to_dict`` here.
+            # ``ClientObj.__init__`` re-parses on load.
+            "monitors": [m.to_dict() for m in self.monitors],
             "placements": list(self.placements),
         }
 

@@ -465,28 +465,17 @@ class ConnectionHandler(BaseConnectionHandler):
                 raise Exception("Client object is None during handshake")
 
             # Advertise the full per-monitor layout so the server can
-            # build edge-routing slots (uture GUI). Built
-            # lazily here because Screen probes are platform syscalls;
-            # if anything fails we still send the legacy
-            # screen_resolution and let the server fall back to the
-            # single-monitor assumption.
+            # build edge-routing slots (future GUI). Built lazily here
+            # because Screen probes are platform syscalls; if anything
+            # fails we still send the legacy screen_resolution and let
+            # the server fall back to the single-monitor assumption.
+            # ``MonitorInfo.to_dict`` is the wire-format owner — keeping
+            # the conversion centralised avoids the two ends drifting.
             monitors_payload: list[dict] = []
             try:
                 from utils.screen import Screen
 
-                monitors_payload = [
-                    {
-                        "monitor_id": m.monitor_id,
-                        "min_x": m.min_x,
-                        "min_y": m.min_y,
-                        "max_x": m.max_x,
-                        "max_y": m.max_y,
-                        "is_primary": m.is_primary,
-                        "name": m.name,
-                        "scaling_factor": m.scaling_factor,
-                    }
-                    for m in Screen.get_monitors()
-                ]
+                monitors_payload = [m.to_dict() for m in Screen.get_monitors()]
             except Exception as e:
                 self._logger.log(
                     f"Failed to probe monitor list for handshake ({e}); "
