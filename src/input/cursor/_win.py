@@ -85,31 +85,85 @@ class CursorHandlerWindow(_base.CursorHandlerWindow):
         except Exception as e:
             self._logger.error(f"Error forcing overlay ({e})")
 
-    def _get_centered_coords(self) -> Point:
-        """Anchor the overlay at the centre of the display under the
-        cursor instead of next to the cursor itself.
+    def enable_mouse_capture(self):
+        """Re-anchor ``center_pos`` to the centre of the
+        ``overlay ∩ display`` intersection so the warp target stays
+        strictly inside the active display.
 
-        ``WarpPointer`` on Windows does NOT dissociate the visible
-        cursor from OS-level clamping the way ``CGDisplayHideCursor``
-        does on macOS. If the warp target lands within
-        ``WINDOW_SIZE/2`` px of a display edge, every subsequent user
-        motion toward that edge is silently clamped by the OS and
-        ``EVT_MOTION`` reports ``delta = 0`` along that axis. Anchoring
-        the overlay at the display centre guarantees the warp target is
-        always ``≥ WINDOW_SIZE/2`` px from every edge, so motion in all
-        four directions is captured before the OS gets a chance to
-        clamp it. The overlay is fully transparent in production builds
-        so the position change is invisible to the user.
+        Why we override (Windows only): ``WarpPointer`` does NOT
+        dissociate the visible cursor from OS-level clamping the way
+        ``CGDisplayHideCursor`` does on macOS. When the cursor enters
+        the server at an edge, the overlay (anchored on the cursor,
+        see :meth:`_base.CursorHandlerWindow._get_centered_coords`)
+        extends past the display bound; the base class warps to the
+        overlay's GEOMETRIC centre, which lands ON the display edge.
+        Every subsequent push outward is then silently clamped by the
+        OS — ``EVT_MOTION`` reads ``delta = 0`` along the clamped axis
+        and forwards nothing to the client. The user perceives the
+        cursor as "stuck" or moving only along the edge.
+
+        Why ONLY here (not in ``reset_mouse_position``): the visible
+        centre is constant for the lifetime of a capture session (the
+        overlay doesn't move once placed). Recomputing it on every
+        ``on_mouse_move`` tick — which fires hundreds of times per
+        second under heavy mouse use — adds two syscalls
+        (``wx.GetMousePosition`` + ``wx.Display.GetFromPoint``) and a
+        rectangle intersection per delta event, breaking the fluid
+        warp-and-track loop. By patching ``center_pos`` ONCE at the
+        end of ``enable_mouse_capture``, the base ``reset_mouse_position``
+        keeps reading the cached value with zero overhead.
         """
-        cursor_pos = wx.GetMousePosition()
-        display_index = wx.Display.GetFromPoint(cursor_pos)
-        if display_index == wx.NOT_FOUND:
-            display_index = 0
-        display = wx.Display(display_index)
-        screen_rect = display.GetClientArea()
-        x = screen_rect.x + (screen_rect.width - self.WINDOW_SIZE[0]) // 2
-        y = screen_rect.y + (screen_rect.height - self.WINDOW_SIZE[1]) // 2
-        return Point(x, y)
+        super().enable_mouse_capture()
+        if not self.mouse_captured_flag.is_set():
+            return
+        visible_center = self._compute_visible_center()
+        if visible_center is None or visible_center == self.center_pos:
+            return
+        self.center_pos = visible_center
+        try:
+            client_center = self.ScreenToClient(visible_center)
+            self.WarpPointer(client_center.x, client_center.y)
+        except Exception as e:
+            self._logger.debug(f"visible-centre warp failed ({e})")
+
+    def _compute_visible_center(self) -> Optional[Point]:
+        """Centre of the overlay intersected with the display under
+        the overlay. ``None`` if the overlay is entirely off-screen
+        (caller falls back to the base ``center_pos``).
+
+        Resolved against the overlay's own anchor point — NOT
+        ``wx.GetMousePosition()`` — so the result is stable regardless
+        of where the cursor is at compute time.
+        """
+        try:
+            overlay_pos = self.GetPosition()
+            overlay_size = self.GetSize()
+            anchor = Point(
+                overlay_pos.x + overlay_size.x // 2,
+                overlay_pos.y + overlay_size.y // 2,
+            )
+            display_index = wx.Display.GetFromPoint(anchor)
+            if display_index == wx.NOT_FOUND:
+                display_index = 0
+            display = wx.Display(display_index)
+            screen_rect = display.GetClientArea()
+
+            left = max(screen_rect.x, overlay_pos.x)
+            top = max(screen_rect.y, overlay_pos.y)
+            right = min(
+                screen_rect.x + screen_rect.width,
+                overlay_pos.x + overlay_size.x,
+            )
+            bottom = min(
+                screen_rect.y + screen_rect.height,
+                overlay_pos.y + overlay_size.y,
+            )
+            if right <= left or bottom <= top:
+                return None
+            return Point((left + right) // 2, (top + bottom) // 2)
+        except Exception as e:
+            self._logger.debug(f"visible centre computation failed ({e})")
+            return None
 
     def HideOverlay(self, startup: bool = False):
         try:

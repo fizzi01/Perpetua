@@ -441,6 +441,20 @@ class ServerMouseListener(object):
             self._active_client_uid = active_screen
             self._cross_screen_event.clear()
         else:
+            # Return-to-server transition. Clear the history too: while
+            # the cursor was on the client (``_listening == True``) the
+            # buffer wasn't refreshed (``should_buffer`` was False in
+            # ``on_move``), so it still holds the stale samples that
+            # triggered the original cross-screen — direction-RIGHT
+            # towards the edge, near the bound. Mixing them with the
+            # fresh samples that arrive after ``position_cursor``
+            # warps the cursor back makes the next edge crossing
+            # unreliable: the direction check sees inconsistent
+            # samples and sometimes refuses to fire. Resetting the
+            # buffer means the next push toward an edge starts from a
+            # clean slate.
+            with self._server_state_lock:
+                self._movement_history.clear()
             self._listening = False
             self._active_client_uid = None
 
@@ -1585,20 +1599,30 @@ class ClientMouseController(object):
             s_edge = b.get("server_edge")
             s_w = max(1, s_max_x - s_min_x)
             s_h = max(1, s_max_y - s_min_y)
-            # Cursor must land just inside the destination edge so the
-            # server's edge detector doesn't immediately re-trigger.
+            # Cursor must land WELL INSIDE the destination edge so:
+            # 1) the server's edge detector doesn't immediately re-fire
+            #    on the next ``on_move`` (cursor still touching the edge
+            #    after the warp),
+            # 2) the OS doesn't clamp the cursor against the screen
+            #    bound — a cursor pinned at ``x = max_x - 1`` doesn't
+            #    generate further ``WM_MOUSEMOVE`` when the user keeps
+            #    pushing outward, starving ``_movement_history`` and
+            #    delaying the next cross-screen.
+            # Six px is enough headroom on every monitor we've seen
+            # without being visually obvious on the landing.
+            edge_margin = 6
             if s_edge == "right":
-                target_x = s_max_x - 1
+                target_x = s_max_x - edge_margin
                 target_y = s_min_y + server_axis * s_h
             elif s_edge == "left":
-                target_x = s_min_x
+                target_x = s_min_x + edge_margin
                 target_y = s_min_y + server_axis * s_h
             elif s_edge == "bottom":
                 target_x = s_min_x + server_axis * s_w
-                target_y = s_max_y - 1
+                target_y = s_max_y - edge_margin
             elif s_edge == "top":
                 target_x = s_min_x + server_axis * s_w
-                target_y = s_min_y
+                target_y = s_min_y + edge_margin
             else:
                 continue
 
