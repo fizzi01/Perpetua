@@ -41,54 +41,7 @@ from dataclasses import dataclass, field
 from enum import StrEnum
 from typing import Iterable, Optional
 
-
-@dataclass(frozen=True)
-class MonitorInfo:
-    """Geometry + metadata for a single connected display.
-
-    Coordinates are in the OS global display coordinate space (origin at
-    the primary monitor's top-left on macOS / Windows; the X server root
-    origin on Linux/X11).
-    """
-
-    monitor_id: int
-    min_x: int
-    min_y: int
-    max_x: int
-    max_y: int
-    is_primary: bool = False
-    name: str = ""
-    scaling_factor: float = 1.0
-
-    @property
-    def width(self) -> int:
-        return self.max_x - self.min_x
-
-    @property
-    def height(self) -> int:
-        return self.max_y - self.min_y
-
-    @property
-    def bbox(self) -> tuple[int, int, int, int]:
-        return self.min_x, self.min_y, self.max_x, self.max_y
-
-    def contains(self, x: float, y: float) -> bool:
-        """``True`` if ``(x, y)`` falls inside this monitor's bounds."""
-        return self.min_x <= x < self.max_x and self.min_y <= y < self.max_y
-
-    def to_dict(self) -> dict:
-        """Plain-dict view safe for JSON / msgpack round-trip with the GUI."""
-        return {
-            "monitor_id": self.monitor_id,
-            "min_x": self.min_x,
-            "min_y": self.min_y,
-            "max_x": self.max_x,
-            "max_y": self.max_y,
-            "is_primary": self.is_primary,
-            "name": self.name,
-            "scaling_factor": self.scaling_factor,
-        }
-
+from model.monitor import MonitorInfo
 
 @dataclass
 class MonitorLayout:

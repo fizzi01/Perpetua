@@ -29,6 +29,7 @@ from enum import StrEnum
 from typing import Optional
 
 from model.connection import ClientConnection
+from model.monitor import MonitorInfo
 
 # Compiled once: hostname validation runs on every client (dis)connect.
 _HOSTNAME_LABEL_RE = re.compile(r"(?!-)[A-Z\d-]{1,63}(?<!-)$", re.IGNORECASE)
@@ -85,7 +86,7 @@ class ClientObj:
         ssl: bool = False,
         conn_socket: Optional[ClientConnection] = None,
         additional_params: Optional[dict] = None,
-        monitors: Optional[list[dict]] = None,
+        monitors: Optional[list[dict | MonitorInfo]] = None,
         placements: Optional[list[dict]] = None,
     ):
         self.uid = uid
@@ -124,7 +125,7 @@ class ClientObj:
         # Kept as plain dicts here so the field survives JSON / msgpack
         # round-trips without importing ``utils.screen`` in the model
         # layer; consumers build :class:`MonitorInfo` on demand.
-        self.monitors: list[dict] = list(monitors) if monitors else []
+        self.monitors: list[dict | MonitorInfo] = list(monitors) if monitors else []
         # Per-monitor placements in the SERVER's virtual workspace.
         # Each dict shape (mirrors the GUI's ``MonitorPlacement``):
         #   {
@@ -320,9 +321,17 @@ class ClientObj:
                 (m for m in self.monitors if getattr(m, "is_primary", False)),
                 self.monitors[0],
             )
-            cw = max(1, cm.max_x - cm.min_x)
-            ch = max(1, cm.max_y - cm.min_y)
-            cm_id = cm.monitor_id
+            if isinstance(cm, dict):
+                cm = MonitorInfo.from_dict(cm)
+
+            try:
+                cw = max(1, cm.max_x - cm.min_x)
+                ch = max(1, cm.max_y - cm.min_y)
+                cm_id = cm.monitor_id
+            except (AttributeError, KeyError):
+                print("Warning: Client monitor info is missing expected fields. "
+                      "Falling back to server primary monitor size.")
+                pass
 
         pos = (self.screen_position or "").lower()
         if pos == ScreenPosition.LEFT:
