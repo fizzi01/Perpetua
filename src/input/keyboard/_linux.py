@@ -32,14 +32,12 @@ class ServerKeyboardListener(_base.ServerKeyboardListener):
         stream_handler: StreamHandler,
         command_stream: StreamHandler,
         filtering: bool = True,
-        mouse_listener: Optional[Any] = None,
     ):
         super().__init__(
             event_bus,
             stream_handler,
             command_stream,
             filtering,
-            mouse_listener=mouse_listener,
         )
 
     def _canonical(self, key):

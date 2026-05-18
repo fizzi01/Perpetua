@@ -1547,7 +1547,6 @@ class Server:
                 event_bus=self.event_bus,
                 stream_handler=keyboard_stream,
                 command_stream=command_stream,
-                mouse_listener=self._components.get("mouse_listener"),
             )
             if is_enabled and not keyboard_listener.start():
                 raise RuntimeError("Failed to start keyboard listener")

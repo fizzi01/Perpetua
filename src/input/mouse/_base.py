@@ -33,6 +33,8 @@ from event import (
     ClientDisconnectedEvent,
     ClientActiveEvent,
     ClientLayoutUpdatedEvent,
+    ScreenSwitchDirectionalRequestEvent,
+    ScreenSwitchCycleRequestEvent,
 )
 from event.bus import EventBus
 
@@ -147,6 +149,8 @@ class ServerMouseListener(object):
             # No event loop running yet - will be set when start() is called
             self._loop = None
 
+        self._hotkey_cycle_index = -1
+
         # Subscribe with async callbacks
         self.event_bus.subscribe(
             event_type=BusEventType.ACTIVE_SCREEN_CHANGED,
@@ -166,6 +170,16 @@ class ServerMouseListener(object):
         self.event_bus.subscribe(
             event_type=BusEventType.CLIENT_LAYOUT_UPDATED,
             callback=self._on_client_layout_updated,
+            priority=True,
+        )
+        self.event_bus.subscribe(
+            event_type=BusEventType.SCREEN_SWITCH_DIRECTIONAL_REQUEST,
+            callback=self._on_hotkey_directional,
+            priority=True,
+        )
+        self.event_bus.subscribe(
+            event_type=BusEventType.SCREEN_SWITCH_CYCLE_REQUEST,
+            callback=self._on_hotkey_cycle,
             priority=True,
         )
 
@@ -288,6 +302,56 @@ class ServerMouseListener(object):
                 data.edge_bindings or []
             )
         await asyncio.sleep(0)
+
+    async def _on_hotkey_directional(self, data: Optional[ScreenSwitchDirectionalRequestEvent]):
+        """
+        Respond to a directional hotkey by querying the cursor position
+        and resolving the appropriate screen based on the layout topology.
+        """
+        if data is None:
+            return
+        
+        # Determine cursor position reliably without recreating MouseController.
+        # If we are strictly listening, we use tracked coordinates. But if not listening 
+        # (e.g., active on client), we can fallback to the singleton controller or tracked last state.
+        try:
+            from input.mouse.backend import MouseController
+            pos = MouseController().position
+            x, y = (float(pos[0]), float(pos[1])) if pos and len(pos) == 2 else (0.0, 0.0)
+        except Exception:
+            x, y = getattr(self, "_current_x", 0.0), getattr(self, "_current_y", 0.0)
+
+        client_uid = self.resolve_neighbour(data.edge, x, y)
+        if client_uid:
+            try:
+                await self.event_bus.dispatch(
+                    event_type=BusEventType.SCREEN_CHANGE_GUARD,
+                    data=ActiveScreenChangedEvent(active_screen=client_uid),
+                )
+                await self.command_stream.send(CrossScreenCommandEvent(target=client_uid))
+            except Exception as e:
+                self._logger.error(f"Error during hotkey directional switch ({e})")
+
+    async def _on_hotkey_cycle(self, data: Optional[ScreenSwitchCycleRequestEvent]):
+        """
+        Respond to the screen cycling hotkey.
+        """
+        if data is None:
+            return
+        uids = list(self._active_clients.keys())
+        if not uids:
+            return
+        
+        self._hotkey_cycle_index = (self._hotkey_cycle_index + data.direction) % len(uids)
+        client_uid = uids[self._hotkey_cycle_index]
+        try:
+            await self.event_bus.dispatch(
+                event_type=BusEventType.SCREEN_CHANGE_GUARD,
+                data=ActiveScreenChangedEvent(active_screen=client_uid),
+            )
+            await self.command_stream.send(CrossScreenCommandEvent(target=client_uid))
+        except Exception as e:
+            self._logger.error(f"Error during hotkey cycle switch ({e})")
 
     async def _on_active_screen_changed(self, data: Optional[ActiveScreenChangedEvent]):
         """

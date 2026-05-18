@@ -15,6 +15,7 @@
 #  along with this program.  If not, see <https://www.gnu.org/licenses/>.
 #
 
+import enum
 from abc import ABC
 from enum import IntEnum
 from time import time
@@ -53,6 +54,10 @@ class BusEventType(IntEnum):
     CLIENT_INACTIVE = 3
 
     CLIENT_STREAM_RECONNECTED = 7  # Dispatched when a client stream reconnects
+
+    # Spatial routing via hotkeys
+    SCREEN_SWITCH_DIRECTIONAL_REQUEST = 8
+    SCREEN_SWITCH_CYCLE_REQUEST = 9
 
     # Dispatched when a client's workspace placements change at runtime
     # (e.g. the GUI saves a new layout via SetClientLayout). Lets the
@@ -134,6 +139,25 @@ class ActiveScreenChangedEvent(BusEvent):
             "x": self.x,
             "y": self.y,
         }
+
+
+class ScreenSwitchDirectionalRequestEvent(BusEvent):
+    """
+    Dispatched when the user presses a directional spatial hotkey.
+    The handling listener should intercept this and resolve the correct adjacent screen.
+    """
+    def __init__(self, edge: enum.Enum):
+        super().__init__()
+        self.edge = edge
+
+
+class ScreenSwitchCycleRequestEvent(BusEvent):
+    """
+    Dispatched when the user presses the screen cycle hotkey.
+    """
+    def __init__(self, direction: int):
+        super().__init__()
+        self.direction = direction
 
 
 class ClientConnectedEvent(BusEvent):
