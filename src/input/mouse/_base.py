@@ -897,6 +897,10 @@ class ClientMouseController(object):
             if self._monitor_layout.monitors
             else Screen.get_virtual_bbox()
         )
+        # Virtual desktop bbox pre-computed on activation to avoid 
+        # evaluating O(N) monitors resolving the target_bbox synchronously every mouse tick
+        self._active_target_bbox: tuple[int, int, int, int] = self._screen_bbox
+        
         # Screen.hide_icon()  # On macOs calling controller.position can spawn a dock icon...
 
         # Instead of creating a listener, we just check edge cases after a mouse move event is received
@@ -1054,6 +1058,14 @@ class ClientMouseController(object):
             # to pin the cursor to that physical screen instead of the
             # full virtual-desktop bbox.
             self._active_monitor_id = data.client_monitor_id
+            
+            # Cache the target bbox for absolute movement
+            self._active_target_bbox = self._screen_bbox
+            if self._active_monitor_id is not None and self._monitor_layout.monitors:
+                for m in self._monitor_layout.monitors:
+                    if m.monitor_id == self._active_monitor_id:
+                        self._active_target_bbox = (m.min_x, m.min_y, m.max_x, m.max_y)
+                        break
         # Reset movement history
         self._movement_history.clear()
 
@@ -1076,6 +1088,7 @@ class ClientMouseController(object):
         # doesn't carry an id (legacy server / hotkey path) doesn't
         # inherit a stale pin.
         self._active_monitor_id = None
+        self._active_target_bbox = self._screen_bbox
 
     async def _on_client_topology_updated(
         self, data: Optional[ClientTopologyUpdatedEvent]
@@ -1395,7 +1408,7 @@ class ClientMouseController(object):
                 # Denormalize against the active target monitor (set by
                 # the server's spatial routing) or the full virtual bbox
                 # when no target is pinned.
-                min_x, min_y, max_x, max_y = self._target_bbox()
+                min_x, min_y, max_x, max_y = self._active_target_bbox
                 width = max_x - min_x
                 height = max_y - min_y
                 if width <= 0 or height <= 0:
