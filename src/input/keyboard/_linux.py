@@ -68,6 +68,8 @@ class ServerKeyboardListener(_base.ServerKeyboardListener):
         shift = Key.shift
         p = KeyCode(char="p")
         q = KeyCode(char="q")
+        one = KeyCode(char="1")
+        two = KeyCode(char="2")
         left = KeyCode.from_vk(Key.left.value.vk)
         right = KeyCode.from_vk(Key.right.value.vk)
         up = KeyCode.from_vk(Key.up.value.vk)
@@ -93,9 +95,13 @@ class ServerKeyboardListener(_base.ServerKeyboardListener):
                 make_cb(self._hotkey_switch_direction, ScreenEdge.BOTTOM),
             ),
             (
-                frozenset({ctrl, shift, p, tab}),
+                frozenset({ctrl, shift, p, tab, one}),
                 make_cb(self._hotkey_cycle_client, 1),
             ),
+            (
+                 frozenset({ctrl, shift, p, tab, two}),
+                 make_cb(self._hotkey_cycle_client, -1),
+             ),
             (frozenset({ctrl, shift, p, esc}), make_cb(self._hotkey_switch_to_server)),
             (frozenset({ctrl, shift, q}), make_cb(self._hotkey_panic)),
         ]
