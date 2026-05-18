@@ -28,6 +28,7 @@ from ._monitor import (
     MonitorInfo,
     MonitorLayout,
     compute_edge_bindings,
+    compute_intra_client_bindings,
     reconcile_bindings_with_client_monitors,
 )
 
@@ -52,4 +53,5 @@ __all__ = [
     "reconcile_bindings_with_client_monitors",
     "EdgeBinding",
     "compute_edge_bindings",
+    "compute_intra_client_bindings",
 ]

@@ -90,6 +90,12 @@ class ServerMouseListener(object):
         # owning ``(server_monitor_id, server_edge, axis_norm)`` and route
         # the cursor to that client's UID.
         self._edge_bindings_by_client: dict[str, list[dict]] = {}
+        # Intra-client warp bindings cached per client UID. Pushed
+        # verbatim to the client on cross-screen activation so the
+        # client can enforce the workspace topology over its OS-level
+        # monitor adjacency. The server itself never reads these
+        # bindings — they're opaque pass-through here.
+        self._intra_bindings_by_client: dict[str, list[dict]] = {}
         # Primary monitor size kept for backward compatibility / scroll
         # events. Edge detection uses the full MonitorLayout so the
         # outer edges of EACH monitor count (asymmetric multi-monitor
@@ -284,6 +290,9 @@ class ServerMouseListener(object):
             self._edge_bindings_by_client[client_uid] = list(
                 getattr(data, "edge_bindings", []) or []
             )
+            self._intra_bindings_by_client[client_uid] = list(
+                getattr(data, "intra_client_bindings", []) or []
+            )
 
         await asyncio.sleep(0)
 
@@ -301,6 +310,7 @@ class ServerMouseListener(object):
         # stale bindings never accidentally route a crossing into a
         # client that's no longer reachable.
         self._edge_bindings_by_client.pop(client_uid, None)
+        self._intra_bindings_by_client.pop(client_uid, None)
 
         # if no clients are active anymore, stop listening
         if not self._active_clients:
@@ -320,9 +330,14 @@ class ServerMouseListener(object):
             self._edge_bindings_by_client[data.client_uid] = list(
                 data.edge_bindings or []
             )
+            self._intra_bindings_by_client[data.client_uid] = list(
+                getattr(data, "intra_client_bindings", []) or []
+            )
         await asyncio.sleep(0)
 
-    async def _on_hotkey_directional(self, data: Optional[ScreenSwitchDirectionalRequestEvent]):
+    async def _on_hotkey_directional(
+        self, data: Optional[ScreenSwitchDirectionalRequestEvent]
+    ):
         """
         Respond to a directional hotkey by resolving the appropriate
         adjacent screen against the layout topology.
@@ -353,6 +368,7 @@ class ServerMouseListener(object):
             x, y = self._last_server_cursor_pos
             try:
                 from input.mouse.backend import MouseController
+
                 pos = MouseController().position
                 if pos and len(pos) == 2:
                     x, y = float(pos[0]), float(pos[1])
@@ -394,8 +410,10 @@ class ServerMouseListener(object):
         uids = list(self._active_clients.keys())
         if not uids:
             return
-        
-        self._hotkey_cycle_index = (self._hotkey_cycle_index + data.direction) % len(uids)
+
+        self._hotkey_cycle_index = (self._hotkey_cycle_index + data.direction) % len(
+            uids
+        )
         client_uid = uids[self._hotkey_cycle_index]
         try:
             await self.event_bus.dispatch(
@@ -607,7 +625,9 @@ class ServerMouseListener(object):
                 # asymmetric layout where, e.g., the client monitor is
                 # vertically offset from the server's.
                 resolved = self._resolve_cross_screen_target(
-                    edge=edge, cursor_x=x, cursor_y=y,
+                    edge=edge,
+                    cursor_x=x,
+                    cursor_y=y,
                 )
                 if resolved is None:
                     return True
@@ -732,17 +752,21 @@ class ServerMouseListener(object):
                 )
 
                 # Push the latest topology to the activating client so
-                # it can resolve return-to-server crossings spatially.
+                # it can resolve return-to-server crossings spatially
+                # AND enforce the workspace topology over its OS-level
+                # monitor adjacency (intra-client warp / clamp).
                 # The BidirectionalStreamHandler routes both this and
                 # the CrossScreenCommandEvent below to the same active
                 # client (set by the SCREEN_CHANGE_GUARD dispatch above).
                 bindings = self._edge_bindings_by_client.get(screen) or []
-                if bindings:
+                intra_bindings = self._intra_bindings_by_client.get(screen) or []
+                if bindings or intra_bindings:
                     await self.command_stream.send(
                         ClientTopologyCommandEvent(
                             target=screen,
                             edge_bindings=bindings,
                             server_bbox=self._screen_bbox,
+                            intra_client_bindings=intra_bindings,
                         )
                     )
 
@@ -944,6 +968,32 @@ class ClientMouseController(object):
         # pushes a topology (which it always does on first activation
         # via ``ClientTopologyCommandEvent``).
         self._edge_bindings: list[dict] = []
+        # Intra-client warp bindings pushed alongside ``_edge_bindings``.
+        # Each entry maps an exit edge on one of this client's monitors
+        # to an entry edge on another monitor of the SAME client. The
+        # client uses these to enforce the workspace topology over the
+        # OS-level adjacency of its physical screens: an OS-driven
+        # cursor drift onto a non-bound monitor is reverted (clamp), and
+        # a workspace-bound transition is honoured via explicit warp.
+        self._intra_client_bindings: list[dict] = []
+        # O(1)-per-monitor lookups derived once from
+        # ``_intra_client_bindings``: ``_intra_by_src`` indexes the
+        # warp candidates by ``src_monitor_id`` (consulted on every
+        # edge approach), and ``_intra_pairs`` holds the authorised
+        # ``(src, dst)`` transitions (consulted on every OS drift
+        # check). Rebuilt only when the server pushes a topology, so
+        # the hot path stays branch-free.
+        self._intra_by_src: dict[int, list[dict]] = {}
+        self._intra_pairs: set[tuple[int, int]] = set()
+        # Monitor id last observed under the cursor by ``_check_edge``.
+        # Used to detect OS-driven drift between client monitors so we
+        # can reject unauthorized transitions; cleared on activate /
+        # inactive so a stale id doesn't leak across sessions.
+        self._last_known_monitor_id: Optional[int] = None
+        # MonitorInfo cached for the last successful ``find_monitor_at``
+        # so subsequent ticks within the same monitor skip the linear
+        # scan. Invalidated when the cursor crosses outside its bbox.
+        self._cached_monitor = None
         # Server's virtual desktop bbox; the return-to-server (x, y)
         # is normalised over this so the server lands the cursor at
         # the right pixel.
@@ -959,10 +1009,10 @@ class ClientMouseController(object):
             if self._monitor_layout.monitors
             else Screen.get_virtual_bbox()
         )
-        # Virtual desktop bbox pre-computed on activation to avoid 
+        # Virtual desktop bbox pre-computed on activation to avoid
         # evaluating O(N) monitors resolving the target_bbox synchronously every mouse tick
         self._active_target_bbox: tuple[int, int, int, int] = self._screen_bbox
-        
+
         # Screen.hide_icon()  # On macOs calling controller.position can spawn a dock icon...
 
         # Instead of creating a listener, we just check edge cases after a mouse move event is received
@@ -1120,7 +1170,7 @@ class ClientMouseController(object):
             # to pin the cursor to that physical screen instead of the
             # full virtual-desktop bbox.
             self._active_monitor_id = data.client_monitor_id
-            
+
             # Cache the target bbox for absolute movement
             self._active_target_bbox = self._screen_bbox
             if self._active_monitor_id is not None and self._monitor_layout.monitors:
@@ -1128,6 +1178,10 @@ class ClientMouseController(object):
                     if m.monitor_id == self._active_monitor_id:
                         self._active_target_bbox = (m.min_x, m.min_y, m.max_x, m.max_y)
                         break
+            # Prime the "last seen" monitor with the landing target so
+            # the very first ``_check_edge`` doesn't mistake the landing
+            # for an unauthorized drift.
+            self._last_known_monitor_id = self._active_monitor_id
         # Reset movement history
         self._movement_history.clear()
 
@@ -1151,16 +1205,36 @@ class ClientMouseController(object):
         # inherit a stale pin.
         self._active_monitor_id = None
         self._active_target_bbox = self._screen_bbox
+        self._last_known_monitor_id = None
 
     async def _on_client_topology_updated(
         self, data: Optional[ClientTopologyUpdatedEvent]
     ):
         """Cache the topology pushed by the server. ``_check_edge``
-        uses it to resolve return-to-server crossings spatially.
+        uses it to resolve return-to-server crossings spatially AND to
+        enforce the workspace topology over the OS-level adjacency of
+        the client's monitors.
         """
         if data is None:
             return
         self._edge_bindings = list(data.edge_bindings or [])
+        self._intra_client_bindings = list(
+            getattr(data, "intra_client_bindings", []) or []
+        )
+        # Pre-build the per-monitor index and the authorised-pair set
+        # so ``_check_edge`` does O(1) lookups instead of scanning the
+        # full list on every cursor tick.
+        by_src: dict[int, list[dict]] = {}
+        pairs: set[tuple[int, int]] = set()
+        for b in self._intra_client_bindings:
+            src_id = b.get("src_monitor_id")
+            dst_id = b.get("dst_monitor_id")
+            if src_id is None or dst_id is None:
+                continue
+            by_src.setdefault(int(src_id), []).append(b)
+            pairs.add((int(src_id), int(dst_id)))
+        self._intra_by_src = by_src
+        self._intra_pairs = pairs
         if data.server_bbox:
             try:
                 self._server_bbox = (
@@ -1181,6 +1255,214 @@ class ClientMouseController(object):
         ScreenEdge.TOP: "top",
         ScreenEdge.BOTTOM: "bottom",
     }
+
+    def _find_monitor_for_cursor(self, x: float, y: float):
+        """Return the :class:`MonitorInfo` containing ``(x, y)`` or the
+        nearest one when the cursor sits in a dead-zone of the OS
+        layout (L-shaped multi-monitor arrangement). Mirrors the
+        nearest-fallback applied by the server's
+        ``_resolve_cross_screen_target``.
+
+        Hot-path fast-paths the common case where the cursor stays
+        inside the same monitor across consecutive ticks via the
+        ``_cached_monitor`` reference.
+        """
+        cached = self._cached_monitor
+        if cached is not None and cached.contains(x, y):
+            return cached
+        if not self._monitor_layout.monitors:
+            return None
+        m = self._monitor_layout.find_monitor_at(x, y)
+        if m is not None:
+            self._cached_monitor = m
+            return m
+        best = None
+        best_dist = None
+        for cand in self._monitor_layout.monitors:
+            cx = max(cand.min_x, min(x, cand.max_x - 1))
+            cy = max(cand.min_y, min(y, cand.max_y - 1))
+            dist = (cx - x) ** 2 + (cy - y) ** 2
+            if best_dist is None or dist < best_dist:
+                best = cand
+                best_dist = dist
+        if best is not None:
+            self._cached_monitor = best
+        return best
+
+    @staticmethod
+    def _detect_directed_edge(
+        movement_history,
+        x: float,
+        y: float,
+        monitor,
+        direction_ratio: float = 0.85,
+    ) -> Optional[ScreenEdge]:
+        """Edge approach detection on a SINGLE monitor, ignoring OS
+        neighbour gating.
+
+        The default :meth:`EdgeDetector.is_at_edge` filters out edges
+        that have a neighbour in the OS-level layout — which is the
+        right call on the server (where the OS layout *is* the user's
+        intent) but wrong on the client when the workspace topology
+        contradicts the OS one. This helper restricts the check to the
+        monitor under the cursor and consults only the direction of
+        the recent movement history.
+        """
+        size = len(movement_history)
+        if size < 2 or monitor is None:
+            return None
+
+        x_edge = None
+        x_axis_sign = 0
+        if x <= monitor.min_x:
+            x_edge = ScreenEdge.LEFT
+            x_axis_sign = -1
+        elif x >= monitor.max_x - 1:
+            x_edge = ScreenEdge.RIGHT
+            x_axis_sign = 1
+
+        y_edge = None
+        y_axis_sign = 0
+        if y <= monitor.min_y:
+            y_edge = ScreenEdge.TOP
+            y_axis_sign = -1
+        elif y >= monitor.max_y - 1:
+            y_edge = ScreenEdge.BOTTOM
+            y_axis_sign = 1
+
+        if x_edge is None and y_edge is None:
+            return None
+
+        pairs = size - 1
+        min_agreements = int(pairs * direction_ratio)
+
+        if x_edge is not None:
+            agreements = 0
+            for i in range(pairs):
+                if (
+                    movement_history[i + 1][0] - movement_history[i][0]
+                ) * x_axis_sign > 0:
+                    agreements += 1
+            if agreements >= min_agreements:
+                return x_edge
+
+        if y_edge is not None:
+            agreements = 0
+            for i in range(pairs):
+                if (
+                    movement_history[i + 1][1] - movement_history[i][1]
+                ) * y_axis_sign > 0:
+                    agreements += 1
+            if agreements >= min_agreements:
+                return y_edge
+
+        return None
+
+    def _resolve_intra_client_warp(
+        self,
+        edge: ScreenEdge,
+        x: float,
+        y: float,
+        monitor,
+    ) -> Optional[tuple[int, float, float]]:
+        """Match the cursor's edge approach against an intra-client
+        binding and return ``(dst_monitor_id, target_x, target_y)`` for
+        the explicit warp. ``None`` when no binding covers this
+        ``(monitor, edge, axis_norm)``.
+        """
+        if monitor is None:
+            return None
+        candidates = self._intra_by_src.get(monitor.monitor_id)
+        if not candidates:
+            return None
+        edge_str = self._EDGE_TO_STRING_CLIENT.get(edge)
+        if edge_str is None:
+            return None
+
+        m_w = max(1, monitor.max_x - monitor.min_x)
+        m_h = max(1, monitor.max_y - monitor.min_y)
+        if edge == ScreenEdge.LEFT or edge == ScreenEdge.RIGHT:
+            axis_norm = (y - monitor.min_y) / m_h
+        else:
+            axis_norm = (x - monitor.min_x) / m_w
+        axis_norm = max(0.0, min(1.0, axis_norm))
+
+        for b in candidates:
+            if b.get("src_edge") != edge_str:
+                continue
+            s_start = b.get("src_axis_start", 0.0)
+            s_end = b.get("src_axis_end", 0.0)
+            if s_end <= s_start or not (s_start <= axis_norm < s_end):
+                continue
+
+            local = (axis_norm - s_start) / (s_end - s_start)
+            if local < 0.0:
+                local = 0.0
+            elif local > 1.0:
+                local = 1.0
+            d_start = b.get("dst_axis_start", 0.0)
+            d_end = b.get("dst_axis_end", 0.0)
+            dst_axis = d_start + local * (d_end - d_start)
+
+            dst_id = int(b.get("dst_monitor_id", -1))
+            dst_edge = b.get("dst_edge")
+            d_min_x = int(b.get("dst_monitor_min_x", 0))
+            d_min_y = int(b.get("dst_monitor_min_y", 0))
+            d_max_x = int(b.get("dst_monitor_max_x", 0))
+            d_max_y = int(b.get("dst_monitor_max_y", 0))
+            d_w = max(1, d_max_x - d_min_x)
+            d_h = max(1, d_max_y - d_min_y)
+
+            # Land the cursor JUST INSIDE the destination edge so the
+            # next ``_check_edge`` tick doesn't immediately re-trigger
+            # the same warp from the other side.
+            if dst_edge == "right":
+                target_x = d_max_x - 2
+                target_y = d_min_y + dst_axis * d_h
+            elif dst_edge == "left":
+                target_x = d_min_x + 1
+                target_y = d_min_y + dst_axis * d_h
+            elif dst_edge == "bottom":
+                target_x = d_min_x + dst_axis * d_w
+                target_y = d_max_y - 2
+            elif dst_edge == "top":
+                target_x = d_min_x + dst_axis * d_w
+                target_y = d_min_y + 1
+            else:
+                continue
+
+            return dst_id, target_x, target_y
+
+        return None
+
+    def _has_intra_binding_between(
+        self, src_monitor_id: int, dst_monitor_id: int
+    ) -> bool:
+        """``True`` when an intra-client binding exists from ``src`` to
+        ``dst`` — used to decide whether an OS-driven monitor change
+        is authorised by the workspace topology. O(1) on the hot path
+        via the pre-built pair set.
+        """
+        return (src_monitor_id, dst_monitor_id) in self._intra_pairs
+
+    def _clamp_cursor_to_monitor(self, monitor) -> None:
+        """Pin the cursor just inside ``monitor``'s bbox. Used to
+        revoke an unauthorised OS-driven cross-monitor transition and
+        to absorb edge approaches on void workspace edges.
+        """
+        if monitor is None:
+            return
+        try:
+            pos = self._controller.position
+            if not pos or len(pos) != 2:
+                return
+            cx, cy = pos
+            new_x = max(monitor.min_x + 1, min(monitor.max_x - 2, cx))
+            new_y = max(monitor.min_y + 1, min(monitor.max_y - 2, cy))
+            if (new_x, new_y) != (cx, cy):
+                self._controller.position = (new_x, new_y)
+        except Exception as e:
+            self._logger.log(f"Failed to clamp cursor to monitor ({e})", Logger.ERROR)
 
     def _resolve_return_to_server(
         self,
@@ -1312,9 +1594,30 @@ class ClientMouseController(object):
             return None
 
     async def _check_edge(self):
-        """
-        Check if the mouse cursor is at the edge of the screen and handle accordingly.
-        This is called after cursor movement. Optimized for maximum speed.
+        """Enforce the workspace topology on every cursor tick.
+
+        Two orthogonal jobs, in order:
+
+        1. **Detect unauthorised OS-driven monitor transitions**. The
+           workspace topology defines which client-monitor pairs are
+           connected via an intra-client binding; an OS-level adjacency
+           that the server's layout does NOT honour must be reverted
+           by clamping the cursor back into the previous monitor's
+           bbox.
+        2. **Resolve edge approaches** on the current monitor against
+           the workspace bindings:
+           - cross-screen binding ⇒ return-to-server;
+           - intra-client binding ⇒ explicit warp to the destination
+             monitor (overriding OS adjacency that may not exist or
+             may differ);
+           - no binding ⇒ clamp inside the current monitor.
+
+        The legacy single-monitor / pre-PR0 path is preserved when no
+        topology has been pushed: in that case ``_intra_client_bindings``
+        is empty, ``_resolve_intra_client_warp`` returns ``None``, and
+        the only side effects are the cross-screen lookup and (when
+        applicable) the edge clamp — same behaviour as before for
+        single-monitor clients.
         """
         if (
             self._checking_edge
@@ -1324,82 +1627,139 @@ class ClientMouseController(object):
             return await asyncio.sleep(0)
 
         try:
-            # Acquisisci il lock per serializzare i controlli edge
             async with self._edge_check_lock:
-                # Double-check dopo aver acquisito il lock
                 if self._cross_screen_event.is_set() or not self._is_active:
                     return await asyncio.sleep(0)
 
                 self._checking_edge = True
 
-                # Get the current cursor position
                 pos = self._controller.position
-                if pos is None or len(pos) != 2:  # Invalid position
+                if pos is None or len(pos) != 2:
                     return None
                 x, y = pos
 
-                # Add the current position to the movement history
                 self._movement_history.append((x, y))
 
-                # Need at least 2 positions to determine direction
+                # Identify the monitor currently under the cursor and
+                # keep ``_active_target_bbox`` in sync so any incoming
+                # ``POSITION_ACTION`` denormalises against the right
+                # screen even if the cursor moved between monitors.
+                current_monitor = self._find_monitor_for_cursor(x, y)
+                if current_monitor is not None:
+                    self._active_target_bbox = (
+                        current_monitor.min_x,
+                        current_monitor.min_y,
+                        current_monitor.max_x,
+                        current_monitor.max_y,
+                    )
+                    self._active_monitor_id = current_monitor.monitor_id
+
+                # ---- 1) reject unauthorised OS drift ----
+                if (
+                    current_monitor is not None
+                    and self._last_known_monitor_id is not None
+                    and current_monitor.monitor_id != self._last_known_monitor_id
+                    and not self._has_intra_binding_between(
+                        self._last_known_monitor_id, current_monitor.monitor_id
+                    )
+                    and not self._is_dragging
+                ):
+                    # Find the previous monitor by id to clamp the
+                    # cursor back into its bbox. The transition is OS-
+                    # only (workspace doesn't sanction it), so we
+                    # revert before the user perceives the drift.
+                    previous = None
+                    for m in self._monitor_layout.monitors:
+                        if m.monitor_id == self._last_known_monitor_id:
+                            previous = m
+                            break
+                    if previous is not None:
+                        self._clamp_cursor_to_monitor(previous)
+                        # Re-read after clamp so ``_active_target_bbox``
+                        # and movement history reflect the corrected
+                        # position; downstream edge logic runs in the
+                        # next tick.
+                        pos = self._controller.position
+                        if pos and len(pos) == 2:
+                            x, y = pos
+                            self._movement_history.clear()
+                            self._movement_history.append((x, y))
+                            self._active_target_bbox = (
+                                previous.min_x,
+                                previous.min_y,
+                                previous.max_x,
+                                previous.max_y,
+                            )
+                            self._active_monitor_id = previous.monitor_id
+                        return None
+
+                if current_monitor is not None:
+                    self._last_known_monitor_id = current_monitor.monitor_id
+
+                # Need at least N samples to assess direction.
                 if len(self._movement_history) < self.MOVEMENT_HISTORY_N_THRESHOLD:
                     return None
 
-                edge = EdgeDetector.is_at_edge(
+                edge = self._detect_directed_edge(
                     movement_history=self._movement_history,
                     x=x,
                     y=y,
-                    screen_size=self._monitor_layout,
-                    is_dragging=False,  # Force to false, we will handle it separately
+                    monitor=current_monitor,
                 )
+                if edge is None or self._is_dragging:
+                    return None
 
-                if edge:
-                    # Clamp cursor position to the virtual-desktop bounds
-                    # so a cursor that overshoots past a secondary-monitor
-                    # edge snaps back into a valid pixel.
-                    cx, cy = EdgeDetector.clamp_to_screen(x, y, self._screen_bbox)
-                    if (cx, cy) != (x, y):
-                        try:
-                            self._controller.position = (cx, cy)
-                            x, y = cx, cy
-                        except Exception as e:
-                            self._logger.log(
-                                f"Failed to clamp cursor to screen ({e})", Logger.ERROR
-                            )
-
-                # If we reach an edge, dispatch event to deactivate client and send cross screen message to server
-                if (
-                    edge and not self._is_dragging
-                ):  # Don't trigger edge crossing if dragging
-                    # Spatial lookup: the bindings cover every abutment
-                    # between this client's monitors and the server's
-                    # monitors. Any edge crossing that doesn't match a
-                    # binding is into empty workspace space and must
-                    # NOT route back to the server. The server always
-                    # pushes a topology on first activation (since
-                    # pre-layout clients use a synthesized placement),
-                    # so the "no topology" case is functionally just
-                    # "this client has no adjacency anywhere".
-                    resolved = self._resolve_return_to_server(edge, x, y)
-                    if resolved is None:
-                        return None
+                # ---- 2a) workspace cross-screen → return-to-server ----
+                resolved = self._resolve_return_to_server(edge, x, y)
+                if resolved is not None:
                     target_x, target_y = resolved
 
-                    # Set event BEFORE clearing history to block concurrent checks
                     self._cross_screen_event.set()
-
-                    # Clear movement history atomically
                     self._movement_history.clear()
 
                     command = CrossScreenCommandEvent(x=target_x, y=target_y)
-
-                    # Send command and dispatch event sequentially
                     await self.command_stream.send(command)
                     await self.event_bus.dispatch(
                         event_type=BusEventType.CLIENT_INACTIVE, data=None
                     )
-
                     return await asyncio.sleep(0)
+
+                # ---- 2b) workspace intra-client → explicit warp ----
+                warp = self._resolve_intra_client_warp(edge, x, y, current_monitor)
+                if warp is not None:
+                    dst_monitor_id, target_x, target_y = warp
+                    try:
+                        self._controller.position = (
+                            int(target_x),
+                            int(target_y),
+                        )
+                    except Exception as e:
+                        self._logger.log(
+                            f"Failed to warp cursor intra-client ({e})", Logger.ERROR
+                        )
+                        return None
+                    # Update last-known to the warp destination so the
+                    # next tick doesn't flag the transition we just
+                    # authorised as an unauthorised drift.
+                    self._last_known_monitor_id = dst_monitor_id
+                    self._active_monitor_id = dst_monitor_id
+                    for m in self._monitor_layout.monitors:
+                        if m.monitor_id == dst_monitor_id:
+                            self._active_target_bbox = (
+                                m.min_x,
+                                m.min_y,
+                                m.max_x,
+                                m.max_y,
+                            )
+                            break
+                    self._movement_history.clear()
+                    return None
+
+                # ---- 2c) void workspace edge → clamp inside current ----
+                if current_monitor is not None:
+                    self._clamp_cursor_to_monitor(current_monitor)
+                    self._movement_history.clear()
+                return None
 
         except Exception as e:
             self._logger.log(f"Failed to dispatch screen event ({e})", Logger.ERROR)

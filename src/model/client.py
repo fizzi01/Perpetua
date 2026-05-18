@@ -114,6 +114,7 @@ class ClientObj:
                         # rather than poison the list.
                         continue
             return out
+
         self.uid = uid
 
         if hostname is not None and not self._check_hostname(hostname):
@@ -313,18 +314,92 @@ class ClientObj:
     def get_effective_placements(self, server_monitors) -> list[dict]:
         """Return the placements that should drive cross-screen routing.
 
-        If the client has been positioned on the workspace via the
-        layout editor, return ``self.placements`` verbatim. Otherwise
-        synthesize a single 1:1 placement next to the server's primary
-        monitor on the side indicated by the legacy ``screen_position``
-        — that way pre-layout clients keep working through the unified
-        spatial routing instead of a parallel ``ScreenPosition`` code
-        path. Returns an empty list only when the legacy position is
-        ``CENTER`` / unset or the server has no monitors to anchor to.
+        Logic in two phases:
+
+        1. **Explicit set**: if the layout editor populated
+           ``self.placements`` use it verbatim; otherwise synthesize a
+           single 1:1 placement for the client primary next to the
+           server's primary monitor on the side indicated by the legacy
+           ``screen_position``. Returns empty when neither path
+           produces a placement (CENTER/unset and no server monitors).
+        2. **Auto-derivation**: when the client advertised its monitor
+           list and at least one client monitor is missing from the
+           explicit set, append a derived placement for each missing
+           monitor using its OS-relative offset from the first explicit
+           placement's anchor. The workspace inherits the client's OS
+           topology *by default*; admins who want to "separate" two
+           client monitors override by placing them both explicitly.
+
+        Auto-derived placements are functionally identical to explicit
+        ones — they feed `compute_edge_bindings` /
+        `compute_intra_client_bindings` the same way. The runtime
+        therefore enforces the resulting workspace topology
+        (server↔client, client↔client, void) regardless of which
+        placements came from the GUI vs. derivation.
         """
         if self.placements:
-            return list(self.placements)
+            explicit = list(self.placements)
+        else:
+            explicit = self._synthesize_legacy_placement(server_monitors)
 
+        if not explicit or not self.monitors:
+            return explicit
+
+        # Anchor for OS-relative derivation: the first explicit
+        # placement's underlying client monitor. Picking the first is
+        # deterministic and stable across reloads.
+        anchor_placement = explicit[0]
+        try:
+            anchor_id = int(anchor_placement["client_monitor_id"])
+        except (KeyError, TypeError, ValueError):
+            return explicit
+        anchor_monitor = next(
+            (m for m in self.monitors if m.monitor_id == anchor_id),
+            None,
+        )
+        if anchor_monitor is None:
+            return explicit
+
+        placed_ids: set[int] = set()
+        for p in explicit:
+            try:
+                placed_ids.add(int(p["client_monitor_id"]))
+            except (KeyError, TypeError, ValueError):
+                continue
+
+        try:
+            anchor_wx = int(anchor_placement["workspace_x"])
+            anchor_wy = int(anchor_placement["workspace_y"])
+        except (KeyError, TypeError, ValueError):
+            return explicit
+
+        derived: list[dict] = []
+        for m in self.monitors:
+            if m.monitor_id in placed_ids:
+                continue
+            os_dx = m.min_x - anchor_monitor.min_x
+            os_dy = m.min_y - anchor_monitor.min_y
+            w = max(1, m.max_x - m.min_x)
+            h = max(1, m.max_y - m.min_y)
+            derived.append(
+                {
+                    "client_monitor_id": m.monitor_id,
+                    "workspace_x": anchor_wx + os_dx,
+                    "workspace_y": anchor_wy + os_dy,
+                    "width": w,
+                    "height": h,
+                }
+            )
+
+        return explicit + derived
+
+    def _synthesize_legacy_placement(self, server_monitors) -> list[dict]:
+        """One-placement fallback for clients that pre-date the layout
+        editor and only carry the legacy ``screen_position`` field.
+
+        Returns ``[]`` when no anchor is available (no server monitors,
+        zero-sized primary, or ``CENTER`` / unset position).
+        """
         if not server_monitors:
             return []
         primary = next(
@@ -335,16 +410,9 @@ class ClientObj:
         ph = primary.max_y - primary.min_y
         if pw <= 0 or ph <= 0:
             return []
-        # Use the client's primary monitor dims when known so the
-        # synthetic placement keeps the right aspect ratio for the
-        # client-side denormalisation. Fall back to the server primary's
-        # size for legacy clients that haven't advertised a monitor list.
         cw, ch = pw, ph
         cm_id = 0
         if self.monitors:
-            # ``self.monitors`` is normalised to ``list[MonitorInfo]``
-            # by ``_coerce_monitors`` in :meth:`__init__`, so attribute
-            # access is safe without isinstance/dict guards.
             cm = next(
                 (m for m in self.monitors if m.is_primary),
                 self.monitors[0],
@@ -364,13 +432,15 @@ class ClientObj:
             wx, wy = primary.min_x, primary.max_y
         else:
             return []
-        return [{
-            "client_monitor_id": cm_id,
-            "workspace_x": wx,
-            "workspace_y": wy,
-            "width": cw,
-            "height": ch,
-        }]
+        return [
+            {
+                "client_monitor_id": cm_id,
+                "workspace_x": wx,
+                "workspace_y": wy,
+                "width": cw,
+                "height": ch,
+            }
+        ]
 
     def get_edge_bindings(self, server_monitors) -> list:
         """Derive the per-placement :class:`EdgeBinding` list from this
@@ -394,6 +464,22 @@ class ClientObj:
         for p in placements:
             out.extend(compute_edge_bindings(p, server_monitors))
         return out
+
+    def get_intra_client_bindings(self, server_monitors) -> list[dict]:
+        """Derive the intra-client warp bindings from the effective
+        placement set: for every ordered pair of placements that abut
+        in workspace coordinates, an entry maps the cursor's exit edge
+        on the source monitor to the corresponding entry edge on the
+        destination monitor. The client uses this to override OS-level
+        adjacency: a transition that doesn't have a binding here gets
+        clamped (cursor pinned to the source monitor's edge).
+        """
+        placements = self.get_effective_placements(server_monitors)
+        if not placements or len(placements) < 2:
+            return []
+        from utils.screen import compute_intra_client_bindings
+
+        return compute_intra_client_bindings(placements)
 
     def to_dict(self) -> dict:
         return self.__dict__()
@@ -508,26 +594,18 @@ class ClientsManager:
         one consistently.
         """
         for existing_client in self.clients:
-            if (
-                client.uid
-                and existing_client.uid
-                and existing_client.uid == client.uid
-            ):
-                raise ValueError(
-                    f"Client with uid '{client.uid}' already exists."
-                )
+            if client.uid and existing_client.uid and existing_client.uid == client.uid:
+                raise ValueError(f"Client with uid '{client.uid}' already exists.")
             if (
                 client.host_name
                 and existing_client.host_name
                 and existing_client.host_name == client.host_name
                 and any(
-                    ip in existing_client.ip_addresses
-                    for ip in client.ip_addresses
+                    ip in existing_client.ip_addresses for ip in client.ip_addresses
                 )
             ):
                 raise ValueError(
-                    f"Client '{client.host_name}' with overlapping IPs "
-                    f"already exists."
+                    f"Client '{client.host_name}' with overlapping IPs already exists."
                 )
         self.clients.append(client)
         return self

@@ -586,9 +586,7 @@ class Server:
                 await self.save_config()
 
             placement_hint = (
-                f"at position {screen_position}"
-                if screen_position
-                else "(unplaced)"
+                f"at position {screen_position}" if screen_position else "(unplaced)"
             )
             self._logger.info(
                 f"Added client {ip_addresses if ip_addresses else hostname} "
@@ -699,16 +697,16 @@ class Server:
             except (KeyError, TypeError, ValueError):
                 raise ValueError(f"Placement missing width/height: {raw!r}")
             if width <= 0 or height <= 0:
-                raise ValueError(
-                    f"Placement has non-positive size: {raw!r}"
-                )
-            normalized.append({
-                "client_monitor_id": int(raw.get("client_monitor_id", 0)),
-                "workspace_x": int(raw.get("workspace_x", 0)),
-                "workspace_y": int(raw.get("workspace_y", 0)),
-                "width": width,
-                "height": height,
-            })
+                raise ValueError(f"Placement has non-positive size: {raw!r}")
+            normalized.append(
+                {
+                    "client_monitor_id": int(raw.get("client_monitor_id", 0)),
+                    "workspace_x": int(raw.get("workspace_x", 0)),
+                    "workspace_y": int(raw.get("workspace_y", 0)),
+                    "width": width,
+                    "height": height,
+                }
+            )
 
         def _rects_overlap(a: dict, b: dict) -> bool:
             ax2 = a["workspace_x"] + a["width"]
@@ -724,7 +722,7 @@ class Server:
 
         # Self-overlap.
         for i, a in enumerate(normalized):
-            for b in normalized[i + 1:]:
+            for b in normalized[i + 1 :]:
                 if _rects_overlap(a, b):
                     raise ValueError(
                         f"Placements of {client.get_net_id()} overlap each other: "
@@ -781,11 +779,13 @@ class Server:
         edge_bindings = [
             eb.to_dict() for eb in client.get_edge_bindings(server_monitors)
         ]
+        intra_client_bindings = client.get_intra_client_bindings(server_monitors)
         await self.event_bus.dispatch(
             event_type=BusEventType.CLIENT_LAYOUT_UPDATED,
             data=ClientLayoutUpdatedEvent(
                 client_uid=client.uid,
                 edge_bindings=edge_bindings,
+                intra_client_bindings=intra_client_bindings,
             ),
         )
 
@@ -1646,6 +1646,7 @@ class Server:
         edge_bindings = [
             eb.to_dict() for eb in client.get_edge_bindings(server_monitors)
         ]
+        intra_client_bindings = client.get_intra_client_bindings(server_monitors)
 
         await self.event_bus.dispatch(
             event_type=BusEventType.CLIENT_CONNECTED,
@@ -1653,6 +1654,7 @@ class Server:
                 client_uid=client.uid,
                 streams=streams,
                 edge_bindings=edge_bindings,
+                intra_client_bindings=intra_client_bindings,
             ),
         )
         # Save config on new connection
@@ -1672,9 +1674,7 @@ class Server:
         """Handle client disconnection event"""
         await self.event_bus.dispatch(
             event_type=BusEventType.CLIENT_DISCONNECTED,
-            data=ClientDisconnectedEvent(
-                client_uid=client.uid, streams=streams
-            ),
+            data=ClientDisconnectedEvent(client_uid=client.uid, streams=streams),
         )
         await self.save_config()
         self._logger.info(
@@ -1694,9 +1694,7 @@ class Server:
         """Handle client stream reconnection event"""
         await self.event_bus.dispatch(
             event_type=BusEventType.CLIENT_STREAM_RECONNECTED,
-            data=ClientStreamReconnectedEvent(
-                client_uid=client.uid, streams=streams
-            ),
+            data=ClientStreamReconnectedEvent(client_uid=client.uid, streams=streams),
         )
 
     # ==================== Utility Methods ====================

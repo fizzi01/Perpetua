@@ -43,6 +43,7 @@ from typing import Iterable, Optional
 
 from model.monitor import MonitorInfo
 
+
 @dataclass
 class MonitorLayout:
     """Aggregate of the connected displays.
@@ -555,7 +556,8 @@ def compute_edge_bindings(
             if y_end > y_start:
                 out.append(
                     _make_binding(
-                        s, Edge.RIGHT,
+                        s,
+                        Edge.RIGHT,
                         s_axis_start_px=y_start - s.min_y,
                         s_axis_end_px=y_end - s.min_y,
                         s_axis_total_px=sh,
@@ -573,7 +575,8 @@ def compute_edge_bindings(
             if y_end > y_start:
                 out.append(
                     _make_binding(
-                        s, Edge.LEFT,
+                        s,
+                        Edge.LEFT,
                         s_axis_start_px=y_start - s.min_y,
                         s_axis_end_px=y_end - s.min_y,
                         s_axis_total_px=sh,
@@ -591,7 +594,8 @@ def compute_edge_bindings(
             if x_end > x_start:
                 out.append(
                     _make_binding(
-                        s, Edge.TOP,
+                        s,
+                        Edge.TOP,
                         s_axis_start_px=x_start - s.min_x,
                         s_axis_end_px=x_end - s.min_x,
                         s_axis_total_px=sw,
@@ -609,7 +613,8 @@ def compute_edge_bindings(
             if x_end > x_start:
                 out.append(
                     _make_binding(
-                        s, Edge.BOTTOM,
+                        s,
+                        Edge.BOTTOM,
                         s_axis_start_px=x_start - s.min_x,
                         s_axis_end_px=x_end - s.min_x,
                         s_axis_total_px=sw,
@@ -623,3 +628,148 @@ def compute_edge_bindings(
     return out
 
 
+def compute_intra_client_bindings(
+    placements: "Iterable[dict] | list[dict]",
+) -> list[dict]:
+    """Cross-monitor warp bindings within a single client.
+
+    For every ORDERED pair ``(p, q)`` of placements with distinct
+    ``client_monitor_id`` check whether any of ``p``'s four edges
+    abuts ``q``'s opposite edge in workspace coordinates. Every
+    abutment produces ONE entry: when the cursor exits ``p`` on that
+    edge, the client warps it onto ``q``'s opposite edge at the
+    matching axis position. The reverse direction ``q → p`` is
+    recorded by the symmetric ``(q, p)`` iteration.
+
+    Axis ranges are normalised over each monitor's edge length
+    (``[0, 1]``), mirroring :class:`EdgeBinding` so the client can
+    reuse the same lookup math for cross-screen and intra-client
+    transitions. ``src_edge`` / ``dst_edge`` are the string forms of
+    :class:`Edge` for wire-format compatibility with the existing
+    binding dict shape pushed to the client.
+
+    Used by the client mouse controller to enforce the workspace
+    topology over the OS-level adjacency: an OS-driven cursor drift
+    between two client monitors is allowed iff the corresponding
+    intra-client binding exists; otherwise the client clamps the
+    cursor back to the source monitor's edge.
+    """
+    placements = list(placements)
+    if len(placements) < 2:
+        return []
+
+    out: list[dict] = []
+    for p in placements:
+        try:
+            px = int(p["workspace_x"])
+            py = int(p["workspace_y"])
+            pw = int(p["width"])
+            ph = int(p["height"])
+            p_id = int(p["client_monitor_id"])
+        except (KeyError, TypeError, ValueError):
+            continue
+        if pw <= 0 or ph <= 0:
+            continue
+        for q in placements:
+            try:
+                q_id = int(q["client_monitor_id"])
+            except (KeyError, TypeError, ValueError):
+                continue
+            if q_id == p_id:
+                continue
+            try:
+                qx = int(q["workspace_x"])
+                qy = int(q["workspace_y"])
+                qw = int(q["width"])
+                qh = int(q["height"])
+            except (KeyError, TypeError, ValueError):
+                continue
+            if qw <= 0 or qh <= 0:
+                continue
+
+            # p.RIGHT abuts q.LEFT
+            if abs((px + pw) - qx) <= _ABUTMENT_TOLERANCE_PX:
+                y_start = max(py, qy)
+                y_end = min(py + ph, qy + qh)
+                if y_end > y_start:
+                    out.append(
+                        {
+                            "src_monitor_id": p_id,
+                            "src_edge": Edge.RIGHT.value,
+                            "src_axis_start": (y_start - py) / ph,
+                            "src_axis_end": (y_end - py) / ph,
+                            "dst_monitor_id": q_id,
+                            "dst_edge": Edge.LEFT.value,
+                            "dst_axis_start": (y_start - qy) / qh,
+                            "dst_axis_end": (y_end - qy) / qh,
+                            "dst_monitor_min_x": qx,
+                            "dst_monitor_min_y": qy,
+                            "dst_monitor_max_x": qx + qw,
+                            "dst_monitor_max_y": qy + qh,
+                        }
+                    )
+            # p.LEFT abuts q.RIGHT
+            if abs(px - (qx + qw)) <= _ABUTMENT_TOLERANCE_PX:
+                y_start = max(py, qy)
+                y_end = min(py + ph, qy + qh)
+                if y_end > y_start:
+                    out.append(
+                        {
+                            "src_monitor_id": p_id,
+                            "src_edge": Edge.LEFT.value,
+                            "src_axis_start": (y_start - py) / ph,
+                            "src_axis_end": (y_end - py) / ph,
+                            "dst_monitor_id": q_id,
+                            "dst_edge": Edge.RIGHT.value,
+                            "dst_axis_start": (y_start - qy) / qh,
+                            "dst_axis_end": (y_end - qy) / qh,
+                            "dst_monitor_min_x": qx,
+                            "dst_monitor_min_y": qy,
+                            "dst_monitor_max_x": qx + qw,
+                            "dst_monitor_max_y": qy + qh,
+                        }
+                    )
+            # p.BOTTOM abuts q.TOP
+            if abs((py + ph) - qy) <= _ABUTMENT_TOLERANCE_PX:
+                x_start = max(px, qx)
+                x_end = min(px + pw, qx + qw)
+                if x_end > x_start:
+                    out.append(
+                        {
+                            "src_monitor_id": p_id,
+                            "src_edge": Edge.BOTTOM.value,
+                            "src_axis_start": (x_start - px) / pw,
+                            "src_axis_end": (x_end - px) / pw,
+                            "dst_monitor_id": q_id,
+                            "dst_edge": Edge.TOP.value,
+                            "dst_axis_start": (x_start - qx) / qw,
+                            "dst_axis_end": (x_end - qx) / qw,
+                            "dst_monitor_min_x": qx,
+                            "dst_monitor_min_y": qy,
+                            "dst_monitor_max_x": qx + qw,
+                            "dst_monitor_max_y": qy + qh,
+                        }
+                    )
+            # p.TOP abuts q.BOTTOM
+            if abs(py - (qy + qh)) <= _ABUTMENT_TOLERANCE_PX:
+                x_start = max(px, qx)
+                x_end = min(px + pw, qx + qw)
+                if x_end > x_start:
+                    out.append(
+                        {
+                            "src_monitor_id": p_id,
+                            "src_edge": Edge.TOP.value,
+                            "src_axis_start": (x_start - px) / pw,
+                            "src_axis_end": (x_end - px) / pw,
+                            "dst_monitor_id": q_id,
+                            "dst_edge": Edge.BOTTOM.value,
+                            "dst_axis_start": (x_start - qx) / qw,
+                            "dst_axis_end": (x_end - qx) / qw,
+                            "dst_monitor_min_x": qx,
+                            "dst_monitor_min_y": qy,
+                            "dst_monitor_max_x": qx + qw,
+                            "dst_monitor_max_y": qy + qh,
+                        }
+                    )
+
+    return out

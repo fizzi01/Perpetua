@@ -154,6 +154,7 @@ class ScreenSwitchDirectionalRequestEvent(BusEvent):
     Dispatched when the user presses a directional spatial hotkey.
     The handling listener should intercept this and resolve the correct adjacent screen.
     """
+
     def __init__(self, edge: "ScreenEdge"):
         super().__init__()
         self.edge = edge
@@ -169,6 +170,7 @@ class ScreenSwitchCycleRequestEvent(BusEvent):
     """
     Dispatched when the user presses the screen cycle hotkey.
     """
+
     def __init__(self, direction: int):
         super().__init__()
         self.direction = direction
@@ -201,16 +203,26 @@ class ClientConnectedEvent(BusEvent):
         client_uid: str,
         streams: Optional[list[int]] = None,
         edge_bindings: Optional[list[dict]] = None,
+        intra_client_bindings: Optional[list[dict]] = None,
     ):
         self.client_uid = client_uid
         self.streams = streams
         self.edge_bindings: list[dict] = list(edge_bindings) if edge_bindings else []
+        # Intra-client warp bindings produced by
+        # :func:`utils.screen.compute_intra_client_bindings`. The client
+        # mouse controller uses these (together with ``edge_bindings``)
+        # to enforce the workspace topology over the OS-level adjacency
+        # of its physical monitors.
+        self.intra_client_bindings: list[dict] = (
+            list(intra_client_bindings) if intra_client_bindings else []
+        )
 
     def to_dict(self) -> dict:
         return {
             "client_uid": self.client_uid,
             "streams": self.streams,
             "edge_bindings": list(self.edge_bindings),
+            "intra_client_bindings": list(self.intra_client_bindings),
         }
 
 
@@ -234,16 +246,22 @@ class ClientTopologyUpdatedEvent(BusEvent):
         self,
         edge_bindings: Optional[list[dict]] = None,
         server_bbox: Optional[tuple[int, int, int, int]] = None,
+        intra_client_bindings: Optional[list[dict]] = None,
     ):
-        self.edge_bindings: list[dict] = (
-            list(edge_bindings) if edge_bindings else []
-        )
+        self.edge_bindings: list[dict] = list(edge_bindings) if edge_bindings else []
         self.server_bbox = server_bbox
+        # Mirror of :class:`ClientConnectedEvent`'s field: the client
+        # rebuilds its workspace-topology cache (cross-screen + intra-
+        # client) from both lists on every push.
+        self.intra_client_bindings: list[dict] = (
+            list(intra_client_bindings) if intra_client_bindings else []
+        )
 
     def to_dict(self) -> dict:
         return {
             "edge_bindings": list(self.edge_bindings),
             "server_bbox": list(self.server_bbox) if self.server_bbox else None,
+            "intra_client_bindings": list(self.intra_client_bindings),
         }
 
 
@@ -259,14 +277,19 @@ class ClientLayoutUpdatedEvent(BusEvent):
         self,
         client_uid: str,
         edge_bindings: Optional[list[dict]] = None,
+        intra_client_bindings: Optional[list[dict]] = None,
     ):
         self.client_uid = client_uid
         self.edge_bindings: list[dict] = list(edge_bindings) if edge_bindings else []
+        self.intra_client_bindings: list[dict] = (
+            list(intra_client_bindings) if intra_client_bindings else []
+        )
 
     def to_dict(self) -> dict:
         return {
             "client_uid": self.client_uid,
             "edge_bindings": list(self.edge_bindings),
+            "intra_client_bindings": list(self.intra_client_bindings),
         }
 
 
@@ -494,6 +517,7 @@ class ClientTopologyCommandEvent(CommandEvent):
         target: str = "",
         edge_bindings: Optional[list[dict]] = None,
         server_bbox: Optional[tuple[int, int, int, int]] = None,
+        intra_client_bindings: Optional[list[dict]] = None,
     ):
         super().__init__(
             command=CommandEvent.CLIENT_TOPOLOGY,
@@ -502,11 +526,17 @@ class ClientTopologyCommandEvent(CommandEvent):
             params={
                 "edge_bindings": list(edge_bindings) if edge_bindings else [],
                 "server_bbox": list(server_bbox) if server_bbox else None,
+                "intra_client_bindings": (
+                    list(intra_client_bindings) if intra_client_bindings else []
+                ),
             },
         )
 
     def get_edge_bindings(self) -> list[dict]:
         return list(self.params.get("edge_bindings") or [])
+
+    def get_intra_client_bindings(self) -> list[dict]:
+        return list(self.params.get("intra_client_bindings") or [])
 
     def get_server_bbox(self) -> Optional[tuple[int, int, int, int]]:
         raw = self.params.get("server_bbox")
@@ -522,6 +552,7 @@ class ClientTopologyCommandEvent(CommandEvent):
             target=event.target,
             edge_bindings=event.params.get("edge_bindings") or [],
             server_bbox=tuple(raw_bbox) if raw_bbox and len(raw_bbox) == 4 else None,
+            intra_client_bindings=event.params.get("intra_client_bindings") or [],
         )
 
     def to_dict(self) -> dict:
@@ -531,6 +562,9 @@ class ClientTopologyCommandEvent(CommandEvent):
             "params": {
                 "edge_bindings": list(self.params.get("edge_bindings") or []),
                 "server_bbox": list(bbox) if bbox else None,
+                "intra_client_bindings": list(
+                    self.params.get("intra_client_bindings") or []
+                ),
             },
         }
 

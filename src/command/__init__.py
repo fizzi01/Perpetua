@@ -113,7 +113,6 @@ class CommandHandler:
                 ),
             )
 
-
     async def handle_force_screen_change(self, event: CommandEvent):
         """
         Async handler for force screen change command by dispatching a client inactive event if we are client.
@@ -139,5 +138,6 @@ class CommandHandler:
             data=ClientTopologyUpdatedEvent(
                 edge_bindings=topo.get_edge_bindings(),
                 server_bbox=topo.get_server_bbox(),
+                intra_client_bindings=topo.get_intra_client_bindings(),
             ),
         )
