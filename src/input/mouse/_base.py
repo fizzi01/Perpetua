@@ -441,20 +441,17 @@ class ServerMouseListener(object):
             self._active_client_uid = active_screen
             self._cross_screen_event.clear()
         else:
-            # Return-to-server transition. Clear the history too: while
-            # the cursor was on the client (``_listening == True``) the
-            # buffer wasn't refreshed (``should_buffer`` was False in
-            # ``on_move``), so it still holds the stale samples that
-            # triggered the original cross-screen — direction-RIGHT
-            # towards the edge, near the bound. Mixing them with the
-            # fresh samples that arrive after ``position_cursor``
-            # warps the cursor back makes the next edge crossing
-            # unreliable: the direction check sees inconsistent
-            # samples and sometimes refuses to fire. Resetting the
-            # buffer means the next push toward an edge starts from a
-            # clean slate.
-            with self._server_state_lock:
-                self._movement_history.clear()
+            # Return-to-server transition. Intentionally DO NOT clear
+            # the history here: the samples accumulated before the
+            # original cross-screen describe the user's push toward
+            # the edge and stay relevant for the next crossing in the
+            # same direction. Clearing them forces the edge detector
+            # to wait for ``MOVEMENT_HISTORY_N_THRESHOLD`` fresh
+            # samples to accumulate from scratch — a fast outward
+            # push only generates 1-2 ``on_move`` events before the
+            # OS clamps the cursor against the screen bound, so the
+            # check never fires. Reusing the cached samples keeps the
+            # next cross-screen responsive.
             self._listening = False
             self._active_client_uid = None
 
