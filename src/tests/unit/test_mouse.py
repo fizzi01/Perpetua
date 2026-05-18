@@ -1102,7 +1102,11 @@ class TestClientMouseController:
         mock_stream_handler,
         mock_mouse_controller,
     ):
-        """Test edge detection on left edge."""
+        """Cursor reaching the LEFT edge of a client monitor that is
+        bound to the server's RIGHT edge dispatches a return-to-server
+        cross-screen command. Mirrors the production path where the
+        server pushed a topology covering the abutment.
+        """
         with patch(
             "input.mouse._base.MouseController", return_value=mock_mouse_controller
         ):
@@ -1113,7 +1117,26 @@ class TestClientMouseController:
                     mock_stream_handler,
                 )
                 controller._is_active = True
-                controller._current_screen = ScreenPosition.RIGHT
+                # Spatial routing contract pushed by the server: this
+                # client's LEFT edge of monitor 0 abuts the server's
+                # RIGHT edge on a server monitor (0, 0, 1920, 1080).
+                controller._edge_bindings = [
+                    {
+                        "server_monitor_id": 0,
+                        "server_edge": "right",
+                        "server_axis_start": 0.0,
+                        "server_axis_end": 1.0,
+                        "server_monitor_min_x": 0,
+                        "server_monitor_min_y": 0,
+                        "server_monitor_max_x": 1920,
+                        "server_monitor_max_y": 1080,
+                        "client_monitor_id": 0,
+                        "client_edge": "left",
+                        "client_axis_start": 0.0,
+                        "client_axis_end": 1.0,
+                    }
+                ]
+                controller._server_bbox = (0, 0, 1920, 1080)
 
                 # Build enough movement history (MOVEMENT_HISTORY_N_THRESHOLD = 6)
                 # _check_edge will add current position, so we need 5 in history
@@ -1161,6 +1184,121 @@ class TestClientMouseController:
                 await controller._check_edge()
 
                 # Should not have dispatched cross-screen command
+                mock_stream_handler.send.assert_not_called()
+
+    @pytest.mark.anyio
+    async def test_check_edge_warps_intra_client(
+        self,
+        event_bus,
+        mock_stream_handler,
+        mock_mouse_controller,
+    ):
+        """Cursor reaching a client-monitor edge that maps onto another
+        client monitor (intra-client binding) triggers an explicit
+        warp instead of a return-to-server crossing.
+        """
+        with patch(
+            "input.mouse._base.MouseController", return_value=mock_mouse_controller
+        ):
+            # Two-monitor layout: primary on top, secondary below.
+            from utils.screen import MonitorLayout
+
+            layout = MonitorLayout.from_bboxes(
+                [(0, 0, 1920, 1080), (0, 1080, 1920, 2160)]
+            )
+            with (
+                patch("input.mouse._base.Screen.get_size", return_value=(1920, 2160)),
+                patch(
+                    "input.mouse._base.Screen.get_virtual_bbox",
+                    return_value=(0, 0, 1920, 2160),
+                ),
+                patch(
+                    "input.mouse._base.Screen.get_monitor_layout",
+                    return_value=layout,
+                ),
+            ):
+                controller = ClientMouseController(
+                    event_bus,
+                    mock_stream_handler,
+                    mock_stream_handler,
+                )
+                controller._is_active = True
+                # Server pushed an intra-client binding for the
+                # primary.BOTTOM ↔ secondary.TOP abutment.
+                topology = [
+                    {
+                        "src_monitor_id": 0,
+                        "src_edge": "bottom",
+                        "src_axis_start": 0.0,
+                        "src_axis_end": 1.0,
+                        "dst_monitor_id": 1,
+                        "dst_edge": "top",
+                        "dst_axis_start": 0.0,
+                        "dst_axis_end": 1.0,
+                        "dst_monitor_min_x": 0,
+                        "dst_monitor_min_y": 1080,
+                        "dst_monitor_max_x": 1920,
+                        "dst_monitor_max_y": 2160,
+                    },
+                ]
+                controller._intra_client_bindings = topology
+                controller._intra_by_src = {0: topology}
+                controller._intra_pairs = {(0, 1)}
+                controller._last_known_monitor_id = 0
+
+                # Cursor moving down on primary, lands on bottom edge.
+                for y in range(1070, 1080):
+                    controller._movement_history.append((960, y))
+                mock_mouse_controller.position = (960, 1079)
+
+                await controller._check_edge()
+
+                # Cursor warped to top of secondary monitor.
+                warped_x, warped_y = mock_mouse_controller.position
+                assert warped_x == 960
+                assert 1080 <= warped_y < 1090
+                # No return-to-server dispatched.
+                mock_stream_handler.send.assert_not_called()
+
+    @pytest.mark.anyio
+    async def test_check_edge_clamps_on_void(
+        self,
+        event_bus,
+        mock_stream_handler,
+        mock_mouse_controller,
+    ):
+        """Cursor reaching an edge that has NO workspace binding
+        (neither cross-screen nor intra-client) gets clamped inside
+        the current monitor — enforces the workspace topology over
+        OS-level adjacency that the server didn't sanction.
+        """
+        with patch(
+            "input.mouse._base.MouseController", return_value=mock_mouse_controller
+        ):
+            with _ScreenGeometry(1920, 1080):
+                controller = ClientMouseController(
+                    event_bus,
+                    mock_stream_handler,
+                    mock_stream_handler,
+                )
+                controller._is_active = True
+                # No edge bindings and no intra-client bindings → every
+                # outer edge is void.
+                controller._edge_bindings = []
+                controller._intra_client_bindings = []
+                controller._intra_by_src = {}
+                controller._intra_pairs = set()
+
+                for x in range(10, 0, -2):
+                    controller._movement_history.append((x, 500))
+                mock_mouse_controller.position = (0, 500)
+
+                await controller._check_edge()
+
+                # Cursor pinned just inside the monitor, no
+                # cross-screen dispatch.
+                cx, cy = mock_mouse_controller.position
+                assert cx > 0
                 mock_stream_handler.send.assert_not_called()
 
     @pytest.mark.anyio
