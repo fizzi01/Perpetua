@@ -781,12 +781,29 @@ class ServerMouseListener(object):
                         )
                     )
 
-                # Wait for message dispatch to complete
+                # Carry the landing coordinates inside the same packet
+                # that activates the client (``x``/``y`` are the
+                # already-mapped normalised position on the destination
+                # client monitor; same values that go into the parallel
+                # ``POSITION_ACTION`` below). This eliminates the race
+                # where the client's mouse stream receives the
+                # POSITION_ACTION before ``CLIENT_ACTIVE`` flips
+                # ``_is_active`` and silently drops it — landing the
+                # cursor at the screen centre instead of the abutment
+                # point.
                 await self.command_stream.send(
                     CrossScreenCommandEvent(
-                        target=screen, client_monitor_id=client_monitor_id
+                        target=screen,
+                        client_monitor_id=client_monitor_id,
+                        x=mouse_event.x,
+                        y=mouse_event.y,
                     )
                 )
+                # Send the POSITION_ACTION too for backward compat with
+                # older clients that don't read ``position_x``/``_y``
+                # off the CLIENT_ACTIVE event. New clients position the
+                # cursor twice (idempotent — same coords on the same
+                # monitor); the second pass is a no-op.
                 await self.stream.send(mouse_event)
                 await asyncio.sleep(0)
 
@@ -1215,6 +1232,18 @@ class ClientMouseController(object):
         # Auto-start if not running
         if not self._running:
             await self.start()
+
+        # Position the cursor at the landing point IF the server packed
+        # the coordinates into this very event. Done AFTER ``_is_active``
+        # flips True so ``_position_cursor`` sees a consistent state.
+        # Bypasses the mouse-stream POSITION_ACTION race: the
+        # CrossScreenCommandEvent and the POSITION_ACTION travel on
+        # separate streams, and the mouse stream can outrun the command
+        # stream — leaving the cursor at its previous-session position
+        # (typically screen centre) instead of the abutment point.
+        if data is not None and data.position_x >= 0 and data.position_y >= 0:
+            for _ in range(10):
+                await self._position_cursor(data.position_x, data.position_y)
 
     async def _on_client_inactive(self, data: Optional[ClientActiveEvent]):
         """

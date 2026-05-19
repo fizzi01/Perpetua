@@ -104,12 +104,19 @@ class CommandHandler:
             # Dispatch CLIENT_ACTIVE event to notify that client itself
             # is now active. Forward the target monitor id (if any) so
             # the client mouse controller can pin incoming positions to
-            # the correct physical screen on multi-monitor setups.
+            # the correct physical screen on multi-monitor setups, and
+            # the landing coordinates so the cursor is placed inside
+            # this very dispatch — bypassing the parallel POSITION_ACTION
+            # on the mouse stream which can race this activation event
+            # and get dropped by the ``_is_active`` gate.
+            pos_x, pos_y = crs_event.get_position()
             await self.event_bus.dispatch(
                 event_type=BusEventType.CLIENT_ACTIVE,
                 data=ClientActiveEvent(
                     client_uid=event.target,
                     client_monitor_id=crs_event.get_client_monitor_id(),
+                    position_x=pos_x,
+                    position_y=pos_y,
                 ),
             )
 

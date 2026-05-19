@@ -305,20 +305,37 @@ class ClientActiveEvent(BusEvent):
     client mouse controller denormalizes incoming positions against
     that monitor's bbox instead of the full virtual desktop, so the
     cursor lands on the right physical screen on multi-monitor clients.
+
+    ``position_x`` / ``position_y`` (optional, normalised in ``[0, 1]``
+    against the target monitor's bbox) carry the landing coordinates
+    INSIDE the same packet that flips ``_is_active`` on the client.
+    Without them the server has to send a separate ``POSITION_ACTION``
+    on the mouse stream, which can race with this activation event
+    (the two streams are independent) and get dropped by the client's
+    ``not _is_active`` gate — landing the cursor at its previous
+    position (typically the screen centre from the prior session)
+    instead of the abutment point. ``-1`` means "no explicit landing
+    requested" (legacy / hotkey path).
     """
 
     def __init__(
         self,
         client_uid: str,
         client_monitor_id: Optional[int] = None,
+        position_x: float = -1,
+        position_y: float = -1,
     ):
         self.client_uid = client_uid
         self.client_monitor_id = client_monitor_id
+        self.position_x = position_x
+        self.position_y = position_y
 
     def to_dict(self) -> dict:
         return {
             "client_uid": self.client_uid,
             "client_monitor_id": self.client_monitor_id,
+            "position_x": self.position_x,
+            "position_y": self.position_y,
         }
 
 

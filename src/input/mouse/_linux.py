@@ -148,7 +148,10 @@ class ServerMouseListener(_base.ServerMouseListener):
     async def _on_client_disconnected(self, data: Optional[ClientDisconnectedEvent]):
         if self._barrier_mode and data is not None:
             client_uid = data.client_uid
-            if self._active_client_barrier and client_uid == self._active_client_barrier:
+            if (
+                self._active_client_barrier
+                and client_uid == self._active_client_barrier
+            ):
                 self._active_client_barrier = None
                 if self._listener:
                     self._listener.disable_capture()
@@ -293,7 +296,17 @@ class ServerMouseListener(_base.ServerMouseListener):
                 event_type=BusEventType.ACTIVE_SCREEN_CHANGED,
                 data=ActiveScreenChangedEvent(active_screen=target_uid),
             )
-            await self.command_stream.send(CrossScreenCommandEvent(target=target_uid))
+            # Mirror the base path: carry landing coords on the same
+            # packet that flips ``_is_active`` on the client, so the
+            # parallel POSITION_ACTION on the mouse stream can't race
+            # the activation event.
+            await self.command_stream.send(
+                CrossScreenCommandEvent(
+                    target=target_uid,
+                    x=mouse_event.x,
+                    y=mouse_event.y,
+                )
+            )
             await self.stream.send(mouse_event)
         except Exception as e:
             self._logger.error(f"Error dispatching cross-screen event: {e}")
