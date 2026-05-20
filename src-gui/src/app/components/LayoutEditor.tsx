@@ -32,6 +32,8 @@ import {
     workspaceBounds,
 } from "../commons/layout";
 
+import { Monitor, GripVertical } from "lucide-react";
+
 export interface LayoutEditorClient {
     uid: string;
     name: string;
@@ -631,9 +633,16 @@ export function LayoutEditor({
                     </div>
                 ) : (
                     <div className="flex flex-col gap-2 overflow-y-auto p-1">
+                        <div className="text-[10px] uppercase font-semibold opacity-50 mb-1 px-1 flex items-center justify-between">
+                            <span>Unplaced</span>
+                            <span className="text-[9px] lowercase font-normal opacity-80 flex items-center gap-1">
+                                <GripVertical size={10} /> drag to place
+                            </span>
+                        </div>
                         {unplaced.map((u, i) => {
                             const highlighted = !!preselectClientUid
                                 && u.clientUid === preselectClientUid;
+                            const isBeingDragged = pendingNew?.clientUid === u.clientUid && pendingNew?.clientMonitorId === u.monitor.monitor_id;
                             return (
                                 <div
                                     key={`${u.clientUid}:${u.monitor.monitor_id}:${i}`}
@@ -645,9 +654,11 @@ export function LayoutEditor({
                                             u.monitor,
                                         )
                                     }
-                                    className="px-2.5 py-2 rounded-lg text-white cursor-grab text-[11px] select-none leading-snug touch-none shadow-sm transition-all"
+                                    className={`px-2 py-2 rounded-lg text-white text-[11px] select-none leading-snug touch-none shadow-sm transition-all flex items-center gap-1.5 group hover:brightness-110 ${isBeingDragged ? 'cursor-grabbing' : 'cursor-grab'}`}
                                     style={{
                                         backgroundColor: clientColors[u.clientUid],
+                                        opacity: isBeingDragged ? 0.4 : 1,
+                                        transform: isBeingDragged ? "scale(0.95)" : "scale(1)",
                                         outline: highlighted
                                             ? "2px solid var(--app-primary)"
                                             : "2px solid transparent",
@@ -655,9 +666,15 @@ export function LayoutEditor({
                                     }}
                                     title={`${u.clientName} · monitor #${u.monitor.monitor_id} · ${u.monitor.max_x - u.monitor.min_x}×${u.monitor.max_y - u.monitor.min_y}`}
                                 >
-                                    <div className="font-semibold">{u.clientName}</div>
-                                    <div className="text-[10px] opacity-85">
-                                        #{u.monitor.monitor_id}
+                                    <GripVertical size={14} className="opacity-50 group-hover:opacity-100 transition-opacity shrink-0" />
+                                    <div className="flex-1 min-w-0">
+                                        <div className="font-semibold flex items-center gap-1.5 truncate">
+                                            <Monitor size={12} className="shrink-0" />
+                                            <span className="truncate">{u.clientName}</span>
+                                        </div>
+                                        <div className="text-[10px] opacity-85">
+                                            #{u.monitor.monitor_id}
+                                        </div>
                                     </div>
                                 </div>
                             );
@@ -684,33 +701,6 @@ export function LayoutEditor({
                 )}
                 {serverMonitors.map(renderServerMonitor)}
                 {placements.map(renderPlacement)}
-                {pendingNew && canvasRef.current && (() => {
-                    const rect = canvasRef.current.getBoundingClientRect();
-                    const inside =
-                        pendingNew.pointerX >= rect.left
-                        && pendingNew.pointerX <= rect.right
-                        && pendingNew.pointerY >= rect.top
-                        && pendingNew.pointerY <= rect.bottom;
-                    if (!inside) return null;
-                    const ghostW = pendingNew.width * metrics.scale;
-                    const ghostH = pendingNew.height * metrics.scale;
-                    return (
-                        <div
-                            style={{
-                                position: "absolute",
-                                left: pendingNew.pointerX - rect.left - ghostW / 2,
-                                top: pendingNew.pointerY - rect.top - ghostH / 2,
-                                width: ghostW,
-                                height: ghostH,
-                                borderRadius: 8,
-                                border: `2px dashed ${pendingNew.color}`,
-                                background: `${pendingNew.color}33`,
-                                pointerEvents: "none",
-                                opacity: 0.85,
-                            }}
-                        />
-                    );
-                })()}
                 {!validation.ok && (
                     <div
                         title={validation.errors.slice(0, 4).join("\n")}
@@ -727,6 +717,42 @@ export function LayoutEditor({
                     </div>
                 )}
             </div>
+            {pendingNew && (() => {
+                const ghostW = pendingNew.width * metrics.scale;
+                const ghostH = pendingNew.height * metrics.scale;
+                return (
+                    <div
+                        style={{
+                            position: "fixed",
+                            left: pendingNew.pointerX - ghostW / 2,
+                            top: pendingNew.pointerY - ghostH / 2,
+                            width: ghostW,
+                            height: ghostH,
+                            borderRadius: 8,
+                            border: `2px dashed ${pendingNew.color}`,
+                            background: `${pendingNew.color}40`,
+                            pointerEvents: "none",
+                            opacity: 0.9,
+                            zIndex: 100,
+                            boxShadow: "0 8px 24px rgba(0,0,0,0.15)",
+                            display: "flex",
+                            alignItems: "center",
+                            justifyContent: "center",
+                            fontSize: 12,
+                            fontWeight: 600,
+                            color: pendingNew.color,
+                            backdropFilter: "blur(2px)",
+                        }}
+                    >
+                        <div style={{textAlign: "center", lineHeight: 1.2}}>
+                            <div style={{fontSize: 10, opacity: 0.85, fontWeight: 500}}>
+                                {pendingNew.clientName}
+                            </div>
+                            <div style={{fontSize: 11}}>#{pendingNew.clientMonitorId}</div>
+                        </div>
+                    </div>
+                );
+            })()}
         </div>
     );
 }
