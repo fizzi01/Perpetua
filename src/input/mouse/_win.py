@@ -644,9 +644,7 @@ class ServerMouseListener(_base.ServerMouseListener):
         # position_cursor warp lands on a visible cursor.
         if data is None:
             return
-        self._logger.debug(
-            f"_on_screen_change_guard active_screen={data.active_screen!r}"
-        )
+
         if data.active_screen:
             await self.event_bus.dispatch(
                 event_type=BusEventType.ACTIVE_SCREEN_CHANGED,
@@ -697,7 +695,6 @@ class ServerMouseListener(_base.ServerMouseListener):
             _restore_system_cursors()
             return
         self._cursor_hidden = True
-        self._logger.debug(f"Raw Input capture enabled at centre={self._listening_center}")
 
     async def _disable_capture(self) -> None:
         if not self._cursor_hidden:
@@ -713,7 +710,6 @@ class ServerMouseListener(_base.ServerMouseListener):
             except Exception as e:
                 self._logger.error(f"Raw input stop failed ({e})")
         _restore_system_cursors()
-        self._logger.debug("Capture disabled, system cursors restored")
 
     def _on_raw_delta(self, dx: int, dy: int) -> None:
         if not self._cursor_hidden:
