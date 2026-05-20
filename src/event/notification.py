@@ -615,21 +615,36 @@ class MonitorTopologyChangedEvent(NotificationEvent):
         self,
         monitors: Optional[list] = None,
         orphans: Optional[list] = None,
+        source_kind: str = "server",
+        client_uid: str = "",
+        client_net_id: str = "",
         **kwargs,
     ):
         data = {
             "monitors": monitors or [],
             "orphans": orphans or [],
+            # ``source_kind`` distinguishes server-local hot-plug from a
+            # connected client's runtime monitor-list change so the GUI
+            # can phrase the toast appropriately.
+            "source_kind": source_kind,
+            "client_uid": client_uid,
+            "client_net_id": client_net_id,
         }
         data.update(kwargs)
         n_orphans = len(data["orphans"])
-        if n_orphans > 0:
-            msg = (
-                f"Monitor layout changed; {n_orphans} client placement(s) "
-                f"became orphaned and were dropped"
+        who = client_net_id or client_uid
+        if source_kind == "client":
+            base = f"Client {who} monitor layout changed" if who else (
+                "Client monitor layout changed"
             )
         else:
-            msg = "Monitor layout changed"
+            base = "Monitor layout changed"
+        if n_orphans > 0:
+            msg = (
+                f"{base}; {n_orphans} placement(s) became orphaned and were dropped"
+            )
+        else:
+            msg = base
         super().__init__(
             event_type=NotificationEventType.MONITOR_TOPOLOGY_CHANGED,
             data=data,

@@ -45,6 +45,7 @@ from event import (
     ClientConnectedEvent,
     ClientDisconnectedEvent,
     ClientLayoutUpdatedEvent,
+    ClientMonitorsUpdatedEvent,
     ClientStreamReconnectedEvent,
 )
 
@@ -1396,6 +1397,15 @@ class Server:
             event_bus=self.event_bus, stream=command_stream
         )
 
+        # Subscribe AFTER the CommandHandler is wired so the bus has a
+        # producer for ``CLIENT_MONITORS_UPDATED``. The event bus is
+        # recreated by ``cleanup()`` so this needs to run on every
+        # start, not just construction.
+        self.event_bus.subscribe(
+            event_type=BusEventType.CLIENT_MONITORS_UPDATED,
+            callback=self._on_client_monitors_updated,
+        )
+
         await self._enable_mouse_stream()
         await self._enable_keyboard_stream()
         await self._enable_clipboard_stream()
@@ -1618,6 +1628,154 @@ class Server:
         await self.event_bus.dispatch(
             event_type=BusEventType.CLIENT_STREAM_RECONNECTED,
             data=ClientStreamReconnectedEvent(client_uid=client.uid, streams=streams),
+        )
+
+    async def _on_client_monitors_updated(
+        self, data: Optional[ClientMonitorsUpdatedEvent]
+    ):
+        """React to a connected client reporting a new monitor list.
+
+        Steps:
+          1. Look up the ClientObj by UID; ignore if unknown.
+          2. Parse the wire monitor dicts into MonitorInfo (drop malformed).
+          3. Detect whether anything actually changed - reconnects send
+             the same list, no need to recompute then.
+          4. Reconcile stored placements against the new monitor ids.
+             Placements pointing to a removed monitor are dropped; the
+             rest are kept as-is.
+          5. Refresh the cached edge / intra bindings on the listener
+             via ``CLIENT_LAYOUT_UPDATED`` so the next crossing uses
+             the new topology without forcing a reconnect.
+          6. Notify the GUI so the layout editor can show which (if
+             any) placements were orphaned.
+        """
+        if data is None or not data.client_uid:
+            return
+
+        client = self.config.get_client(uid=data.client_uid)
+        if client is None:
+            self._logger.debug(
+                f"Ignoring monitor update for unknown client uid={data.client_uid}"
+            )
+            return
+
+        from model.monitor import MonitorInfo
+        from utils.screen import Screen
+
+        new_monitors: list[MonitorInfo] = []
+        for m in data.monitors or []:
+            if not isinstance(m, dict):
+                continue
+            try:
+                new_monitors.append(MonitorInfo.from_dict(m))
+            except (KeyError, TypeError, ValueError) as exc:
+                self._logger.debug(
+                    f"Dropping malformed monitor in update from "
+                    f"{client.get_net_id()}: {exc}"
+                )
+
+        prev_signature = self._monitors_signature(client.monitors or [])
+        new_signature = self._monitors_signature(new_monitors)
+        if prev_signature == new_signature:
+            return
+
+        self._logger.info(
+            f"Client {client.get_net_id()} monitor topology changed: "
+            f"{len(new_monitors)} monitor(s) now connected"
+        )
+
+        client.monitors = new_monitors
+
+        # Drop placements whose ``client_monitor_id`` is no longer
+        # advertised. Other placements survive untouched - the OS
+        # bbox may have changed but the workspace target stays the
+        # same until the admin opens the layout editor.
+        known_ids = {m.monitor_id for m in new_monitors}
+        orphans: list[dict] = []
+        kept: list[dict] = []
+        for p in list(client.placements or []):
+            try:
+                pid = int(p.get("client_monitor_id"))
+            except (TypeError, ValueError):
+                orphans.append(
+                    {
+                        "client_uid": client.uid,
+                        "client_net_id": client.get_net_id(),
+                        "placement": dict(p),
+                    }
+                )
+                continue
+            if pid in known_ids:
+                kept.append(p)
+            else:
+                orphans.append(
+                    {
+                        "client_uid": client.uid,
+                        "client_net_id": client.get_net_id(),
+                        "placement": dict(p),
+                    }
+                )
+
+        if orphans:
+            client.placements = kept
+
+        try:
+            self.clients_manager.update_client(client)
+        except Exception as e:
+            self._logger.warning(
+                f"Failed to update client {client.get_net_id()} after "
+                f"monitor change ({e})"
+            )
+
+        try:
+            await self.save_config()
+        except Exception as e:
+            self._logger.warning(
+                f"Failed to persist client {client.get_net_id()} monitor "
+                f"update ({e})"
+            )
+
+        # Refresh the listener's edge-binding cache so the next
+        # crossing routes against the new monitor topology.
+        try:
+            server_monitors = Screen.get_monitors()
+        except Exception:
+            server_monitors = []
+        try:
+            edge_bindings = [
+                eb.to_dict() for eb in client.get_edge_bindings(server_monitors)
+            ]
+            intra_client_bindings = client.get_intra_client_bindings(
+                server_monitors
+            )
+            await self.event_bus.dispatch(
+                event_type=BusEventType.CLIENT_LAYOUT_UPDATED,
+                data=ClientLayoutUpdatedEvent(
+                    client_uid=client.uid,
+                    edge_bindings=edge_bindings,
+                    intra_client_bindings=intra_client_bindings,
+                ),
+            )
+        except Exception as e:
+            self._logger.warning(
+                f"Failed to refresh bindings for {client.get_net_id()} "
+                f"after monitor change ({e})"
+            )
+
+        try:
+            monitor_dicts = [m.to_dict() for m in new_monitors]
+        except Exception:
+            monitor_dicts = []
+        # Reuse the server-side monitor-topology notification: the
+        # ``source`` and ``client_uid`` fields disambiguate at the GUI.
+        await self._send_notification(
+            MonitorTopologyChangedEvent(
+                monitors=monitor_dicts,
+                orphans=orphans,
+                source_kind="client",
+                client_uid=client.uid,
+                client_net_id=client.get_net_id() or "",
+            )
         )
 
     def get_event_bus(self) -> AsyncEventBus:

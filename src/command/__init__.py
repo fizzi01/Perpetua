@@ -24,6 +24,8 @@ from event import (
     CommandEvent,
     EventMapper,
     ActiveScreenChangedEvent,
+    ClientMonitorsUpdateCommandEvent,
+    ClientMonitorsUpdatedEvent,
     ClientTopologyCommandEvent,
     ClientTopologyUpdatedEvent,
     CrossScreenCommandEvent,
@@ -62,6 +64,8 @@ class CommandHandler:
                 await asyncio.create_task(self.handle_force_screen_change(event))
             elif event.command == CommandEvent.CLIENT_TOPOLOGY:
                 await asyncio.create_task(self.handle_client_topology(event))
+            elif event.command == CommandEvent.CLIENT_MONITORS_UPDATE:
+                await asyncio.create_task(self.handle_client_monitors_update(event))
             else:
                 self._logger.warning(f"Unknown command received -> {event.command}")
                 return
@@ -116,5 +120,29 @@ class CommandHandler:
                 edge_bindings=topo.get_edge_bindings(),
                 server_bbox=topo.get_server_bbox(),
                 intra_client_bindings=topo.get_intra_client_bindings(),
+            ),
+        )
+
+    async def handle_client_monitors_update(self, event: CommandEvent):
+        """Server-side dispatch of a client-reported monitor change.
+
+        The client sends this on the command stream when its OS-level
+        monitor enumeration changes (display added/removed/resized).
+        The service-layer subscriber updates the stored monitor list,
+        reconciles placements against the new ids, and pushes refreshed
+        edge bindings.
+        """
+        upd = ClientMonitorsUpdateCommandEvent.from_command_event(event)
+        client_uid = upd.get_client_uid()
+        if not client_uid:
+            self._logger.warning(
+                "Dropped client monitors update: missing client_uid in payload"
+            )
+            return
+        await self.event_bus.dispatch(
+            event_type=BusEventType.CLIENT_MONITORS_UPDATED,
+            data=ClientMonitorsUpdatedEvent(
+                client_uid=client_uid,
+                monitors=upd.get_monitors(),
             ),
         )

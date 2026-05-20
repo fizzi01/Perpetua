@@ -44,7 +44,7 @@ from event.notification import (
     ServerChoiceNeededEvent,
     ServiceErrorEvent,
 )
-from event import BusEventType, ClientStreamReconnectedEvent
+from event import BusEventType, ClientStreamReconnectedEvent, CommandEvent
 from network.connection.client import ConnectionHandler
 from network.stream.handler.client import (
     UnidirectionalStreamHandler,
@@ -219,6 +219,13 @@ class Client:
         self._components = {}
         self._running = False
         self._connected = False
+
+        # Monitor-change watcher: polls the OS monitor list and pushes
+        # the new layout to the server over the command stream when it
+        # changes. Stays None until ``start()`` spawns it.
+        self._monitor_watch_task: Optional[asyncio.Task] = None
+        self._known_monitors_signature: Optional[tuple] = None
+        self.MONITOR_WATCH_INTERVAL = 2.0
 
         # Metrics
         self._metrics_collector = MetricsCollector()
@@ -898,6 +905,129 @@ class Client:
         except Exception as e:
             self._logger.error(f"Error during server discovery ({e})")
 
+    @staticmethod
+    def _monitors_signature(monitors) -> tuple:
+        """Hashable fingerprint of a monitor list.
+
+        Matches the server-side helper - any change in monitor id,
+        bbox, or primary flag flips the signature so the watch loop
+        sends an update.
+        """
+        sig = []
+        for m in monitors or []:
+            sig.append(
+                (
+                    int(getattr(m, "monitor_id", 0)),
+                    int(getattr(m, "min_x", 0)),
+                    int(getattr(m, "min_y", 0)),
+                    int(getattr(m, "max_x", 0)),
+                    int(getattr(m, "max_y", 0)),
+                    bool(getattr(m, "is_primary", False)),
+                )
+            )
+        sig.sort()
+        return tuple(sig)
+
+    async def _push_monitor_update(self, monitors) -> bool:
+        """Send the current monitor list to the server over the command stream.
+
+        Bypasses the BidirectionalStreamHandler's ``active_only`` gate
+        by talking to the underlying msg_exchange directly: the server
+        needs the new layout even (especially) when the cursor is still
+        on the server, because the next cross-screen crossing will read
+        from the cached topology.
+        """
+        command_stream = self._stream_handlers.get(StreamType.COMMAND)
+        if command_stream is None:
+            return False
+        msg_exchange = getattr(command_stream, "msg_exchange", None)
+        if msg_exchange is None:
+            return False
+
+        client_uid = self.main_client.uid if self.main_client else ""
+        if not client_uid:
+            client_uid = self.config.get_uid() or ""
+
+        screen_position = ""
+        if self.main_client is not None:
+            try:
+                screen_position = self.main_client.get_screen_position() or ""
+            except Exception:
+                screen_position = ""
+
+        try:
+            payload_monitors = [m.to_dict() for m in monitors]
+        except Exception:
+            payload_monitors = []
+
+        try:
+            await msg_exchange.send_command_message(
+                command=CommandEvent.CLIENT_MONITORS_UPDATE,
+                params={
+                    "client_uid": client_uid,
+                    "monitors": payload_monitors,
+                },
+                source=screen_position,
+                target="server",
+            )
+            return True
+        except Exception as e:
+            self._logger.warning(
+                f"Failed to push client monitor update ({e})"
+            )
+            return False
+
+    async def _monitor_watch_loop(self) -> None:
+        """Background poller that surfaces client-side monitor topology changes.
+
+        The OS doesn't expose a portable hot-plug callback at this
+        layer so polling is the lower-common-denominator. The cadence
+        matches the server-side watcher: small enough that the GUI
+        feels reactive when a display is plugged/unplugged but cheap
+        enough to leave running.
+        """
+        while self._running:
+            try:
+                await asyncio.sleep(self.MONITOR_WATCH_INTERVAL)
+                if not self._running:
+                    return
+                if not self._connected:
+                    continue
+                try:
+                    monitors = Screen.get_monitors()
+                except Exception as e:
+                    self._logger.debug(
+                        f"Client monitor enumeration failed in watch loop ({e})"
+                    )
+                    continue
+                signature = self._monitors_signature(monitors)
+                if signature == self._known_monitors_signature:
+                    continue
+                self._known_monitors_signature = signature
+                self._logger.info(
+                    f"Client monitor topology changed: "
+                    f"{len(monitors)} monitor(s) now connected"
+                )
+
+                # Update the local ClientObj cache so subsequent
+                # introspection paths (and a possible reconnect) see
+                # the fresh list.
+                if self.main_client is not None:
+                    self.main_client.monitors = list(monitors)
+                    try:
+                        self.main_client.screen_resolution = Screen.get_size_str()
+                    except Exception:
+                        pass
+
+                await self._push_monitor_update(monitors)
+            except asyncio.CancelledError:
+                return
+            except Exception as e:
+                self._logger.error(
+                    f"Error in client monitor watch loop ({e})"
+                )
+                await asyncio.sleep(self.MONITOR_WATCH_INTERVAL)
+
     async def _discovery_refresh_loop(self) -> None:
         """Periodically refresh the mDNS server list while the client is up.
 
@@ -1162,6 +1292,28 @@ class Client:
             self._bg_tasks.spawn(
                 self._discovery_refresh_loop(), name="discovery_refresh"
             )
+
+            # Prime the monitor signature with the boot-time topology so
+            # the first change (not the initial enumeration) drives the
+            # send. The handshake already carried the boot list.
+            try:
+                self._known_monitors_signature = self._monitors_signature(
+                    Screen.get_monitors()
+                )
+            except Exception as e:
+                self._logger.debug(
+                    f"Could not prime client monitor signature ({e})"
+                )
+                self._known_monitors_signature = None
+            try:
+                self._monitor_watch_task = asyncio.create_task(
+                    self._monitor_watch_loop()
+                )
+            except Exception as e:
+                self._logger.warning(
+                    f"Failed to start client monitor watch task ({e})"
+                )
+
             server_host = self.config.get_server_host()
             server_port = self.config.get_server_port()
             self._logger.info(
@@ -1189,6 +1341,16 @@ class Client:
             await self._futures_cleanup()
 
             self._logger.info("Stopping Client...")
+            # Halt the monitor watch task before tearing down the streams
+            # so its in-flight send (if any) can complete or be cancelled
+            # cleanly rather than racing the disconnect.
+            if self._monitor_watch_task is not None:
+                self._monitor_watch_task.cancel()
+                try:
+                    await self._monitor_watch_task
+                except (asyncio.CancelledError, Exception):
+                    pass
+                self._monitor_watch_task = None
             async with self._guarded_handler(check=False):
                 # Stop all components
                 for component_name, component in list(self._components.items()):

@@ -54,6 +54,11 @@ class BusEventType(IntEnum):
     # topology (reverse edge bindings + server bbox).
     CLIENT_TOPOLOGY_UPDATED = 9
 
+    # Dispatched on the SERVER side when a connected client reports its
+    # monitor list changed at runtime. Triggers placement reconciliation
+    # against the new monitor ids.
+    CLIENT_MONITORS_UPDATED = 12
+
 
 class BusEvent(ABC):
     """Base class for events dispatched on the EventBus."""
@@ -221,6 +226,30 @@ class ClientLayoutUpdatedEvent(BusEvent):
         }
 
 
+class ClientMonitorsUpdatedEvent(BusEvent):
+    """Dispatched on the SERVER bus when a connected client reports
+    its monitor list changed at runtime.
+
+    Carries the raw monitor dicts as received over the wire — the
+    server-side handler parses them into MonitorInfo while reconciling
+    placements against the new ids.
+    """
+
+    def __init__(
+        self,
+        client_uid: str,
+        monitors: Optional[list[dict]] = None,
+    ):
+        self.client_uid = client_uid
+        self.monitors: list[dict] = list(monitors) if monitors else []
+
+    def to_dict(self) -> dict:
+        return {
+            "client_uid": self.client_uid,
+            "monitors": list(self.monitors),
+        }
+
+
 class ClientActiveEvent(BusEvent):
     """Event dispatched on the CLIENT side when the server activates it.
 
@@ -334,6 +363,7 @@ class CommandEvent(Event):
     FORCE_SCREEN_CHANGE = "force_screen_change"
     KEYBOARD_STATE_SYNC = "keyboard_state_sync"
     CLIENT_TOPOLOGY = "client_topology"
+    CLIENT_MONITORS_UPDATE = "client_monitors_update"
 
     def __init__(
         self,
@@ -476,6 +506,57 @@ class ClientTopologyCommandEvent(CommandEvent):
                 "intra_client_bindings": list(
                     self.params.get("intra_client_bindings") or []
                 ),
+            },
+        }
+
+
+class ClientMonitorsUpdateCommandEvent(CommandEvent):
+    """Client-to-server notification that the client's monitor list changed.
+
+    The client includes its UID in the payload so the server can route
+    the update to the right ClientObj (the stream handler's transport
+    routing layer doesn't surface the source connection to the command
+    handler).
+    """
+
+    def __init__(
+        self,
+        source: str = "",
+        target: str = "server",
+        client_uid: str = "",
+        monitors: Optional[list[dict]] = None,
+    ):
+        super().__init__(
+            command=CommandEvent.CLIENT_MONITORS_UPDATE,
+            source=source,
+            target=target,
+            params={
+                "client_uid": client_uid,
+                "monitors": list(monitors) if monitors else [],
+            },
+        )
+
+    def get_client_uid(self) -> str:
+        return str(self.params.get("client_uid", ""))
+
+    def get_monitors(self) -> list[dict]:
+        return list(self.params.get("monitors") or [])
+
+    @classmethod
+    def from_command_event(cls, event: CommandEvent) -> Self:
+        return cls(
+            source=event.source,
+            target=event.target,
+            client_uid=str(event.params.get("client_uid", "")),
+            monitors=list(event.params.get("monitors") or []),
+        )
+
+    def to_dict(self) -> dict:
+        return {
+            "command": self.command,
+            "params": {
+                "client_uid": self.params.get("client_uid", ""),
+                "monitors": list(self.params.get("monitors") or []),
             },
         }
 
