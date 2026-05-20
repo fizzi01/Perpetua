@@ -127,6 +127,20 @@ class StreamHandler:
         """
         await self._send_queue.put(data)
 
+    def send_nowait(self, data: Any) -> bool:
+        """
+        Synchronous, non-blocking enqueue from the event-loop thread.
+
+        Skips the coroutine + task overhead of ``send`` on hot paths (raw
+        mouse deltas etc.). Returns False when the queue is saturated, so
+        the caller can drop or coalesce instead of blocking.
+        """
+        try:
+            self._send_queue.put_nowait(data)
+            return True
+        except asyncio.QueueFull:
+            return False
+
     def _clear_buffer(self):
         """
         Clears the send queue.
