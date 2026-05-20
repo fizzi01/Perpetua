@@ -1,18 +1,5 @@
-"""
-Windows cursor handler — no-op shim.
-
-The actual cursor visibility / capture / delta-forwarding logic on
-Windows lives in :class:`input.mouse._win.ServerMouseListener`, which
-piggybacks on the ``SetWindowsHookEx(WH_MOUSE_LL)`` hook pynput already
-maintains for edge detection. The wx overlay subprocess used on macOS
-(50-150 ms of focus / capture / z-order overhead per cross-screen, plus
-a long tail of focus-drop bugs) is therefore unnecessary on Windows.
-
-This module exists so :mod:`input.cursor` can still resolve
-``CursorHandlerWorker`` at import time without crashing the service
-wiring (which always instantiates one). All operations are no-ops; the
-listener performs them in-process instead.
-"""
+"""Windows cursor handler. The listener owns cursor
+visibility and delta capture natively on this platform."""
 
 
 #  Perpetua - open-source and cross-platform KVM software.
@@ -41,15 +28,7 @@ from utils.logging import get_logger
 
 
 class CursorHandlerWorker:
-    """No-op replacement for the wx-based worker on Windows.
-
-    Preserves the public API surface (``start``, ``stop``, ``is_alive``,
-    ``close_handler``, ``enable_capture``, ``disable_capture``,
-    ``send_command``, ``get_result``, ``get_all_results``) consumed by
-    the service wiring and the orchestration helpers, but performs no
-    work — the listener owns cursor visibility and delta capture
-    natively on this platform.
-    """
+    """No-op replacement for the wx-based worker on Windows."""
 
     def __init__(
         self,
@@ -67,9 +46,6 @@ class CursorHandlerWorker:
         self.process = None
         self._mouse_data_task = None
         self._logger = get_logger(self.__class__.__name__)
-        self._logger.debug(
-            "Windows uses the in-listener fast path; cursor worker is a no-op."
-        )
 
     async def start(self, wait_ready: bool = True, timeout: float = 1) -> bool:
         self._is_running = True

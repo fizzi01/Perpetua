@@ -114,10 +114,6 @@ pub async fn add_client(
             .join(", ")
     );
 
-    // ``screen_position`` was retired as a load-bearing field: the
-    // admin places clients via the Layout Editor instead of picking
-    // a direction here. The daemon accepts ``add_client`` payloads
-    // without it.
     let command = CommandEvent::build(
         CommandType::AddClient,
         &format!(
@@ -149,10 +145,6 @@ pub async fn approve_client(
     if peer_ip.is_empty() {
         return Err("peer_ip must be provided".to_string());
     }
-    // ``screen_position`` is no longer part of the approval payload
-    // (see ``add_client``). Approved clients land unplaced; the GUI
-    // auto-opens the Layout Editor preselected to the new client so
-    // the admin can position its monitors visually.
     let command = CommandEvent::build(
         CommandType::ApproveClient,
         &format!(

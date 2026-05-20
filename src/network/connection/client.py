@@ -464,13 +464,8 @@ class ConnectionHandler(BaseConnectionHandler):
             if self._client_obj is None:
                 raise Exception("Client object is None during handshake")
 
-            # Advertise the full per-monitor layout so the server can
-            # build edge-routing slots (future GUI). Built lazily here
-            # because Screen probes are platform syscalls; if anything
-            # fails we still send the legacy screen_resolution and let
-            # the server fall back to the single-monitor assumption.
-            # ``MonitorInfo.to_dict`` is the wire-format owner — keeping
-            # the conversion centralised avoids the two ends drifting.
+            # Advertise per-monitor layout for server edge-routing. On
+            # failure, server falls back to legacy screen_resolution.
             monitors_payload: list[dict] = []
             try:
                 from utils.screen import Screen

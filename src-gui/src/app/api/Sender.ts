@@ -32,10 +32,6 @@ export function stopServer(): Promise<void> {
 }
 
 export function addClient(hostname: string, ip_addresses: string[]): Promise<void> {
-    // The legacy ``screen_position`` argument has been retired; the
-    // Layout Editor now drives placement. The daemon stores the new
-    // client as unplaced and the GUI prompts the admin to position
-    // its monitors in the editor.
     return invoke(getType(CommandType, CommandType.AddClient), {
         hostname,
         ipAddresses: ip_addresses,
@@ -47,7 +43,6 @@ export function removeClient(hostname: string, ip_address: string): Promise<void
 }
 
 export function approveClient(peer_ip: string): Promise<void> {
-    // Approval no longer carries a position — the editor handles it.
     return invoke(getType(CommandType, CommandType.ApproveClient), {
         peerIp: peer_ip,
     });
@@ -57,16 +52,7 @@ export function denyClient(peer_ip: string): Promise<void> {
     return invoke(getType(CommandType, CommandType.DenyClient), {peerIp: peer_ip});
 }
 
-/**
- * Persist the multi-monitor workspace placements of one client on the
- * daemon. Identify the client by UID when available (stable); the
- * hostname / IP fallbacks exist for clients that haven't completed
- * pairing yet.
- *
- * The daemon validates that the placements don't overlap each other,
- * any server monitor, or any OTHER client's placements before
- * persisting. On rejection, ``CommandError`` is dispatched.
- */
+/** Persist a client's workspace placements. UID is preferred; hostname/IP fallbacks for unpaired clients. */
 export function setClientLayout(
     clientUid: string | undefined,
     placements: MonitorPlacement[],
@@ -76,8 +62,7 @@ export function setClientLayout(
         clientUid,
         hostname: extra.hostname,
         ipAddress: extra.ipAddress,
-        // Snake-case the payload shape so the daemon receives the same
-        // dict the Python side already speaks.
+        // Snake-case keys match the daemon's expected dict shape.
         placements: placements.map((p) => ({
             client_monitor_id: p.client_monitor_id,
             workspace_x: p.workspace_x,

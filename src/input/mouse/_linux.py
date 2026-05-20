@@ -54,16 +54,11 @@ class ServerMouseListener(_base.ServerMouseListener):
         super().__init__(*args, **kwargs)
 
         if self._barrier_mode:
-            # UID of the currently captured client (None while the
-            # server owns the cursor). Replaces the legacy
-            # screen-position string used by the X11 path.
+            # UID of the captured client; None while the server owns the cursor.
             self._active_client_barrier: Optional[str] = None
             self._barrier_screen_size: tuple[int, int] = Screen.get_size()
-            # Edge → client UID map derived from the unified
-            # ``_edge_bindings_by_client`` cache. Built fresh whenever
-            # bindings change; lets ``_on_barrier_activated`` translate
-            # the edge name reported by the backend into the UID the
-            # rest of the routing pipeline expects.
+            # Edge → UID map rebuilt from _edge_bindings_by_client whenever
+            # bindings change; resolves the edge name from the backend.
             self._edge_to_uid: dict[str, str] = {}
 
             self.event_bus.subscribe(
@@ -72,12 +67,9 @@ class ServerMouseListener(_base.ServerMouseListener):
             )
 
     def _refresh_edge_to_uid(self) -> dict[str, bool]:
-        """Recompute the edge → UID map from the current
-        ``_edge_bindings_by_client`` cache and return the ``{edge: True}``
-        snapshot the barrier backend expects. First binding wins when
-        multiple clients share the same server edge; full per-axis
-        partitioning is left to the X11 / spatial path.
-        """
+        """Rebuild edge → UID map from _edge_bindings_by_client and return
+        the {edge: True} snapshot the barrier backend expects. First binding
+        wins on edge collisions; per-axis partitioning is X11-only."""
         edge_to_uid: dict[str, str] = {}
         for client_uid, bindings in self._edge_bindings_by_client.items():
             for b in bindings:
@@ -166,9 +158,8 @@ class ServerMouseListener(_base.ServerMouseListener):
             self._listener.update_clients(self._refresh_edge_to_uid())
 
     async def _on_client_layout_updated(self, data):
-        # Bindings just changed → refresh the edge→UID map AND the
-        # barrier backend's active-edge set so the new topology takes
-        # effect immediately (parity with the X11 hot-reload path).
+        # Refresh edge→UID and the barrier backend's edge set so the new
+        # topology takes effect immediately (mirrors X11 hot-reload).
         await super()._on_client_layout_updated(data)
         if self._barrier_mode and data is not None and self._listener:
             self._listener.update_clients(self._refresh_edge_to_uid())
@@ -252,14 +243,8 @@ class ServerMouseListener(_base.ServerMouseListener):
         )
 
     async def _on_barrier_activated(self, edge: str, cursor_x: float, cursor_y: float):
-        """Dispatch cross-screen events when a barrier is hit.
-
-        The portal backend reports the edge name; we resolve it to the
-        UID of the client that owns that edge via ``_edge_to_uid``
-        (populated from ``_edge_bindings_by_client``). The X11 path
-        does the same translation through ``_resolve_cross_screen_target``;
-        this is the barrier-equivalent for Wayland.
-        """
+        """Dispatch cross-screen events when a barrier is hit. Resolves edge to
+        target UID via _edge_to_uid (Wayland-equivalent of the X11 spatial path)."""
         target_uid = self._edge_to_uid.get(edge)
         if not target_uid or target_uid not in self._active_clients:
             return
@@ -296,10 +281,8 @@ class ServerMouseListener(_base.ServerMouseListener):
                 event_type=BusEventType.ACTIVE_SCREEN_CHANGED,
                 data=ActiveScreenChangedEvent(active_screen=target_uid),
             )
-            # Mirror the base path: carry landing coords on the same
-            # packet that flips ``_is_active`` on the client, so the
-            # parallel POSITION_ACTION on the mouse stream can't race
-            # the activation event.
+            # Carry landing coords on the activation packet so POSITION_ACTION
+            # on the mouse stream can't race CLIENT_ACTIVE on the client.
             await self.command_stream.send(
                 CrossScreenCommandEvent(
                     target=target_uid,

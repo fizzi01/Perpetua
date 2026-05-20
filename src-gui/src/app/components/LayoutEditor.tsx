@@ -32,8 +32,6 @@ import {
     workspaceBounds,
 } from "../commons/layout";
 
-// Client summary the editor needs. ``monitors`` is the source of truth
-// for what can be placed (each MonitorInfo becomes a draggable box).
 export interface LayoutEditorClient {
     uid: string;
     name: string;
@@ -45,9 +43,7 @@ export interface LayoutEditorProps {
     serverMonitors: MonitorInfo[];
     clients: LayoutEditorClient[];
     placements: MonitorPlacement[];
-    // UID of a client to spotlight in the sidebar on mount. Used by
-    // the approve/add auto-open flow so the freshly-onboarded client's
-    // monitors are visually obvious.
+    // Spotlight a client's monitors in the sidebar on mount (approve/add auto-open flow).
     preselectClientUid?: string;
     onChange: (placements: MonitorPlacement[]) => void;
     onValidityChange?: (ok: boolean, errors: string[]) => void;
@@ -85,7 +81,6 @@ function computeViewMetrics(
     const w = Math.max(1, bounds.width);
     const h = Math.max(1, bounds.height);
     const scale = Math.min(usableW / w, usableH / h);
-    // Center the workspace inside the canvas.
     const renderedW = w * scale;
     const renderedH = h * scale;
     return {
@@ -113,23 +108,16 @@ function canvasToWorkspace(
 
 interface DragState {
     placementIdx: number;
-    // Pointer offset (in workspace coords) from the placement's top-left
-    // corner at drag start, so the box follows the cursor cleanly.
     grabDx: number;
     grabDy: number;
-    // Original position captured at pointerdown — if the user drops on
-    // an invalid spot AND no nearby valid landing exists, we revert
-    // here instead of stranding the box outside the workspace.
+    // Original position captured at pointerdown - used to revert if no valid landing is found.
     originX: number;
     originY: number;
 }
 
 const SNAP_THRESHOLD_PX = 12;
 
-// State used while the user is dragging an unplaced client monitor from
-// the sidebar onto the canvas. Pointer-based instead of HTML5 drag
-// because the latter is unreliable inside Tauri's WebView on some
-// platforms (drop events occasionally don't fire on macOS WKWebView).
+// Pointer-based drag from sidebar; HTML5 DnD drop events are unreliable in Tauri's WebView (macOS WKWebView).
 interface PendingPlacement {
     clientUid: string;
     clientName: string;
@@ -137,7 +125,6 @@ interface PendingPlacement {
     width: number;
     height: number;
     color: string;
-    // Live pointer position in viewport coords for the ghost overlay.
     pointerX: number;
     pointerY: number;
 }
@@ -174,7 +161,6 @@ export function LayoutEditor({
         return () => ro.disconnect();
     }, []);
 
-    // Compute the workspace bbox so the view always fits all monitors.
     const bounds = useMemo(
         () => workspaceBounds(serverMonitors, placements),
         [serverMonitors, placements],
@@ -206,8 +192,6 @@ export function LayoutEditor({
         return m;
     }, [clients]);
 
-    // Monitors of every client that haven't been placed yet — these
-    // show up in the sidebar as drag sources.
     const unplaced = useMemo(() => {
         const placed = new Set(
             placements.map((p) => `${p.client_uid}:${p.client_monitor_id}`),
@@ -226,10 +210,6 @@ export function LayoutEditor({
         }
         return out;
     }, [clients, placements]);
-
-    // ------------------------------------------------------------------
-    // Drag of an existing placement (workspace box).
-    // ------------------------------------------------------------------
 
     function onPlacementPointerDown(e: React.PointerEvent, idx: number) {
         e.preventDefault();
@@ -252,12 +232,7 @@ export function LayoutEditor({
         (e.target as Element).setPointerCapture?.(e.pointerId);
     }
 
-    // Free-drag: the box follows the cursor 1:1, with snap-assist when
-    // the candidate is near a neighbour edge. Validation (adjacency +
-    // overlap) is NOT enforced during the move — the dragged box just
-    // gets a red-tinted outline (via ``validation.overlappingIndices``
-    // / the trailing snap check in ``onDragEnd``) so the user sees
-    // what's wrong without the box "freezing" mid-drag.
+    // Validation isn't enforced during the move (just visual feedback); see onDragEnd for snap-on-release.
     const onDragMove = useCallback((ev: PointerEvent) => {
         if (!drag || !canvasRef.current) return;
         const rect = canvasRef.current.getBoundingClientRect();
@@ -282,9 +257,6 @@ export function LayoutEditor({
                 .filter((_, i) => i !== drag.placementIdx)
                 .map(placementAsRect),
         ];
-        // Snap-to-edge within a small threshold (in workspace px,
-        // derived from the canvas-px threshold for resolution
-        // independence). Purely visual feedback — no rejection.
         const snapped = snapRect(candidate, others, SNAP_THRESHOLD_PX / metrics.scale);
 
         const next = placements.slice();
@@ -296,11 +268,7 @@ export function LayoutEditor({
         onChange(next);
     }, [drag, metrics, placements, serverMonitors, onChange]);
 
-    // Snap-on-release: if the dropped position is invalid (not
-    // adjacent to any neighbour OR overlapping one), try the four
-    // flush-to-edge slots around every existing neighbour and pick
-    // the closest valid one. Falls back to the drag origin so the
-    // box is never stranded on an unreachable cell.
+    // On release: if invalid, snap to the closest valid flush-to-edge slot around existing rects; else revert to origin.
     const onDragEnd = useCallback(() => {
         setDrag((d) => {
             if (!d) return null;
@@ -325,9 +293,6 @@ export function LayoutEditor({
                 && !others.some((o) => rectsOverlap(r, o));
 
             if (!isValid(candidate)) {
-                // Search the flush-to-edge slots around every other
-                // rect and pick the one closest to where the user
-                // released. If none fit, revert to drag origin.
                 let bestDist = Infinity;
                 let bestX = d.originX;
                 let bestY = d.originY;
@@ -382,15 +347,6 @@ export function LayoutEditor({
         };
     }, [drag, onDragMove, onDragEnd]);
 
-    // ------------------------------------------------------------------
-    // Pointer-based drag-to-place flow for the sidebar.
-    //
-    // HTML5 drag-and-drop turned out to be flaky inside Tauri's WebView
-    // (drop events occasionally don't fire on macOS WKWebView), which
-    // is what the user was seeing as "small box that doesn't even work".
-    // Pointer events behave identically on every platform.
-    // ------------------------------------------------------------------
-
     function onSidebarPointerDown(
         e: React.PointerEvent,
         clientUid: string,
@@ -441,14 +397,7 @@ export function LayoutEditor({
                 ...placements.map(placementAsRect),
             ];
 
-            // Find the best landing spot near the drop point that is
-            // adjacent to a server (or another placed client) and
-            // doesn't overlap anything. Strategy:
-            //   1. snap the cursor-centered candidate;
-            //   2. if it lands adjacent + non-overlap, accept;
-            //   3. otherwise pick the closest valid slot among the
-            //      four flush-to-edge positions around each existing
-            //      neighbour (right-of, left-of, below, above).
+            // Try the snapped cursor-centered candidate first, then fall back to the closest valid flush-to-edge slot.
             const cursorCandidate = snapRect(
                 {
                     x: ws.x - prev.width / 2,
@@ -472,18 +421,12 @@ export function LayoutEditor({
             ) {
                 chosen = {x: cursorCandidate.x, y: cursorCandidate.y};
             } else {
-                // Search every flush-to-edge slot around each existing
-                // monitor and pick the one closest to the drop point.
                 let bestDist = Infinity;
                 for (const r of others) {
                     const candidates = [
-                        // right of `r`
                         {x: r.x + r.width, y: r.y},
-                        // left of `r`
                         {x: r.x - prev.width, y: r.y},
-                        // below `r`
                         {x: r.x, y: r.y + r.height},
-                        // above `r`
                         {x: r.x, y: r.y - prev.height},
                     ];
                     for (const c of candidates) {
@@ -541,10 +484,6 @@ export function LayoutEditor({
         next.splice(idx, 1);
         onChange(next);
     }
-
-    // ------------------------------------------------------------------
-    // Render
-    // ------------------------------------------------------------------
 
     function renderServerMonitor(m: MonitorInfo, idx: number) {
         const tl = workspaceToCanvas(m.min_x, m.min_y, metrics);
@@ -624,7 +563,7 @@ export function LayoutEditor({
                 }}
                 title={
                     isBad
-                        ? `${client?.name || p.client_uid} · monitor #${p.client_monitor_id} · overlaps with another monitor — drag to a free area`
+                        ? `${client?.name || p.client_uid} · monitor #${p.client_monitor_id} · overlaps with another monitor - drag to a free area`
                         : `${client?.name || p.client_uid} · monitor #${p.client_monitor_id} · ${p.width}×${p.height}`
                 }
             >

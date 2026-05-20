@@ -117,7 +117,7 @@ _HID_USAGE_GENERIC_MOUSE = 0x02
 _MOUSE_MOVE_ABSOLUTE = 0x01
 
 # HWND_MESSAGE is a magic sentinel, not a real HWND. It must be passed as a
-# plain int so ctypes routes it through HWND (== c_void_p) cleanly — wrapping
+# plain int so ctypes routes it through HWND (== c_void_p) cleanly - wrapping
 # it in c_void_p drops the sign-extended high bits on some builds and turns
 # the message-only window into a top-level one.
 _HWND_MESSAGE = -3
@@ -399,7 +399,7 @@ class _RawMouseCapture:
                     f"Raw input thread still alive after {timeout}s join"
                 )
         self._thread = None
-        # Release from the caller too — if the thread died unexpectedly the
+        # Release from the caller too - if the thread died unexpectedly the
         # cursor would stay pinned at the centre forever.
         try:
             self._user32.ClipCursor(None)
@@ -482,7 +482,7 @@ class _RawMouseCapture:
         rid.usUsagePage = _HID_USAGE_PAGE_GENERIC
         rid.usUsage = _HID_USAGE_GENERIC_MOUSE
         # RIDEV_INPUTSINK: deliver WM_INPUT even when the target HWND is not
-        # in the foreground — required since we're a background listener.
+        # in the foreground - required since we're a background listener.
         rid.dwFlags = _RIDEV_INPUTSINK
         rid.hwndTarget = self._hwnd
         if not self._user32.RegisterRawInputDevices(
@@ -684,7 +684,7 @@ class ServerMouseListener(_base.ServerMouseListener):
             try:
                 loop = asyncio.get_running_loop()
             except RuntimeError:
-                self._logger.error("No event loop available — capture aborted")
+                self._logger.error("No event loop available - capture aborted")
                 return
 
         self._raw_capture = _RawMouseCapture(

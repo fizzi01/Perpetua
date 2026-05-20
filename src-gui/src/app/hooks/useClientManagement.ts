@@ -27,14 +27,7 @@ interface Client {
     ips?: string[];
     status: 'online' | 'offline';
     connectedAt?: Date;
-    // Per-monitor info the client advertised on its last handshake.
-    // Forwarded to the layout editor so each monitor can be placed
-    // individually in the shared workspace.
     monitors?: MonitorInfo[];
-    // Workspace placements persisted on the daemon. Used to seed the
-    // layout editor on startup so the user doesn't see an empty canvas
-    // before the first save. A client is "placed" iff this list is
-    // non-empty (see ``isPlaced``).
     placements?: MonitorPlacement[];
 }
 
@@ -134,11 +127,7 @@ export function useClientManagement() {
                             connectedAt: connected
                                 ? new Date(clientData.last_connection_date || clientData.first_connection_date)
                                 : c.connectedAt,
-                            // Refresh the monitor list whenever the
-                            // status payload carries one; preserve the
-                            // previous cache otherwise so a transient
-                            // status without ``monitors`` doesn't wipe
-                            // the layout editor's data.
+                            // Preserve cached monitors when the status payload doesn't carry them (transient).
                             monitors: clientData.monitors ?? c.monitors,
                             placements: clientData.placements ?? c.placements,
                         };
@@ -158,12 +147,7 @@ export function useClientManagement() {
         });
     }, [findExistingClient, createClient]);
 
-    /**
-     * Add a client manually (for authorization). The new client lands
-     * "unplaced": no ``placements`` yet, so cross-screen routing will
-     * not reach it until the admin positions its monitors via the
-     * Layout Editor (auto-opened by the caller).
-     */
+    /** Add a client manually (for authorization); lands unplaced until the Layout Editor positions it. */
     const addClient = useCallback((hostname: string, ips: string[]) => {
         const newClient: Client = {
             id: ips[0] || hostname,

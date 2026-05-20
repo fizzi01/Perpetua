@@ -24,18 +24,11 @@ import {LayoutEditor, type LayoutEditorClient} from "./components/LayoutEditor";
 import type {MonitorInfo, MonitorPlacement} from "./api/Interface";
 import {platform} from '@tauri-apps/plugin-os';
 
-// Payload exchanged with the main window. The main window emits
-// "layout-editor:init" right after the editor window is shown; the
-// editor window replies with "layout-editor:ready" so the main window
-// knows it's safe to push state, and emits "layout-editor:save" on save
-// (followed by closing itself).
+// Payload exchanged with the main window. Main emits "init", editor replies "ready", then "save"/"cancel".
 export interface LayoutEditorInitPayload {
     serverMonitors: MonitorInfo[];
     clients: LayoutEditorClient[];
     placements: MonitorPlacement[];
-    // UID of the client to highlight in the sidebar on open. Used by
-    // the approve/add flow so a freshly-onboarded client's monitors
-    // are obvious as soon as the editor appears.
     preselectClientUid?: string;
 }
 
@@ -59,11 +52,7 @@ export default function LayoutEditorWindow() {
     const [valid, setValid] = useState(true);
     const [windowHeight, setWindowHeight] = useState(window.innerHeight);
     const initialPlacementsRef = useRef<MonitorPlacement[]>([]);
-    // Mirror of ``initialised`` for use inside the persistent listener
-    // closure: when the parent re-pushes INIT mid-session (e.g. a freshly
-    // approved client just arrived in the client list) we want to refresh
-    // the sidebar without clobbering the placements the user has been
-    // dragging around.
+    // Mirror of `initialised` for the persistent listener: re-INIT must refresh sidebar without clobbering drags.
     const initialisedRef = useRef(false);
 
     const currentPlatform = platform();
@@ -86,10 +75,7 @@ export default function LayoutEditorWindow() {
                     setServerMonitors(data.serverMonitors || []);
                     setClients(data.clients || []);
                     setPreselectClientUid(data.preselectClientUid);
-                    // Seed placements only on the first INIT of the current
-                    // open session. Subsequent INITs are live refreshes
-                    // (new client connected, monitor list grew, etc.) and
-                    // must preserve the user's in-progress drags.
+                    // Seed placements only on the first INIT; later INITs are live refreshes — preserve drags.
                     if (!initialisedRef.current) {
                         setPlacements(data.placements || []);
                         initialPlacementsRef.current = data.placements || [];
@@ -98,9 +84,7 @@ export default function LayoutEditorWindow() {
                     }
                 },
             );
-            // Tell the main window we're ready to receive state. Doing
-            // this AFTER the listener is attached avoids a race where
-            // the init event fires before we're listening.
+            // Emit AFTER attaching the listener — otherwise INIT can fire before we're listening.
             await emit(LAYOUT_READY_EVENT, {});
         })();
         return () => {
@@ -115,11 +99,8 @@ export default function LayoutEditorWindow() {
         try {
             await getCurrentWindow().hide();
         } catch (_) {
-            // Hiding might fail in dev with hot-reload; the main
-            // window has the data anyway.
+            // hot-reload in dev can race here; data already left the window.
         }
-        // Reset so the next open session re-seeds placements from the
-        // parent's first INIT instead of carrying over stale state.
         initialisedRef.current = false;
         setInitialised(false);
     }
@@ -211,8 +192,6 @@ export default function LayoutEditorWindow() {
     );
 }
 
-// Exported so the main window can use the same event names without
-// re-declaring strings.
 export const LAYOUT_EDITOR_EVENTS = {
     INIT: LAYOUT_INIT_EVENT,
     READY: LAYOUT_READY_EVENT,

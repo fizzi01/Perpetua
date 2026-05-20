@@ -80,25 +80,13 @@ export function ServerTab({onStatusChange, state}: ServerTabProps) {
     const [showOptions, setShowOptions] = useState(false);
     const [showClients, setShowClients] = useState(false);
     const [showSecurity, setShowSecurity] = useState(false);
-    // Local working-copy of the workspace placements (per client
-    // monitor). Today this is GUI-only state; future work will persist
-    // it via a SetLayout command on the daemon and load it back from
-    // ServerStatus.
     const [layoutPlacements, setLayoutPlacements] = useState<MonitorPlacement[]>([]);
-    // Server monitors are populated from the daemon's status payload
-    // (see ``_handle_status`` server-side, which now serialises
-    // ``Screen.get_monitors()``). Falls back to an empty list when the
-    // OS backend can't enumerate displays; the editor then renders a
-    // single virtual placeholder so the user can still drag things
-    // around.
     const [serverMonitors, setServerMonitors] = useState<MonitorInfo[]>(
         state.monitors ?? [],
     );
 
     useEffect(() => {
-        // Keep the local cache in sync with status updates. We compare
-        // by JSON because MonitorInfo is a plain dict and the array
-        // identity changes on every status refresh.
+        // JSON-compare: array identity changes on every status refresh.
         const incoming = state.monitors ?? [];
         setServerMonitors((prev) => {
             if (JSON.stringify(prev) === JSON.stringify(incoming)) return prev;
@@ -107,13 +95,7 @@ export function ServerTab({onStatusChange, state}: ServerTabProps) {
     }, [state.monitors]);
 
     useEffect(() => {
-        // Seed the working layout from the daemon's authoritative client
-        // list whenever it changes. The daemon stores ``placements`` per
-        // ClientObj; flatten them so the editor renders the persisted
-        // state on startup instead of a blank canvas. We always overwrite
-        // - the editor saves through SetClientLayout (which dispatches
-        // CLIENT_LAYOUT_UPDATED), so authorized_clients is the source of
-        // truth.
+        // authorized_clients is the source of truth (the daemon dispatches CLIENT_LAYOUT_UPDATED on save).
         const incoming: MonitorPlacement[] = [];
         for (const c of state.authorized_clients ?? []) {
             for (const p of c.placements ?? []) {
@@ -167,17 +149,8 @@ export function ServerTab({onStatusChange, state}: ServerTabProps) {
     const listeners = useEventListeners('server-tab');
     const clientEventHandler = handleClientEventListeners();
 
-    // Always-fresh snapshot of the client list. The layout-editor SAVE
-    // listener is registered inside ``openLayoutEditorWindow``, which
-    // captures ``clientManager`` by closure. When the editor is auto-
-    // opened right after Allow, the closure's snapshot does NOT yet
-    // include the freshly approved client (its ``ClientConnected``
-    // event lands a tick later). Reading the ref inside the SAVE
-    // handler instead of the captured ``clientManager`` keeps the
-    // grouping + UID lookup correct so ``setClientLayout`` is invoked
-    // with the real ``client_uid`` rather than ``undefined`` (which
-    // the daemon rejects with "Must provide client_uid, hostname, or
-    // ip_address").
+    // Ref instead of the closure's clientManager: the SAVE listener registered in
+    // openLayoutEditorWindow runs after Allow, but the freshly approved client lands a tick later.
     const clientsRef = useRef(clientManager.clients);
     clientsRef.current = clientManager.clients;
 
@@ -204,18 +177,12 @@ export function ServerTab({onStatusChange, state}: ServerTabProps) {
         }, 4000);
     };
 
-    // Tracks the currently open layout-editor session so a state
-    // change (new client connected, monitor list grew) can be pushed
-    // to the editor window without the admin having to close and
-    // re-open it. ``preselectClientUid`` is stored here so re-emits
-    // keep highlighting the same client.
+    // Tracks the open editor session so upstream changes (new client, monitor list grew) can be pushed live.
     const [editorSession, setEditorSession] = useState<{
         open: boolean;
         preselectClientUid?: string;
     }>({open: false});
 
-    // Stable payload builder used by both the initial open and the
-    // re-emit effect below. Captures the latest state via closure.
     const buildLayoutEditorPayload = (
         preselectClientUid?: string,
     ): LayoutEditorInitPayload => {
@@ -230,9 +197,7 @@ export function ServerTab({onStatusChange, state}: ServerTabProps) {
                 is_primary: true,
             }] as MonitorInfo[]);
 
-        // Extract ONLY the exact primitive fields we need to absolutely
-        // guarantee there are no hidden cyclic dependencies or getters/proxies
-        // from the framework's reactivity system.
+        // Strip to primitive fields only - Tauri's event channel can't serialise reactive proxies/getters.
         const stripMonitor = (m: any) => ({
             monitor_id: m.monitor_id ?? 0,
             min_x: m.min_x ?? 0,
@@ -268,13 +233,7 @@ export function ServerTab({onStatusChange, state}: ServerTabProps) {
         };
     };
 
-    // Live refresh: whenever the editor is open and the upstream state
-    // changes (a freshly approved client just appeared in the manager,
-    // its monitor list arrived a tick later, etc.), push a new INIT to
-    // the editor window. The editor preserves the user's in-progress
-    // placements on re-INIT - only the sidebar / serverMonitors get
-    // refreshed. This is what fixes the "approve → editor opens empty,
-    // needs reopen to see monitors" bug.
+    // Re-emit INIT on upstream changes so the editor never opens stale (fixes "approve → editor opens empty" bug).
     useEffect(() => {
         if (!editorSession.open) return;
         emit(
@@ -283,8 +242,6 @@ export function ServerTab({onStatusChange, state}: ServerTabProps) {
         ).catch((err) => {
             console.error('Failed to refresh layout editor payload', err);
         });
-        // buildLayoutEditorPayload reads from clientManager.clients,
-        // serverMonitors and layoutPlacements - all explicit deps below.
         // eslint-disable-next-line react-hooks/exhaustive-deps
     }, [
         editorSession.open,
@@ -294,14 +251,7 @@ export function ServerTab({onStatusChange, state}: ServerTabProps) {
         layoutPlacements,
     ]);
 
-    // Opens the layout-editor window (defined statically in
-    // tauri.conf.json so we don't need extra create-window permissions),
-    // pushes the current state to it once it signals readiness, and
-    // listens for the save / cancel reply.
-    //
-    // ``preselectClientUid`` (optional) tells the editor which client
-    // to highlight in the sidebar - used by the approve/add flow so
-    // a freshly-onboarded client's monitors are immediately visible.
+    // Opens the layout-editor window (declared statically in tauri.conf.json - avoids create-window perms).
     const openLayoutEditorWindow = async (preselectClientUid?: string) => {
         const editorWindow = await Window.getByLabel('layout-editor');
         if (!editorWindow) {
@@ -311,9 +261,7 @@ export function ServerTab({onStatusChange, state}: ServerTabProps) {
 
         const buildPayload = () => buildLayoutEditorPayload(preselectClientUid);
 
-        // Wire the response listeners BEFORE showing the window so the
-        // ready event from the editor (fired as soon as it mounts) is
-        // never lost.
+        // Wire listeners before show() so the editor's READY emit is never lost.
         const unlistenFns: UnlistenFn[] = [];
         const cleanup = () => {
             for (const u of unlistenFns) {
@@ -334,24 +282,7 @@ export function ServerTab({onStatusChange, state}: ServerTabProps) {
                     const next = event.payload.placements || [];
                     setLayoutPlacements(next);
 
-                    // Per-client dispatch: each known client gets a
-                    // ``SetClientLayout`` call - including those with an
-                    // empty resulting list, so the daemon can clear a
-                    // previously-set layout. The canonical grouping
-                    // key is the client's daemon UID (``c.uid``); the
-                    // local fallback ``c.id`` is used only for clients
-                    // that haven't paired yet (no daemon UID). The
-                    // editor's placements carry the daemon UID via
-                    // ``client_uid``, so we look up the client by UID
-                    // first and fall back to ``c.id`` only when needed.
-                    // Read from ``clientsRef`` (refreshed every render)
-                    // instead of the closure's ``clientManager.clients``:
-                    // when the editor is auto-opened right after Allow,
-                    // the closure's snapshot is the pre-approval list,
-                    // and the just-approved client is missing. The ref
-                    // guarantees the freshest list at save time, so the
-                    // freshly-paired UID resolves and ``setClientLayout``
-                    // is called with the daemon's expected identity.
+                    // Dispatch one SetClientLayout per known client (empty list clears a stored layout).
                     const currentClients = clientsRef.current;
                     const groupKey = (c: typeof currentClients[number]) =>
                         c.uid || c.id;
@@ -373,8 +304,6 @@ export function ServerTab({onStatusChange, state}: ServerTabProps) {
                             (c) => groupKey(c) === clientKey,
                         );
                         if (!client && placements.length === 0) {
-                            // Stale empty entry for a client that's
-                            // gone - skip silently, nothing to clear.
                             continue;
                         }
                         try {
@@ -422,17 +351,9 @@ export function ServerTab({onStatusChange, state}: ServerTabProps) {
         try {
             await editorWindow.show();
             await editorWindow.setFocus();
-            // The editor window is created at app boot (visible:false) and
-            // emits READY once on mount - by the time the user opens it
-            // that emit is long lost, so we push INIT directly. The
-            // READY listener above still handles the re-mount case (dev
-            // hot-reload etc).
+            // The window is created at boot (visible:false) so its READY emit fires once and is long lost
+            // by the time the user opens it - push INIT directly. The READY listener handles re-mount (HMR).
             await emit(LAYOUT_EDITOR_EVENTS.INIT, buildPayload());
-            // Mark the session open AFTER the initial INIT so the live
-            // re-emit effect (above) takes over for subsequent state
-            // changes - e.g. the ``ClientConnected`` event that fires
-            // a tick after ``approveClient`` resolves and finally
-            // populates ``clientManager.clients`` with the new entry.
             setEditorSession({open: true, preselectClientUid});
         } catch (err) {
             console.error('Failed to show layout editor window', err);
@@ -663,10 +584,7 @@ export function ServerTab({onStatusChange, state}: ServerTabProps) {
             prev.filter((r) => r.peer_ip !== req.peer_ip)
         );
         approveClientCommand(req.peer_ip).then(() => {
-            // Auto-open the Layout Editor so the admin can position
-            // the freshly-approved client's monitors right away.
-            // ``req.uid`` is the client's stable UID announced during
-            // the pairing handshake - pass it as the preselect hint.
+            // Auto-open the Layout Editor so the admin can place the new client's monitors right away.
             openLayoutEditorWindow(req.uid || undefined).catch((err) => {
                 console.error('Failed to auto-open layout editor', err);
             });
@@ -938,12 +856,7 @@ export function ServerTab({onStatusChange, state}: ServerTabProps) {
 
                 clientManager.addClient(hostname, ips);
 
-                // Auto-open the Layout Editor so the admin can place
-                // the freshly-added client's monitors immediately.
-                // The daemon may not yet have echoed back the client's
-                // monitor list; the editor still highlights the row
-                // and will receive the placements via the next status
-                // tick.
+                // Auto-open the Layout Editor; the editor refreshes when the daemon echoes back monitors.
                 const newClientUid =
                     clientManager.clients.find(c => c.name === hostname
                         || (c.ips ?? []).some(ip => ips.includes(ip)))?.uid;
@@ -1164,14 +1077,7 @@ export function ServerTab({onStatusChange, state}: ServerTabProps) {
                 )}
             </AnimatePresence>
 
-            {/* Pending client-approval prompts. One card per unknown
-                client attempting to connect; the admin clicks Allow or
-                Deny - no position picker, since approved clients are
-                placed visually in the Layout Editor (auto-opened post-
-                approval). The handshake on the server is held open
-                until one of the buttons is pressed (or the request
-                times out, in which case the resolved event removes
-                the card). */}
+            {/* Pending client-approval prompts. Allow auto-opens the Layout Editor; handshake is held open. */}
             <AnimatePresence>
                 {pendingApprovals.map((req) => (
                     <PendingApprovalCard
@@ -1384,11 +1290,6 @@ export function ServerTab({onStatusChange, state}: ServerTabProps) {
                                         className="flex-1 min-w-[120px] bg-transparent border-none outline-none"
                                     />
                                 </div>
-                                {/* Position picker removed - clients are placed
-                                    free-form in the Layout Editor (auto-opens
-                                    after add/approve). The 4-client cap is gone:
-                                    any number of clients can be onboarded. */}
-
                                 <motion.button
                                     whileHover={{scale: 1.02}}
                                     whileTap={{scale: 0.98}}

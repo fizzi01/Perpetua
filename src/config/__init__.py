@@ -437,13 +437,9 @@ class ServerConfig:
         hostname: Optional[str] = None,
         screen_position: Optional[str] = None,
     ) -> ClientObj:
-        """Add a client to the authorized list.
-
-        ``screen_position`` is optional. ``None`` (or empty) creates
-        an unplaced client; the legacy directional value is still
-        honoured for pre-migration tooling and feeds the synthesis
-        shim in :meth:`ClientObj.get_effective_placements`.
-        """
+        """Add a client to the authorized list. ``screen_position`` None
+        creates an unplaced client; legacy directional values still feed
+        ClientObj.get_effective_placements."""
         if client is None:
             client = ClientObj(
                 ip_addresses=ip_addresses,

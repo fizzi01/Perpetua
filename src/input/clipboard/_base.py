@@ -354,8 +354,6 @@ class ClipboardListener:
         )
         self.command_stream = command_stream
 
-        # Presence map of active client UIDs (mirrors the mouse/keyboard
-        # listeners' rekey to UID-keyed routing).
         self._active_clients: dict[str, bool] = {}
         # Internal flag to track if we should be listening (When at least one client is active or connected)
         # This flag should not be set directly, but via event handlers

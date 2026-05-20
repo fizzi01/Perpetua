@@ -47,9 +47,7 @@ from .backend import KeyboardListener, Key, KeyCode, HotKey, KeyboardController,
 
 
 class ServerKeyboardListener(object):
-    """
-    Base class for server-side keyboard listeners.
-    """
+    """Base class for server-side keyboard listeners."""
 
     def __init__(
         self,
@@ -58,27 +56,13 @@ class ServerKeyboardListener(object):
         command_stream: StreamHandler,
         filtering: bool = True,
     ):
-        """
-        Initializes the server keyboard listener.
-
-        Args:
-            event_bus (EventBus): The event bus for inter-component communication.
-            stream_handler (StreamHandler): The stream handler for sending keyboard events.
-            command_stream (StreamHandler): The command stream handler.
-            filtering (bool): Whether to apply platform-specific filtering.
-        """
-
         self.stream = stream_handler  # Should be a keyboard stream
         self.command_stream = command_stream
         self.event_bus = event_bus
-        # Insertion-ordered index into ``_active_clients`` used by the
-        # Tab/Shift+Tab cycling hotkey to remember where we are.
+        # Index into _active_clients used by Tab/Shift+Tab cycling.
         self._hotkey_cycle_index: int = -1
 
         self._listening = False
-        # Presence map of active client UIDs (see migration to UID-keyed
-        # routing in src/input/mouse/_base.py for the equivalent dict
-        # on the mouse listener).
         self._active_clients: dict[str, bool] = {}
         self._screen_size: tuple[int, int] = Screen.get_size()
         self._caps_lock_state = self._get_lock_state()
@@ -142,24 +126,15 @@ class ServerKeyboardListener(object):
 
     @staticmethod
     def _get_lock_state() -> bool:
-        """
-        Helper to get current Caps Lock state.
-        Os-specific implementations should override this method to return actual state.
-        """
+        """Current Caps Lock state. OS-specific subclasses override."""
         return False
 
     def _create_listener(self) -> KeyboardListener:
-        """
-        Creates a new keyboard listener instance.
-        """
         return KeyboardListener(
             on_press=self.on_press, on_release=self.on_release, **self._filter_args
         )
 
     def start(self) -> bool:
-        """
-        Starts the keyboard listener.
-        """
         # Always re-capture the running loop: a previous start() may have
         # cached a loop that has since been closed (e.g. between tests).
         try:
@@ -176,10 +151,7 @@ class ServerKeyboardListener(object):
         return True
 
     def _build_hotkeys(self) -> list[HotKey]:
-        """
-        Build HotKey instances for all registered combinations.
-        Uses Ctrl+Shift+P+<action> to avoid Option/Alt issues on macOS.
-        """
+        """Build HotKey instances. Uses Ctrl+Shift+P+<action> to avoid Option/Alt issues on macOS."""
 
         def make_cb(coro_fn, *args):
             def cb():
@@ -205,7 +177,7 @@ class ServerKeyboardListener(object):
                 "<ctrl>+<shift>+p+<down>",
                 make_cb(self._hotkey_switch_direction, ScreenEdge.BOTTOM),
             ),
-            # Cycle through every active client regardless of layout —
+            # Cycle through every active client regardless of layout -
             # useful when clients sit in disjoint locations the
             # directional hotkeys can't reach from the current cursor.
             ("<ctrl>+<shift>+p+<tab>+1", make_cb(self._hotkey_cycle_client, 1)),
@@ -228,11 +200,7 @@ class ServerKeyboardListener(object):
     }
 
     def _canonical(self, key: Key | KeyCode) -> Key | KeyCode:
-        """
-        Normalize key to canonical form for HotKey matching.
-        Delegates to the pynput Listener's canonical() when available,
-        otherwise falls back to manual normalization.
-        """
+        """Normalize key for HotKey matching, delegating to pynput when available."""
         if self._listener is not None and hasattr(self._listener, "canonical"):
             return self._listener.canonical(key)  # ty:ignore[call-non-callable]
         # Fallback
@@ -248,10 +216,7 @@ class ServerKeyboardListener(object):
     LISTENER_JOIN_TIMEOUT = 2.0  # sec
 
     def stop(self) -> bool:
-        """
-        Stops the keyboard listener. ``pynput.Listener.stop`` returns
-        immediately; we explicitly join the OS-level listener thread.
-        """
+        # pynput.Listener.stop returns immediately; join the OS thread.
         if self._listener and self.is_alive():
             self._listener.stop()
             try:
@@ -289,9 +254,6 @@ class ServerKeyboardListener(object):
             return
 
     async def _on_client_connected(self, data: Optional[ClientConnectedEvent]):
-        """
-        Async event handler for when a client connects.
-        """
         if data is None:
             return
 
@@ -301,9 +263,6 @@ class ServerKeyboardListener(object):
         await asyncio.sleep(0)
 
     async def _on_client_disconnected(self, data: Optional[ClientDisconnectedEvent]):
-        """
-        Async event handler for when a client disconnects.
-        """
         if data is None:
             return
 
@@ -311,20 +270,15 @@ class ServerKeyboardListener(object):
         if client_uid and client_uid in self._active_clients:
             del self._active_clients[client_uid]
 
-        # if no clients are active anymore, stop listening
         if not self._active_clients:
             self._listening = False
 
         await asyncio.sleep(0)
 
     async def _on_active_screen_changed(self, data: Optional[ActiveScreenChangedEvent]):
-        """
-        Async event handler for when the active screen changes.
-        """
         if data is None:
             return
 
-        # If active screen is not none then we can start listening to mouse events
         active_screen = data.active_screen
 
         if active_screen is not None:
@@ -336,13 +290,8 @@ class ServerKeyboardListener(object):
         await asyncio.sleep(0)
 
     async def _sync_caps_lock_state(self, ext_state: Optional[bool] = None):
-        """
-        Sync server's Caps Lock state with clients by sending a toggle event if needed.
-
-        Wrapped in ``_caps_lock_sync_lock`` so two rapidly-fired active-screen
-        changes cannot interleave the read/compare/send sequence and emit
-        spurious double-toggles.
-        """
+        """Sync server's Caps Lock state with clients by sending a toggle when needed.
+        Wrapped in _caps_lock_sync_lock so rapid active-screen changes can't double-toggle."""
         async with self._caps_lock_sync_lock:
             if ext_state is None:
                 ext_state = self._get_lock_state()
@@ -363,24 +312,18 @@ class ServerKeyboardListener(object):
         raise NotImplementedError("Mouse suppress filter not implemented yet.")
 
     def _schedule_async(self, coro):
-        """
-        Helper to schedule async coroutines from sync context (pynput thread).
-        Uses saved event loop reference for thread-safe scheduling.
-        """
+        """Schedule async coroutine from sync context (pynput thread)."""
         if self._loop is not None and not self._loop.is_closed():
-            # Best case: we have a valid loop reference
             try:
                 asyncio.run_coroutine_threadsafe(coro, self._loop)
                 return
             except Exception as e:
                 self._logger.error(f"Error scheduling coroutine ({e})")
 
-        # Fallback: try to get running loop
         try:
             loop = asyncio.get_running_loop()
             asyncio.run_coroutine_threadsafe(coro, loop)
         except RuntimeError:
-            # Last resort: try to get event loop (may not work from thread)
             try:
                 loop = asyncio.get_event_loop()
                 if loop.is_running():
@@ -396,9 +339,6 @@ class ServerKeyboardListener(object):
 
     @staticmethod
     def _get_key(key: Key | KeyCode) -> str:
-        """
-        Helper to convert pynput Key or KeyCode to string representation.
-        """
         if isinstance(key, KeyCode):
             return key.char if key.char is not None else f"vk_{key.vk}"
         elif isinstance(key, Key):
@@ -407,9 +347,6 @@ class ServerKeyboardListener(object):
         raise AttributeError(f"Key {key} is not a valid key.")
 
     def on_press(self, key: Key | KeyCode | None):
-        """
-        Callback for key press events.
-        """
         if key is None:
             return
 
@@ -418,7 +355,7 @@ class ServerKeyboardListener(object):
         for hotkey in self._hotkeys:
             hotkey.press(canonical)
         if self._hotkey_consumed:
-            return  # Hotkey consumed – do not forward to client
+            return
 
         if not self._listening:
             return
@@ -432,9 +369,6 @@ class ServerKeyboardListener(object):
             self._logger.error(f"Error handling key press ({e})")
 
     def on_release(self, key: Key | KeyCode | None):
-        """
-        Callback for key release events.
-        """
         if key is None:
             return
 
@@ -454,11 +388,7 @@ class ServerKeyboardListener(object):
             self._logger.error(f"Error handling key release ({e})")
 
     async def _hotkey_switch_direction(self, edge: ScreenEdge) -> None:
-        """Directional hotkey: request a spatial client switch.
-        Combination: ``Ctrl+Shift+P+<Arrow>``.
-        Dispatches an event so the active MouseListener can resolve
-        the correct screen spatially.
-        """
+        """Ctrl+Shift+P+<Arrow>: spatial client switch. The mouse listener resolves the target."""
         try:
             await self.event_bus.dispatch(
                 event_type=BusEventType.SCREEN_SWITCH_DIRECTIONAL_REQUEST,
@@ -468,14 +398,8 @@ class ServerKeyboardListener(object):
             self._logger.error(f"Error dispatching directional hotkey ({e})")
 
     async def _hotkey_cycle_client(self, direction: int) -> None:
-        """Cycle the active client forward (``direction=1``) or
-        backward (``direction=-1``).
-
-        Combination: ``Ctrl+Shift+P+Tab`` / ``Shift+Tab``. Wraps at
-        the boundaries and stays a no-op when no clients are connected.
-        Used when the topology is too disjoint for the directional
-        hotkeys to reach a client from the current cursor position.
-        """
+        """Ctrl+Shift+P+Tab / Shift+Tab: cycle active client forward (1) or back (-1).
+        Used when topology is too disjoint for directional hotkeys."""
         try:
             self._logger.debug(f"Hotkey cycle client: direction={direction}")
             await self.event_bus.dispatch(
@@ -487,10 +411,7 @@ class ServerKeyboardListener(object):
 
 
     async def _hotkey_switch_to_server(self) -> None:
-        """
-        Hotkey handler: release any active client and return focus to the server.
-        Combination: Ctrl+Shift+P+Esc
-        """
+        """Ctrl+Shift+P+Esc: release any active client and return focus to the server."""
         if not self._listening:
             self._logger.debug("Hotkey switch-to-server ignored: already on server.")
             return
@@ -500,19 +421,14 @@ class ServerKeyboardListener(object):
                 event_type=BusEventType.SCREEN_CHANGE_GUARD,
                 data=ActiveScreenChangedEvent(active_screen=None),
             )
-            # Notify clients of forced screen change to server
             await self.command_stream.send(ForceScreenChangeCommandEvent())
         except Exception as e:
             self._logger.error(f"Error during hotkey switch-to-server ({e})")
 
     async def _hotkey_panic(self) -> None:
-        """
-        Hotkey handler: panic button - sends SIGQUIT to the current process.
-        Combination: Ctrl+Shift+Q
-        """
+        """Ctrl+Shift+Q: panic button - SIGTERM then SIGKILL self."""
         self._logger.warning("Panic hotkey triggered: sending SIGTERM to self.")
         os.kill(os.getpid(), signal.SIGTERM)
-        # Are we still alive? If so, try SIGKILL
         await asyncio.sleep(1)
         if self.is_alive():
             self._logger.warning("Process still alive after SIGTERM, sending SIGKILL.")
@@ -520,9 +436,7 @@ class ServerKeyboardListener(object):
 
 
 class ClientKeyboardController(object):
-    """
-    Base class for client-side keyboard controllers.
-    """
+    """Base class for client-side keyboard controllers."""
 
     # Keys that can be hold pressed
     _SPECIAL_KEYS_FILTER: list[Key] = [
@@ -557,25 +471,15 @@ class ClientKeyboardController(object):
         stream_handler: StreamHandler,
         command_stream: StreamHandler,
     ):
-        """
-        Initializes the client keyboard controller.
-
-        Args:
-            event_bus (EventBus): The event bus for inter-component communication.
-            stream_handler (StreamHandler): The stream handler for receiving keyboard events.
-            command_stream (StreamHandler): The command stream handler.
-        """
-        self.stream = stream_handler  # Should be a mouse stream
-        self.command_stream = command_stream  # Should be a command stream
+        self.stream = stream_handler
+        self.command_stream = command_stream
         self.event_bus = event_bus
         self._cross_screen_event = asyncio.Event()
 
         self._is_active = False
 
         self._controller = KeyboardController()
-        # self._hotkey_controller = hotkey_controller
         self._pressed = False
-        # Track pressed keys for hotkey combinations
         self.pressed_keys = set()
         self._pressed_general_keys = set()
         self._caps_lock_state = False
@@ -586,17 +490,14 @@ class ClientKeyboardController(object):
             f"Keyboard controller backend: {BACKEND.get('keyboard_controller', 'unknown')}"
         )
 
-        # Async queue instead of multiprocessing queue
         self._queue: asyncio.Queue = asyncio.Queue(maxsize=1000)
         self._worker_task: Optional[asyncio.Task] = None
         self._running = False
 
-        # Register to receive mouse events from the stream (async callback)
         self.stream.register_receive_callback(
             self._key_event_callback, message_type=MessageType.KEYBOARD
         )
 
-        # Subscribe with async callbacks
         self.event_bus.subscribe(
             event_type=BusEventType.CLIENT_ACTIVE, callback=self._on_client_active
         )
@@ -605,12 +506,8 @@ class ClientKeyboardController(object):
         )
 
     async def start(self):
-        """
-        Starts the async mouse controller worker task.
-        """
         if not self._running:
             self._running = True
-            # Clear queue
             while not self._queue.empty():
                 try:
                     self._queue.get_nowait()
@@ -619,19 +516,14 @@ class ClientKeyboardController(object):
                 finally:
                     await asyncio.sleep(0)
 
-            # Start worker task
             self._worker_task = asyncio.create_task(self._run_worker())
             self._logger.debug("Async worker started.")
             await asyncio.sleep(0)
 
     async def stop(self):
-        """
-        Stops the async mouse controller worker task.
-        """
         if self._running:
             self._running = False
 
-            # Clear pressed keys
             await self._clear_pressed_keys()
 
             if self._worker_task:
@@ -645,9 +537,6 @@ class ClientKeyboardController(object):
             self._logger.debug("Async worker stopped.")
 
     def is_alive(self) -> bool:
-        """
-        Checks if the async mouse controller worker task is running.
-        """
         return (
             self._running
             and self._worker_task is not None
@@ -655,15 +544,10 @@ class ClientKeyboardController(object):
         )
 
     async def _run_worker(self):
-        """
-        Async worker task to handle mouse events.
-        Replaces the multiprocessing worker.
-        """
         loop = asyncio.get_running_loop()
 
         while self._running:
             try:
-                # Get message from async queue
                 message = await self._queue.get()
 
                 event = EventMapper.get_event(message)
@@ -682,44 +566,29 @@ class ClientKeyboardController(object):
                 await asyncio.sleep(0.01)
 
     async def _on_client_active(self, data: Optional[ClientActiveEvent]):
-        """
-        Async event handler for when client becomes active.
-        """
         self._is_active = True
         self._cross_screen_event.clear()
 
-        # Auto-start if not running
         if not self._running:
             await self.start()
         await asyncio.sleep(0)
 
     async def _on_client_inactive(self, data: Optional[ClientActiveEvent]):
-        """
-        Async event handler for when a client becomes inactive.
-        """
         self._is_active = False
         await self._clear_pressed_keys()
         await asyncio.sleep(0)
 
     async def _key_event_callback(self, message):
-        """
-        Async callback function to handle mouse events received from the stream.
-        """
         try:
-            # Auto-start if not running
             if not self._running:
                 await self.start()
 
-            # Put message in async queue
             await self._queue.put(message)
         except Exception as e:
             self._logger.error(f"Failed to process mouse event ({e})")
             await asyncio.sleep(0)
 
     async def _clear_pressed_keys(self):
-        """
-        Helper to release all currently pressed keys.
-        """
         for key in list(self.pressed_keys):
             try:
                 self._controller.release(key)
@@ -737,26 +606,20 @@ class ClientKeyboardController(object):
         self._pressed_general_keys.clear()
 
     def _key_event_action(self, event: KeyboardEvent):
-        """
-        Synchronous action to perform key event.
-        Os-specific implementations should override this method.
-        """
+        """Apply key event. OS-specific subclasses override."""
         key = KeyUtilities.map_key(event.key)
         if key is None:
             self._logger.warning(f"Unmapped key received: {event.key}")
             return
 
         if event.action == KeyboardEvent.PRESS_ACTION:
-            # Handle Caps Lock toggle
             if key == Key.caps_lock:
                 if self._caps_lock_state:
                     self._controller.release(key)
                 else:
                     self._controller.press(key)
                 self._caps_lock_state = not self._caps_lock_state
-            elif KeyUtilities.is_special(
-                key, filter_out=self._SPECIAL_KEYS_FILTER
-            ):  # General special key handling
+            elif KeyUtilities.is_special(key, filter_out=self._SPECIAL_KEYS_FILTER):
                 if key not in self.pressed_keys:
                     self.pressed_keys.add(key)
                     self._controller.press(key)
@@ -770,9 +633,7 @@ class ClientKeyboardController(object):
                 else:
                     self._controller.press(key)
                 self._caps_lock_state = not self._caps_lock_state
-            elif KeyUtilities.is_special(
-                key, filter_out=self._SPECIAL_KEYS_FILTER
-            ):  # General special key handling
+            elif KeyUtilities.is_special(key, filter_out=self._SPECIAL_KEYS_FILTER):
                 if key in self.pressed_keys:
                     self.pressed_keys.discard(key)
                     self._controller.release(key)

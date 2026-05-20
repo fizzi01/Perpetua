@@ -29,12 +29,8 @@ interface PendingApprovalCardProps {
 }
 
 /**
- * Inline allow/deny prompt for an unknown client trying to connect.
- * The handshake on the server is held open until the admin makes a
- * choice; the card surfaces a countdown derived from the timeout the
- * server reported. Approval no longer requires picking a direction —
- * the GUI auto-opens the Layout Editor afterwards so the admin can
- * place the client's monitors visually.
+ * Inline allow/deny prompt for an unknown client. Handshake is held open until the admin replies;
+ * the card shows a countdown based on the server-reported timeout.
  */
 export function PendingApprovalCard({request, onApprove, onDeny}: PendingApprovalCardProps) {
     const [remaining, setRemaining] = useState(request.timeout);

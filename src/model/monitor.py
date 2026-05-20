@@ -22,9 +22,8 @@ from dataclasses import dataclass
 class MonitorInfo:
     """Geometry + metadata for a single connected display.
 
-    Coordinates are in the OS global display coordinate space (origin at
-    the primary monitor's top-left on macOS / Windows; the X server root
-    origin on Linux/X11).
+    Coordinates are in the OS global display space (primary monitor's
+    top-left on macOS/Windows; X root origin on Linux/X11).
     """
 
     monitor_id: int
@@ -49,11 +48,9 @@ class MonitorInfo:
         return self.min_x, self.min_y, self.max_x, self.max_y
 
     def contains(self, x: float, y: float) -> bool:
-        """``True`` if ``(x, y)`` falls inside this monitor's bounds."""
         return self.min_x <= x < self.max_x and self.min_y <= y < self.max_y
 
     def to_dict(self) -> dict:
-        """Plain-dict view safe for JSON / msgpack round-trip with the GUI."""
         return {
             "monitor_id": self.monitor_id,
             "min_x": self.min_x,

@@ -32,19 +32,14 @@ from ._monitor import MonitorInfo
 class Screen(_base.Screen):
     @classmethod
     def get_size(cls) -> tuple[int, int]:
-        """
-        Returns the size of the primary screen as a tuple (width, height).
-        """
         mainMonitor = CGDisplayBounds(CGMainDisplayID())
         return mainMonitor.size.width, mainMonitor.size.height
 
     @classmethod
     def _enumerate_displays(cls) -> "list[MonitorInfo] | None":
-        """Return per-display :class:`MonitorInfo` or ``None`` on failure."""
+        """Per-display MonitorInfo, or None on failure."""
         try:
-            # CGGetActiveDisplayList returns (err, ids_array, count). The
-            # pyobjc binding pre-allocates the array — request up to 16
-            # displays which is well past realistic limits.
+            # pyobjc pre-allocates the ids array; 16 is well past realistic limits.
             _, ids, count = CGGetActiveDisplayList(16, None, None)
         except Exception:
             return None
@@ -78,13 +73,8 @@ class Screen(_base.Screen):
 
     @classmethod
     def get_virtual_bbox(cls) -> tuple[int, int, int, int]:
-        """
-        Union of every active display's bounds.
-
-        On macOS each display has its own origin in the global coordinate
-        space (the primary sits at (0, 0); secondary displays are placed
-        relative to it via System Settings → Displays → Arrangement).
-        """
+        """Union of every active display's bounds. Each display has its own
+        origin in the global coordinate space (primary at (0,0))."""
         monitors = cls._enumerate_displays()
         if not monitors:
             return super().get_virtual_bbox()
@@ -103,9 +93,6 @@ class Screen(_base.Screen):
 
     @classmethod
     def is_screen_locked(cls) -> bool:
-        """
-        Checks if the screen is currently locked.
-        """
         d = CGSessionCopyCurrentDictionary()
         return (
             d.get("CGSSessionScreenIsLocked") and d.get("CGSSessionScreenIsLocked") == 1
@@ -113,10 +100,7 @@ class Screen(_base.Screen):
 
     @classmethod
     def hide_icon(cls):
-        """
-        Hides the application icon from the dock.
-        Modify directly the bundle info dict, because wx.App will read it
-        """
+        # Modify the bundle info dict directly; wx.App reads it.
         info = NSBundle.mainBundle().infoDictionary()
         if not info.get("LSUIElement", False):
             info["LSUIElement"] = "1"

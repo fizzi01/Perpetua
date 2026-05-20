@@ -1,6 +1,4 @@
-"""
-Contains the logic to handle client/server commands coming from command streams.
-"""
+"""Handler for client/server commands arriving on the command stream."""
 
 
 #  Perpetua - open-source and cross-platform KVM software.
@@ -39,35 +37,26 @@ from utils.logging import get_logger
 
 
 class CommandHandler:
-    """
-    Async command handler that registers callbacks to stream to receive and handle commands.
-    It dispatches appropriate events or actions based on the received commands.
-    """
+    """Translates command-stream messages into bus events."""
 
     def __init__(self, event_bus: EventBus, stream: StreamHandler):
         self.event_bus = event_bus
-        self.stream = stream  # StreamHandler for command stream
+        self.stream = stream
 
         self._logger = get_logger(self.__class__.__name__)
 
-        # Register async callback for command messages
         self.stream.register_receive_callback(
             self.handle_command, message_type=MessageType.COMMAND
         )
 
     async def handle_command(self, message):
-        """
-        Async callback to handle incoming command messages.
-        """
         try:
             event = EventMapper.get_event(message)
             if not isinstance(event, CommandEvent):
                 self._logger.warning(f"Received non-command event -> {event}")
                 return
 
-            # Handle different commands types asynchronously
             if event.command == CommandEvent.CROSS_SCREEN:
-                # Create task to handle in background
                 await asyncio.create_task(self.handle_cross_screen(event))
             elif event.command == CommandEvent.FORCE_SCREEN_CHANGE:
                 await asyncio.create_task(self.handle_force_screen_change(event))
@@ -82,18 +71,13 @@ class CommandHandler:
             return
 
     async def handle_cross_screen(self, event: CommandEvent):
-        """
-        Async handler for cross screen command by dispatching a screen event.
-        """
-        # If we are server we dispatch ACTIVE_SCREEN_CHANGED event
-        # When client sends to server that it crossed the screen, it sends as data the normalized cursor position
-        # Then the server should stop data sending to that client by just changing the active screen to None
+        # target=="server": client returning the cursor → notify the
+        # cursor guard so the server stops sending to that client.
+        # Otherwise the target client must become active.
         crs_event = CrossScreenCommandEvent().from_command_event(event)
         if crs_event.target == "server":
-            # Async dispatch
             await self.event_bus.dispatch(
-                # when ServerMouseController receives this event will set the correct cursor position
-                event_type=BusEventType.SCREEN_CHANGE_GUARD,  # We first notify the cursor guard (cursor handler)
+                event_type=BusEventType.SCREEN_CHANGE_GUARD,
                 data=ActiveScreenChangedEvent(
                     active_screen=None,
                     source=event.source,
@@ -101,14 +85,10 @@ class CommandHandler:
                 ),
             )
         else:
-            # Dispatch CLIENT_ACTIVE event to notify that client itself
-            # is now active. Forward the target monitor id (if any) so
-            # the client mouse controller can pin incoming positions to
-            # the correct physical screen on multi-monitor setups, and
-            # the landing coordinates so the cursor is placed inside
-            # this very dispatch — bypassing the parallel POSITION_ACTION
-            # on the mouse stream which can race this activation event
-            # and get dropped by the ``_is_active`` gate.
+            # Carry landing coords + target monitor inside the same
+            # event that flips ``_is_active`` so a parallel
+            # POSITION_ACTION on the mouse stream can't race the
+            # activation and get dropped by the ``_is_active`` gate.
             pos_x, pos_y = crs_event.get_position()
             await self.event_bus.dispatch(
                 event_type=BusEventType.CLIENT_ACTIVE,
@@ -121,10 +101,6 @@ class CommandHandler:
             )
 
     async def handle_force_screen_change(self, event: CommandEvent):
-        """
-        Async handler for force screen change command by dispatching a client inactive event if we are client.
-        """
-        # If we are client we just dispatch CLIENT_INACTIVE event
         f_ev = ForceScreenChangeCommandEvent().from_command_event(event)
         if event.source == "server" and f_ev.params.get("force", False):
             await self.event_bus.dispatch(
@@ -132,13 +108,7 @@ class CommandHandler:
             )
 
     async def handle_client_topology(self, event: CommandEvent):
-        """Async handler for the topology push from server → client.
-
-        Translates the wire payload into a
-        :class:`ClientTopologyUpdatedEvent` on the local bus so the
-        client mouse controller can refresh its return-to-server
-        routing without coupling to the network layer.
-        """
+        """Translate a server-pushed topology into a local bus event."""
         topo = ClientTopologyCommandEvent.from_command_event(event)
         await self.event_bus.dispatch(
             event_type=BusEventType.CLIENT_TOPOLOGY_UPDATED,

@@ -1,7 +1,4 @@
-"""
-Unified Server API
-Provides a clean interface to configure and manage server components.
-"""
+"""Unified server API to configure and manage server components."""
 
 
 #  Perpetua - open-source and cross-platform KVM software.
@@ -77,10 +74,10 @@ from . import ServiceDiscovery
 
 
 class ServerStartError(Exception):
-    """Raised by :meth:`Server.start` when startup fails for a known,
-    user-actionable reason. The daemon surfaces ``str(exc)`` directly as the
-    CommandError message so the GUI shows a useful description without us
-    having to fire a second notification event.
+    """Startup failure for a known, user-actionable reason.
+
+    The daemon surfaces ``str(exc)`` as the CommandError message so the
+    GUI shows something useful without a second notification.
     """
 
     def __init__(self, message: str, reason: str = "", **details):
@@ -90,16 +87,9 @@ class ServerStartError(Exception):
 
 
 class Server:
-    """
-    Manages server configurations, clients, connections, SSL setup, and certificate sharing.
+    """Manages server configuration, clients, connections, SSL and cert sharing."""
 
-    This class provides features for configuring the server, managing client connections,
-    enabling and disabling SSL, managing SSL certificates, sharing certificates securely,
-    and maintaining an allowlist of clients. It abstracts away the complexities involved
-    in handling connections, certificate generation, and client management.
-    """
-
-    CLEANUP_DELAY = 0.5  # seconds to wait during cleanup
+    CLEANUP_DELAY = 0.5
 
     def __init__(
         self,
@@ -107,148 +97,68 @@ class Server:
         server_config: Optional[ServerConfig] = None,
         auto_load_config: bool = True,
     ):
-        """
-        Initializes the primary configuration and components of the server application.
-
-        The constructor initializes core configurations, logging, components, and
-        registries required for the server application. It loads application-specific
-        settings, manages secure connections with optional SSL certificates, and sets
-        up core communication components and registries for managing client connections
-        and event handling.
-
-        Args:
-            app_config: The application-level settings such as directory paths and
-                app-specific preferences. Defaults to None, in which case a default
-                configuration is initialized.
-            server_config: The server's runtime configuration including connection,
-                SSL, logging, streams, and authorized clients. Defaults to None, using
-                a default configuration.
-            auto_load_config: If True, automatically loads configuration from file if exists.
-                Defaults to True.
-
-        Attributes:
-            app_config (ApplicationConfig): Initialized or passed application
-                configuration object.
-            config (ServerConfig): Holds all server settings including connection,
-                SSL, logging, streams, and authorized clients.
-            _cert_manager (CertificateManager): Manages SSL certificates for secure
-                connections.
-            _cert_sharing (Optional[CertificateSharing]): Facilitates certificate
-                sharing between components, initialized only in SSL mode. Defaults to
-                None.
-            clients_manager (ClientsManager): Handles and tracks currently connected
-                clients.
-            event_bus (AsyncEventBus): Manages asynchronous events and their
-                distribution across the application services.
-            _stream_handlers (Dict[int, StreamHandler]): Registry mapping stream
-                identifiers to their respective handlers.
-            _components (dict): Storage for application components or services
-                initialized during runtime by the server.
-            _running (bool): Indicates the server's running state. Initialized as
-                False.
-            connection_handler (Optional[ConnectionHandler]): Coordinates incoming and
-                outgoing connections. Defaults to None, and is set during runtime.
-
-        Raises:
-            The constructor does not explicitly raise exceptions but may encounter
-            errors indirectly if components initialization or configurations fail.
-        """
-        # Initialize configurations
         self.app_config = app_config or ApplicationConfig()
         self.config = server_config or ServerConfig(self.app_config)
 
-        # Try to load existing configuration if requested
         if auto_load_config:
             self.config.sync_load()
 
-        # Set logging level
         self._logger = get_logger(self.__class__.__name__, level=self.config.log_level)
         self._logger.info(f"Logger initialized at level: {self.config.log_level}")
 
-        # Log loaded clients
         self._load_authorized_clients()
 
-        # Initialize certificate manager
         self._cert_manager = CertificateManager(
             cert_dir=self.app_config.get_certificate_path()
         )
         self._cert_sharing: Optional[CertificateSharing] = None
 
-        # Setup SSL if enabled
         self.certfile, self.keyfile = None, None
         if self.config.ssl_enabled:
             self.certfile, self.keyfile = self._setup_certificates()
 
-        # Initialize event bus
         self.event_bus = AsyncEventBus()
 
-        # Stream handlers registry
         self._stream_handlers: Dict[int, StreamHandler] = {}
-
-        # Components registry
         self._components = {}
         self._running = False
 
-        # Metrics and performance monitoring
-        # self._metrics_collector = MetricsCollector()
-        # self._performance_monitor = PerformanceMonitor(self._metrics_collector)
         self._metrics_collector = None
         self._performance_monitor = PerformanceMonitor(self._metrics_collector)
 
-        # mDNS
         self._mdns_service = ServiceDiscovery()
 
-        # Connection handler
         self.connection_handler: Optional[ConnectionHandler] = None
 
-        # Notification callback (set by daemon or external controller)
         self._notification_callback: Optional[
             Callable[[NotificationEvent], Awaitable[None]]
         ] = None
 
-        # Pending client-approval requests: each unknown client that initiates
-        # a handshake spawns a Future stored here, resolved by the admin via
-        # approve_pending_client / deny_pending_client (or by timeout).
+        # Pending approvals: each unknown client awaiting admin OK
+        # spawns a Future resolved via approve_pending_client /
+        # deny_pending_client (or by timeout).
         self._pending_approvals: Dict[str, "asyncio.Future[Optional[ClientObj]]"] = {}
         self._pending_approval_meta: Dict[str, Dict[str, str]] = {}
         self._pending_approvals_lock = asyncio.Lock()
-        self._approval_request_timeout = 60  # seconds
+        self._approval_request_timeout = 60
 
     @property
     def clients_manager(self) -> ClientsManager:
-        """Access the ClientsManager from configuration"""
         return self.config.clients_manager
-
-    # ==================== Notification Callback Management ====================
 
     def set_notification_callback(
         self, callback: Optional[Callable[[NotificationEvent], Awaitable[None]]]
     ) -> None:
-        """
-        Set callback for sending notifications about state changes.
-
-        Args:
-            callback: Async callback function that receives NotificationEvent
-        """
         self._notification_callback = callback
 
     async def _send_notification(self, event: NotificationEvent) -> None:
-        """
-        Send notification to registered callback.
-
-        Args:
-            event: NotificationEvent to send
-        """
         if self._notification_callback:
             try:
                 await self._notification_callback(event)
             except Exception as e:
                 self._logger.error(f"Error sending notification: {e}")
 
-    # ==================== Configuration Management ====================
-
     def _load_authorized_clients(self) -> None:
-        """Log info about loaded authorized clients (clients are loaded by config)"""
         clients = self.clients_manager.get_clients()
         if len(clients) > 0:
             self._logger.info(
@@ -258,14 +168,7 @@ class Server:
             self._logger.info("No authorized clients found in configuration")
 
     async def save_config(self) -> bool:
-        """
-        Save current configuration to file.
-
-        Returns:
-            True if saved successfully, False otherwise
-        """
         try:
-            # Clients are already in config.clients_manager, just save
             await self.config.save()
             self._logger.info("Configuration saved successfully")
             await self._send_notification(ConfigSavedEvent(config_type="server"))
@@ -275,15 +178,8 @@ class Server:
             return False
 
     async def load_config(self) -> bool:
-        """
-        Load configuration from file.
-
-        Returns:
-            True if loaded successfully, False otherwise
-        """
         try:
             if await self.config.load():
-                # Clients are already loaded by config
                 self._load_authorized_clients()
                 self._logger.set_level(self.config.log_level)
                 self._logger.info("Configuration loaded successfully")
@@ -295,13 +191,8 @@ class Server:
             self._logger.error(f"Error loading configuration: {e}")
             return False
 
-    # ==================== Certificate Management ====================
-
     def enable_ssl(self) -> bool:
-        """
-        Enable SSL for server connections. It will take effect on next start.
-        We won't auto save config here, need a manual save after this call.
-        """
+        """Enable SSL on next start. Caller must save config manually."""
         try:
             self.certfile, self.keyfile = self._setup_certificates()
         except Exception:
@@ -314,22 +205,13 @@ class Server:
         return True
 
     def disable_ssl(self) -> None:
-        """
-        Disable SSL for server connections. It will take effect on next start.
-        We won't auto save config here, need a manual save after this call.
-        """
+        """Disable SSL on next start. Caller must save config manually."""
         self.certfile = None
         self.keyfile = None
         self.config.disable_ssl()
         self._logger.info("SSL disabled for server connections")
 
     def _setup_certificates(self) -> Tuple[str, str]:
-        """
-        Ensure SSL certificates are available.
-
-        Returns:
-            Tuple of (certfile_path, keyfile_path)
-        """
         try:
             if not self._cert_manager.certificates_exist():
                 self._logger.warning(
@@ -365,17 +247,12 @@ class Server:
         host: Optional[str] = None,
         port: Optional[int] = None,
     ) -> bool:
-        """
-        Start the always-on pairing/cert-sharing listener.
+        """Start the always-on pairing/cert-sharing listener.
 
-        While this listener is running, clients can:
-
-        - send ``REQUEST_PAIRING`` to ask the server to auto-generate an OTP
-          and surface it on the admin GUI (no OTP travels over the network);
-        - send ``GET_CERTIFICATE`` to download the encrypted CA bundle once an
-          OTP is active.
-
-        Idempotent: if the service is already running, this is a no-op.
+        While running, clients can send ``REQUEST_PAIRING`` (server
+        auto-generates an OTP shown on the admin GUI) and
+        ``GET_CERTIFICATE`` (download the encrypted CA bundle once an
+        OTP is active). Idempotent.
         """
         if not self._cert_manager.certificates_exist():
             self._logger.warning(
@@ -384,8 +261,7 @@ class Server:
             return False
 
         if self._cert_sharing and self._cert_sharing.is_sharing_active():
-            # Refresh the callback so it captures the current notification
-            # callback even if it changed since last start.
+            # Refresh the callback in case it changed since last start.
             self._cert_sharing.set_pairing_request_callback(self._on_pairing_requested)
             return True
 
@@ -395,9 +271,8 @@ class Server:
             return False
 
         bind_host = host if host is not None else "0.0.0.0"
-        # Resolve effective pairing port: explicit arg -> config override ->
-        # legacy "port - 2" convention. Keeping the resolution centralised so
-        # both server.py and the mDNS TXT record agree.
+        # Pairing port precedence: explicit arg, config override, legacy
+        # "port - 2" convention. Centralised so server.py and mDNS agree.
         bind_port = port if port is not None else self.config.get_pairing_port()
         self._cert_sharing = CertificateSharing(
             cert_data=cert_data,
@@ -422,8 +297,7 @@ class Server:
         return True
 
     def get_pairing_actual_port(self) -> Optional[int]:
-        """Return the port the pairing listener actually bound to (with
-        fallback applied), or None if not running."""
+        """Port the pairing listener actually bound to (after fallback), or None."""
         if self._cert_sharing is None:
             return None
         return self._cert_sharing.get_actual_port()
@@ -431,9 +305,8 @@ class Server:
     async def _on_pairing_requested(self, info: Dict[str, str]) -> None:
         """Bridge a pairing request from CertificateSharing into notifications.
 
-        Emits two events so the GUI can react with either:
-        - the legacy ``OtpGenerated`` path (existing UI just works);
-        - the richer ``PairingRequested`` path (shows which client asked).
+        Emits both PairingRequested (richer payload) and the legacy
+        OtpGenerated event so existing GUI listeners keep working.
         """
         try:
             otp = info.get("otp", "")
@@ -454,8 +327,6 @@ class Server:
                 was_active=was_active,
             )
         )
-        # Mirror as OtpGenerated so existing GUI listeners keep working
-        # without needing to know about pairing-vs-manual provenance.
         if otp:
             await self._send_notification(
                 OtpGeneratedEvent(otp=otp, timeout=timeout_val)
@@ -467,26 +338,10 @@ class Server:
         port: Optional[int] = None,
         timeout: int = 30,
     ) -> Tuple[bool, Optional[str]]:
-        """
-        Start (or refresh) certificate sharing with an OTP.
+        """Start or refresh certificate sharing with an OTP.
 
-        If the always-on pairing service is running, this just ensures an OTP
-        is active and returns it - no new socket is opened. Otherwise it falls
-        back to the legacy one-shot flow that opens a temporary server.
-
-        Args:
-            host: Host address for temporary server (default: all interfaces)
-            port: Port for temporary server (default: 55556)
-            timeout: OTP validity window in seconds (default: 30)
-
-        Returns:
-            Tuple of (success, otp). OTP is None if failed.
-
-        Example:
-        ::
-            success, otp = await server.share_certificate()
-            if success:
-                print(f"Share this OTP with client: {otp}")
+        If the always-on pairing service is running, refreshes the OTP
+        in place. Otherwise falls back to the legacy one-shot flow.
         """
         if not self._cert_manager.certificates_exist():
             self._logger.error("No certificates available to share")
@@ -532,31 +387,17 @@ class Server:
             return False, None
 
     async def stop_cert_sharing(self):
-        """
-        Stop certificate sharing server.
-
-        Invalidates OTP and closes temporary server.
-        """
         if self._cert_sharing:
             await self._cert_sharing.stop_sharing()
             self._logger.info("Certificate sharing stopped")
 
     def get_sharing_otp(self) -> Optional[str]:
-        """
-        Get current OTP for certificate sharing.
-
-        Returns:
-            OTP string if valid and sharing is active, None otherwise
-        """
         if self._cert_sharing:
             return self._cert_sharing.get_otp()
         return None
 
     def is_cert_sharing_active(self) -> bool:
-        """Check if certificate sharing is currently active"""
         return self._cert_sharing is not None and self._cert_sharing.is_sharing_active()
-
-    # ==================== Client Management ====================
 
     async def add_client(
         self,
@@ -567,13 +408,10 @@ class Server:
     ) -> ClientObj:
         """Add a client to the authorized list.
 
-        ``screen_position`` is optional; when ``None`` the client is
-        added unplaced and the admin is expected to position its
-        monitors via the Layout Editor. Pre-migration tooling that
-        still passes a legacy direction is honoured — the value is
-        stored verbatim on :attr:`ClientObj.screen_position` and the
-        synthesis shim in :meth:`ClientObj.get_effective_placements`
-        produces a default placement for it.
+        ``screen_position`` is optional; ``None`` leaves the client
+        unplaced (admin positions its monitors via the Layout Editor).
+        Legacy values are stored verbatim and feed the synthesis shim
+        in :meth:`ClientObj.get_effective_placements`.
         """
         try:
             client = self.config.add_client(
@@ -604,27 +442,13 @@ class Server:
         screen_position: Optional[str] = None,
         auto_save: bool = True,
     ) -> bool:
-        """
-        Remove a client from the authorized list.
-
-        Args:
-            ip_address: One of the client's known IP addresses (used for lookup)
-            hostname: Hostname of the client
-            screen_position: Screen position of the client
-            auto_save: If True, automatically saves configuration after removal
-
-        Returns:
-            True if client was removed, False if not found
-        """
+        """Remove a client from the authorized list."""
         client = self.config.get_client(
             ip_address=ip_address, hostname=hostname, screen_position=screen_position
         )
         if client:
-            if (
-                self._running and self.connection_handler is not None
-            ):  # If server is running, disconnect client first
+            if self._running and self.connection_handler is not None:
                 await self.connection_handler.force_disconnect_client(client)
-            # Finally remove from allowlist
             self.config.remove_client(client=client)
 
             if auto_save:
@@ -636,7 +460,6 @@ class Server:
         return False
 
     def get_clients(self) -> list[ClientObj]:
-        """Get all registered clients"""
         return self.config.get_clients()
 
     def get_client(
@@ -645,7 +468,6 @@ class Server:
         hostname: Optional[str] = None,
         screen_position: Optional[str] = None,
     ) -> Optional[ClientObj]:
-        """Get a specific client"""
         return self.config.get_client(
             ip_address=ip_address, hostname=hostname, screen_position=screen_position
         )
@@ -660,19 +482,10 @@ class Server:
     ) -> ClientObj:
         """Replace the multi-monitor placements of one client.
 
-        Validates the new list against:
-
-        - basic placement shape (positive width/height, non-negative
-          ``client_monitor_id``);
-        - no overlap among the client's own placements;
-        - no overlap with the server's monitors;
-        - no overlap with the placements of OTHER clients (the workspace
-          must stay a partition of disjoint rectangles).
-
-        On success the new placements are persisted on the ClientObj
-        and (if ``auto_save``) on disk. Subsequent ``CLIENT_CONNECTED``
-        events will carry the refreshed :class:`EdgeBinding` list to
-        the mouse listener.
+        Validates positive width/height and no overlap (self, with the
+        server's monitors, or with other clients' placements). On
+        success, persists and hot-reloads the mouse listener's routing
+        cache via CLIENT_LAYOUT_UPDATED.
         """
         client = self.config.get_client(
             uid=uid,
@@ -773,9 +586,8 @@ class Server:
         if auto_save:
             await self.save_config()
 
-        # Hot-reload the mouse listener's routing cache so the new
-        # placements take effect on the very next mouse crossing,
-        # without requiring the client to reconnect.
+        # Hot-reload the listener's routing cache so the new placements
+        # take effect on the next crossing, without forcing a reconnect.
         edge_bindings = [
             eb.to_dict() for eb in client.get_edge_bindings(server_monitors)
         ]
@@ -804,20 +616,7 @@ class Server:
         new_ip_addresses: Optional[list[str] | str] = None,
         auto_save: bool = True,
     ) -> ClientObj:
-        """
-        Edit a client's properties.
-
-        Args:
-            ip_address: One of the client's known IP addresses (used for lookup)
-            hostname: Hostname of the client to edit
-            old_screen_position: Current screen position (used for lookup)
-            new_screen_position: New screen position
-            new_ip_addresses: New IP address(es) to set (replaces existing list)
-            auto_save: If True, automatically saves configuration after editing
-
-        Returns:
-            The updated ClientObj
-        """
+        """Edit a client's properties."""
         client = self.config.get_client(
             ip_address=ip_address,
             hostname=hostname,
@@ -826,7 +625,6 @@ class Server:
         if not client:
             raise ValueError(f"Client [IP {ip_address}, Host {hostname}] not found")
 
-        # if client is connected do not allow changing screen_position
         if client.is_connected:
             raise RuntimeError("Cannot edit a connected client's properties")
 
@@ -852,7 +650,6 @@ class Server:
     def is_client_alive(
         self, ip_address: Optional[str] = None, hostname: Optional[str] = None
     ) -> bool:
-        """Check if a client is currently connected"""
         if not ip_address and not hostname:
             raise ValueError("Either ip_address or hostname must be provided")
 
@@ -860,12 +657,7 @@ class Server:
         return client.is_connected if client else False
 
     async def clear_clients(self, auto_save: bool = True) -> None:
-        """
-        Remove all clients from authorized list.
-
-        Args:
-            auto_save: If True, automatically saves configuration after clearing
-        """
+        """Remove all clients from authorized list."""
         self.config.clients_manager.clear()
 
         if auto_save:
@@ -873,15 +665,7 @@ class Server:
 
         self._logger.info("Cleared all clients")
 
-    # ==================== Stream Management ====================
-
     async def enable_stream(self, stream_type: int) -> None:
-        """
-        Enable a specific stream type (applies before start or at runtime)
-
-        Raises:
-            ValueError: If the stream type is invalid
-        """
         if not StreamType.is_valid(stream_type):
             raise ValueError(f"Invalid stream type: {stream_type}")
 
@@ -892,12 +676,6 @@ class Server:
         await self._send_notification(StreamEnabledEvent(stream_type=stream_type))
 
     async def disable_stream(self, stream_type: int) -> None:
-        """
-        Disable a specific stream type (applies before start or at runtime)
-
-        Raises:
-            ValueError: If the stream type is invalid
-        """
         if not StreamType.is_valid(stream_type):
             raise ValueError(f"Invalid stream type: {stream_type}")
 
@@ -922,15 +700,12 @@ class Server:
             await self.enable_stream(stream_type)
             return True
 
-        # Se già abilitato, non fare nulla
         if self.is_stream_enabled(stream_type):
             self._logger.warning(f"Stream {stream_type} already enabled")
             return True
 
-        # Abilita nella configurazione
         await self.enable_stream(stream_type)
 
-        # Inizializza e avvia i componenti per questo stream
         try:
             if stream_type == StreamType.MOUSE:
                 await self._enable_mouse_stream()
@@ -958,10 +733,8 @@ class Server:
             await self.disable_stream(stream_type)
             return True
 
-        # Disabilita nella configurazione
         await self.disable_stream(stream_type)
 
-        # Ferma e rimuovi i componenti
         try:
             if stream_type == StreamType.MOUSE:
                 await self._disable_mouse_stream()
@@ -986,23 +759,16 @@ class Server:
     ) -> Optional[ClientObj]:
         """Ask the admin (via GUI) whether to accept an unknown client.
 
-        Called by the ConnectionHandler when a client not present in the
-        allowlist completes the handshake. Emits a notification with the
-        client's identifiers, then blocks on a Future that the admin resolves
-        via :meth:`approve_pending_client` or :meth:`deny_pending_client`.
-
-        Returns:
-            A populated ClientObj if approved (already added to the
-            allowlist), or None if denied / timed out.
+        Blocks on a Future resolved by approve/deny_pending_client.
+        Returns the added ClientObj on approve, None on deny / timeout.
         """
         request_id = f"{peer_ip}-{int(asyncio.get_running_loop().time() * 1000)}"
 
         async with self._pending_approvals_lock:
             existing = self._pending_approvals.get(peer_ip)
             if existing is not None and not existing.done():
-                # A second handshake attempt from the same IP while an admin
-                # decision is pending: piggy-back on the same Future instead
-                # of stacking prompts.
+                # Second handshake from same IP while admin is deciding:
+                # piggy-back on the same Future to avoid stacking prompts.
                 self._logger.info(
                     f"Reusing pending approval for {peer_ip} (hostname={hostname})"
                 )
@@ -1039,10 +805,8 @@ class Server:
             await self._resolve_pending_approval(peer_ip, None, reason="timeout")
             return None
         finally:
-            # ``_resolve_pending_approval`` already
-            # pops the entries, but if the waiter was cancelled mid-flight
-            # the resolver may never run. Unconditional pop here closes that
-            # leak path.
+            # If the waiter was cancelled mid-flight the resolver may
+            # never run; unconditional pop here closes the leak path.
             async with self._pending_approvals_lock:
                 self._pending_approvals.pop(peer_ip, None)
                 self._pending_approval_meta.pop(peer_ip, None)
@@ -1054,12 +818,7 @@ class Server:
         screen_position: str = "",
         reason: str = "",
     ) -> bool:
-        """Resolve a pending approval Future. Returns True if a Future existed.
-
-        Pops the entry from both ``_pending_approvals`` and
-        ``_pending_approval_meta`` under the lock so a cancelled waiter can't
-        leave stale state behind.
-        """
+        """Resolve a pending approval Future. Returns True if one existed."""
         async with self._pending_approvals_lock:
             fut = self._pending_approvals.pop(peer_ip, None)
             meta = self._pending_approval_meta.pop(peer_ip, None) or {}
@@ -1080,13 +839,12 @@ class Server:
     async def approve_pending_client(
         self, peer_ip: str, screen_position: Optional[str] = None
     ) -> bool:
-        """Approve an unknown client that's waiting for the admin's OK.
+        """Approve an unknown client awaiting admin OK.
 
-        Adds the client to the persistent allowlist before unblocking
-        the handshake. ``screen_position`` is optional and only kept
-        as legacy metadata — when omitted the client lands unplaced
-        and the GUI auto-opens the Layout Editor for the admin to
-        position its monitors visually.
+        Adds the client to the allowlist before unblocking the
+        handshake. ``screen_position`` is optional legacy metadata;
+        omitted clients land unplaced and the GUI opens the Layout
+        Editor.
         """
         async with self._pending_approvals_lock:
             meta = self._pending_approval_meta.get(peer_ip)
@@ -1136,16 +894,11 @@ class Server:
     def _is_port_available(host: str, port: int) -> bool:
         """Synchronously probe whether ``host:port`` is free for bind.
 
-        Mirrors what ``asyncio.start_server`` would actually attempt: on POSIX
-        the event loop sets ``SO_REUSEADDR`` by default, so sockets stuck in
-        ``TIME_WAIT`` from a previous incarnation don't block a fresh bind.
-        Without ``SO_REUSEADDR`` here this probe was reporting "port busy"
-        for ~60s after every stop, even though the real start would have
-        succeeded fine.
-
-        On Windows ``SO_REUSEADDR`` has different (looser) semantics; setting
-        it would let two unrelated servers steal each other's port, so we
-        keep the probe strict there to match the OS behaviour.
+        Mirrors ``asyncio.start_server``: on POSIX the loop sets
+        SO_REUSEADDR by default, so TIME_WAIT sockets from a previous
+        run don't block a fresh bind. On Windows SO_REUSEADDR has
+        looser semantics (would let two servers steal each other's
+        port) so the probe stays strict there.
         """
         bind_host = host if host and host != "0.0.0.0" else ""
         try:
@@ -1167,12 +920,9 @@ class Server:
 
         self._logger.info("Starting Server...")
 
-        # Pre-flight check: refuse to start if the configured TCP data port
-        # is already taken. Unlike the pairing port (which auto-falls-back
-        # to adjacent ports), the data port is published over mDNS and used
-        # by client configs, so a silent fallback would confuse everything.
-        # Surface the conflict explicitly so the GUI can prompt the admin to
-        # change the port in Options.
+        # Refuse to start if the data port is taken. Unlike the pairing
+        # port, this one is published over mDNS and baked into client
+        # configs — a silent fallback would confuse everything.
         if not self._is_port_available(self.config.host, self.config.port):
             error_msg = (
                 f"Port {self.config.port} is already in use on "
@@ -1187,7 +937,6 @@ class Server:
                 host=self.config.host,
             )
 
-        # Initialize and start enabled streams
         try:
             await self._initialize_streams()
         except Exception as e:
@@ -1195,7 +944,6 @@ class Server:
             await self.stop(True)
             return False
 
-        # Initialize connection handler
         self.connection_handler = ConnectionHandler(
             connected_callback=self._on_client_connected,
             disconnected_callback=self._on_client_disconnected,
@@ -1210,7 +958,6 @@ class Server:
             server_uid=self.config.uid,
         )
 
-        # Initialize and start enabled components
         try:
             await self._initialize_components()
         except Exception as e:
@@ -1223,22 +970,17 @@ class Server:
             await self.stop(True)
             return False
 
-        # Bring up the pairing/cert-sharing listener BEFORE mDNS so the
-        # service record advertises the port we actually bound (the listener
-        # may have fallen back to an adjacent port if the preferred one was
-        # busy). Failure is non-fatal - the rest of the server keeps running
-        # and the admin can still share certs manually via
-        # share_certificate().
+        # Pairing listener comes up BEFORE mDNS so the service record
+        # advertises the port we actually bound (may have fallen back
+        # to an adjacent port). Failure is non-fatal.
         if self.config.ssl_enabled:
             try:
                 await self.start_pairing_service(host=self.config.host)
             except Exception as e:
                 self._logger.warning(f"Pairing service did not start ({e})")
 
-        # Start mDNS service. Advertise the pairing port so clients can
-        # discover it without relying on the legacy ``port - 2`` convention.
-        # Prefer the actually-bound port over the configured one so the
-        # advertisement reflects reality after fallback.
+        # Advertise the actually-bound pairing port over mDNS so clients
+        # don't rely on the legacy ``port - 2`` convention.
         actual_pairing = self.get_pairing_actual_port()
         advertised_pairing = (
             actual_pairing if actual_pairing else self.config.get_pairing_port()
@@ -1259,14 +1001,11 @@ class Server:
 
         try:
             await service_task
-            if (
-                self.config.uid is None
-            ):  # At this point we have a UID generated and assigned
+            if self.config.uid is None:
                 self.config.uid = self._mdns_service.get_uid()
                 await self.save_config()
-            # Backfill the handshake-ack UID now that we know it. First-run
-            # servers build the connection handler before mDNS assigns a
-            # UID, so without this clients would see ``server_uid=""``.
+            # Backfill the handshake-ack UID: first-run servers build
+            # the connection handler before mDNS assigns one.
             if self.connection_handler is not None:
                 self.connection_handler.set_server_uid(self.config.uid)
         except RuntimeError as re:
@@ -1290,19 +1029,17 @@ class Server:
 
         tasks: list[asyncio.Task] = []
 
-        # Cancel any pending client-approval prompts so admin GUI stops
-        # showing them and the futures don't leak.
+        # Cancel pending approval prompts so the GUI clears them and
+        # the futures don't leak.
         for ip, fut in list(self._pending_approvals.items()):
             if not fut.done():
                 fut.set_result(None)
             self._pending_approvals.pop(ip, None)
             self._pending_approval_meta.pop(ip, None)
 
-        # Stop connection handler
         if self.connection_handler:
             await self.connection_handler.stop()
 
-        # Stop pairing/cert-sharing listener
         if self._cert_sharing:
             try:
                 await self._cert_sharing.stop_sharing()
@@ -1310,7 +1047,6 @@ class Server:
                 self._logger.warning(f"Error stopping pairing service ({e})")
             self._cert_sharing = None
 
-        # Stop all components
         for component_name, component in list(self._components.items()):
             try:
                 if hasattr(component, "stop"):
@@ -1321,7 +1057,6 @@ class Server:
             except Exception as e:
                 self._logger.error(f"Error stopping component {component_name} ({e})")
 
-        # Stop all stream handlers
         for stream_type, handler in list(self._stream_handlers.items()):
             try:
                 if hasattr(handler, "stop"):
@@ -1329,16 +1064,11 @@ class Server:
             except Exception as e:
                 self._logger.error(f"Error stopping stream handler {stream_type} ({e})")
 
-        # Stop performance monitor
         tasks.append(asyncio.create_task(self._performance_monitor.stop()))
-
-        # mDNS service unregister
         tasks.append(asyncio.create_task(self._mdns_service.unregister_service()))
 
-        # Wait a moment for cleanup
         await asyncio.sleep(self.CLEANUP_DELAY)
 
-        # Await all stop tasks
         if len(tasks) > 0:
             try:
                 await asyncio.gather(*tasks, return_exceptions=True)
@@ -1350,44 +1080,32 @@ class Server:
         self._logger.info("Server stopped")
 
     def cleanup(self):
-        """Cleanup client resources"""
         self._logger.info("Cleaning up resources...")
-        # We cleanup component and stream handlers obj from memory
         self._components.clear()
         self._stream_handlers.clear()
-
-        # We also reset event bus
         self.event_bus = AsyncEventBus()
-
         self._logger.info("Resources cleaned up.")
 
     def is_running(self) -> bool:
-        """Check if server is running"""
         return self._running
 
-    # ==================== Private Initialization Methods ====================
-
     async def _initialize_streams(self):
-        """Initialize stream handlers and start enabled streams"""
-        #! We need to create all stream handlers first to allow event listening and state sync
+        # All stream handlers must exist before any starts so event
+        # listening and state sync work coherently.
 
-        # Command stream (always required)
         self._stream_handlers[StreamType.COMMAND] = BidirectionalStreamHandler(
             stream_type=StreamType.COMMAND,
             clients=self.clients_manager,
             event_bus=self.event_bus,
             handler_id="ServerCommandStreamHandler",
             metrics_collector=self._metrics_collector,
-            do_cleanup=False,  # Command stream should not cleanup on state changes
+            do_cleanup=False,  # Command stream lives across state changes.
         )
-        # Force start command stream
         if not await self._stream_handlers[StreamType.COMMAND].start():
             raise RuntimeError("Failed to start command stream handler")
-        # Add to enabled streams if not present
         if not self.is_stream_enabled(StreamType.COMMAND):
             await self.enable_stream(StreamType.COMMAND)
 
-        # Mouse stream
         self._stream_handlers[StreamType.MOUSE] = UnidirectionalStreamHandler(
             stream_type=StreamType.MOUSE,
             clients=self.clients_manager,
@@ -1398,7 +1116,6 @@ class Server:
             buffer_size=10000,
         )
 
-        # Keyboard stream
         self._stream_handlers[StreamType.KEYBOARD] = UnidirectionalStreamHandler(
             stream_type=StreamType.KEYBOARD,
             clients=self.clients_manager,
@@ -1408,7 +1125,6 @@ class Server:
             metrics_collector=self._metrics_collector,
         )
 
-        # Clipboard stream
         self._stream_handlers[StreamType.CLIPBOARD] = MulticastStreamHandler(
             stream_type=StreamType.CLIPBOARD,
             clients=self.clients_manager,
@@ -1417,37 +1133,29 @@ class Server:
             metrics_collector=self._metrics_collector,
         )
 
-        # Start all stream handlers
         for stream_type, handler in self._stream_handlers.items():
             if self.is_stream_enabled(stream_type):
                 if not await handler.start():
                     raise RuntimeError(f"Failed to start stream handler: {stream_type}")
 
     async def _initialize_components(self):
-        """Initialize enabled components based on configuration"""
         command_stream = self._stream_handlers[StreamType.COMMAND]
 
-        # Command handler (always required)
         self._components["command_handler"] = CommandHandler(
             event_bus=self.event_bus, stream=command_stream
         )
 
-        # Initialize all stream components (they will start only if enabled)
         await self._enable_mouse_stream()
         await self._enable_keyboard_stream()
         await self._enable_clipboard_stream()
 
-    # ==================== Runtime Enable/Disable Methods ====================
-
     async def _ensure_stream_active(self, stream_type: int, stream_handler) -> None:
-        """Helper: Ensure stream handler is started if enabled"""
         is_enabled = self.is_stream_enabled(stream_type)
         if is_enabled and not stream_handler.is_active():
             if not await stream_handler.start():
                 raise RuntimeError(f"Failed to start stream handler for {stream_type}")
 
     async def _enable_mouse_stream(self):
-        """Enable mouse stream and components at runtime"""
         # Get or create stream handler
         mouse_stream = self._stream_handlers.get(StreamType.MOUSE)
         if not mouse_stream:
@@ -1467,7 +1175,6 @@ class Server:
         is_enabled = self.is_stream_enabled(StreamType.MOUSE)
         command_stream = self._stream_handlers[StreamType.COMMAND]
 
-        # Cursor Handler - manages cursor visibility
         cursor_handler = self._components.get("cursor_handler")
         if not cursor_handler:
             cursor_handler = CursorHandlerWorker(
@@ -1481,13 +1188,11 @@ class Server:
                 await self._disable_mouse_stream()
                 raise RuntimeError("Failed to start cursor handler")
 
-        # Mouse Controller - handles incoming mouse commands
         if not self._components.get("mouse_controller"):
             self._components["mouse_controller"] = ServerMouseController(
                 event_bus=self.event_bus
             )
 
-        # Mouse Listener - captures and sends mouse events
         mouse_listener = self._components.get("mouse_listener")
         if not mouse_listener:
             mouse_listener = ServerMouseListener(
@@ -1506,20 +1211,15 @@ class Server:
                 raise RuntimeError("Failed to start mouse listener")
 
     async def _disable_mouse_stream(self):
-        """Disable mouse stream and components at runtime"""
-        # Stop mouse listener
         mouse_listener = self._components.get("mouse_listener")
         if mouse_listener:
             mouse_listener.stop()
 
-        # Stop stream handler
         mouse_stream = self._stream_handlers.get(StreamType.MOUSE)
         if mouse_stream:
             await mouse_stream.stop()
 
     async def _enable_keyboard_stream(self):
-        """Enable keyboard stream and components at runtime"""
-        # Get or create stream handler
         keyboard_stream = self._stream_handlers.get(StreamType.KEYBOARD)
         if not keyboard_stream:
             keyboard_stream = UnidirectionalStreamHandler(
@@ -1531,16 +1231,11 @@ class Server:
             )
             self._stream_handlers[StreamType.KEYBOARD] = keyboard_stream
 
-        # Start stream if enabled
         await self._ensure_stream_active(StreamType.KEYBOARD, keyboard_stream)
 
         is_enabled = self.is_stream_enabled(StreamType.KEYBOARD)
         command_stream = self._stream_handlers[StreamType.COMMAND]
 
-        # Keyboard Listener - captures and sends keyboard events.
-        # Wire the mouse listener (if present) so the directional
-        # hotkeys can resolve targets through the spatial topology
-        # instead of the retired ScreenPosition enum.
         keyboard_listener = self._components.get("keyboard_listener")
         if not keyboard_listener:
             keyboard_listener = ServerKeyboardListener(
@@ -1557,20 +1252,15 @@ class Server:
                 raise RuntimeError("Failed to start keyboard listener")
 
     async def _disable_keyboard_stream(self):
-        """Disable keyboard stream and components at runtime"""
-        # Stop keyboard listener
         keyboard_listener = self._components.get("keyboard_listener")
         if keyboard_listener:
             keyboard_listener.stop()
 
-        # Stop stream handler
         keyboard_stream = self._stream_handlers.get(StreamType.KEYBOARD)
         if keyboard_stream:
             await keyboard_stream.stop()
 
     async def _enable_clipboard_stream(self):
-        """Enable clipboard stream and components at runtime"""
-        # Get or create stream handler
         clipboard_stream = self._stream_handlers.get(StreamType.CLIPBOARD)
         if not clipboard_stream:
             clipboard_stream = MulticastStreamHandler(
@@ -1581,13 +1271,11 @@ class Server:
             )
             self._stream_handlers[StreamType.CLIPBOARD] = clipboard_stream
 
-        # Start stream if enabled
         await self._ensure_stream_active(StreamType.CLIPBOARD, clipboard_stream)
 
         is_enabled = self.is_stream_enabled(StreamType.CLIPBOARD)
         command_stream = self._stream_handlers[StreamType.COMMAND]
 
-        # Clipboard Listener - monitors clipboard changes
         clipboard_listener = self._components.get("clipboard_listener")
         if not clipboard_listener:
             clipboard_listener = ClipboardListener(
@@ -1603,7 +1291,6 @@ class Server:
                 await self._disable_clipboard_stream()
                 raise RuntimeError("Failed to start clipboard listener")
 
-        # Clipboard Controller - handles incoming clipboard updates
         if not self._components.get("clipboard_controller"):
             clipboard_controller = ClipboardController(
                 event_bus=self.event_bus,
@@ -1616,27 +1303,17 @@ class Server:
             self._components["clipboard_controller"] = clipboard_controller
 
     async def _disable_clipboard_stream(self):
-        """Disable clipboard stream and components at runtime"""
-        # Stop clipboard listener
         clipboard_listener = self._components.get("clipboard_listener")
         if clipboard_listener:
             await clipboard_listener.stop()
 
-        # Stop stream handler
         clipboard_stream = self._stream_handlers.get(StreamType.CLIPBOARD)
         if clipboard_stream:
             await clipboard_stream.stop()
 
-    # ==================== Event Callbacks ====================
-
     async def _on_client_connected(self, client: ClientObj, streams: list[int]):
-        """Handle client connection event"""
-        # Derive the unified spatial cross-screen contract from the
-        # client's effective placements (real or synthesized from the
-        # legacy ``screen_position``) and this server's monitor list.
-        # The same binding list drives both forward routing (server
-        # listener) and reverse routing (pushed to the client via the
-        # ``CLIENT_TOPOLOGY`` command).
+        # Same binding list drives forward routing (server listener) and
+        # reverse routing (pushed via the CLIENT_TOPOLOGY command).
         try:
             from utils.screen import Screen
 
@@ -1657,13 +1334,11 @@ class Server:
                 intra_client_bindings=intra_client_bindings,
             ),
         )
-        # Save config on new connection
         await self.save_config()
         self._logger.info(
             f"Client {client.get_net_id()} connected at position {client.screen_position}"
         )
 
-        # Send notification
         await self._send_notification(
             ClientConnectedNotification(
                 client=client.to_dict(),
@@ -1671,7 +1346,6 @@ class Server:
         )
 
     async def _on_client_disconnected(self, client: ClientObj, streams: list[int]):
-        """Handle client disconnection event"""
         await self.event_bus.dispatch(
             event_type=BusEventType.CLIENT_DISCONNECTED,
             data=ClientDisconnectedEvent(client_uid=client.uid, streams=streams),
@@ -1681,7 +1355,6 @@ class Server:
             f"Client {client.get_net_id()} disconnected from position {client.screen_position}"
         )
 
-        # Send notification
         await self._send_notification(
             ClientDisconnectedNotification(
                 client=client.to_dict(),
@@ -1691,40 +1364,30 @@ class Server:
     async def _on_client_stream_reconnected(
         self, client: ClientObj, streams: list[int]
     ):
-        """Handle client stream reconnection event"""
         await self.event_bus.dispatch(
             event_type=BusEventType.CLIENT_STREAM_RECONNECTED,
             data=ClientStreamReconnectedEvent(client_uid=client.uid, streams=streams),
         )
 
-    # ==================== Utility Methods ====================
-
     def get_event_bus(self) -> AsyncEventBus:
-        """Get the event bus instance"""
         return self.event_bus
 
     def get_stream_handler(self, stream_type: int) -> Optional[object]:
-        """Get a specific stream handler"""
         return self._stream_handlers.get(stream_type)
 
     def get_component(self, component_name: str) -> Optional[object]:
-        """Get a specific component by name"""
         return self._components.get(component_name)
 
     def get_enabled_streams(self, parse: bool = False) -> list[int] | dict[int, bool]:
-        """Get list of enabled stream types"""
         if parse:
             return [k for k, v in self.config.streams_enabled.items() if v]
         return self.config.streams_enabled
 
     def get_active_streams(self) -> list[int]:
-        """Get list of currently active stream types"""
         return list(self._stream_handlers.keys())
 
     async def start_metrics_collection(self):
-        """Start metrics collection"""
         await self._performance_monitor.start()
 
     async def stop_metrics_collection(self):
-        """Stop metrics collection"""
         await self._performance_monitor.stop()

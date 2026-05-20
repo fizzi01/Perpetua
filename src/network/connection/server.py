@@ -619,15 +619,9 @@ class ConnectionHandler(BaseConnectionHandler):
                 )
                 client.additional_params = response.payload.get("additional_params", {})
                 client.ssl = response.payload.get("ssl", False)
-                # Multi-monitor payload: list of MonitorInfo-shaped dicts
-                # off the wire. Convert to :class:`MonitorInfo` once at
-                # ingress so the rest of the pipeline (routing, layout
-                # editor seeding, edge-binding computation) reads
-                # attributes rather than dict keys. Malformed entries
-                # are dropped silently — better to lose one stray
-                # monitor than poison the list. Legacy clients omit the
-                # field; the empty list signals "single monitor =
-                # screen_resolution" downstream.
+                # Parse monitor list once at ingress; malformed entries are
+                # dropped. Legacy clients omit the field — empty list signals
+                # "single monitor = screen_resolution" downstream.
                 raw_monitors = response.payload.get("monitors", [])
                 if isinstance(raw_monitors, list):
                     parsed_monitors: list[MonitorInfo] = []

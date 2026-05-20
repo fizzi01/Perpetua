@@ -33,9 +33,6 @@ class Screen(_base.Screen):
 
     @classmethod
     def get_size(cls) -> tuple[int, int]:
-        """
-        Get the current screen size on Linux (X11 and Wayland).
-        """
         if _IS_WAYLAND:
             return cls._get_size_wayland()
         return cls._get_size_x11()
@@ -77,14 +74,13 @@ class Screen(_base.Screen):
 
     @classmethod
     def _enumerate_monitors(cls) -> "list[MonitorInfo] | None":
-        """Dispatch to X11 / Wayland enumerators."""
         if _IS_WAYLAND:
             return cls._monitors_wayland()
         return cls._monitors_x11()
 
     @classmethod
     def _monitors_x11(cls) -> "list[MonitorInfo] | None":
-        """Use Xinerama (or root-screen fallback) to enumerate monitors."""
+        """Xinerama enumeration with root-screen fallback."""
         try:
             from Xlib import display as xdisplay
             from Xlib.ext import xinerama
@@ -103,14 +99,11 @@ class Screen(_base.Screen):
                                     min_y=int(s.y),
                                     max_x=int(s.x + s.width),
                                     max_y=int(s.y + s.height),
-                                    # Xinerama doesn't expose a primary
-                                    # flag directly; first screen is the
-                                    # conventional primary in most layouts.
+                                    # Xinerama has no primary flag; assume index 0.
                                     is_primary=(idx == 0),
                                 )
                             )
                         return monitors
-                # Fallback: single root screen.
                 screen = d.screen()
                 return [
                     MonitorInfo(
@@ -275,11 +268,8 @@ class Screen(_base.Screen):
 
     @classmethod
     def is_screen_locked(cls) -> bool:
-        """
-        Monitor display sleep/wake events on Linux.
-        """
-        return False  # Placeholder implementation
+        return False
 
     @classmethod
     def hide_icon(cls):
-        pass  # Placeholder implementation
+        pass

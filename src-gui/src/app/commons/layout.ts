@@ -25,22 +25,17 @@ import type {
     MonitorPlacement,
 } from "../api/Interface";
 
-// Mirror of utils.screen._monitor's overlap / routing helpers so the GUI
-// can validate the layout the user is building without a round-trip to
-// the daemon. Kept in lock-step with the Python implementation.
+// Mirrors utils.screen._monitor's overlap/routing helpers - keep in lock-step with the Python side.
 
 export function slotsOverlap(a: LayoutSlot, b: LayoutSlot): boolean {
     if (a.monitor_id !== b.monitor_id || a.edge !== b.edge) return false;
-    // Touching at a single point counts as disjoint so a clean split at
-    // 0.5 between two slots is valid.
+    // Touching at a single point counts as disjoint (clean split at 0.5 is valid).
     return !(a.segment_end <= b.segment_start || b.segment_end <= a.segment_start);
 }
 
 export interface LayoutValidationResult {
     ok: boolean;
     errors: string[];
-    // Maps every offending binding index to the human-readable error so
-    // the editor can highlight rows in place.
     errorsByIndex: Record<number, string[]>;
 }
 
@@ -84,14 +79,9 @@ export function validateLayout(
     return {ok: errors.length === 0, errors, errorsByIndex};
 }
 
-// Geometric helpers used by the visual editor.
-
 export interface CanvasMetrics {
-    // Pixel offset to apply to every monitor's coords so the smallest
-    // (min_x, min_y) sits at (0, 0) inside the canvas.
     offsetX: number;
     offsetY: number;
-    // Scale factor mapping OS pixels to canvas pixels.
     scale: number;
     width: number;
     height: number;
@@ -136,12 +126,10 @@ export function monitorRectInCanvas(
     };
 }
 
-// Picks the closest edge of any monitor to a canvas point (in canvas px).
-// Used during drag to figure out where a client chip is being dropped.
+// Picks the monitor edge closest to a canvas point (canvas px) for drop targeting.
 export interface EdgeHit {
     monitorId: number;
     edge: Edge;
-    // 0..1 normalized position along the edge's secondary axis.
     axisNorm: number;
     distancePx: number;
 }
@@ -178,8 +166,6 @@ export function pickClosestEdge(
             },
         ];
         for (const c of candidates) {
-            // Skip if the secondary axis is outside the monitor (we only
-            // want hits along the actual physical edge length).
             if (c.axisNorm < 0 || c.axisNorm > 1) continue;
             if (best === null || c.dist < best.distancePx) {
                 best = {
@@ -194,9 +180,7 @@ export function pickClosestEdge(
     return best;
 }
 
-// Finds a free segment to drop a new slot into. Returns a [start, end]
-// pair guaranteed to be disjoint from every existing slot on the same
-// (monitor, edge). Returns null if the edge is fully occupied.
+// Free segment disjoint from existing slots on the same (monitor, edge); null if fully occupied.
 export function findFreeSegment(
     bindings: LayoutBinding[],
     monitorId: number,
@@ -211,7 +195,6 @@ export function findFreeSegment(
         .map((b) => [b.slot.segment_start, b.slot.segment_end] as [number, number])
         .sort((a, b) => a[0] - b[0]);
 
-    // Build the list of free gaps along [0, 1].
     const gaps: Array<[number, number]> = [];
     let cursor = 0;
     for (const [s, e] of taken) {
@@ -220,7 +203,6 @@ export function findFreeSegment(
     }
     if (cursor < 1) gaps.push([cursor, 1]);
 
-    // Pick the gap whose middle is closest to the preferred center.
     let best: [number, number] | null = null;
     let bestDist = Infinity;
     for (const [s, e] of gaps) {
@@ -236,13 +218,7 @@ export function findFreeSegment(
 }
 
 
-// ============================================================================
-// Workspace placement helpers (new model).
-// Each monitor — server or client — is a rectangle in a shared virtual
-// workspace. Adjacency replaces the old LEFT/RIGHT/TOP/BOTTOM enum: when
-// a cursor reaches the edge of one rect AND another rect abuts it at
-// that secondary coordinate, the cursor crosses.
-// ============================================================================
+// Workspace placement helpers. Adjacency in a shared virtual workspace replaces the old TOP/BOTTOM/LEFT/RIGHT enum.
 
 export interface Rect {
     x: number;
@@ -273,11 +249,7 @@ export function rectsOverlap(a: Rect, b: Rect): boolean {
     );
 }
 
-/** ``true`` if ``a`` shares an edge with ``b`` (within ``tolerance`` px on
- * the abutting axis) and their orthogonal ranges overlap. Used by the
- * layout editor to prevent client monitors from drifting into empty
- * space — every placement must touch at least one server monitor or
- * another already-placed client. */
+/** True if `a` shares an edge with `b` within `tolerance` and orthogonal ranges overlap. */
 export function rectsAdjacent(a: Rect, b: Rect, tolerance = 2): boolean {
     const aRight = a.x + a.width;
     const aBottom = a.y + a.height;
@@ -297,8 +269,6 @@ export function rectsAdjacent(a: Rect, b: Rect, tolerance = 2): boolean {
     return horizontalAbut || verticalAbut;
 }
 
-/** ``true`` if ``candidate`` is adjacent (in the {@link rectsAdjacent}
- * sense) to at least one rect in ``others``. */
 export function isAdjacentToAny(
     candidate: Rect,
     others: Rect[],
@@ -310,8 +280,6 @@ export function isAdjacentToAny(
     return false;
 }
 
-// Computes the combined bbox of every monitor (server + client placed
-// in the workspace) so the canvas can scale to fit them all.
 export function workspaceBounds(
     serverMonitors: MonitorInfo[],
     placements: MonitorPlacement[],
@@ -330,10 +298,7 @@ export function workspaceBounds(
     return {x: minX, y: minY, width: maxX - minX, height: maxY - minY};
 }
 
-// Snap a candidate rect to nearby monitor edges within `thresholdPx`
-// (interpreted in workspace pixels). Returns the snapped (x, y) for the
-// rect's top-left corner. Prefers edge-flush alignment so the user can
-// place a client monitor exactly touching the server's right edge.
+// Snap top-left to nearby monitor edges within `thresholdPx` (workspace px); prefers flush alignment.
 export function snapRect(
     candidate: Rect,
     others: Rect[],
@@ -345,13 +310,11 @@ export function snapRect(
     let bestDY = thresholdPx;
 
     for (const r of others) {
-        // Horizontal snaps: candidate.left ↔ r.right, candidate.right ↔ r.left,
-        // and left/right alignment (same-X) for stacked layouts.
         const candidates = [
-            {target: r.x + r.width, current: candidate.x},                       // right-of
-            {target: r.x - candidate.width, current: candidate.x},               // left-of
-            {target: r.x, current: candidate.x},                                 // align-left
-            {target: r.x + r.width - candidate.width, current: candidate.x},     // align-right
+            {target: r.x + r.width, current: candidate.x},
+            {target: r.x - candidate.width, current: candidate.x},
+            {target: r.x, current: candidate.x},
+            {target: r.x + r.width - candidate.width, current: candidate.x},
         ];
         for (const c of candidates) {
             const d = Math.abs(c.target - c.current);
@@ -361,7 +324,6 @@ export function snapRect(
             }
         }
 
-        // Vertical snaps mirror the above.
         const vCandidates = [
             {target: r.y + r.height, current: candidate.y},
             {target: r.y - candidate.height, current: candidate.y},
@@ -386,8 +348,7 @@ export interface PlacementValidationResult {
     errors: string[];
 }
 
-// Reject any placement that overlaps a server monitor OR another
-// placement. Server monitors stay fixed; clients orbit around them.
+// Reject placements overlapping a server monitor or another placement.
 export function validatePlacements(
     serverMonitors: MonitorInfo[],
     placements: MonitorPlacement[],
@@ -426,9 +387,7 @@ export function validatePlacements(
     return {ok: errors.length === 0, overlappingIndices: overlapping, errors};
 }
 
-// Default placement for a fresh client monitor: tack it onto the right
-// edge of the workspace at the primary server monitor's Y. Keeps the
-// initial UI un-cluttered; the user can drag from there.
+// Default placement for a fresh client monitor: right edge of the workspace at the primary monitor's Y.
 export function suggestInitialPlacement(
     serverMonitors: MonitorInfo[],
     placements: MonitorPlacement[],

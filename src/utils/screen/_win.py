@@ -20,10 +20,7 @@ from win32api import EnumDisplayMonitors, GetMonitorInfo, GetSystemMetrics
 from . import _base
 from ._monitor import MonitorInfo
 
-# SM_XVIRTUALSCREEN / SM_YVIRTUALSCREEN / SM_CXVIRTUALSCREEN / SM_CYVIRTUALSCREEN
-# are the canonical Win32 way to get the virtual desktop bbox without
-# enumerating monitors. Cheaper than EnumDisplayMonitors when we only need
-# the union rect.
+# Cheaper than EnumDisplayMonitors when only the virtual-desktop union is needed.
 _SM_XVIRTUALSCREEN = 76
 _SM_YVIRTUALSCREEN = 77
 _SM_CXVIRTUALSCREEN = 78
@@ -33,9 +30,6 @@ _SM_CYVIRTUALSCREEN = 79
 class Screen(_base.Screen):
     @classmethod
     def get_size(cls) -> tuple[int, int]:
-        """
-        Returns the size of the primary screen as a tuple (width, height).
-        """
         width = GetSystemMetrics(0)
         height = GetSystemMetrics(1)
         return width, height
@@ -44,13 +38,10 @@ class Screen(_base.Screen):
     _MONITORINFOF_PRIMARY = 0x00000001
 
     @classmethod
+    #todo: Recheck for monitor change
     def _enumerate_monitors(cls) -> "list[MonitorInfo] | None":
-        """Return per-monitor :class:`MonitorInfo` via ``EnumDisplayMonitors``.
-
-        ``GetMonitorInfo`` provides the primary flag and the device name;
-        when it fails (unusual driver) we still return a usable
-        :class:`MonitorInfo` built from the bbox alone.
-        """
+        """Per-monitor MonitorInfo via EnumDisplayMonitors. GetMonitorInfo
+        adds primary flag and device name; fall back to bbox-only on failure."""
         try:
             monitors: list[MonitorInfo] = []
             for idx, (hmon, _hdc, rect) in enumerate(EnumDisplayMonitors()):
@@ -81,13 +72,8 @@ class Screen(_base.Screen):
 
     @classmethod
     def get_virtual_bbox(cls) -> tuple[int, int, int, int]:
-        """
-        Bounding box of the virtual desktop spanning every monitor.
-
-        Uses ``SM_*VIRTUALSCREEN`` metrics first (single syscall); falls
-        back to ``EnumDisplayMonitors`` if those return zero (very old
-        Windows / unusual driver state).
-        """
+        """Virtual-desktop bbox. SM_*VIRTUALSCREEN is one syscall; fall back
+        to EnumDisplayMonitors if those return zero."""
         try:
             x = GetSystemMetrics(_SM_XVIRTUALSCREEN)
             y = GetSystemMetrics(_SM_YVIRTUALSCREEN)
@@ -117,10 +103,7 @@ class Screen(_base.Screen):
 
     @classmethod
     def is_screen_locked(cls) -> bool:
-        """
-        Monitor display sleep/wake events on Windows.
-        """
-        return False  # Placeholder implementation
+        return False
 
     @classmethod
     def hide_icon(cls):

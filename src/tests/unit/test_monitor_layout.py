@@ -14,16 +14,7 @@
 #  You should have received a copy of the GNU General Public License
 #  along with this program.  If not, see <https://www.gnu.org/licenses/>.
 
-"""Unit tests for the monitor / layout model.
-
-Covers the data shapes that feed into of the multi-monitor work:
-
-- :class:`MonitorInfo` + :class:`MonitorLayout` (geometry helpers,
-  neighbour detection in asymmetric arrangements).
-- :class:`LayoutSlot` / :class:`LayoutBinding` (round-trip serialization,
-  overlap semantics).
-- :class:`LayoutValidator` (no-overlap invariant + slot routing).
-"""
+"""Unit tests for the monitor / layout model."""
 
 import pytest
 
@@ -56,26 +47,15 @@ def _mon(
 
 
 class TestMonitorLayoutNeighbors:
-    """Validate the asymmetric-layout bug fix:
-
-    When a secondary monitor sits above a narrower primary AND extends
-    past the primary's X range, the primary monitor's left/right edges
-    are interior to the union bbox. ``has_neighbor_*`` must return
-    False at the primary's outer X edges (no neighbour at the primary's
-    Y range) so the cursor crossing fires correctly.
-    """
-
     def test_asymmetric_layout_primary_has_no_horizontal_neighbour(self):
-        # Upper monitor (wider) placed above the primary (narrower).
+        # Wider monitor above a narrower primary: primary's left/right
+        # are outer at the primary's Y range.
         upper = _mon(monitor_id=1, x=-300, y=-1080, w=2520, h=1080)
         primary = _mon(monitor_id=0, x=0, y=0, w=1920, h=1080, primary=True)
         layout = MonitorLayout(monitors=(primary, upper))
 
-        # On the primary (y in [0, 1080)) the left and right edges of
-        # the primary are outer edges: no neighbour at that Y.
         assert layout.has_neighbor_left(primary, y=500) is False
         assert layout.has_neighbor_right(primary, y=500) is False
-        # The primary's top edge however IS bordered by the upper monitor.
         assert layout.has_neighbor_top(primary, x=960) is True
 
     def test_side_by_side_monitors_have_horizontal_neighbours(self):
@@ -83,22 +63,18 @@ class TestMonitorLayoutNeighbors:
         right = _mon(monitor_id=1, x=1920, y=0, w=1920, h=1080)
         layout = MonitorLayout(monitors=(left, right))
 
-        # Inner edges have neighbours; outer edges don't.
         assert layout.has_neighbor_right(left, y=500) is True
         assert layout.has_neighbor_left(right, y=500) is True
         assert layout.has_neighbor_left(left, y=500) is False
         assert layout.has_neighbor_right(right, y=500) is False
 
     def test_neighbour_check_respects_y_range(self):
-        # Top monitor only covers part of the primary's X range; cursor
-        # below it should still report "no top neighbour" for the
-        # primary because the top monitor doesn't extend to that X.
         primary = _mon(monitor_id=0, x=0, y=0, w=1920, h=1080, primary=True)
         partial_top = _mon(monitor_id=1, x=0, y=-720, w=600, h=720)
         layout = MonitorLayout(monitors=(primary, partial_top))
 
         assert layout.has_neighbor_top(primary, x=300) is True
-        # Past the partial top monitor's right edge: no neighbour.
+        # Past the partial top monitor's right edge.
         assert layout.has_neighbor_top(primary, x=1500) is False
 
 
@@ -140,7 +116,7 @@ class TestLayoutSlot:
         assert a.overlaps(b) is False
 
     def test_overlaps_clean_split_is_disjoint(self):
-        # Touching at a single point counts as disjoint so 0/0.5/1 split works.
+        # Touching at a single point is disjoint so a 0/0.5/1 split works.
         top = LayoutSlot(0, Edge.RIGHT, 0.0, 0.5)
         bottom = LayoutSlot(0, Edge.RIGHT, 0.5, 1.0)
         assert top.overlaps(bottom) is False
@@ -197,12 +173,10 @@ class TestLayoutValidator:
         ok, errors = LayoutValidator().validate(bindings)
         assert ok is False
         assert len(errors) == 1
-        # Both client UIDs surface so a GUI can highlight both rows.
         assert "client-A" in errors[0]
         assert "client-B" in errors[0]
 
     def test_multiple_overlaps_all_reported(self):
-        # Three slots all overlapping on the same edge.
         bindings = [
             LayoutBinding(LayoutSlot(0, Edge.RIGHT, 0.0, 0.8), "client-A"),
             LayoutBinding(LayoutSlot(0, Edge.RIGHT, 0.2, 1.0), "client-B"),
@@ -241,94 +215,59 @@ class TestLayoutValidator:
 
 
 class TestComplexLayouts:
-    """End-to-end checks on richer arrangements: T-shape, L-shape, four
-    monitors, mixed scaling, etc. These exercise neighbour detection +
-    edge routing in the configurations real users will hit."""
-
     def test_t_shape_layout_outer_edges(self):
-        # Three monitors in a T: top center on top of two side-by-side
-        # primary + right monitors.
-        #
-        #          [-- top (id=2) --]
-        #   [--- primary (id=0) ---][--- right (id=1) ---]
-        #
-        # Outer edges (no neighbour at the orthogonal coord):
-        #   primary.left, primary.bottom, primary.top (only where top doesn't cover)
-        #   right.right, right.bottom, right.top (only where top doesn't cover)
-        #   top.top, top.left, top.right
+        # T: top center over primary + right side-by-side.
         primary = _mon(0, 0, 0, 1920, 1080, primary=True)
         right = _mon(1, 1920, 0, 1920, 1080)
         top = _mon(2, 960, -1080, 1920, 1080)
         layout = MonitorLayout(monitors=(primary, right, top))
 
-        # Primary: bottom is outer everywhere.
         assert layout.has_neighbor_bottom(primary, x=100) is False
         assert layout.has_neighbor_bottom(primary, x=1800) is False
-        # Primary: top is covered by `top` only for x in [960, 1920);
-        # below 960 it's an outer top edge.
+        # top covers primary.top only for x in [960, 1920).
         assert layout.has_neighbor_top(primary, x=500) is False
         assert layout.has_neighbor_top(primary, x=1500) is True
-        # Primary: left is outer; right has the `right` monitor as neighbour.
         assert layout.has_neighbor_left(primary, y=500) is False
         assert layout.has_neighbor_right(primary, y=500) is True
 
-        # Top monitor: top/left/right are all outer.
         assert layout.has_neighbor_top(top, x=1500) is False
         assert layout.has_neighbor_left(top, y=-500) is False
         assert layout.has_neighbor_right(top, y=-500) is False
-        # Top monitor's bottom is partially bordered (primary covers
-        # x in [960, 1920), right covers x in [1920, 2880)).
         assert layout.has_neighbor_bottom(top, x=1500) is True
         assert layout.has_neighbor_bottom(top, x=2000) is True
 
     def test_l_shape_layout_has_dead_zone_handled(self):
-        # L-shape: primary at origin, smaller monitor only on top-left.
-        #
-        #   [-- top-left --]
-        #   [---- primary ----]
-        #
-        # The "dead zone" is the top-right area (x in [1280, 1920),
-        # y < 0) — no monitor there. The primary's top is partially
-        # outer.
+        # L-shape: primary + smaller monitor on top-left only. Dead zone
+        # is top-right (no monitor there).
         primary = _mon(0, 0, 0, 1920, 1080, primary=True)
         top_left = _mon(1, 0, -720, 1280, 720)
         layout = MonitorLayout(monitors=(primary, top_left))
 
-        # Primary's top is bordered by top_left only on the left half.
         assert layout.has_neighbor_top(primary, x=500) is True
         assert layout.has_neighbor_top(primary, x=1500) is False
 
-        # find_monitor_at in the dead zone returns None; the edge
-        # detector then snaps to the closest monitor.
+        # Dead zone returns None; edge detector snaps to the closest monitor.
         assert layout.find_monitor_at(1500, -300) is None
-        # Primary still contains its own pixels.
         assert layout.find_monitor_at(960, 500) is primary
 
     def test_four_monitor_2x2_grid(self):
-        # 2x2 grid, all 1920x1080. Each monitor has 2 inner edges (with
-        # neighbours) and 2 outer edges.
         tl = _mon(0, 0, 0, 1920, 1080, primary=True)
         tr = _mon(1, 1920, 0, 1920, 1080)
         bl = _mon(2, 0, 1080, 1920, 1080)
         br = _mon(3, 1920, 1080, 1920, 1080)
         layout = MonitorLayout(monitors=(tl, tr, bl, br))
 
-        # Top-left: top + left outer, right + bottom have neighbours.
         assert layout.has_neighbor_top(tl, x=500) is False
         assert layout.has_neighbor_left(tl, y=500) is False
         assert layout.has_neighbor_right(tl, y=500) is True
         assert layout.has_neighbor_bottom(tl, x=500) is True
 
-        # Bottom-right: bottom + right outer, top + left have neighbours.
         assert layout.has_neighbor_bottom(br, x=2400) is False
         assert layout.has_neighbor_right(br, y=1500) is False
         assert layout.has_neighbor_top(br, x=2400) is True
         assert layout.has_neighbor_left(br, y=1500) is True
 
     def test_complex_layout_full_slot_routing(self):
-        # Three monitors, four clients: top-half right edge of monitor 0
-        # to client-A, bottom-half right edge to client-B, monitor 1's
-        # right edge to client-C, monitor 2 (above) top edge to client-D.
         bindings = [
             LayoutBinding(LayoutSlot(0, Edge.RIGHT, 0.0, 0.5), "client-A"),
             LayoutBinding(LayoutSlot(0, Edge.RIGHT, 0.5, 1.0), "client-B"),
@@ -345,39 +284,27 @@ class TestComplexLayouts:
             assert b is not None, f"no slot for ({monitor_id}, {edge}, {axis_norm})"
             return b.client_uid
 
-        # Top half of m0 right -> client-A
         assert _route(0, Edge.RIGHT, 0.1) == "client-A"
-        # Bottom half of m0 right -> client-B
         assert _route(0, Edge.RIGHT, 0.9) == "client-B"
-        # m1 right is one whole slot -> client-C
         assert _route(1, Edge.RIGHT, 0.3) == "client-C"
-        # m2 top -> client-D
         assert _route(2, Edge.TOP, 0.5) == "client-D"
-        # m1 left has no binding -> None
         assert v.slot_for(bindings, 1, Edge.LEFT, 0.5) is None
 
 
 class TestLayoutReconciliation:
-    """Resiliency contract for the reconnection path: when a client
-    advertises a different monitor list than the one the layout was
-    configured against, bindings that pinned the client to a missing
-    monitor must be surfaced without crashing the routing layer."""
-
     def test_client_disconnects_monitor_drops_pinned_binding(self):
         bindings = [
-            # Pinned binding: client A's monitor #2 is the target.
             LayoutBinding(
                 LayoutSlot(0, Edge.RIGHT, 0.0, 0.5),
                 "client-A",
                 client_monitor_id=2,
             ),
-            # Unpinned (any monitor) binding for same client — survives.
+            # Unpinned binding for the same client must survive.
             LayoutBinding(
                 LayoutSlot(0, Edge.RIGHT, 0.5, 1.0),
                 "client-A",
             ),
         ]
-        # Client reconnects with only monitor 0 and 1 (the #2 is gone).
         result = reconcile_bindings_with_client_monitors(
             bindings, client_uid="client-A", client_monitor_ids=[0, 1]
         )
@@ -391,8 +318,6 @@ class TestLayoutReconciliation:
         assert result.missing_monitor_ids == frozenset({2})
 
     def test_unrelated_client_bindings_are_kept(self):
-        # Bindings for OTHER clients must not be touched by a single
-        # client's reconnection.
         bindings = [
             LayoutBinding(LayoutSlot(0, Edge.RIGHT), "client-A", client_monitor_id=5),
             LayoutBinding(LayoutSlot(0, Edge.LEFT), "client-B", client_monitor_id=99),
@@ -401,7 +326,6 @@ class TestLayoutReconciliation:
             bindings, client_uid="client-A", client_monitor_ids=[0]
         )
 
-        # Client-A's pinned binding is dropped; client-B's is kept.
         assert len(result.dropped) == 1
         assert result.dropped[0].client_uid == "client-A"
         kept_uids = {b.client_uid for b in result.kept}
@@ -420,8 +344,6 @@ class TestLayoutReconciliation:
         assert result.dropped == ()
 
     def test_client_with_no_monitors_drops_all_pinned(self):
-        # Edge case: client reports empty monitor list (legacy / probe).
-        # Every pinned binding for that client gets dropped.
         bindings = [
             LayoutBinding(LayoutSlot(0, Edge.RIGHT), "client-A", client_monitor_id=0),
             LayoutBinding(LayoutSlot(0, Edge.LEFT), "client-A"),
@@ -434,18 +356,6 @@ class TestLayoutReconciliation:
 
 
 class TestComputeEdgeBindings:
-    """The unified runtime contract derived from a client's placements
-    + server's monitor list.
-
-    Each placement that abuts a server monitor on at least one side
-    yields one :class:`EdgeBinding` per touched edge. The
-    ``server_axis_*`` range is normalised over the server monitor's
-    edge length (used by the server listener for forward routing);
-    ``client_axis_*`` is the mirror over the client monitor's edge
-    length (used by the client controller for return-to-server
-    crossings). A single binding therefore drives both directions.
-    """
-
     @staticmethod
     def _placement(client_monitor_id: int, x: int, y: int, w: int, h: int) -> dict:
         return {
@@ -457,8 +367,6 @@ class TestComputeEdgeBindings:
         }
 
     def test_full_right_abutment_produces_full_segment(self):
-        # Server monitor at origin 1920x1080; client monitor flush to
-        # the right, same height -> full [0, 1] segment on both sides.
         server = _mon(0, 0, 0, 1920, 1080, primary=True)
         placement = self._placement(0, 1920, 0, 1280, 1080)
         out = compute_edge_bindings(placement, [server])
@@ -473,16 +381,12 @@ class TestComputeEdgeBindings:
         assert b.client_edge == Edge.LEFT
         assert b.client_axis_start == 0.0
         assert b.client_axis_end == 1.0
-        # Server monitor bounds embedded for client-side absolute
-        # positioning.
         assert (b.server_monitor_min_x, b.server_monitor_min_y) == (0, 0)
         assert (b.server_monitor_max_x, b.server_monitor_max_y) == (1920, 1080)
 
     def test_partial_right_abutment_produces_partial_segment(self):
-        # Client monitor smaller than server, vertically centered:
-        # Y range [200, 920) of server's 1080 -> normalized
-        # ~[0.185, 0.852); the same overlap on the client (height 720)
-        # covers the whole client edge (0..720 / 720).
+        # Client smaller than server, vertically centered: overlap is
+        # [200, 920) on server's 1080, the full 720 on the client side.
         server = _mon(0, 0, 0, 1920, 1080)
         placement = self._placement(0, 1920, 200, 1280, 720)
         out = compute_edge_bindings(placement, [server])
@@ -496,10 +400,7 @@ class TestComputeEdgeBindings:
         assert b.client_axis_end == pytest.approx(1.0)
 
     def test_top_abutment_uses_x_axis(self):
-        # Client monitor sitting on top of the server: TOP edge,
-        # axis range normalized over the server's WIDTH.
         server = _mon(0, 0, 0, 1920, 1080)
-        # Client 1280x720 placed flush above the server at x=320.
         placement = self._placement(0, 320, -720, 1280, 720)
         out = compute_edge_bindings(placement, [server])
         assert len(out) == 1
@@ -512,14 +413,13 @@ class TestComputeEdgeBindings:
         assert b.client_axis_end == pytest.approx(1.0)
 
     def test_no_binding_when_separated_by_gap(self):
-        # 100 px gap on the right -> no abutment.
         server = _mon(0, 0, 0, 1920, 1080)
         placement = self._placement(0, 2020, 0, 1280, 1080)
         assert compute_edge_bindings(placement, [server]) == []
 
     def test_pixel_tolerance_allows_one_pixel_gap(self):
-        # 1-pixel gap is still considered an abutment so GUI rounding
-        # doesn't silently disconnect adjacent boxes.
+        # 1-pixel gap still counts so GUI rounding doesn't silently
+        # disconnect adjacent boxes.
         server = _mon(0, 0, 0, 1920, 1080)
         placement = self._placement(0, 1921, 0, 1280, 1080)
         out = compute_edge_bindings(placement, [server])
@@ -527,15 +427,12 @@ class TestComputeEdgeBindings:
         assert out[0].server_edge == Edge.RIGHT
 
     def test_corner_straddle_produces_two_bindings(self):
-        # Client monitor wraps the right+bottom corner of a server
-        # monitor: it abuts on RIGHT and on TOP of the lower-right
-        # server monitor at the same time.
+        # Client wraps the right+bottom corner of `upper` and abuts the
+        # top of `lower_right` simultaneously.
         upper = _mon(0, 0, 0, 1920, 1080)
         lower_right = _mon(1, 1920, 1080, 1920, 1080)
-        # Placement sits at (1920, 1080) flush against both.
         placement = self._placement(0, 1920, 540, 1280, 540)
         out = compute_edge_bindings(placement, [upper, lower_right])
-        # Two bindings: right of `upper` and top of `lower_right`.
         edges = sorted((b.server_monitor_id, b.server_edge.value) for b in out)
         assert (0, "right") in edges
         assert (1, "top") in edges
@@ -546,8 +443,6 @@ class TestComputeEdgeBindings:
         assert compute_edge_bindings(placement, [server]) == []
 
     def test_edge_binding_contains_server_axis_half_open(self):
-        # Half-open server_axis range so split boundaries route
-        # deterministically.
         b = compute_edge_bindings(
             self._placement(0, 1920, 0, 1280, 540),
             [_mon(0, 0, 0, 1920, 1080)],
@@ -556,8 +451,6 @@ class TestComputeEdgeBindings:
         assert b.contains_server_axis(b.server_axis_end) is False
 
     def test_edge_binding_axis_mapping_inverts(self):
-        # The forward/reverse axis maps are exact inverses by
-        # construction — round-trip a few sample points.
         b = compute_edge_bindings(
             self._placement(0, 1920, 200, 1280, 720),
             [_mon(0, 0, 0, 1920, 1080)],
@@ -572,8 +465,6 @@ class TestComputeEdgeBindings:
             [_mon(3, 0, 0, 1920, 1080)],
         )[0]
         d = b.to_dict()
-        # Keys present on both sides — the client reads ``client_*``,
-        # the server reads ``server_*``, both off the same dict.
         for k in (
             "server_monitor_id",
             "server_edge",
@@ -594,9 +485,6 @@ class TestComputeEdgeBindings:
 
 
 class TestClientObjPlacements:
-    """``ClientObj.placements`` round-trip + ``get_edge_bindings``
-    bridge into the runtime data model."""
-
     def _make_client(self, placements):
         from model.client import ClientObj
 
@@ -642,22 +530,14 @@ class TestClientObjPlacements:
         assert bindings[0].client_monitor_id == 0
 
     def test_get_edge_bindings_empty_when_no_placements(self):
-        # Default screen_position is CENTER → no synthetic placement,
-        # no bindings. Pre-layout clients with a legacy direction get a
-        # synthetic placement instead (see the tests below).
+        # Default screen_position is CENTER: no synthetic placement, no
+        # bindings. Legacy directional clients get one via the tests below.
         c = self._make_client([])
         server_monitors = [_mon(0, 0, 0, 1920, 1080)]
         assert c.get_edge_bindings(server_monitors) == []
 
 
 class TestEffectivePlacementSynthesis:
-    """Pre-layout clients should still cross-screen via the unified
-    bindings: ``get_effective_placements`` synthesizes a 1:1 placement
-    next to the server's primary monitor on the side indicated by the
-    legacy ``screen_position``. This replaces the old parallel
-    ScreenPosition routing path on the mouse listener.
-    """
-
     def _make_client(self, screen_position, monitors=None):
         from model.client import ClientObj
 
@@ -678,10 +558,8 @@ class TestEffectivePlacementSynthesis:
         c = self._make_client("right")
         ps = c.get_effective_placements([server])
         assert len(ps) == 1
-        # Flush against the server's right edge at the same Y origin.
         assert ps[0]["workspace_x"] == 1920
         assert ps[0]["workspace_y"] == 0
-        # The resulting binding covers the server's RIGHT edge fully.
         bindings = c.get_edge_bindings([server])
         assert len(bindings) == 1
         assert bindings[0].server_edge == Edge.RIGHT
@@ -710,8 +588,7 @@ class TestEffectivePlacementSynthesis:
         assert ps[0]["workspace_y"] == 1080
 
     def test_synthesis_uses_client_primary_monitor_dims(self):
-        # When the client advertises monitor info we mirror its
-        # primary's dimensions so denormalisation stays accurate.
+        # Mirror the client's primary so denormalisation stays accurate.
         server = _mon(0, 0, 0, 1920, 1080, primary=True)
         client_mon = _mon(7, 0, 0, 1280, 720, primary=True)
         c = self._make_client("right", monitors=[client_mon])
@@ -721,8 +598,7 @@ class TestEffectivePlacementSynthesis:
         assert ps[0]["height"] == 720
 
     def test_real_placements_take_precedence_over_screen_position(self):
-        # If both placements AND screen_position are set, placements win:
-        # the editor's explicit layout is the source of truth.
+        # Explicit placements win over the legacy screen_position.
         server = _mon(0, 0, 0, 1920, 1080, primary=True)
         c = self._make_client("right")
         c.placements = [
@@ -740,9 +616,8 @@ class TestEffectivePlacementSynthesis:
 
 class TestEffectivePlacementsAutoDerivation:
     """Auto-derivation of placements for client monitors the admin
-    didn't position explicitly. The workspace inherits the client's
-    OS-level adjacency by default; admins override by placing both
-    monitors explicitly.
+    didn't position explicitly: workspace inherits the OS adjacency by
+    default; explicit placements override it.
     """
 
     def _make_client(self, placements, monitors, screen_position="center"):
@@ -758,11 +633,8 @@ class TestEffectivePlacementsAutoDerivation:
         )
 
     def test_unplaced_monitor_is_auto_derived_from_os_offset(self):
-        # Client has primary (0..1920, 0..1080) and secondary stacked
-        # vertically BELOW (0..1920, 1080..2160). Admin places only
-        # the primary flush against the server's right edge. Auto-
-        # derivation should reproduce the OS offset in workspace
-        # coords so the secondary sits 1080 px below the primary.
+        # Admin placed only the primary. The secondary's OS offset
+        # (1080 px below) must carry over into workspace coords.
         primary = MonitorInfo(
             monitor_id=0, min_x=0, min_y=0, max_x=1920, max_y=1080, is_primary=True
         )
@@ -788,9 +660,7 @@ class TestEffectivePlacementsAutoDerivation:
         assert derived["height"] == 1080
 
     def test_all_monitors_placed_explicitly_no_derivation(self):
-        # Admin overrode the OS topology by placing both monitors
-        # explicitly. Derivation must NOT touch them — the workspace
-        # encodes the admin's intent, not the OS layout.
+        # Both monitors placed explicitly - derivation must not touch them.
         primary = MonitorInfo(
             monitor_id=0, min_x=0, min_y=0, max_x=1920, max_y=1080, is_primary=True
         )
@@ -805,8 +675,7 @@ class TestEffectivePlacementsAutoDerivation:
                 "width": 1920,
                 "height": 1080,
             },
-            # Secondary placed FAR away (separated from primary), not
-            # adjacent in workspace.
+            # Secondary placed FAR from primary (not adjacent in workspace).
             {
                 "client_monitor_id": 1,
                 "workspace_x": -1920,
@@ -820,10 +689,8 @@ class TestEffectivePlacementsAutoDerivation:
         assert ps == explicit
 
     def test_legacy_screen_position_derives_secondary(self):
-        # Pre-layout client: no explicit placements, just legacy
-        # screen_position="right". The synthesized primary placement
-        # acts as anchor; the secondary monitor is derived from OS
-        # offset against the synthesized one.
+        # Pre-layout client (only screen_position set). The synthesized
+        # primary placement anchors the OS-offset derivation.
         primary = MonitorInfo(
             monitor_id=0, min_x=0, min_y=0, max_x=1920, max_y=1080, is_primary=True
         )
@@ -837,12 +704,6 @@ class TestEffectivePlacementsAutoDerivation:
 
 
 class TestComputeIntraClientBindings:
-    """Cross-monitor warp bindings within a single client. Mirror of
-    :class:`TestComputeEdgeBindings` but for the client↔client case
-    that lets the client controller enforce the workspace topology
-    over OS-level adjacency.
-    """
-
     @staticmethod
     def _placement(client_monitor_id: int, x: int, y: int, w: int, h: int) -> dict:
         return {
@@ -864,9 +725,7 @@ class TestComputeIntraClientBindings:
         )
 
     def test_vertical_stack_produces_two_bindings(self):
-        # Primary above, secondary below (OS-style stacked layout
-        # mirrored on the workspace by auto-derivation). Two bindings:
-        # primary.BOTTOM → secondary.TOP and secondary.TOP → primary.BOTTOM.
+        # primary.BOTTOM <-> secondary.TOP, both directions.
         bindings = compute_intra_client_bindings(
             [
                 self._placement(0, 1920, 0, 1920, 1080),
@@ -876,8 +735,6 @@ class TestComputeIntraClientBindings:
         pairs = {(b["src_edge"], b["dst_edge"]) for b in bindings}
         assert ("bottom", "top") in pairs
         assert ("top", "bottom") in pairs
-        # Full overlap on the X axis: full [0, 1] segment on both
-        # sides.
         for b in bindings:
             assert b["src_axis_start"] == 0.0
             assert b["src_axis_end"] == 1.0
@@ -885,9 +742,7 @@ class TestComputeIntraClientBindings:
             assert b["dst_axis_end"] == 1.0
 
     def test_separated_placements_produce_no_bindings(self):
-        # Admin separates the two client monitors in the workspace:
-        # they don't abut, so the cursor must NOT pass between them.
-        # No bindings = void edges on both sides ⇒ client clamps.
+        # Non-adjacent placements -> void edges, client clamps.
         assert (
             compute_intra_client_bindings(
                 [
@@ -899,15 +754,13 @@ class TestComputeIntraClientBindings:
         )
 
     def test_partial_horizontal_overlap_clips_axis(self):
-        # primary (1920x1080) and secondary (1920x720) below it,
-        # offset right by 200. Overlap on x in [200, 1920] only.
+        # Secondary offset right by 200: overlap on x in [200, 1920].
         bindings = compute_intra_client_bindings(
             [
                 self._placement(0, 0, 0, 1920, 1080),
                 self._placement(1, 200, 1080, 1920, 720),
             ]
         )
-        # src=0 BOTTOM → dst=1 TOP
         b = next(
             b
             for b in bindings
@@ -915,14 +768,11 @@ class TestComputeIntraClientBindings:
         )
         assert b["src_axis_start"] == pytest.approx(200 / 1920)
         assert b["src_axis_end"] == pytest.approx(1.0)
-        # Mirror entry on the secondary side: clip start at 0 of its
-        # own width (relative axis).
         assert b["dst_axis_start"] == pytest.approx(0.0)
         assert b["dst_axis_end"] == pytest.approx((1920 - 200) / 1920)
 
     def test_pixel_tolerance_allows_small_gap(self):
-        # 1 px workspace gap still counts as abutment so GUI rounding
-        # doesn't silently sever the warp path.
+        # 1 px gap still counts so GUI rounding doesn't sever the warp.
         bindings = compute_intra_client_bindings(
             [
                 self._placement(0, 0, 0, 1920, 1080),

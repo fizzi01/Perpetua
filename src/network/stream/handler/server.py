@@ -99,12 +99,7 @@ class UnidirectionalStreamHandler(_ServerStreamHandler):
                 self._clear_buffer()
 
     async def _on_active_screen_changed(self, data: Optional[ActiveScreenChangedEvent]):
-        """
-        Async event handler for when the active screen changes.
-
-        ``data.active_screen`` now carries the active client's UID (or
-        ``None`` for the server).
-        """
+        # data.active_screen carries the active client's UID, or None for server.
         if data is None:
             return
 
@@ -250,12 +245,7 @@ class BidirectionalStreamHandler(_ServerStreamHandler):
                 self._clear_buffer()
 
     async def _on_active_screen_changed(self, data: Optional[ActiveScreenChangedEvent]):
-        """
-        Async event handler for when the active screen changes.
-
-        ``data.active_screen`` carries the active client's UID (or
-        ``None`` for the server).
-        """
+        # data.active_screen carries the active client's UID, or None for server.
         if data is None:
             return
 
@@ -462,12 +452,7 @@ class MulticastStreamHandler(_ServerStreamHandler):
                 self._clear_buffer()
 
     async def _on_active_screen_changed(self, data: Optional[ActiveScreenChangedEvent]):
-        """
-        Async event handler for when the active screen changes.
-
-        ``data.active_screen`` carries the active client's UID (or
-        ``None`` for the server).
-        """
+        # data.active_screen carries the active client's UID, or None for server.
         if data is None:
             return
 

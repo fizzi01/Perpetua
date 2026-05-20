@@ -23,71 +23,40 @@ from typing import Optional, Self, TYPE_CHECKING
 from network.protocol.message import ProtocolMessage, MessageType
 
 if TYPE_CHECKING:
-    # ``ScreenEdge`` lives in ``input.utils`` — keep the runtime import
-    # out of this module to preserve the event-layer / input-layer
-    # separation. ``TYPE_CHECKING`` makes the symbol available to
-    # mypy / ty / ``get_type_hints`` while staying ABSENT at runtime;
-    # the field carries a real ``ScreenEdge`` instance assigned by the
-    # listener, which is all the runtime cares about.
+    # Keep ``ScreenEdge`` out of the runtime import graph to preserve
+    # the event-layer / input-layer separation.
     from input.utils import ScreenEdge
 
 
 class BusEventType(IntEnum):
-    """
-    Events type to subscribe to and dispatch.
+    """Events to subscribe to and dispatch on the bus."""
 
-    Events:
-    - ACTIVE_SCREEN_CHANGED: Dispatched when the active screen changes.
-    - SCREEN_CHANGE_GUARD: Internal event to notify the cursor guard about screen changes.
-
-    - CLIENT_CONNECTED: Dispatched when a new client connects.
-    - CLIENT_DISCONNECTED: Dispatched when a client disconnects.
-    - CLIENT_ACTIVE: Dispatched when the client becomes active.
-    - CLIENT_INACTIVE: Dispatched when the client becomes inactive.
-    """
-
-    # Both uses ActiveScreenChangedEvent as data
-    ACTIVE_SCREEN_CHANGED = (
-        1  # Dispatched when the active screen effectively changes (after guard check)
-    )
-    SCREEN_CHANGE_GUARD = (
-        6  # Internal event to notify the cursor guard about screen changes
-    )
+    ACTIVE_SCREEN_CHANGED = 1
+    SCREEN_CHANGE_GUARD = 6
 
     CLIENT_CONNECTED = 4
     CLIENT_DISCONNECTED = 5
 
-    # Client only events
     CLIENT_ACTIVE = 2
     CLIENT_INACTIVE = 3
 
-    CLIENT_STREAM_RECONNECTED = 7  # Dispatched when a client stream reconnects
+    CLIENT_STREAM_RECONNECTED = 7
 
-    # Spatial routing via hotkeys
     SCREEN_SWITCH_DIRECTIONAL_REQUEST = 10
     SCREEN_SWITCH_CYCLE_REQUEST = 11
 
     # Dispatched when a client's workspace placements change at runtime
-    # (e.g. the GUI saves a new layout via SetClientLayout). Lets the
-    # mouse listener refresh its cached EdgeBindings without forcing the
-    # client to reconnect.
+    # (e.g. the GUI saves a new layout). Lets the listener refresh its
+    # cached EdgeBindings without forcing the client to reconnect.
     CLIENT_LAYOUT_UPDATED = 8
 
     # Dispatched on the CLIENT side when the server pushes a fresh
-    # topology (reverse edge bindings + server bbox). Used by the
-    # client mouse controller to resolve return-to-server crossings
-    # spatially instead of via the legacy ScreenPosition enum.
+    # topology (reverse edge bindings + server bbox).
     CLIENT_TOPOLOGY_UPDATED = 9
 
 
 class BusEvent(ABC):
-    """
-    Base class for events dispatched on the EventBus.
-
-    ``__slots__ = ()`` on the base lets concrete subclasses opt into real
-    slot-based instances (no per-event ``__dict__`` allocation) without
-    fighting the ABC metaclass.
-    """
+    """Base class for events dispatched on the EventBus."""
 
     __slots__ = ()
 
@@ -96,9 +65,7 @@ class BusEvent(ABC):
 
 
 class ClientStreamReconnectedEvent(BusEvent):
-    """
-    Event dispatched when a client stream reconnects.
-    """
+    """Event dispatched when a client stream reconnects."""
 
     def __init__(self, client_uid: str, streams: list[int]):
         self.client_uid = client_uid
@@ -109,13 +76,10 @@ class ClientStreamReconnectedEvent(BusEvent):
 
 
 class ActiveScreenChangedEvent(BusEvent):
-    """
-    Event dispatched when the active client changes.
+    """Event dispatched when the active client changes.
 
-    ``active_screen`` now carries the active client's **UID** (or
-    ``None`` to mean "back to server"). The field name is preserved
-    for historical reasons but its contract changed in the UID-routing
-    migration — never set it to a ``ScreenPosition`` string.
+    ``active_screen`` carries the active client's UID, or ``None`` for
+    "back to server". Never set it to a ``ScreenPosition`` string.
     """
 
     def __init__(
@@ -124,17 +88,6 @@ class ActiveScreenChangedEvent(BusEvent):
         source: str = "",
         position: tuple[float, float] = (-1, -1),
     ):
-        """
-        Represents a change in the active client.
-
-        Args:
-            active_screen: Optional[str]
-                UID of the active client; ``None`` means "back to server".
-            source: str, optional
-                Source information related to the object. Defaults to an empty string.
-            position: tuple[float, float], optional
-                A tuple defining the x and y coordinates of the object. Defaults to (-1.0, -1.0).
-        """
         self.active_screen = active_screen
         self.client = source
         self.x = position[0]
@@ -150,26 +103,20 @@ class ActiveScreenChangedEvent(BusEvent):
 
 
 class ScreenSwitchDirectionalRequestEvent(BusEvent):
-    """
-    Dispatched when the user presses a directional spatial hotkey.
-    The handling listener should intercept this and resolve the correct adjacent screen.
-    """
+    """Dispatched when the user presses a directional spatial hotkey."""
 
     def __init__(self, edge: "ScreenEdge"):
         super().__init__()
         self.edge = edge
 
     def to_dict(self) -> dict:
-        # ``edge`` is an ``input.utils.ScreenEdge`` enum at runtime;
         # ``.name`` keeps the payload bus-instrumentation friendly
         # without leaking the enum type across the layer boundary.
         return {"edge": getattr(self.edge, "name", str(self.edge))}
 
 
 class ScreenSwitchCycleRequestEvent(BusEvent):
-    """
-    Dispatched when the user presses the screen cycle hotkey.
-    """
+    """Dispatched when the user presses the screen cycle hotkey."""
 
     def __init__(self, direction: int):
         super().__init__()
@@ -180,22 +127,14 @@ class ScreenSwitchCycleRequestEvent(BusEvent):
 
 
 class ClientConnectedEvent(BusEvent):
-    """
-    Event dispatched when a new client connects.
-
-    ``client_uid`` is the client's stable identifier (mirrored from
-    :attr:`model.client.ClientObj.uid`) and is the routing key used by
-    the mouse listener, stream handlers, and cursor worker.
+    """Event dispatched when a new client connects.
 
     ``edge_bindings`` carries the spatial cross-screen contract derived
     from the client's effective placements (real or synthesized from
-    the legacy ``screen_position``) and the server's monitor list. Each
-    entry is a serialized :class:`utils.screen.EdgeBinding` and carries
-    both server-side and client-side axis info — the same record drives
-    forward routing on the server AND return-to-server routing on the
-    client (pushed via the ``CLIENT_TOPOLOGY`` command). Empty only
-    when the client has no placement and no legacy position to anchor
-    to (e.g. ``screen_position == "center"``).
+    the legacy ``screen_position``) and the server's monitor list. The
+    same record drives forward routing on the server AND return-to-
+    server routing on the client (pushed via the ``CLIENT_TOPOLOGY``
+    command).
     """
 
     def __init__(
@@ -208,11 +147,6 @@ class ClientConnectedEvent(BusEvent):
         self.client_uid = client_uid
         self.streams = streams
         self.edge_bindings: list[dict] = list(edge_bindings) if edge_bindings else []
-        # Intra-client warp bindings produced by
-        # :func:`utils.screen.compute_intra_client_bindings`. The client
-        # mouse controller uses these (together with ``edge_bindings``)
-        # to enforce the workspace topology over the OS-level adjacency
-        # of its physical monitors.
         self.intra_client_bindings: list[dict] = (
             list(intra_client_bindings) if intra_client_bindings else []
         )
@@ -227,19 +161,17 @@ class ClientConnectedEvent(BusEvent):
 
 
 class ClientDisconnectedEvent(ClientConnectedEvent):
-    """
-    Event dispatched when a client disconnects.
-    """
+    """Event dispatched when a client disconnects."""
 
     pass
 
 
 class ClientTopologyUpdatedEvent(BusEvent):
-    """Dispatched on the CLIENT after the server pushes a topology
-    update. Carries the unified edge bindings (the client reads the
-    ``client_*`` fields of each entry) plus the server's virtual bbox
-    so the client can normalize the return-to-server cursor position
-    over it.
+    """Dispatched on the CLIENT after the server pushes a topology update.
+
+    Carries the unified edge bindings (the client reads the ``client_*``
+    fields of each entry) plus the server's virtual bbox so the client
+    can normalize the return-to-server cursor position over it.
     """
 
     def __init__(
@@ -250,9 +182,6 @@ class ClientTopologyUpdatedEvent(BusEvent):
     ):
         self.edge_bindings: list[dict] = list(edge_bindings) if edge_bindings else []
         self.server_bbox = server_bbox
-        # Mirror of :class:`ClientConnectedEvent`'s field: the client
-        # rebuilds its workspace-topology cache (cross-screen + intra-
-        # client) from both lists on every push.
         self.intra_client_bindings: list[dict] = (
             list(intra_client_bindings) if intra_client_bindings else []
         )
@@ -266,11 +195,10 @@ class ClientTopologyUpdatedEvent(BusEvent):
 
 
 class ClientLayoutUpdatedEvent(BusEvent):
-    """Dispatched when a client's workspace placements are mutated at
-    runtime (typically from the GUI's layout editor). Carries the
-    refreshed serialized EdgeBindings so the mouse listener can hot-swap
-    its routing cache (and push the new topology to the client) without
-    forcing it to disconnect.
+    """Dispatched when a client's workspace placements change at runtime.
+
+    Carries refreshed serialized EdgeBindings so the mouse listener can
+    hot-swap its routing cache without forcing a reconnect.
     """
 
     def __init__(
@@ -294,28 +222,15 @@ class ClientLayoutUpdatedEvent(BusEvent):
 
 
 class ClientActiveEvent(BusEvent):
-    """
-    Event dispatched on the CLIENT side when the server activates it.
+    """Event dispatched on the CLIENT side when the server activates it.
 
-    ``client_uid`` is the client's own UID (echoed by the server, used
-    for log correlation on the client side).
-
-    ``client_monitor_id`` (optional) tells the receiving client which of
-    its own monitors the server's cursor crossed into. When set, the
-    client mouse controller denormalizes incoming positions against
-    that monitor's bbox instead of the full virtual desktop, so the
-    cursor lands on the right physical screen on multi-monitor clients.
-
-    ``position_x`` / ``position_y`` (optional, normalised in ``[0, 1]``
-    against the target monitor's bbox) carry the landing coordinates
-    INSIDE the same packet that flips ``_is_active`` on the client.
-    Without them the server has to send a separate ``POSITION_ACTION``
-    on the mouse stream, which can race with this activation event
-    (the two streams are independent) and get dropped by the client's
-    ``not _is_active`` gate — landing the cursor at its previous
-    position (typically the screen centre from the prior session)
-    instead of the abutment point. ``-1`` means "no explicit landing
-    requested" (legacy / hotkey path).
+    ``client_monitor_id`` (optional) selects which of the client's own
+    monitors the cursor lands on. ``position_x`` / ``position_y`` carry
+    landing coords on the SAME packet that flips ``_is_active``, so they
+    can't race the activation against a parallel ``POSITION_ACTION`` on
+    the mouse stream (which would get dropped by the ``_is_active``
+    gate and leave the cursor at the previous session's position).
+    ``-1`` means "no explicit landing requested" (legacy / hotkey path).
     """
 
     def __init__(
@@ -340,13 +255,7 @@ class ClientActiveEvent(BusEvent):
 
 
 class Event(ABC):
-    """
-    Base event class.
-
-    ``__slots__ = ()`` lets concrete subclasses (e.g. :class:`MouseEvent`)
-    opt into real slot-based instances — no per-event ``__dict__`` alloc on
-    a hot path that creates 1000s of events per second under heavy mouse use.
-    """
+    """Base event class. Slot-based so subclasses can avoid per-instance dicts."""
 
     __slots__ = ()
 
@@ -355,10 +264,9 @@ class Event(ABC):
 
 
 class MouseEvent(Event):
-    """
-    Mouse event data structure.
+    """Mouse event data structure.
 
-    Slot-based: each event is the hottest allocation in the project (one per
+    Slot-based: this is the hottest allocation in the project (one per
     mouse move on a fast pointer = thousands per second).
     """
 
@@ -390,7 +298,6 @@ class MouseEvent(Event):
         self.is_pressed = is_presed
         self.timestamp = time()
 
-    # When passing mouse event data as function parameter it should be converted to dictionary
     def to_dict(self) -> dict:
         return {
             "x": self.x,
@@ -404,12 +311,7 @@ class MouseEvent(Event):
 
 
 class KeyboardEvent(Event):
-    """
-    Keyboard event data structure.
-
-    Slot-based for the same reason as :class:`MouseEvent`: high allocation
-    rate when keys are held / repeated.
-    """
+    """Keyboard event data structure. Slot-based; allocated on every key event."""
 
     __slots__ = ("key", "action", "timestamp")
 
@@ -426,9 +328,7 @@ class KeyboardEvent(Event):
 
 
 class CommandEvent(Event):
-    """
-    Command event data structure.
-    """
+    """Command event data structure."""
 
     CROSS_SCREEN = "cross_screen"
     FORCE_SCREEN_CHANGE = "force_screen_change"
@@ -458,13 +358,11 @@ class CommandEvent(Event):
 
 
 class CrossScreenCommandEvent(CommandEvent):
-    """
-    Cross screen command event data structure.
+    """Cross-screen command event.
 
-    ``client_monitor_id`` carries the target monitor on the receiving
-    client when the server's spatial routing has matched an
-    :class:`EdgeBinding`. ``None`` falls back to the client's virtual
-    desktop bbox (legacy single-monitor behaviour).
+    ``client_monitor_id`` selects the target monitor on the receiving
+    client when spatial routing matched an EdgeBinding; ``None`` falls
+    back to the client's virtual desktop bbox.
     """
 
     def __init__(
@@ -516,16 +414,12 @@ class CrossScreenCommandEvent(CommandEvent):
 
 
 class ClientTopologyCommandEvent(CommandEvent):
-    """Command event sent from server to client to push a fresh
-    topology. The client's :class:`command.CommandHandler` translates
-    this into a :class:`ClientTopologyUpdatedEvent` on the bus, which
-    the mouse controller listens to.
+    """Pushes a fresh topology from server to client.
 
-    ``edge_bindings`` is a list of :class:`utils.screen.EdgeBinding`
-    dicts — the client reads the ``client_*`` fields to find the local
-    edge / axis range that returns to the server. ``server_bbox`` is
-    a 4-tuple ``(min_x, min_y, max_x, max_y)`` of the server's virtual
-    desktop, used to normalise the return-to-server cursor position.
+    The client's CommandHandler turns this into a
+    :class:`ClientTopologyUpdatedEvent` on the bus. ``edge_bindings``
+    is a list of :class:`utils.screen.EdgeBinding` dicts; ``server_bbox``
+    is a 4-tuple used to normalise return-to-server cursor positions.
     """
 
     def __init__(
@@ -587,9 +481,7 @@ class ClientTopologyCommandEvent(CommandEvent):
 
 
 class ForceScreenChangeCommandEvent(CommandEvent):
-    """
-    Force screen change command event data structure.
-    """
+    """Force screen change command event."""
 
     def __init__(self, source: str = "", target: str = ""):
         super().__init__(
@@ -611,9 +503,7 @@ class ForceScreenChangeCommandEvent(CommandEvent):
 
 
 class KeyboardStateSyncCommandEvent(CommandEvent):
-    """
-    Keyboard state sync command event data structure.
-    """
+    """Keyboard state sync command event."""
 
     def __init__(
         self,
@@ -647,21 +537,17 @@ class KeyboardStateSyncCommandEvent(CommandEvent):
 
 
 class ScreenEvent(Event):
-    """
-    Screen event data structure.
-    """
+    """Screen event data structure."""
 
     def __init__(self, data: dict):
-        self.data = data  # It should contain information about client cursor position
+        self.data = data
 
     def to_dict(self) -> dict:
         return {"data": self.data}
 
 
 class ClipboardEvent(Event):
-    """
-    Clipboard event data structure.
-    """
+    """Clipboard event data structure."""
 
     def __init__(self, content: str | None, content_type: str = "text"):
         self.content = content
@@ -673,9 +559,7 @@ class ClipboardEvent(Event):
 
 
 class EventMapper:
-    """
-    Maps protocol messages to event objects.
-    """
+    """Maps protocol messages to event objects."""
 
     @staticmethod
     def get_event(message: ProtocolMessage) -> Optional[Event]:
