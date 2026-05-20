@@ -44,7 +44,11 @@ from event.notification import (
     ServerChoiceNeededEvent,
     ServiceErrorEvent,
 )
-from event import BusEventType, ClientStreamReconnectedEvent, CommandEvent
+from event import (
+    BusEventType,
+    ClientMonitorsUpdateCommandEvent,
+    ClientStreamReconnectedEvent,
+)
 from network.connection.client import ConnectionHandler
 from network.stream.handler.client import (
     UnidirectionalStreamHandler,
@@ -931,22 +935,29 @@ class Client:
     async def _push_monitor_update(self, monitors) -> bool:
         """Send the current monitor list to the server over the command stream.
 
-        Bypasses the BidirectionalStreamHandler's ``active_only`` gate
-        by talking to the underlying msg_exchange directly: the server
-        needs the new layout even (especially) when the cursor is still
-        on the server, because the next cross-screen crossing will read
-        from the cached topology.
+        Goes through the standard ``command_stream.send`` queue so the
+        message rides the same path as every other client→server command
+        (CROSS_SCREEN, FORCE_SCREEN_CHANGE). The COMMAND stream is no
+        longer ``active_only`` on the client, so the queue drains while
+        the cursor is on the server too.
         """
         command_stream = self._stream_handlers.get(StreamType.COMMAND)
         if command_stream is None:
-            return False
-        msg_exchange = getattr(command_stream, "msg_exchange", None)
-        if msg_exchange is None:
+            self._logger.warning(
+                "Cannot push monitor update: command stream not initialized"
+            )
             return False
 
-        client_uid = self.main_client.uid if self.main_client else ""
+        client_uid = (
+            (self.main_client.uid if self.main_client else "")
+            or self.config.get_uid()
+            or ""
+        )
         if not client_uid:
-            client_uid = self.config.get_uid() or ""
+            self._logger.warning(
+                "Cannot push monitor update: client uid not assigned yet"
+            )
+            return False
 
         screen_position = ""
         if self.main_client is not None:
@@ -960,20 +971,22 @@ class Client:
         except Exception:
             payload_monitors = []
 
+        event = ClientMonitorsUpdateCommandEvent(
+            source=screen_position,
+            target="server",
+            client_uid=client_uid,
+            monitors=payload_monitors,
+        )
+
         try:
-            await msg_exchange.send_command_message(
-                command=CommandEvent.CLIENT_MONITORS_UPDATE,
-                params={
-                    "client_uid": client_uid,
-                    "monitors": payload_monitors,
-                },
-                source=screen_position,
-                target="server",
+            await command_stream.send(event)
+            self._logger.info(
+                f"Pushed monitor update to server: {len(payload_monitors)} monitor(s)"
             )
             return True
         except Exception as e:
             self._logger.warning(
-                f"Failed to push client monitor update ({e})"
+                f"Failed to enqueue client monitor update ({e})"
             )
             return False
 
@@ -1003,10 +1016,16 @@ class Client:
                 signature = self._monitors_signature(monitors)
                 if signature == self._known_monitors_signature:
                     continue
+                prev_count = (
+                    len(self._known_monitors_signature)
+                    if self._known_monitors_signature is not None
+                    else 0
+                )
                 self._known_monitors_signature = signature
                 self._logger.info(
-                    f"Client monitor topology changed: "
-                    f"{len(monitors)} monitor(s) now connected"
+                    f"Client monitor topology changed "
+                    f"({prev_count} -> {len(monitors)} monitor(s)); "
+                    f"pushing update to server"
                 )
 
                 # Update the local ClientObj cache so subsequent
@@ -1453,13 +1472,18 @@ class Client:
 
     async def _initialize_streams(self):
         """Initialize stream handlers (don't start them yet - will start on connection)"""
-        # Command stream (always required)
+        # Command stream (always required). Not gated on ``active_only``:
+        # the stream carries both directional commands (CROSS_SCREEN,
+        # which the mouse listener self-gates) and informational updates
+        # like CLIENT_MONITORS_UPDATE that MUST flow even when the cursor
+        # is on the server. Active-only would buffer the update until the
+        # next activation and the server would route against stale data.
         self._stream_handlers[StreamType.COMMAND] = BidirectionalStreamHandler(
             stream_type=StreamType.COMMAND,
             clients=self.clients_manager,
             event_bus=self.event_bus,
             handler_id="ClientCommandStreamHandler",
-            active_only=True,  # We send commands only when client is active
+            active_only=False,
         )
         # Force enable command stream
         await self.enable_stream(StreamType.COMMAND)

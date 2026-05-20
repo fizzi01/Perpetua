@@ -651,6 +651,12 @@ class MessageExchange:
         Internal method to send a message via the transport layer.
         If multicast is enabled, sends via all configured transports.
         Handles automatic chunking if enabled.
+
+        In multicast mode, ``message.target`` is treated as a routing key:
+        when it matches a configured ``tr_id`` the send is unicast to
+        that peer only. Targets that don't match any tr_id fall back to
+        broadcast (legacy semantics for routes that label the wire with
+        a peer-defined string like ``"server"``).
         """
         # Cycle through all send callbacks
         callback_snapshot = list(self._send_callbacks.items())
@@ -660,6 +666,12 @@ class MessageExchange:
                 "Transport layer not configured (no send callbacks). "
                 "Call set_transport() first."
             )
+        if self.config.multicast and message.target:
+            matched = [
+                (tr, cb) for tr, cb in callback_snapshot if tr == message.target
+            ]
+            if matched:
+                callback_snapshot = matched
         for tr_id, send_callback in callback_snapshot:  # Round-robin
             if not send_callback:
                 raise MissingTransportError(
