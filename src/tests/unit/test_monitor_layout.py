@@ -614,10 +614,10 @@ class TestEffectivePlacementSynthesis:
         assert ps == c.placements
 
 
-class TestEffectivePlacementsAutoDerivation:
-    """Auto-derivation of placements for client monitors the admin
-    didn't position explicitly: workspace inherits the OS adjacency by
-    default; explicit placements override it.
+class TestEffectivePlacementsExplicitOnly:
+    """Only explicit placements drive routing. Unplaced monitors stay
+    off the workspace so their OS-level adjacency can't smuggle the
+    cursor into an unrouted region that has no return path to the server.
     """
 
     def _make_client(self, placements, monitors, screen_position="center"):
@@ -632,9 +632,10 @@ class TestEffectivePlacementsAutoDerivation:
             placements=placements,
         )
 
-    def test_unplaced_monitor_is_auto_derived_from_os_offset(self):
-        # Admin placed only the primary. The secondary's OS offset
-        # (1080 px below) must carry over into workspace coords.
+    def test_unplaced_monitor_stays_off_workspace(self):
+        # Admin placed only the primary. The secondary's OS offset must
+        # NOT smuggle in a derived placement - that would create a side
+        # path the cursor could drift into with no return-to-server.
         primary = MonitorInfo(
             monitor_id=0, min_x=0, min_y=0, max_x=1920, max_y=1080, is_primary=True
         )
@@ -652,15 +653,9 @@ class TestEffectivePlacementsAutoDerivation:
         ]
         c = self._make_client(explicit, [primary, secondary])
         ps = c.get_effective_placements([_mon(0, 0, 0, 1920, 1080, primary=True)])
-        assert len(ps) == 2
-        derived = next(p for p in ps if p["client_monitor_id"] == 1)
-        assert derived["workspace_x"] == 1920  # same x as anchor
-        assert derived["workspace_y"] == 1080  # OS offset preserved
-        assert derived["width"] == 1920
-        assert derived["height"] == 1080
+        assert ps == explicit
 
-    def test_all_monitors_placed_explicitly_no_derivation(self):
-        # Both monitors placed explicitly - derivation must not touch them.
+    def test_all_monitors_placed_explicitly_returned_verbatim(self):
         primary = MonitorInfo(
             monitor_id=0, min_x=0, min_y=0, max_x=1920, max_y=1080, is_primary=True
         )
@@ -675,7 +670,6 @@ class TestEffectivePlacementsAutoDerivation:
                 "width": 1920,
                 "height": 1080,
             },
-            # Secondary placed FAR from primary (not adjacent in workspace).
             {
                 "client_monitor_id": 1,
                 "workspace_x": -1920,
@@ -688,9 +682,9 @@ class TestEffectivePlacementsAutoDerivation:
         ps = c.get_effective_placements([_mon(0, 0, 0, 1920, 1080, primary=True)])
         assert ps == explicit
 
-    def test_legacy_screen_position_derives_secondary(self):
-        # Pre-layout client (only screen_position set). The synthesized
-        # primary placement anchors the OS-offset derivation.
+    def test_legacy_screen_position_synthesises_primary_only(self):
+        # Pre-layout client (no explicit placements). Legacy synthesis
+        # covers the primary; the secondary is intentionally left out.
         primary = MonitorInfo(
             monitor_id=0, min_x=0, min_y=0, max_x=1920, max_y=1080, is_primary=True
         )
@@ -699,8 +693,8 @@ class TestEffectivePlacementsAutoDerivation:
         )
         c = self._make_client([], [primary, secondary], screen_position="right")
         ps = c.get_effective_placements([_mon(0, 0, 0, 1920, 1080, primary=True)])
-        assert len(ps) == 2
-        assert {p["client_monitor_id"] for p in ps} == {0, 1}
+        assert len(ps) == 1
+        assert ps[0]["client_monitor_id"] == 0
 
 
 class TestComputeIntraClientBindings:

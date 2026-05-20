@@ -345,15 +345,19 @@ export function snapRect(
 export interface PlacementValidationResult {
     ok: boolean;
     overlappingIndices: Set<number>;
+    notAdjacentToServerIndices: Set<number>;
     errors: string[];
 }
 
-// Reject placements overlapping a server monitor or another placement.
+// Reject placements overlapping a server monitor, overlapping each other,
+// or not abutting any server monitor (chained client-only hops break the
+// reverse-routing path back to the server).
 export function validatePlacements(
     serverMonitors: MonitorInfo[],
     placements: MonitorPlacement[],
 ): PlacementValidationResult {
     const overlapping = new Set<number>();
+    const notAdjacent = new Set<number>();
     const errors: string[] = [];
     const serverRects = serverMonitors.map(monitorAsRect);
 
@@ -368,6 +372,15 @@ export function validatePlacements(
                 );
                 break;
             }
+        }
+        // Server-adjacency rule. Skipped while serverRects is empty so
+        // legacy clients without server monitor info don't fail outright.
+        if (serverRects.length > 0 && !isAdjacentToAny(r, serverRects)) {
+            notAdjacent.add(i);
+            errors.push(
+                `Client ${p.client_uid} monitor ${p.client_monitor_id} `
+                + `is not adjacent to any server monitor`,
+            );
         }
     });
 
@@ -384,7 +397,12 @@ export function validatePlacements(
         }
     }
 
-    return {ok: errors.length === 0, overlappingIndices: overlapping, errors};
+    return {
+        ok: errors.length === 0,
+        overlappingIndices: overlapping,
+        notAdjacentToServerIndices: notAdjacent,
+        errors,
+    };
 }
 
 // Default placement for a fresh client monitor: right edge of the workspace at the primary monitor's Y.

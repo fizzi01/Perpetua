@@ -518,6 +518,7 @@ def compute_edge_bindings(
 
 def compute_intra_client_bindings(
     placements: "Iterable[dict] | list[dict]",
+    client_monitors: "Iterable[MonitorInfo] | None" = None,
 ) -> list[dict]:
     """Cross-monitor warp bindings within a single client.
 
@@ -526,10 +527,29 @@ def compute_intra_client_bindings(
     the workspace topology over its OS-level monitor adjacency: an
     unbound OS-driven transition is reverted; a bound transition is
     honoured via explicit warp.
+
+    ``client_monitors`` carries the destination monitor's OS bbox so
+    ``dst_monitor_min/max_*`` fields land the cursor at a real screen
+    pixel - workspace coords would warp it off-screen and the OS would
+    clamp it onto whichever monitor is closest in OS layout, which is
+    only sometimes the workspace target.
     """
     placements = list(placements)
     if len(placements) < 2:
         return []
+
+    os_bbox_by_id: dict[int, tuple[int, int, int, int]] = {}
+    if client_monitors is not None:
+        for m in client_monitors:
+            try:
+                os_bbox_by_id[int(m.monitor_id)] = (
+                    int(m.min_x),
+                    int(m.min_y),
+                    int(m.max_x),
+                    int(m.max_y),
+                )
+            except (AttributeError, TypeError, ValueError):
+                continue
 
     out: list[dict] = []
     for p in placements:
@@ -560,6 +580,12 @@ def compute_intra_client_bindings(
             if qw <= 0 or qh <= 0:
                 continue
 
+            # Destination OS bbox - falls back to workspace bbox when
+            # the caller didn't pass ``client_monitors`` (legacy / tests
+            # that don't depend on the cursor warping to a real pixel).
+            dst_os = os_bbox_by_id.get(q_id, (qx, qy, qx + qw, qy + qh))
+            dst_min_x, dst_min_y, dst_max_x, dst_max_y = dst_os
+
             # p.RIGHT abuts q.LEFT
             if abs((px + pw) - qx) <= _ABUTMENT_TOLERANCE_PX:
                 y_start = max(py, qy)
@@ -575,10 +601,10 @@ def compute_intra_client_bindings(
                             "dst_edge": Edge.LEFT.value,
                             "dst_axis_start": (y_start - qy) / qh,
                             "dst_axis_end": (y_end - qy) / qh,
-                            "dst_monitor_min_x": qx,
-                            "dst_monitor_min_y": qy,
-                            "dst_monitor_max_x": qx + qw,
-                            "dst_monitor_max_y": qy + qh,
+                            "dst_monitor_min_x": dst_min_x,
+                            "dst_monitor_min_y": dst_min_y,
+                            "dst_monitor_max_x": dst_max_x,
+                            "dst_monitor_max_y": dst_max_y,
                         }
                     )
             # p.LEFT abuts q.RIGHT
@@ -596,10 +622,10 @@ def compute_intra_client_bindings(
                             "dst_edge": Edge.RIGHT.value,
                             "dst_axis_start": (y_start - qy) / qh,
                             "dst_axis_end": (y_end - qy) / qh,
-                            "dst_monitor_min_x": qx,
-                            "dst_monitor_min_y": qy,
-                            "dst_monitor_max_x": qx + qw,
-                            "dst_monitor_max_y": qy + qh,
+                            "dst_monitor_min_x": dst_min_x,
+                            "dst_monitor_min_y": dst_min_y,
+                            "dst_monitor_max_x": dst_max_x,
+                            "dst_monitor_max_y": dst_max_y,
                         }
                     )
             # p.BOTTOM abuts q.TOP
@@ -617,10 +643,10 @@ def compute_intra_client_bindings(
                             "dst_edge": Edge.TOP.value,
                             "dst_axis_start": (x_start - qx) / qw,
                             "dst_axis_end": (x_end - qx) / qw,
-                            "dst_monitor_min_x": qx,
-                            "dst_monitor_min_y": qy,
-                            "dst_monitor_max_x": qx + qw,
-                            "dst_monitor_max_y": qy + qh,
+                            "dst_monitor_min_x": dst_min_x,
+                            "dst_monitor_min_y": dst_min_y,
+                            "dst_monitor_max_x": dst_max_x,
+                            "dst_monitor_max_y": dst_max_y,
                         }
                     )
             # p.TOP abuts q.BOTTOM
@@ -638,10 +664,10 @@ def compute_intra_client_bindings(
                             "dst_edge": Edge.BOTTOM.value,
                             "dst_axis_start": (x_start - qx) / qw,
                             "dst_axis_end": (x_end - qx) / qw,
-                            "dst_monitor_min_x": qx,
-                            "dst_monitor_min_y": qy,
-                            "dst_monitor_max_x": qx + qw,
-                            "dst_monitor_max_y": qy + qh,
+                            "dst_monitor_min_x": dst_min_x,
+                            "dst_monitor_min_y": dst_min_y,
+                            "dst_monitor_max_x": dst_max_x,
+                            "dst_monitor_max_y": dst_max_y,
                         }
                     )
 

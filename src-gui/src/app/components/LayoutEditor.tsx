@@ -532,8 +532,13 @@ export function LayoutEditor({
         const h = br.y - tl.y;
         const client = clientByUid[p.client_uid];
         const color = clientColors[p.client_uid] || "#7c3aed";
-        const isBad = validation.overlappingIndices.has(idx);
+        const isOverlap = validation.overlappingIndices.has(idx);
+        const isOrphan = validation.notAdjacentToServerIndices.has(idx);
+        const isBad = isOverlap || isOrphan;
         const isDragging = drag?.placementIdx === idx;
+        const badTitle = isOverlap
+            ? `overlaps with another monitor - drag to a free area`
+            : `not adjacent to any server monitor - drag against a server edge`;
         return (
             <div
                 key={`p-${p.client_uid}-${p.client_monitor_id}-${idx}`}
@@ -565,7 +570,7 @@ export function LayoutEditor({
                 }}
                 title={
                     isBad
-                        ? `${client?.name || p.client_uid} · monitor #${p.client_monitor_id} · overlaps with another monitor - drag to a free area`
+                        ? `${client?.name || p.client_uid} · monitor #${p.client_monitor_id} · ${badTitle}`
                         : `${client?.name || p.client_uid} · monitor #${p.client_monitor_id} · ${p.width}×${p.height}`
                 }
             >

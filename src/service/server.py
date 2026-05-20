@@ -570,6 +570,26 @@ class Server:
                         f"Placement {p} overlaps server monitor #{m.monitor_id}"
                     )
 
+        # Server-adjacency rule: every client monitor must abut at least
+        # one server monitor on a shared edge. Chained client-only hops
+        # (A↔server, B↔A but B not touching the server) are forbidden
+        # because the cursor's reverse routing has nowhere to land back
+        # to the server when it leaves B's outer edge.
+        if server_monitors and normalized:
+            from utils.screen import compute_edge_bindings
+
+            for p in normalized:
+                try:
+                    bindings = compute_edge_bindings(p, server_monitors)
+                except Exception:
+                    bindings = []
+                if not bindings:
+                    raise ValueError(
+                        f"Placement for client_monitor_id={p['client_monitor_id']} "
+                        f"is not adjacent to any server monitor. Every client "
+                        f"placement must share at least one edge with the server."
+                    )
+
         # Overlap with OTHER clients' placements.
         for other in self.config.get_clients():
             if other.get_net_id() == client.get_net_id():
@@ -652,10 +672,7 @@ class Server:
         ``notify`` is True the bus is also re-dispatched per affected
         client so the mouse listener's edge-binding cache stays in sync.
         """
-        from utils.screen import (
-            compute_edge_bindings,
-            compute_intra_client_bindings,
-        )
+        from utils.screen import compute_edge_bindings
 
         orphans: list[dict] = []
 
@@ -664,59 +681,18 @@ class Server:
             if not placements:
                 continue
 
-            # "Reachable" = touches a server monitor OR shares an intra
-            # binding with another reachable placement. A placement with
-            # no edge binding is only kept when it can still be reached
-            # by hopping from a placement that DOES touch the server,
-            # otherwise routing has no entry point to it.
-            try:
-                intra = compute_intra_client_bindings(placements)
-            except Exception:
-                intra = []
-            intra_neighbours: dict[int, set[int]] = {}
-            for b in intra:
-                try:
-                    s = int(b["src_monitor_id"])
-                    d = int(b["dst_monitor_id"])
-                except (KeyError, TypeError, ValueError):
-                    continue
-                intra_neighbours.setdefault(s, set()).add(d)
-                intra_neighbours.setdefault(d, set()).add(s)
-
-            touches_server: dict[int, bool] = {}
-            for p in placements:
-                try:
-                    pid = int(p["client_monitor_id"])
-                except (KeyError, TypeError, ValueError):
-                    continue
-                try:
-                    bindings = compute_edge_bindings(p, server_monitors)
-                except Exception:
-                    bindings = []
-                touches_server[pid] = bool(bindings)
-
-            # BFS from server-adjacent placements through intra
-            # neighbours to mark every reachable monitor id.
-            reachable: set[int] = {
-                mid for mid, ok in touches_server.items() if ok
-            }
-            frontier = list(reachable)
-            while frontier:
-                cur = frontier.pop()
-                for nxt in intra_neighbours.get(cur, set()):
-                    if nxt not in reachable:
-                        reachable.add(nxt)
-                        frontier.append(nxt)
-
+            # Server-adjacency rule: every placement must touch a server
+            # monitor on at least one edge. Chained client-only hops are
+            # rejected here so the cursor's return path back to the
+            # server is well-defined for every placed monitor.
             kept: list[dict] = []
             dropped: list[dict] = []
             for p in placements:
                 try:
-                    pid = int(p["client_monitor_id"])
-                except (KeyError, TypeError, ValueError):
-                    dropped.append(p)
-                    continue
-                if pid in reachable:
+                    bindings = compute_edge_bindings(p, server_monitors)
+                except Exception:
+                    bindings = []
+                if bindings:
                     kept.append(p)
                 else:
                     dropped.append(p)
@@ -1240,14 +1216,36 @@ class Server:
         try:
             from utils.screen import Screen
 
+            startup_monitors = Screen.get_monitors()
             self._known_monitors_signature = self._monitors_signature(
-                Screen.get_monitors()
+                startup_monitors
             )
         except Exception as e:
             self._logger.debug(
                 f"Could not prime monitor signature at startup ({e})"
             )
             self._known_monitors_signature = None
+            startup_monitors = []
+
+        # Drop stored placements that no longer abut any server monitor
+        # (saved against an older monitor layout). ``notify=False``: the
+        # watcher emits MONITOR_TOPOLOGY_CHANGED later only when the live
+        # topology *changes*; the startup pass just cleans up.
+        if startup_monitors:
+            try:
+                orphans = await self._reconcile_layouts_with_monitors(
+                    startup_monitors, notify=False
+                )
+                if orphans:
+                    self._logger.warning(
+                        f"Dropped {len(orphans)} stored placement(s) that no "
+                        f"longer abut any server monitor on startup"
+                    )
+            except Exception as e:
+                self._logger.warning(
+                    f"Failed to reconcile layouts at startup ({e})"
+                )
+
         try:
             self._monitor_watch_task = asyncio.create_task(
                 self._monitor_watch_loop()

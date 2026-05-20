@@ -218,68 +218,17 @@ class ClientObj:
     def get_effective_placements(self, server_monitors) -> list[dict]:
         """Return the placements that drive cross-screen routing.
 
-        1. Explicit set: use ``self.placements`` if populated; otherwise
-           synthesize a single placement from the legacy ``screen_position``.
-        2. Auto-derivation: for any client monitor missing from the
-           explicit set, append a derived placement using its OS-relative
-           offset from the first explicit placement's anchor. The
-           workspace inherits the client's OS topology by default;
-           admins override by placing all monitors explicitly.
+        Explicit placements are honoured verbatim. Monitors the admin
+        chose NOT to place are intentionally left off the workspace so
+        their OS-level adjacency to a placed monitor can't smuggle the
+        cursor into an unrouted region (which would then have no return
+        path to the server). Legacy clients that only carry a
+        ``screen_position`` get a single synthesised placement for the
+        client's primary monitor.
         """
         if self.placements:
-            explicit = list(self.placements)
-        else:
-            explicit = self._synthesize_legacy_placement(server_monitors)
-
-        if not explicit or not self.monitors:
-            return explicit
-
-        # First explicit placement is the deterministic anchor for
-        # OS-relative derivation.
-        anchor_placement = explicit[0]
-        try:
-            anchor_id = int(anchor_placement["client_monitor_id"])
-        except (KeyError, TypeError, ValueError):
-            return explicit
-        anchor_monitor = next(
-            (m for m in self.monitors if m.monitor_id == anchor_id),
-            None,
-        )
-        if anchor_monitor is None:
-            return explicit
-
-        placed_ids: set[int] = set()
-        for p in explicit:
-            try:
-                placed_ids.add(int(p["client_monitor_id"]))
-            except (KeyError, TypeError, ValueError):
-                continue
-
-        try:
-            anchor_wx = int(anchor_placement["workspace_x"])
-            anchor_wy = int(anchor_placement["workspace_y"])
-        except (KeyError, TypeError, ValueError):
-            return explicit
-
-        derived: list[dict] = []
-        for m in self.monitors:
-            if m.monitor_id in placed_ids:
-                continue
-            os_dx = m.min_x - anchor_monitor.min_x
-            os_dy = m.min_y - anchor_monitor.min_y
-            w = max(1, m.max_x - m.min_x)
-            h = max(1, m.max_y - m.min_y)
-            derived.append(
-                {
-                    "client_monitor_id": m.monitor_id,
-                    "workspace_x": anchor_wx + os_dx,
-                    "workspace_y": anchor_wy + os_dy,
-                    "width": w,
-                    "height": h,
-                }
-            )
-
-        return explicit + derived
+            return list(self.placements)
+        return self._synthesize_legacy_placement(server_monitors)
 
     def _synthesize_legacy_placement(self, server_monitors) -> list[dict]:
         """Fallback placement for clients that only carry ``screen_position``."""
@@ -353,7 +302,12 @@ class ClientObj:
             return []
         from utils.screen import compute_intra_client_bindings
 
-        return compute_intra_client_bindings(placements)
+        # Pass the client's OS monitor bboxes so ``dst_monitor_min/max_*``
+        # encode real screen pixels instead of workspace coords - otherwise
+        # the cursor warps off-screen and the OS clamps it to whichever
+        # monitor is closest in OS layout (typically the primary), not the
+        # workspace target.
+        return compute_intra_client_bindings(placements, self.monitors)
 
     def to_dict(self) -> dict:
         return self.__dict__()

@@ -1442,6 +1442,12 @@ class ClientMouseController(object):
                         # its only return path shares an OS-adjacency
                         # with another, non-workspace-adjacent monitor.
                         exit_edge = self._infer_exit_edge(previous, x, y)
+                        self._logger.info(
+                            f"OS drift detected from monitor "
+                            f"{previous.monitor_id} -> {current_monitor.monitor_id}; "
+                            f"exit_edge={exit_edge}; bindings={len(self._edge_bindings)}; "
+                            f"server_bbox={self._server_bbox is not None}"
+                        )
                         if exit_edge is not None:
                             edge_x = max(
                                 previous.min_x, min(previous.max_x - 1, x)
@@ -1458,6 +1464,18 @@ class ClientMouseController(object):
                                 self._cross_screen_event.set()
                                 self._movement_history.clear()
 
+                                # Pull the local cursor back inside
+                                # ``previous`` so it doesn't visually
+                                # remain stranded on the unplaced
+                                # OS-neighbour after we hand control
+                                # back to the server.
+                                self._clamp_cursor_to_monitor(previous)
+
+                                self._logger.info(
+                                    f"Firing return-to-server from drift "
+                                    f"(monitor {previous.monitor_id} {exit_edge}); "
+                                    f"target=({target_x:.3f}, {target_y:.3f})"
+                                )
                                 command = CrossScreenCommandEvent(
                                     x=target_x, y=target_y
                                 )
@@ -1467,6 +1485,12 @@ class ClientMouseController(object):
                                     data=None,
                                 )
                                 return await asyncio.sleep(0)
+                            else:
+                                self._logger.info(
+                                    f"No return-to-server binding for "
+                                    f"monitor {previous.monitor_id} edge "
+                                    f"{exit_edge}; falling through"
+                                )
 
                             # No return-to-server; check whether the
                             # exit edge has an intra-client warp. If it
