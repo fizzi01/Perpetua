@@ -34,6 +34,7 @@ from event.notification import (
     ClientConnectedEvent as ClientConnectedNotification,
     ClientDisconnectedEvent as ClientDisconnectedNotification,
     ConfigSavedEvent,
+    MonitorTopologyChangedEvent,
     OtpGeneratedEvent,
     PairingRequestEvent,
     StreamEnabledEvent,
@@ -141,6 +142,14 @@ class Server:
         self._pending_approval_meta: Dict[str, Dict[str, str]] = {}
         self._pending_approvals_lock = asyncio.Lock()
         self._approval_request_timeout = 60
+
+        # Monitor-change watcher: polls the OS for the server's monitor
+        # topology and reconciles stored client placements when displays
+        # are added/removed or resolutions change. Stays None until
+        # ``start()`` spawns the task.
+        self._monitor_watch_task: Optional[asyncio.Task] = None
+        self._known_monitors_signature: Optional[tuple] = None
+        self.MONITOR_WATCH_INTERVAL = 2.0
 
     @property
     def clients_manager(self) -> ClientsManager:
@@ -607,6 +616,212 @@ class Server:
         )
         return client
 
+    @staticmethod
+    def _monitors_signature(monitors) -> tuple:
+        """Hashable fingerprint of a monitor list.
+
+        Two enumerations with the same (id, bbox, primary) tuple are
+        treated as identical even if Python recreated the dataclasses;
+        anything else triggers a topology-changed event.
+        """
+        sig = []
+        for m in monitors or []:
+            sig.append(
+                (
+                    int(getattr(m, "monitor_id", 0)),
+                    int(getattr(m, "min_x", 0)),
+                    int(getattr(m, "min_y", 0)),
+                    int(getattr(m, "max_x", 0)),
+                    int(getattr(m, "max_y", 0)),
+                    bool(getattr(m, "is_primary", False)),
+                )
+            )
+        sig.sort()
+        return tuple(sig)
+
+    async def _reconcile_layouts_with_monitors(
+        self,
+        server_monitors,
+        notify: bool = True,
+    ) -> list[dict]:
+        """Drop client placements that no longer touch any server monitor.
+
+        Returns a list of orphan descriptors (one per dropped placement)
+        so the GUI can show the admin which placements went away. When
+        ``notify`` is True the bus is also re-dispatched per affected
+        client so the mouse listener's edge-binding cache stays in sync.
+        """
+        from utils.screen import (
+            compute_edge_bindings,
+            compute_intra_client_bindings,
+        )
+
+        orphans: list[dict] = []
+
+        for client in list(self.config.get_clients()):
+            placements = list(client.placements or [])
+            if not placements:
+                continue
+
+            # "Reachable" = touches a server monitor OR shares an intra
+            # binding with another reachable placement. A placement with
+            # no edge binding is only kept when it can still be reached
+            # by hopping from a placement that DOES touch the server,
+            # otherwise routing has no entry point to it.
+            try:
+                intra = compute_intra_client_bindings(placements)
+            except Exception:
+                intra = []
+            intra_neighbours: dict[int, set[int]] = {}
+            for b in intra:
+                try:
+                    s = int(b["src_monitor_id"])
+                    d = int(b["dst_monitor_id"])
+                except (KeyError, TypeError, ValueError):
+                    continue
+                intra_neighbours.setdefault(s, set()).add(d)
+                intra_neighbours.setdefault(d, set()).add(s)
+
+            touches_server: dict[int, bool] = {}
+            for p in placements:
+                try:
+                    pid = int(p["client_monitor_id"])
+                except (KeyError, TypeError, ValueError):
+                    continue
+                try:
+                    bindings = compute_edge_bindings(p, server_monitors)
+                except Exception:
+                    bindings = []
+                touches_server[pid] = bool(bindings)
+
+            # BFS from server-adjacent placements through intra
+            # neighbours to mark every reachable monitor id.
+            reachable: set[int] = {
+                mid for mid, ok in touches_server.items() if ok
+            }
+            frontier = list(reachable)
+            while frontier:
+                cur = frontier.pop()
+                for nxt in intra_neighbours.get(cur, set()):
+                    if nxt not in reachable:
+                        reachable.add(nxt)
+                        frontier.append(nxt)
+
+            kept: list[dict] = []
+            dropped: list[dict] = []
+            for p in placements:
+                try:
+                    pid = int(p["client_monitor_id"])
+                except (KeyError, TypeError, ValueError):
+                    dropped.append(p)
+                    continue
+                if pid in reachable:
+                    kept.append(p)
+                else:
+                    dropped.append(p)
+
+            if not dropped:
+                continue
+
+            for p in dropped:
+                orphans.append(
+                    {
+                        "client_uid": client.uid,
+                        "client_net_id": client.get_net_id(),
+                        "placement": dict(p),
+                    }
+                )
+
+            client.placements = kept
+            try:
+                self.clients_manager.update_client(client)
+            except Exception as e:
+                self._logger.warning(
+                    f"Failed to persist pruned layout for "
+                    f"{client.get_net_id()} ({e})"
+                )
+
+            if notify and client.is_connected:
+                try:
+                    edge_bindings = [
+                        eb.to_dict()
+                        for eb in client.get_edge_bindings(server_monitors)
+                    ]
+                    intra_client_bindings = client.get_intra_client_bindings(
+                        server_monitors
+                    )
+                    await self.event_bus.dispatch(
+                        event_type=BusEventType.CLIENT_LAYOUT_UPDATED,
+                        data=ClientLayoutUpdatedEvent(
+                            client_uid=client.uid,
+                            edge_bindings=edge_bindings,
+                            intra_client_bindings=intra_client_bindings,
+                        ),
+                    )
+                except Exception as e:
+                    self._logger.warning(
+                        f"Failed to refresh bindings for "
+                        f"{client.get_net_id()} after monitor change ({e})"
+                    )
+
+        if orphans:
+            try:
+                await self.save_config()
+            except Exception as e:
+                self._logger.warning(
+                    f"Failed to persist layout reconciliation ({e})"
+                )
+
+        return orphans
+
+    async def _monitor_watch_loop(self) -> None:
+        """Background poller that surfaces server-monitor topology changes.
+
+        The OS does not expose a portable hot-plug callback at this layer
+        so the poll cadence is the time-to-detect upper bound. Two
+        seconds is small enough that the GUI feels reactive when the
+        admin plugs/unplugs a display but cheap enough to leave running.
+        """
+        from utils.screen import Screen
+
+        while self._running:
+            try:
+                await asyncio.sleep(self.MONITOR_WATCH_INTERVAL)
+                if not self._running:
+                    return
+                try:
+                    monitors = Screen.get_monitors()
+                except Exception as e:
+                    self._logger.debug(
+                        f"Monitor enumeration failed in watch loop ({e})"
+                    )
+                    continue
+                signature = self._monitors_signature(monitors)
+                if signature == self._known_monitors_signature:
+                    continue
+                self._known_monitors_signature = signature
+                self._logger.info(
+                    f"Server monitor topology changed: "
+                    f"{len(monitors)} monitor(s) now connected"
+                )
+                orphans = await self._reconcile_layouts_with_monitors(monitors)
+                try:
+                    monitor_dicts = [m.to_dict() for m in monitors]
+                except Exception:
+                    monitor_dicts = []
+                await self._send_notification(
+                    MonitorTopologyChangedEvent(
+                        monitors=monitor_dicts,
+                        orphans=orphans,
+                    )
+                )
+            except asyncio.CancelledError:
+                return
+            except Exception as e:
+                self._logger.error(f"Error in monitor watch loop ({e})")
+                # Brief pause so a persistent error doesn't busy-spin.
+                await asyncio.sleep(self.MONITOR_WATCH_INTERVAL)
+
     async def edit_client(
         self,
         ip_address: Optional[str] = None,
@@ -1016,6 +1231,31 @@ class Server:
             return False
 
         self._running = True
+
+        # Spawn the monitor watcher AFTER ``_running`` flips True so the
+        # loop's start guard sees the running state. Prime the signature
+        # cache with the boot-time topology so a subsequent change is
+        # what triggers the first notification.
+        try:
+            from utils.screen import Screen
+
+            self._known_monitors_signature = self._monitors_signature(
+                Screen.get_monitors()
+            )
+        except Exception as e:
+            self._logger.debug(
+                f"Could not prime monitor signature at startup ({e})"
+            )
+            self._known_monitors_signature = None
+        try:
+            self._monitor_watch_task = asyncio.create_task(
+                self._monitor_watch_loop()
+            )
+        except Exception as e:
+            self._logger.warning(
+                f"Failed to start monitor watch task ({e})"
+            )
+
         self._logger.info(f"Server started on {self.config.host}:{self.config.port}")
         return True
 
@@ -1036,6 +1276,17 @@ class Server:
                 fut.set_result(None)
             self._pending_approvals.pop(ip, None)
             self._pending_approval_meta.pop(ip, None)
+
+        # Halt the monitor watcher first - its loop body talks to
+        # ``event_bus`` and ``connection_handler`` and ``cleanup`` wipes
+        # those.
+        if self._monitor_watch_task is not None:
+            self._monitor_watch_task.cancel()
+            try:
+                await self._monitor_watch_task
+            except (asyncio.CancelledError, Exception):
+                pass
+            self._monitor_watch_task = None
 
         if self.connection_handler:
             await self.connection_handler.stop()

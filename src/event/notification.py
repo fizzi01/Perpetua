@@ -107,6 +107,10 @@ class NotificationEventType(str, Enum):
     SCREEN_CHANGED = "screen_changed"
     SCREEN_TRANSITION_STARTED = "screen_transition_started"
     SCREEN_TRANSITION_COMPLETED = "screen_transition_completed"
+    # Server-side monitor topology changed at runtime (display added/removed,
+    # resolution/DPI change). Carries the new monitor list + a per-client
+    # report of placements that became orphaned by the change.
+    MONITOR_TOPOLOGY_CHANGED = "monitor_topology_changed"
 
     # Transfer events
     FILE_TRANSFER_STARTED = "file_transfer_started"
@@ -593,6 +597,44 @@ class ClientDisconnectedEvent(NotificationEvent):
             data=data,
             source="server",
             message=f"Client {hostname} disconnected",
+        )
+
+
+@dataclass
+class MonitorTopologyChangedEvent(NotificationEvent):
+    """Server-side monitor topology changed at runtime.
+
+    Lets the GUI re-fetch status to refresh the layout editor's monitor
+    panel and surface any client placements that became orphaned (no
+    longer touch any server monitor). The daemon prunes orphans
+    automatically so routing stays consistent; this event is purely
+    informational.
+    """
+
+    def __init__(
+        self,
+        monitors: Optional[list] = None,
+        orphans: Optional[list] = None,
+        **kwargs,
+    ):
+        data = {
+            "monitors": monitors or [],
+            "orphans": orphans or [],
+        }
+        data.update(kwargs)
+        n_orphans = len(data["orphans"])
+        if n_orphans > 0:
+            msg = (
+                f"Monitor layout changed; {n_orphans} client placement(s) "
+                f"became orphaned and were dropped"
+            )
+        else:
+            msg = "Monitor layout changed"
+        super().__init__(
+            event_type=NotificationEventType.MONITOR_TOPOLOGY_CHANGED,
+            data=data,
+            source="server",
+            message=msg,
         )
 
 

@@ -164,6 +164,28 @@ export function ServerTab({onStatusChange, state}: ServerTabProps) {
         }
     }, []);
 
+    // The daemon snapshots ``pending_approvals`` on every STATUS response so a
+    // GUI launched AFTER the daemon (with a client already awaiting approval)
+    // can hydrate the inline cards. Merge with the live event-driven state
+    // instead of replacing it: ClientApprovalRequested events may have already
+    // delivered fresher entries than the STATUS snapshot.
+    useEffect(() => {
+        const snapshot = state.pending_approvals ?? [];
+        setPendingApprovals((prev) => {
+            const byIp = new Map<string, ClientApprovalRequest>();
+            for (const r of snapshot) {
+                if (r && r.peer_ip) byIp.set(r.peer_ip, r);
+            }
+            // Live entries win on overlap - they carry the freshest request_id.
+            for (const r of prev) {
+                if (r && r.peer_ip) byIp.set(r.peer_ip, r);
+            }
+            const merged = Array.from(byIp.values());
+            if (JSON.stringify(prev) === JSON.stringify(merged)) return prev;
+            return merged;
+        });
+    }, [state.pending_approvals]);
+
     const addNotification = (type: Notification['type'], message: string, description?: string) => {
         const newNotification: Notification = {
             id: Date.now().toString(),
@@ -543,6 +565,31 @@ export function ServerTab({onStatusChange, state}: ServerTabProps) {
                 listeners.addListenerOnce('approval-resolved', unlisten);
             });
 
+            // Server monitor hot-plug/topology change. The daemon already
+            // auto-prunes placements that no longer touch any server monitor;
+            // surface the orphans (if any) so the admin can re-place them.
+            listenGeneralEvent(EventType.MonitorTopologyChanged, true, (event: any) => {
+                const data = event?.data || {};
+                const orphans = Array.isArray(data.orphans) ? data.orphans : [];
+                if (orphans.length > 0) {
+                    const affected = new Set<string>();
+                    for (const o of orphans) {
+                        const who = o?.client_net_id || o?.client_uid;
+                        if (who) affected.add(String(who));
+                    }
+                    const list = Array.from(affected).join(', ');
+                    addNotification(
+                        'warning',
+                        'Monitor layout changed',
+                        `${orphans.length} placement(s) dropped${list ? ` for ${list}` : ''} - re-position via Layout Editor`,
+                    );
+                } else {
+                    addNotification('info', 'Monitor layout changed');
+                }
+            }).then(unlisten => {
+                listeners.addListenerOnce('monitor-topology-changed', unlisten);
+            });
+
         };
 
         const cleanup = () => {
@@ -551,6 +598,7 @@ export function ServerTab({onStatusChange, state}: ServerTabProps) {
             listeners.removeListener('pairing-requested');
             listeners.removeListener('approval-requested');
             listeners.removeListener('approval-resolved');
+            listeners.removeListener('monitor-topology-changed');
         };
 
         return {cleanup, setup};

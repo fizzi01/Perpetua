@@ -77,6 +77,21 @@ export function Main() {
                     unlisten();
                 });
             });
+
+            // Server-side monitor topology changed (display added/removed,
+            // resolution change). Pull a fresh STATUS so the layout editor's
+            // monitor list and any orphan warnings reach the GUI.
+            listenGeneralEvent(EventType.MonitorTopologyChanged, true, (event: any) => {
+                console.log('[App] MonitorTopologyChanged event received', event);
+                setupStatusListener();
+                getStatus().catch((err) => {
+                    console.error('[App] Error fetching status after monitor change:', err);
+                });
+            }).then((unlisten) => {
+                listeners.addListenerOnce('monitor-topology-changed', () => {
+                    unlisten();
+                });
+            });
         }
     }
 

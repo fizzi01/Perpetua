@@ -103,6 +103,7 @@ pub enum EventType {
     ScreenChanged,
     ScreenTransitionStarted,
     ScreenTransitionCompleted,
+    MonitorTopologyChanged,
 
     // Transfer events
     FileTransferStarted,

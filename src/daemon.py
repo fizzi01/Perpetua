@@ -1262,11 +1262,23 @@ class Daemon:
                 )
                 server_monitors = []
 
+            # Pending approvals: GUI may launch AFTER the daemon, so a
+            # client already waiting in pending-approval state would
+            # otherwise be invisible until the next handshake attempt.
+            try:
+                pending_approvals = self._server.get_pending_approvals()
+            except Exception as e:
+                self._logger.debug(
+                    f"Could not enumerate pending approvals for status: {e}"
+                )
+                pending_approvals = []
+
             status["server_info"] = {
                 **self._server_config.to_dict(),
                 "running": self._server.is_running(),
                 "start_time": self._state["server"].get_timestamp(),
                 "monitors": server_monitors,
+                "pending_approvals": pending_approvals,
             }  # ty:ignore[invalid-assignment]
 
         if self._client_config and self._client:

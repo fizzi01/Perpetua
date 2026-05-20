@@ -100,6 +100,7 @@ export enum EventType {
     ScreenChanged,
     ScreenTransitionStarted,
     ScreenTransitionCompleted,
+    MonitorTopologyChanged,
 
     // Transfer events
     FileTransferStarted,
@@ -272,6 +273,9 @@ export interface ServerStatus {
     ssl_enabled: boolean;
     authorized_clients: ClientObj[];
     monitors?: MonitorInfo[];
+    // Snapshot of unknown clients currently awaiting admin approval.
+    // Surfaced on STATUS so a late-launching GUI doesn't miss pending requests.
+    pending_approvals?: ClientApprovalRequest[];
 }
 
 export interface ClientConnectionInfo {

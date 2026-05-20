@@ -1199,58 +1199,51 @@ class ClientMouseController(object):
         """True iff the workspace authorises a ``src → dst`` cross-monitor transition."""
         return (src_monitor_id, dst_monitor_id) in self._intra_pairs
 
-    def _clamp_cursor_to_monitor(self, monitor) -> None:
-        """Pin the cursor just inside ``monitor``'s bbox."""
-        if monitor is None:
-            return
-        try:
-            pos = self._controller.position
-            if not pos or len(pos) != 2:
-                return
-            cx, cy = pos
-            new_x = max(monitor.min_x + 1, min(monitor.max_x - 2, cx))
-            new_y = max(monitor.min_y + 1, min(monitor.max_y - 2, cy))
-            if (new_x, new_y) != (cx, cy):
-                self._controller.position = (new_x, new_y)
-        except Exception as e:
-            self._logger.log(f"Failed to clamp cursor to monitor ({e})", Logger.ERROR)
+    @staticmethod
+    def _infer_exit_edge(
+        previous, x: float, y: float
+    ) -> Optional[ScreenEdge]:
+        """Infer which edge of ``previous`` the cursor crossed to reach (x, y).
 
-    def _resolve_return_to_server(
+        When the OS warps the cursor across physically-adjacent monitors
+        in a single tick, the edge detector never fires on ``previous``.
+        Reconstructing the exit edge from the cursor's offset lets the
+        drift handler still resolve a workspace edge binding before
+        falling back to a clamp.
+        """
+        if previous is None:
+            return None
+        if x < previous.min_x:
+            return ScreenEdge.LEFT
+        if x >= previous.max_x:
+            return ScreenEdge.RIGHT
+        if y < previous.min_y:
+            return ScreenEdge.TOP
+        if y >= previous.max_y:
+            return ScreenEdge.BOTTOM
+        return None
+
+    def _lookup_return_to_server(
         self,
+        monitor,
         edge: ScreenEdge,
         x: float,
         y: float,
     ) -> Optional[tuple[float, float]]:
-        """Dual of ``ServerMouseListener._resolve_cross_screen_target``.
+        """Edge binding lookup against an explicit (monitor, edge, x, y).
 
-        Translates a client-side edge crossing to the matching
-        server-bbox-normalised position. ``None`` when no binding
-        matches - caller stays on the client.
+        Used by the drift handler when cursor has already crossed off
+        ``monitor`` in the OS, so ``find_monitor_at(x, y)`` would return
+        the WRONG monitor for the lookup.
         """
         if (
             not self._edge_bindings
-            or not self._monitor_layout.monitors
+            or monitor is None
             or self._server_bbox is None
         ):
             return None
-
         edge_str = self._EDGE_TO_STRING_CLIENT.get(edge)
         if edge_str is None:
-            return None
-
-        monitor = self._monitor_layout.find_monitor_at(x, y)
-        if monitor is None:
-            best = None
-            best_dist = None
-            for m in self._monitor_layout.monitors:
-                cx = max(m.min_x, min(x, m.max_x - 1))
-                cy = max(m.min_y, min(y, m.max_y - 1))
-                dist = (cx - x) ** 2 + (cy - y) ** 2
-                if best_dist is None or dist < best_dist:
-                    best = m
-                    best_dist = dist
-            monitor = best
-        if monitor is None:
             return None
 
         m_w = max(1, monitor.max_x - monitor.min_x)
@@ -1284,10 +1277,6 @@ class ClientMouseController(object):
             s_edge = b.get("server_edge")
             s_w = max(1, s_max_x - s_min_x)
             s_h = max(1, s_max_y - s_min_y)
-            # Land well inside the destination edge so (a) the server's
-            # edge detector doesn't re-fire next tick, and (b) the OS
-            # doesn't clamp the cursor against the screen bound and
-            # starve WM_MOUSEMOVE.
             edge_margin = 6
             if s_edge == "right":
                 target_x = s_max_x - edge_margin
@@ -1320,6 +1309,52 @@ class ClientMouseController(object):
             return x_norm, y_norm
 
         return None
+
+    def _clamp_cursor_to_monitor(self, monitor) -> None:
+        """Pin the cursor just inside ``monitor``'s bbox."""
+        if monitor is None:
+            return
+        try:
+            pos = self._controller.position
+            if not pos or len(pos) != 2:
+                return
+            cx, cy = pos
+            new_x = max(monitor.min_x + 1, min(monitor.max_x - 2, cx))
+            new_y = max(monitor.min_y + 1, min(monitor.max_y - 2, cy))
+            if (new_x, new_y) != (cx, cy):
+                self._controller.position = (new_x, new_y)
+        except Exception as e:
+            self._logger.log(f"Failed to clamp cursor to monitor ({e})", Logger.ERROR)
+
+    def _resolve_return_to_server(
+        self,
+        edge: ScreenEdge,
+        x: float,
+        y: float,
+    ) -> Optional[tuple[float, float]]:
+        """Dual of ``ServerMouseListener._resolve_cross_screen_target``.
+
+        Translates a client-side edge crossing to the matching
+        server-bbox-normalised position. ``None`` when no binding
+        matches - caller stays on the client.
+        """
+        if not self._monitor_layout.monitors:
+            return None
+
+        monitor = self._monitor_layout.find_monitor_at(x, y)
+        if monitor is None:
+            best = None
+            best_dist = None
+            for m in self._monitor_layout.monitors:
+                cx = max(m.min_x, min(x, m.max_x - 1))
+                cy = max(m.min_y, min(y, m.max_y - 1))
+                dist = (cx - x) ** 2 + (cy - y) ** 2
+                if best_dist is None or dist < best_dist:
+                    best = m
+                    best_dist = dist
+            monitor = best
+
+        return self._lookup_return_to_server(monitor, edge, x, y)
 
     async def _mouse_event_callback(self, message):
         try:
@@ -1398,6 +1433,79 @@ class ClientMouseController(object):
                             previous = m
                             break
                     if previous is not None:
+                        # Fast-motion case: the cursor crossed off
+                        # ``previous`` so fast that ``_detect_directed_edge``
+                        # never fired on it. If the exit edge has a
+                        # workspace binding back to the server, honour
+                        # it before falling back to the clamp - otherwise
+                        # this client monitor becomes a one-way trap when
+                        # its only return path shares an OS-adjacency
+                        # with another, non-workspace-adjacent monitor.
+                        exit_edge = self._infer_exit_edge(previous, x, y)
+                        if exit_edge is not None:
+                            edge_x = max(
+                                previous.min_x, min(previous.max_x - 1, x)
+                            )
+                            edge_y = max(
+                                previous.min_y, min(previous.max_y - 1, y)
+                            )
+                            resolved = self._lookup_return_to_server(
+                                previous, exit_edge, edge_x, edge_y
+                            )
+                            if resolved is not None:
+                                target_x, target_y = resolved
+
+                                self._cross_screen_event.set()
+                                self._movement_history.clear()
+
+                                command = CrossScreenCommandEvent(
+                                    x=target_x, y=target_y
+                                )
+                                await self.command_stream.send(command)
+                                await self.event_bus.dispatch(
+                                    event_type=BusEventType.CLIENT_INACTIVE,
+                                    data=None,
+                                )
+                                return await asyncio.sleep(0)
+
+                            # No return-to-server; check whether the
+                            # exit edge has an intra-client warp. If it
+                            # does, honour the workspace destination
+                            # instead of the OS one (the OS picked an
+                            # unauthorised neighbour, but the workspace
+                            # has a different valid neighbour for this
+                            # edge).
+                            warp = self._resolve_intra_client_warp(
+                                exit_edge, edge_x, edge_y, previous
+                            )
+                            if warp is not None:
+                                dst_monitor_id, target_x, target_y = warp
+                                try:
+                                    self._controller.position = (
+                                        int(target_x),
+                                        int(target_y),
+                                    )
+                                except Exception as e:
+                                    self._logger.log(
+                                        f"Failed to warp cursor intra-client "
+                                        f"after drift ({e})",
+                                        Logger.ERROR,
+                                    )
+                                else:
+                                    self._last_known_monitor_id = dst_monitor_id
+                                    self._active_monitor_id = dst_monitor_id
+                                    for m in self._monitor_layout.monitors:
+                                        if m.monitor_id == dst_monitor_id:
+                                            self._active_target_bbox = (
+                                                m.min_x,
+                                                m.min_y,
+                                                m.max_x,
+                                                m.max_y,
+                                            )
+                                            break
+                                    self._movement_history.clear()
+                                return None
+
                         self._clamp_cursor_to_monitor(previous)
                         pos = self._controller.position
                         if pos and len(pos) == 2:
