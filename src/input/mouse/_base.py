@@ -1442,7 +1442,7 @@ class ClientMouseController(object):
                         # its only return path shares an OS-adjacency
                         # with another, non-workspace-adjacent monitor.
                         exit_edge = self._infer_exit_edge(previous, x, y)
-                        self._logger.info(
+                        self._logger.debug(
                             f"OS drift detected from monitor "
                             f"{previous.monitor_id} -> {current_monitor.monitor_id}; "
                             f"exit_edge={exit_edge}; bindings={len(self._edge_bindings)}; "
@@ -1471,7 +1471,7 @@ class ClientMouseController(object):
                                 # back to the server.
                                 self._clamp_cursor_to_monitor(previous)
 
-                                self._logger.info(
+                                self._logger.debug(
                                     f"Firing return-to-server from drift "
                                     f"(monitor {previous.monitor_id} {exit_edge}); "
                                     f"target=({target_x:.3f}, {target_y:.3f})"
@@ -1486,7 +1486,7 @@ class ClientMouseController(object):
                                 )
                                 return await asyncio.sleep(0)
                             else:
-                                self._logger.info(
+                                self._logger.debug(
                                     f"No return-to-server binding for "
                                     f"monitor {previous.monitor_id} edge "
                                     f"{exit_edge}; falling through"
