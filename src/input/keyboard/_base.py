@@ -96,7 +96,8 @@ class ServerKeyboardListener(object):
         self._logger = get_logger(self.__class__.__name__)
 
         self._logger.info(
-            f"Keyboard listener backend: {BACKEND.get('keyboard_listener', 'unknown')}"
+            "keyboard listener backend selected",
+            backend=BACKEND.get("keyboard_listener", "unknown"),
         )
 
         # Store event loop reference for thread-safe async scheduling
@@ -486,7 +487,8 @@ class ClientKeyboardController(object):
         self._logger = get_logger(self.__class__.__name__)
 
         self._logger.info(
-            f"Keyboard controller backend: {BACKEND.get('keyboard_controller', 'unknown')}"
+            "keyboard controller backend selected",
+            extra={"backend": BACKEND.get("keyboard_controller", "unknown")}
         )
 
         self._queue: asyncio.Queue = asyncio.Queue(maxsize=1000)

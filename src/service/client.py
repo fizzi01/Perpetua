@@ -71,7 +71,7 @@ from utils.crypto.sharing import (
 from utils import BackgroundTasks
 from utils.metrics import MetricsCollector, PerformanceMonitor
 from utils.screen import Screen
-from utils.logging import get_logger
+from utils.logging import get_logger, Logger
 
 
 class ClientAbortedError(Exception):
@@ -380,10 +380,13 @@ class Client:
         server_uid = self.config.get_server_uid()
         if self._cert_manager.certificate_exist(source_id=server_uid):
             cert_path = self._cert_manager.get_ca_cert_path(source_id=server_uid)
-            self._logger.info(f"Certificate loaded from {cert_path}")
+            if self._logger.is_enabled_for(Logger.DEBUG):
+                self._logger.debug("Certificate loaded", cert_path=cert_path, server_uid=server_uid)
+            else:
+                self._logger.info("Certificate loaded")
             return cert_path
         else:
-            self._logger.warning(f"Certificate not found for server {server_uid}")
+            self._logger.warning("Certificate not found", server_uid=server_uid)
             return None
 
     def _remove_certificate(self) -> None:

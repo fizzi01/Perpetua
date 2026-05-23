@@ -539,9 +539,9 @@ class Daemon:
                 )
                 try:
                     os.unlink(self.socket_path)
-                    self._logger.info(f"Removed stale socket file {self.socket_path}")
+                    self._logger.info("Removed stale socket file")
                 except Exception as remove_error:
-                    self._logger.error(f"Failed to remove stale socket: {remove_error}")
+                    self._logger.error("Failed to remove stale socket", error=str(remove_error))
                     raise
             except OSError as e:
                 if isinstance(e, OSError):
@@ -556,7 +556,8 @@ class Daemon:
                             )
                         except Exception as remove_error:
                             self._logger.error(
-                                f"Failed to remove non-socket file: {remove_error}"
+                                "Failed to remove non-socket file",
+                                error=str(remove_error)
                             )
                             raise
 
