@@ -22,6 +22,8 @@ import type {
     MonitorPlacement,
 } from "../api/Interface";
 import {
+    canvasToWorkspace,
+    computeViewMetrics,
     isAdjacentToAny,
     monitorAsRect,
     placementAsRect,
@@ -30,6 +32,7 @@ import {
     suggestInitialPlacement,
     validatePlacements,
     workspaceBounds,
+    workspaceToCanvas,
 } from "../commons/layout";
 
 import { Monitor, GripVertical } from "lucide-react";
@@ -64,48 +67,6 @@ function colorFor(uid: string, idx: number): string {
         h = (h * 31 + uid.charCodeAt(i)) >>> 0;
     }
     return FALLBACK_PALETTE[h % FALLBACK_PALETTE.length];
-}
-
-interface ViewMetrics {
-    scale: number;
-    offsetX: number;
-    offsetY: number;
-}
-
-function computeViewMetrics(
-    bounds: {x: number; y: number; width: number; height: number},
-    canvasW: number,
-    canvasH: number,
-    padding: number,
-): ViewMetrics {
-    const usableW = Math.max(1, canvasW - padding * 2);
-    const usableH = Math.max(1, canvasH - padding * 2);
-    const w = Math.max(1, bounds.width);
-    const h = Math.max(1, bounds.height);
-    const scale = Math.min(usableW / w, usableH / h);
-    const renderedW = w * scale;
-    const renderedH = h * scale;
-    return {
-        scale,
-        offsetX: (canvasW - renderedW) / 2 - bounds.x * scale,
-        offsetY: (canvasH - renderedH) / 2 - bounds.y * scale,
-    };
-}
-
-function workspaceToCanvas(
-    x: number,
-    y: number,
-    m: ViewMetrics,
-): {x: number; y: number} {
-    return {x: x * m.scale + m.offsetX, y: y * m.scale + m.offsetY};
-}
-
-function canvasToWorkspace(
-    x: number,
-    y: number,
-    m: ViewMetrics,
-): {x: number; y: number} {
-    return {x: (x - m.offsetX) / m.scale, y: (y - m.offsetY) / m.scale};
 }
 
 interface DragState {
@@ -470,16 +431,19 @@ export function LayoutEditor({
         });
     }, [metrics, placements, serverMonitors, onChange]);
 
+    const onPendingCancel = useCallback(() => setPendingNew(null), []);
+
     useEffect(() => {
         if (!pendingNew) return;
         window.addEventListener("pointermove", onPendingMove);
         window.addEventListener("pointerup", onPendingUp);
-        window.addEventListener("pointercancel", () => setPendingNew(null));
+        window.addEventListener("pointercancel", onPendingCancel);
         return () => {
             window.removeEventListener("pointermove", onPendingMove);
             window.removeEventListener("pointerup", onPendingUp);
+            window.removeEventListener("pointercancel", onPendingCancel);
         };
-    }, [pendingNew, onPendingMove, onPendingUp]);
+    }, [pendingNew, onPendingMove, onPendingUp, onPendingCancel]);
 
     function removePlacement(idx: number) {
         const next = placements.slice();

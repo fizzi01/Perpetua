@@ -172,12 +172,7 @@ class ClientDisconnectedEvent(ClientConnectedEvent):
 
 
 class ClientTopologyUpdatedEvent(BusEvent):
-    """Dispatched on the CLIENT after the server pushes a topology update.
-
-    Carries the unified edge bindings (the client reads the ``client_*``
-    fields of each entry) plus the server's virtual bbox so the client
-    can normalize the return-to-server cursor position over it.
-    """
+    """Topology pushed by the server: edge bindings + server virtual bbox."""
 
     def __init__(
         self,
@@ -200,11 +195,7 @@ class ClientTopologyUpdatedEvent(BusEvent):
 
 
 class ClientLayoutUpdatedEvent(BusEvent):
-    """Dispatched when a client's workspace placements change at runtime.
-
-    Carries refreshed serialized EdgeBindings so the mouse listener can
-    hot-swap its routing cache without forcing a reconnect.
-    """
+    """Refreshed edge bindings after the admin edits a client's placements."""
 
     def __init__(
         self,
@@ -227,13 +218,7 @@ class ClientLayoutUpdatedEvent(BusEvent):
 
 
 class ClientMonitorsUpdatedEvent(BusEvent):
-    """Dispatched on the SERVER bus when a connected client reports
-    its monitor list changed at runtime.
-
-    Carries the raw monitor dicts as received over the wire — the
-    server-side handler parses them into MonitorInfo while reconciling
-    placements against the new ids.
-    """
+    """Client-reported monitor list change; raw dicts pending reconciliation."""
 
     def __init__(
         self,
@@ -388,12 +373,7 @@ class CommandEvent(Event):
 
 
 class CrossScreenCommandEvent(CommandEvent):
-    """Cross-screen command event.
-
-    ``client_monitor_id`` selects the target monitor on the receiving
-    client when spatial routing matched an EdgeBinding; ``None`` falls
-    back to the client's virtual desktop bbox.
-    """
+    """Cross-screen command; ``client_monitor_id=None`` falls back to client bbox."""
 
     def __init__(
         self,
@@ -444,13 +424,7 @@ class CrossScreenCommandEvent(CommandEvent):
 
 
 class ClientTopologyCommandEvent(CommandEvent):
-    """Pushes a fresh topology from server to client.
-
-    The client's CommandHandler turns this into a
-    :class:`ClientTopologyUpdatedEvent` on the bus. ``edge_bindings``
-    is a list of :class:`utils.screen.EdgeBinding` dicts; ``server_bbox``
-    is a 4-tuple used to normalise return-to-server cursor positions.
-    """
+    """Server-to-client topology push; mapped to ``ClientTopologyUpdatedEvent``."""
 
     def __init__(
         self,
@@ -511,13 +485,7 @@ class ClientTopologyCommandEvent(CommandEvent):
 
 
 class ClientMonitorsUpdateCommandEvent(CommandEvent):
-    """Client-to-server notification that the client's monitor list changed.
-
-    The client includes its UID in the payload so the server can route
-    the update to the right ClientObj (the stream handler's transport
-    routing layer doesn't surface the source connection to the command
-    handler).
-    """
+    """Client-to-server monitor list change; ``client_uid`` routes to the right ClientObj."""
 
     def __init__(
         self,

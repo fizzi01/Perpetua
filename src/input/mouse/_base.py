@@ -41,7 +41,7 @@ from event.bus import EventBus
 from network.stream import StreamType
 from network.stream.handler import StreamHandler
 
-from utils.logging import get_logger, Logger
+from utils.logging import get_logger
 from utils.screen import Screen
 from input.utils import ScreenEdge, EdgeDetector, ButtonMapping
 
@@ -117,7 +117,8 @@ class ServerMouseListener(object):
         self._logger = get_logger(self.__class__.__name__)
 
         self._logger.info(
-            f"Mouse listener backend: {BACKEND.get('mouse_listener', 'unknown')}"
+            "mouse listener backend selected",
+            backend=BACKEND.get("mouse_listener", "unknown"),
         )
 
         try:
@@ -219,7 +220,6 @@ class ServerMouseListener(object):
         client_uid = data.client_uid
         client_streams = data.streams
         if client_streams is None:
-            await asyncio.sleep(0)
             return
 
         if client_uid and StreamType.MOUSE in client_streams:
@@ -269,14 +269,11 @@ class ServerMouseListener(object):
         if data is None:
             return
 
-        # Anchor for the spatial resolver: when on a client the OS
-        # position is stale (server's last position before the crossing),
-        # so we always start from the cached ``_last_server_cursor_pos``
-        # and only refresh it from the controller when on the server.
+        # When a client is active the OS cursor position is stale (it
+        # holds the server's last position before the crossing); refresh
+        # from the controller only while the server still owns the cursor.
+        x, y = self._last_server_cursor_pos
         if self._listening:
-            x, y = self._last_server_cursor_pos
-        else:
-            x, y = self._last_server_cursor_pos
             try:
                 from input.mouse.backend import MouseController
 
@@ -286,8 +283,8 @@ class ServerMouseListener(object):
                     self._last_server_cursor_pos = (x, y)
             except Exception as e:
                 self._logger.debug(
-                    f"MouseController().position failed in hotkey resolver, "
-                    f"using last tracked cursor position ({e})"
+                    "hotkey resolver controller refresh failed",
+                    error=str(e),
                 )
 
         client_uid = self.resolve_neighbour(data.edge, x, y)
@@ -308,7 +305,7 @@ class ServerMouseListener(object):
             )
             await self.command_stream.send(CrossScreenCommandEvent(target=client_uid))
         except Exception as e:
-            self._logger.error(f"Error during hotkey directional switch ({e})")
+            self._logger.error("hotkey directional switch failed", error=str(e))
 
     async def _on_hotkey_cycle(self, data: Optional[ScreenSwitchCycleRequestEvent]):
         if data is None:
@@ -328,7 +325,7 @@ class ServerMouseListener(object):
             )
             await self.command_stream.send(CrossScreenCommandEvent(target=client_uid))
         except Exception as e:
-            self._logger.error(f"Error during hotkey cycle switch ({e})")
+            self._logger.error("hotkey cycle switch failed", error=str(e))
 
     async def _on_active_screen_changed(self, data: Optional[ActiveScreenChangedEvent]):
         if data is None:
@@ -376,30 +373,12 @@ class ServerMouseListener(object):
         cursor_x: float,
         cursor_y: float,
     ) -> Optional[tuple[str, dict, float]]:
-        """Match an edge crossing against a cached EdgeBinding.
-
-        Returns ``(client_uid, binding_dict, server_axis_norm)`` or
-        ``None`` if no binding covers ``(server_monitor, edge,
-        axis_norm)``. When the cursor sits in a dead-zone gap of an
-        L-shape layout we snap to the nearest monitor so a corner
-        crossing still resolves.
-        """
+        """Match an edge crossing against a cached EdgeBinding."""
         edge_str = self._EDGE_TO_STRING.get(edge)
         if not edge_str or not self._edge_bindings_by_client:
             return None
 
-        monitor = self._monitor_layout.find_monitor_at(cursor_x, cursor_y)
-        if monitor is None and self._monitor_layout.monitors:
-            best = None
-            best_dist = None
-            for m in self._monitor_layout.monitors:
-                cx = max(m.min_x, min(cursor_x, m.max_x - 1))
-                cy = max(m.min_y, min(cursor_y, m.max_y - 1))
-                dist = (cx - cursor_x) ** 2 + (cy - cursor_y) ** 2
-                if best_dist is None or dist < best_dist:
-                    best = m
-                    best_dist = dist
-            monitor = best
+        monitor = self._monitor_layout.nearest_monitor(cursor_x, cursor_y)
         if monitor is None:
             return None
 
@@ -537,7 +516,7 @@ class ServerMouseListener(object):
                         )
                     )
                 except Exception as e:
-                    self._logger.error(f"Failed to dispatch mouse event ({e})")
+                    self._logger.error("failed to dispatch mouse event", error=str(e))
                 finally:
                     self._cross_screen_event.clear()
 
@@ -550,7 +529,7 @@ class ServerMouseListener(object):
                 asyncio.run_coroutine_threadsafe(coro, self._loop)
                 return
             except Exception as e:
-                self._logger.error(f"Error scheduling coroutine ({e})")
+                self._logger.error("failed to schedule coroutine", error=str(e))
 
         try:
             loop = asyncio.get_running_loop()
@@ -627,7 +606,7 @@ class ServerMouseListener(object):
                 await asyncio.sleep(0)
 
         except Exception as e:
-            self._logger.error(f"Error handling cross-screen ({e})")
+            self._logger.error("failed to handle cross-screen", error=str(e))
         finally:
             with self._server_state_lock:
                 self._handling_cross_screen = False
@@ -658,7 +637,7 @@ class ServerMouseListener(object):
 
                 self._schedule_async(self.stream.send(mouse_event))
             except Exception as e:
-                self._logger.error(f"Failed to dispatch mouse click event ({e})")
+                self._logger.error("failed to dispatch mouse click", error=str(e))
 
         else:
             self._is_dragging = pressed and ButtonMapping[button.name].value in [
@@ -673,7 +652,7 @@ class ServerMouseListener(object):
             try:
                 self._schedule_async(self.stream.send(mouse_event))
             except Exception as e:
-                self._logger.error(f"Failed to dispatch mouse scroll event ({e})")
+                self._logger.error("failed to dispatch mouse scroll", error=str(e))
         return True
 
 
@@ -692,7 +671,8 @@ class ServerMouseController(object):
         self._logger = get_logger(self.__class__.__name__)
 
         self._logger.info(
-            f"Mouse controller backend: {BACKEND.get('mouse_controller', 'unknown')}"
+            "mouse controller backend selected",
+            backend=BACKEND.get("mouse_controller", "unknown"),
         )
 
         self.event_bus.subscribe(
@@ -716,7 +696,7 @@ class ServerMouseController(object):
         await asyncio.sleep(0)
 
     def position_cursor(self, x: float | int, y: float | int):
-        """Position the cursor at normalised ``(x, y)``, denormalised over the virtual desktop bbox."""
+        """Place the cursor from normalised ``(x, y)`` over the virtual desktop bbox."""
         try:
             min_x, min_y, max_x, max_y = self._screen_bbox
             width = max_x - min_x
@@ -726,13 +706,13 @@ class ServerMouseController(object):
             x = max(min_x, min(max_x - 1, round(min_x + x * width)))
             y = max(min_y, min(max_y - 1, round(min_y + y * height)))
         except ValueError:
-            self._logger.log(f"Invalid x or y values: x={x}, y={y}", Logger.ERROR)
+            self._logger.error("invalid cursor coordinates", x=x, y=y)
             return
 
         try:
             self._controller.position = (x, y)
         except Exception as e:
-            self._logger.log(f"Failed to position cursor ({e})", Logger.ERROR)
+            self._logger.error("failed to position cursor", error=str(e))
 
 
 class ClientMouseController(object):
@@ -816,7 +796,8 @@ class ClientMouseController(object):
         self._logger = get_logger(self.__class__.__name__)
 
         self._logger.info(
-            f"Mouse controller backend: {BACKEND.get('mouse_controller', 'unknown')}"
+            "mouse controller backend selected",
+            backend=BACKEND.get("mouse_controller", "unknown"),
         )
 
         if not self.check_cursor_validity():
@@ -849,7 +830,7 @@ class ClientMouseController(object):
                 return False
             return True
         except Exception:
-            self._logger.log("Cursor not available.", Logger.ERROR)
+            self._logger.error("cursor not available")
             return False
 
     async def start(self):
@@ -864,7 +845,7 @@ class ClientMouseController(object):
                     await asyncio.sleep(0)
 
             self._worker_task = asyncio.create_task(self._run_worker())
-            self._logger.log("Async worker started.", Logger.DEBUG)
+            self._logger.debug("async worker started")
             await asyncio.sleep(0)
 
     async def stop(self):
@@ -879,7 +860,7 @@ class ClientMouseController(object):
                     pass
                 self._worker_task = None
 
-            self._logger.log("Async worker stopped.", Logger.DEBUG)
+            self._logger.debug("async worker stopped")
 
     def is_alive(self) -> bool:
         return (
@@ -917,7 +898,7 @@ class ClientMouseController(object):
             except asyncio.CancelledError:
                 break
             except Exception as e:
-                self._logger.log(f"Error in worker ({e})", Logger.ERROR)
+                self._logger.error("worker error", error=str(e))
                 await asyncio.sleep(0.01)
 
     async def _on_client_active(self, data: Optional[ClientActiveEvent]):
@@ -1006,24 +987,10 @@ class ClientMouseController(object):
         cached = self._cached_monitor
         if cached is not None and cached.contains(x, y):
             return cached
-        if not self._monitor_layout.monitors:
-            return None
-        m = self._monitor_layout.find_monitor_at(x, y)
+        m = self._monitor_layout.nearest_monitor(x, y)
         if m is not None:
             self._cached_monitor = m
-            return m
-        best = None
-        best_dist = None
-        for cand in self._monitor_layout.monitors:
-            cx = max(cand.min_x, min(x, cand.max_x - 1))
-            cy = max(cand.min_y, min(y, cand.max_y - 1))
-            dist = (cx - x) ** 2 + (cy - y) ** 2
-            if best_dist is None or dist < best_dist:
-                best = cand
-                best_dist = dist
-        if best is not None:
-            self._cached_monitor = best
-        return best
+        return m
 
     def _detect_edge_via_delta(
         self,
@@ -1200,9 +1167,7 @@ class ClientMouseController(object):
         return (src_monitor_id, dst_monitor_id) in self._intra_pairs
 
     @staticmethod
-    def _infer_exit_edge(
-        previous, x: float, y: float
-    ) -> Optional[ScreenEdge]:
+    def _infer_exit_edge(previous, x: float, y: float) -> Optional[ScreenEdge]:
         """Infer which edge of ``previous`` the cursor crossed to reach (x, y).
 
         When the OS warps the cursor across physically-adjacent monitors
@@ -1236,11 +1201,7 @@ class ClientMouseController(object):
         ``monitor`` in the OS, so ``find_monitor_at(x, y)`` would return
         the WRONG monitor for the lookup.
         """
-        if (
-            not self._edge_bindings
-            or monitor is None
-            or self._server_bbox is None
-        ):
+        if not self._edge_bindings or monitor is None or self._server_bbox is None:
             return None
         edge_str = self._EDGE_TO_STRING_CLIENT.get(edge)
         if edge_str is None:
@@ -1324,7 +1285,7 @@ class ClientMouseController(object):
             if (new_x, new_y) != (cx, cy):
                 self._controller.position = (new_x, new_y)
         except Exception as e:
-            self._logger.log(f"Failed to clamp cursor to monitor ({e})", Logger.ERROR)
+            self._logger.error("failed to clamp cursor to monitor", error=str(e))
 
     def _resolve_return_to_server(
         self,
@@ -1332,28 +1293,10 @@ class ClientMouseController(object):
         x: float,
         y: float,
     ) -> Optional[tuple[float, float]]:
-        """Dual of ``ServerMouseListener._resolve_cross_screen_target``.
-
-        Translates a client-side edge crossing to the matching
-        server-bbox-normalised position. ``None`` when no binding
-        matches - caller stays on the client.
-        """
-        if not self._monitor_layout.monitors:
-            return None
-
-        monitor = self._monitor_layout.find_monitor_at(x, y)
+        """Dual of ``ServerMouseListener._resolve_cross_screen_target``."""
+        monitor = self._monitor_layout.nearest_monitor(x, y)
         if monitor is None:
-            best = None
-            best_dist = None
-            for m in self._monitor_layout.monitors:
-                cx = max(m.min_x, min(x, m.max_x - 1))
-                cy = max(m.min_y, min(y, m.max_y - 1))
-                dist = (cx - x) ** 2 + (cy - y) ** 2
-                if best_dist is None or dist < best_dist:
-                    best = m
-                    best_dist = dist
-            monitor = best
-
+            return None
         return self._lookup_return_to_server(monitor, edge, x, y)
 
     async def _mouse_event_callback(self, message):
@@ -1367,22 +1310,11 @@ class ClientMouseController(object):
             await self._queue.put(message)
             return None
         except Exception as e:
-            self._logger.log(f"Failed to process mouse event ({e})", Logger.ERROR)
+            self._logger.error("failed to process mouse event", error=str(e))
             return None
 
     async def _check_edge(self):
-        """Enforce the workspace topology on every cursor tick.
-
-        Two jobs, in order:
-        1. revert OS-driven monitor transitions not authorised by an
-           intra-client binding (clamp back);
-        2. resolve edge approaches: cross-screen → return-to-server,
-           intra-client → explicit warp, otherwise clamp inside.
-
-        Single-monitor / pre-topology clients have empty bindings and
-        only see the cross-screen lookup + edge clamp - same behaviour
-        as before.
-        """
+        """Enforce the workspace topology on every cursor tick."""
         if (
             self._checking_edge
             or self._cross_screen_event.is_set()
@@ -1401,12 +1333,8 @@ class ClientMouseController(object):
                 if pos is None or len(pos) != 2:
                     return None
                 x, y = pos
-
                 self._movement_history.append((x, y))
 
-                # Keep ``_active_target_bbox`` in sync so an incoming
-                # POSITION_ACTION denormalises against the right screen
-                # even if the cursor moved between monitors.
                 current_monitor = self._find_monitor_for_cursor(x, y)
                 if current_monitor is not None:
                     self._active_target_bbox = (
@@ -1417,133 +1345,8 @@ class ClientMouseController(object):
                     )
                     self._active_monitor_id = current_monitor.monitor_id
 
-                # 1) revert unauthorised OS drift between monitors
-                if (
-                    current_monitor is not None
-                    and self._last_known_monitor_id is not None
-                    and current_monitor.monitor_id != self._last_known_monitor_id
-                    and not self._has_intra_binding_between(
-                        self._last_known_monitor_id, current_monitor.monitor_id
-                    )
-                    and not self._is_dragging
-                ):
-                    previous = None
-                    for m in self._monitor_layout.monitors:
-                        if m.monitor_id == self._last_known_monitor_id:
-                            previous = m
-                            break
-                    if previous is not None:
-                        # Fast-motion case: the cursor crossed off
-                        # ``previous`` so fast that ``_detect_directed_edge``
-                        # never fired on it. If the exit edge has a
-                        # workspace binding back to the server, honour
-                        # it before falling back to the clamp - otherwise
-                        # this client monitor becomes a one-way trap when
-                        # its only return path shares an OS-adjacency
-                        # with another, non-workspace-adjacent monitor.
-                        exit_edge = self._infer_exit_edge(previous, x, y)
-                        self._logger.debug(
-                            f"OS drift detected from monitor "
-                            f"{previous.monitor_id} -> {current_monitor.monitor_id}; "
-                            f"exit_edge={exit_edge}; bindings={len(self._edge_bindings)}; "
-                            f"server_bbox={self._server_bbox is not None}"
-                        )
-                        if exit_edge is not None:
-                            edge_x = max(
-                                previous.min_x, min(previous.max_x - 1, x)
-                            )
-                            edge_y = max(
-                                previous.min_y, min(previous.max_y - 1, y)
-                            )
-                            resolved = self._lookup_return_to_server(
-                                previous, exit_edge, edge_x, edge_y
-                            )
-                            if resolved is not None:
-                                target_x, target_y = resolved
-
-                                self._cross_screen_event.set()
-                                self._movement_history.clear()
-
-                                # Pull the local cursor back inside
-                                # ``previous`` so it doesn't visually
-                                # remain stranded on the unplaced
-                                # OS-neighbour after we hand control
-                                # back to the server.
-                                self._clamp_cursor_to_monitor(previous)
-
-                                self._logger.debug(
-                                    f"Firing return-to-server from drift "
-                                    f"(monitor {previous.monitor_id} {exit_edge}); "
-                                    f"target=({target_x:.3f}, {target_y:.3f})"
-                                )
-                                command = CrossScreenCommandEvent(
-                                    x=target_x, y=target_y
-                                )
-                                await self.command_stream.send(command)
-                                await self.event_bus.dispatch(
-                                    event_type=BusEventType.CLIENT_INACTIVE,
-                                    data=None,
-                                )
-                                return await asyncio.sleep(0)
-                            else:
-                                self._logger.debug(
-                                    f"No return-to-server binding for "
-                                    f"monitor {previous.monitor_id} edge "
-                                    f"{exit_edge}; falling through"
-                                )
-
-                            # No return-to-server; check whether the
-                            # exit edge has an intra-client warp. If it
-                            # does, honour the workspace destination
-                            # instead of the OS one (the OS picked an
-                            # unauthorised neighbour, but the workspace
-                            # has a different valid neighbour for this
-                            # edge).
-                            warp = self._resolve_intra_client_warp(
-                                exit_edge, edge_x, edge_y, previous
-                            )
-                            if warp is not None:
-                                dst_monitor_id, target_x, target_y = warp
-                                try:
-                                    self._controller.position = (
-                                        int(target_x),
-                                        int(target_y),
-                                    )
-                                except Exception as e:
-                                    self._logger.log(
-                                        f"Failed to warp cursor intra-client "
-                                        f"after drift ({e})",
-                                        Logger.ERROR,
-                                    )
-                                else:
-                                    self._last_known_monitor_id = dst_monitor_id
-                                    self._active_monitor_id = dst_monitor_id
-                                    for m in self._monitor_layout.monitors:
-                                        if m.monitor_id == dst_monitor_id:
-                                            self._active_target_bbox = (
-                                                m.min_x,
-                                                m.min_y,
-                                                m.max_x,
-                                                m.max_y,
-                                            )
-                                            break
-                                    self._movement_history.clear()
-                                return None
-
-                        self._clamp_cursor_to_monitor(previous)
-                        pos = self._controller.position
-                        if pos and len(pos) == 2:
-                            x, y = pos
-                            self._movement_history.clear()
-                            self._movement_history.append((x, y))
-                            self._active_target_bbox = (
-                                previous.min_x,
-                                previous.min_y,
-                                previous.max_x,
-                                previous.max_y,
-                            )
-                            self._active_monitor_id = previous.monitor_id
-                        return None
+                if await self._handle_os_drift(x, y, current_monitor):
+                    return None
 
                 if current_monitor is not None:
                     self._last_known_monitor_id = current_monitor.monitor_id
@@ -1556,72 +1359,162 @@ class ClientMouseController(object):
                         y=y,
                         monitor=current_monitor,
                     )
-
-                # Delta fallback when OS clamping stalls the position
-                # history against a monitor bound.
                 if edge is None:
                     edge = self._detect_edge_via_delta(x, y, current_monitor)
 
                 if edge is None or self._is_dragging:
                     return None
 
-                # 2a) cross-screen binding -> return-to-server
-                resolved = self._resolve_return_to_server(edge, x, y)
-                if resolved is not None:
-                    target_x, target_y = resolved
-
-                    self._cross_screen_event.set()
-                    self._movement_history.clear()
-
-                    command = CrossScreenCommandEvent(x=target_x, y=target_y)
-                    await self.command_stream.send(command)
-                    await self.event_bus.dispatch(
-                        event_type=BusEventType.CLIENT_INACTIVE, data=None
-                    )
+                if await self._try_return_to_server(edge, x, y):
                     return await asyncio.sleep(0)
 
-                # 2b) intra-client binding -> explicit warp
-                warp = self._resolve_intra_client_warp(edge, x, y, current_monitor)
-                if warp is not None:
-                    dst_monitor_id, target_x, target_y = warp
-                    try:
-                        self._controller.position = (
-                            int(target_x),
-                            int(target_y),
-                        )
-                    except Exception as e:
-                        self._logger.log(
-                            f"Failed to warp cursor intra-client ({e})", Logger.ERROR
-                        )
-                        return None
-                    # Update last-known to the warp destination so the
-                    # next tick doesn't flag this as drift.
-                    self._last_known_monitor_id = dst_monitor_id
-                    self._active_monitor_id = dst_monitor_id
-                    for m in self._monitor_layout.monitors:
-                        if m.monitor_id == dst_monitor_id:
-                            self._active_target_bbox = (
-                                m.min_x,
-                                m.min_y,
-                                m.max_x,
-                                m.max_y,
-                            )
-                            break
-                    self._movement_history.clear()
+                if self._try_intra_client_warp_sync(edge, x, y, current_monitor):
                     return None
 
-                # 2c) void workspace edge -> clamp inside current monitor
                 if current_monitor is not None:
                     self._clamp_cursor_to_monitor(current_monitor)
                     self._movement_history.clear()
                 return None
 
         except Exception as e:
-            self._logger.log(f"Failed to dispatch screen event ({e})", Logger.ERROR)
+            self._logger.error("failed to dispatch screen event", error=str(e))
         finally:
             self._checking_edge = False
 
-        return await asyncio.sleep(0)
+    async def _handle_os_drift(self, x: float, y: float, current_monitor) -> bool:
+        """Detect/consume unauthorised OS-driven monitor transitions.
+
+        ``True`` ⇒ drift was handled (caller must return). The fast-motion
+        case bypasses ``_detect_directed_edge`` so the exit edge has to be
+        re-inferred to honour workspace return-to-server/intra-warp bindings.
+        """
+        if not (
+            current_monitor is not None
+            and self._last_known_monitor_id is not None
+            and current_monitor.monitor_id != self._last_known_monitor_id
+            and not self._has_intra_binding_between(
+                self._last_known_monitor_id, current_monitor.monitor_id
+            )
+            and not self._is_dragging
+        ):
+            return False
+
+        previous = next(
+            (
+                m
+                for m in self._monitor_layout.monitors
+                if m.monitor_id == self._last_known_monitor_id
+            ),
+            None,
+        )
+        if previous is None:
+            return False
+
+        exit_edge = self._infer_exit_edge(previous, x, y)
+        self._logger.debug(
+            "OS drift detected",
+            from_monitor=previous.monitor_id,
+            to_monitor=current_monitor.monitor_id,
+            exit_edge=str(exit_edge) if exit_edge else None,
+            bindings=len(self._edge_bindings),
+            has_server_bbox=self._server_bbox is not None,
+        )
+
+        if exit_edge is not None:
+            edge_x = max(previous.min_x, min(previous.max_x - 1, x))
+            edge_y = max(previous.min_y, min(previous.max_y - 1, y))
+
+            resolved = self._lookup_return_to_server(
+                previous, exit_edge, edge_x, edge_y
+            )
+            if resolved is not None:
+                target_x, target_y = resolved
+                self._cross_screen_event.set()
+                self._movement_history.clear()
+                # Pull the local cursor back inside ``previous`` so it
+                # doesn't visually remain stranded on the unplaced
+                # OS-neighbour after handing control back to the server.
+                self._clamp_cursor_to_monitor(previous)
+                self._logger.debug(
+                    "return-to-server from drift",
+                    monitor=previous.monitor_id,
+                    edge=str(exit_edge),
+                    target_x=target_x,
+                    target_y=target_y,
+                )
+                await self.command_stream.send(
+                    CrossScreenCommandEvent(x=target_x, y=target_y)
+                )
+                await self.event_bus.dispatch(
+                    event_type=BusEventType.CLIENT_INACTIVE, data=None
+                )
+                return True
+
+            self._logger.debug(
+                "no return-to-server binding for drift edge",
+                monitor=previous.monitor_id,
+                edge=str(exit_edge),
+            )
+            if self._try_intra_client_warp_sync(exit_edge, edge_x, edge_y, previous):
+                return True
+
+        self._clamp_cursor_to_monitor(previous)
+        pos = self._controller.position
+        if pos and len(pos) == 2:
+            nx, ny = pos
+            self._movement_history.clear()
+            self._movement_history.append((nx, ny))
+            self._active_target_bbox = (
+                previous.min_x,
+                previous.min_y,
+                previous.max_x,
+                previous.max_y,
+            )
+            self._active_monitor_id = previous.monitor_id
+        return True
+
+    async def _try_return_to_server(self, edge: ScreenEdge, x: float, y: float) -> bool:
+        """Return True if a cross-screen binding consumed the edge approach."""
+        resolved = self._resolve_return_to_server(edge, x, y)
+        if resolved is None:
+            return False
+        target_x, target_y = resolved
+        self._cross_screen_event.set()
+        self._movement_history.clear()
+        await self.command_stream.send(CrossScreenCommandEvent(x=target_x, y=target_y))
+        await self.event_bus.dispatch(
+            event_type=BusEventType.CLIENT_INACTIVE, data=None
+        )
+        return True
+
+    def _try_intra_client_warp_sync(
+        self, edge: ScreenEdge, x: float, y: float, current_monitor
+    ) -> bool:
+        """Execute an intra-client warp if a binding covers the edge."""
+        warp = self._resolve_intra_client_warp(edge, x, y, current_monitor)
+        if warp is None:
+            return False
+        dst_monitor_id, target_x, target_y = warp
+        try:
+            self._controller.position = (int(target_x), int(target_y))
+        except Exception as e:
+            self._logger.error("failed to warp cursor intra-client", error=str(e))
+            return True
+        # Update last-known to the warp destination so the next tick
+        # doesn't flag this as drift.
+        self._last_known_monitor_id = dst_monitor_id
+        self._active_monitor_id = dst_monitor_id
+        for m in self._monitor_layout.monitors:
+            if m.monitor_id == dst_monitor_id:
+                self._active_target_bbox = (
+                    m.min_x,
+                    m.min_y,
+                    m.max_x,
+                    m.max_y,
+                )
+                break
+        self._movement_history.clear()
+        return True
 
     async def _position_cursor(self, x: float | int, y: float | int):
         """Position the cursor at normalised ``(x, y)`` over the active target bbox."""
@@ -1640,7 +1533,7 @@ class ClientMouseController(object):
             self._controller.position = (x, y)
             await asyncio.sleep(0)
         except Exception as e:
-            self._logger.log(f"Failed to position cursor ({e})", Logger.ERROR)
+            self._logger.error("failed to position cursor", error=str(e))
 
     def _move_cursor(
         self, x: float | int, y: float | int, dx: float | int, dy: float | int
@@ -1674,7 +1567,7 @@ class ClientMouseController(object):
             try:
                 self._controller.position = (x, y)
             except Exception as e:
-                self._logger.log(f"Failed to position cursor ({e})", Logger.ERROR)
+                self._logger.error("failed to position cursor", error=str(e))
 
     def _click(self, button: int | None, is_pressed: bool):
         """Forward press/release to the OS, tagging multi-click sequences.
@@ -1696,9 +1589,7 @@ class ClientMouseController(object):
                 try:
                     self._controller.release(btn)
                 except Exception as e:
-                    self._logger.log(
-                        f"Failed to release stuck button ({e})", Logger.ERROR
-                    )
+                    self._logger.error("failed to release stuck button", error=str(e))
                 self._pressed = False
 
             current_time = time()
@@ -1717,7 +1608,7 @@ class ClientMouseController(object):
                 self._controller.press(btn)
                 self._pressed = True
             except Exception as e:
-                self._logger.log(f"Failed to press button ({e})", Logger.ERROR)
+                self._logger.error("failed to press button", error=str(e))
 
             self._last_press_time = current_time
             self._previous_button = button
@@ -1727,7 +1618,7 @@ class ClientMouseController(object):
                 try:
                     self._controller.release(btn)
                 except Exception as e:
-                    self._logger.log(f"Failed to release button ({e})", Logger.ERROR)
+                    self._logger.error("failed to release button", error=str(e))
                 self._pressed = False
 
         self._is_dragging = is_pressed and ButtonMapping(button).value in [

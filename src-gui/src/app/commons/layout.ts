@@ -79,6 +79,50 @@ export function validateLayout(
     return {ok: errors.length === 0, errors, errorsByIndex};
 }
 
+export interface ViewMetrics {
+    scale: number;
+    offsetX: number;
+    offsetY: number;
+}
+
+// Workspace-bounds-driven viewport. Used by the LayoutEditor where the visible
+// area must include both server monitors and unsubmitted placements.
+export function computeViewMetrics(
+    bounds: {x: number; y: number; width: number; height: number},
+    canvasW: number,
+    canvasH: number,
+    padding: number,
+): ViewMetrics {
+    const usableW = Math.max(1, canvasW - padding * 2);
+    const usableH = Math.max(1, canvasH - padding * 2);
+    const w = Math.max(1, bounds.width);
+    const h = Math.max(1, bounds.height);
+    const scale = Math.min(usableW / w, usableH / h);
+    const renderedW = w * scale;
+    const renderedH = h * scale;
+    return {
+        scale,
+        offsetX: (canvasW - renderedW) / 2 - bounds.x * scale,
+        offsetY: (canvasH - renderedH) / 2 - bounds.y * scale,
+    };
+}
+
+export function workspaceToCanvas(
+    x: number,
+    y: number,
+    m: ViewMetrics,
+): {x: number; y: number} {
+    return {x: x * m.scale + m.offsetX, y: y * m.scale + m.offsetY};
+}
+
+export function canvasToWorkspace(
+    x: number,
+    y: number,
+    m: ViewMetrics,
+): {x: number; y: number} {
+    return {x: (x - m.offsetX) / m.scale, y: (y - m.offsetY) / m.scale};
+}
+
 export interface CanvasMetrics {
     offsetX: number;
     offsetY: number;

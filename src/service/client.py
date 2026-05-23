@@ -985,9 +985,7 @@ class Client:
             )
             return True
         except Exception as e:
-            self._logger.warning(
-                f"Failed to enqueue client monitor update ({e})"
-            )
+            self._logger.warning(f"Failed to enqueue client monitor update ({e})")
             return False
 
     async def _monitor_watch_loop(self) -> None:
@@ -1042,9 +1040,7 @@ class Client:
             except asyncio.CancelledError:
                 return
             except Exception as e:
-                self._logger.error(
-                    f"Error in client monitor watch loop ({e})"
-                )
+                self._logger.error(f"Error in client monitor watch loop ({e})")
                 await asyncio.sleep(self.MONITOR_WATCH_INTERVAL)
 
     async def _discovery_refresh_loop(self) -> None:
@@ -1320,18 +1316,14 @@ class Client:
                     Screen.get_monitors()
                 )
             except Exception as e:
-                self._logger.debug(
-                    f"Could not prime client monitor signature ({e})"
-                )
+                self._logger.debug(f"Could not prime client monitor signature ({e})")
                 self._known_monitors_signature = None
             try:
                 self._monitor_watch_task = asyncio.create_task(
                     self._monitor_watch_loop()
                 )
             except Exception as e:
-                self._logger.warning(
-                    f"Failed to start client monitor watch task ({e})"
-                )
+                self._logger.warning(f"Failed to start client monitor watch task ({e})")
 
             server_host = self.config.get_server_host()
             server_port = self.config.get_server_port()
@@ -1767,9 +1759,7 @@ class Client:
         self._logger.info("Streams reconnected", streams=streams)
         await self.event_bus.dispatch(
             event_type=BusEventType.CLIENT_STREAM_RECONNECTED,
-            data=ClientStreamReconnectedEvent(
-                client_uid=client.uid, streams=streams
-            ),
+            data=ClientStreamReconnectedEvent(client_uid=client.uid, streams=streams),
         )
 
     async def _on_server_uid_received(self, uid: str) -> None:

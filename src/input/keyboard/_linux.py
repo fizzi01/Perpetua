@@ -15,7 +15,6 @@
 #  along with this program.  If not, see <https://www.gnu.org/licenses/>.
 #
 
-from typing import Any, Optional
 
 from event.bus import EventBus
 from network.stream.handler import StreamHandler
@@ -99,9 +98,9 @@ class ServerKeyboardListener(_base.ServerKeyboardListener):
                 make_cb(self._hotkey_cycle_client, 1),
             ),
             (
-                 frozenset({ctrl, shift, p, tab, two}),
-                 make_cb(self._hotkey_cycle_client, -1),
-             ),
+                frozenset({ctrl, shift, p, tab, two}),
+                make_cb(self._hotkey_cycle_client, -1),
+            ),
             (frozenset({ctrl, shift, p, esc}), make_cb(self._hotkey_switch_to_server)),
             (frozenset({ctrl, shift, q}), make_cb(self._hotkey_panic)),
         ]

@@ -38,10 +38,8 @@ class Screen(_base.Screen):
     _MONITORINFOF_PRIMARY = 0x00000001
 
     @classmethod
-    #todo: Recheck for monitor change
     def _enumerate_monitors(cls) -> "list[MonitorInfo] | None":
-        """Per-monitor MonitorInfo via EnumDisplayMonitors. GetMonitorInfo
-        adds primary flag and device name; fall back to bbox-only on failure."""
+        """Per-monitor MonitorInfo via EnumDisplayMonitors."""
         try:
             monitors: list[MonitorInfo] = []
             for idx, (hmon, _hdc, rect) in enumerate(EnumDisplayMonitors()):

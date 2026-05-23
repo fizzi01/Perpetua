@@ -319,17 +319,20 @@ export function ServerTab({onStatusChange, state}: ServerTabProps) {
                         grouped.set(key, existing);
                     }
 
-                    let saved = 0;
-                    let failed = 0;
-                    for (const [clientKey, placements] of grouped) {
-                        const client = currentClients.find(
-                            (c) => groupKey(c) === clientKey,
-                        );
-                        if (!client && placements.length === 0) {
-                            continue;
-                        }
-                        try {
-                            await setClientLayout(
+                    const entries = Array.from(grouped).filter(
+                        ([clientKey, placements]) => {
+                            const client = currentClients.find(
+                                (c) => groupKey(c) === clientKey,
+                            );
+                            return Boolean(client) || placements.length > 0;
+                        },
+                    );
+                    const results = await Promise.allSettled(
+                        entries.map(([clientKey, placements]) => {
+                            const client = currentClients.find(
+                                (c) => groupKey(c) === clientKey,
+                            );
+                            return setClientLayout(
                                 client?.uid || undefined,
                                 placements,
                                 {
@@ -337,21 +340,33 @@ export function ServerTab({onStatusChange, state}: ServerTabProps) {
                                     ipAddress: client?.ips?.[0],
                                 },
                             );
+                        }),
+                    );
+
+                    let saved = 0;
+                    let failed = 0;
+                    results.forEach((res, i) => {
+                        if (res.status === 'fulfilled') {
                             saved += 1;
-                        } catch (err) {
-                            failed += 1;
-                            console.error(
-                                'SetClientLayout failed for',
-                                clientKey,
-                                err,
-                            );
-                            addNotification(
-                                'error',
-                                `Layout rejected for ${client?.name ?? clientKey}`,
-                                String(err),
-                            );
+                            return;
                         }
-                    }
+                        failed += 1;
+                        const [clientKey] = entries[i];
+                        const client = currentClients.find(
+                            (c) => groupKey(c) === clientKey,
+                        );
+                        console.error(
+                            'SetClientLayout failed for',
+                            clientKey,
+                            res.reason,
+                        );
+                        addNotification(
+                            'error',
+                            `Layout rejected for ${client?.name ?? clientKey}`,
+                            String(res.reason),
+                        );
+                    });
+
                     if (failed === 0) {
                         addNotification(
                             'info',

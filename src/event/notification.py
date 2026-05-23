@@ -634,15 +634,15 @@ class MonitorTopologyChangedEvent(NotificationEvent):
         n_orphans = len(data["orphans"])
         who = client_net_id or client_uid
         if source_kind == "client":
-            base = f"Client {who} monitor layout changed" if who else (
-                "Client monitor layout changed"
+            base = (
+                f"Client {who} monitor layout changed"
+                if who
+                else ("Client monitor layout changed")
             )
         else:
             base = "Monitor layout changed"
         if n_orphans > 0:
-            msg = (
-                f"{base}; {n_orphans} placement(s) became orphaned and were dropped"
-            )
+            msg = f"{base}; {n_orphans} placement(s) became orphaned and were dropped"
         else:
             msg = base
         super().__init__(

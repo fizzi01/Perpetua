@@ -65,6 +65,7 @@ from input.mouse import ServerMouseListener, ServerMouseController
 from input.keyboard import ServerKeyboardListener
 from input.clipboard import ClipboardListener, ClipboardController
 
+from utils import BackgroundTasks
 from utils.metrics import PerformanceMonitor
 from utils.net import get_local_ip
 from utils.crypto import CertificateManager
@@ -151,6 +152,7 @@ class Server:
         self._monitor_watch_task: Optional[asyncio.Task] = None
         self._known_monitors_signature: Optional[tuple] = None
         self.MONITOR_WATCH_INTERVAL = 2.0
+        self._bg_tasks = BackgroundTasks()
 
     @property
     def clients_manager(self) -> ClientsManager:
@@ -714,15 +716,13 @@ class Server:
                 self.clients_manager.update_client(client)
             except Exception as e:
                 self._logger.warning(
-                    f"Failed to persist pruned layout for "
-                    f"{client.get_net_id()} ({e})"
+                    f"Failed to persist pruned layout for {client.get_net_id()} ({e})"
                 )
 
             if notify and client.is_connected:
                 try:
                     edge_bindings = [
-                        eb.to_dict()
-                        for eb in client.get_edge_bindings(server_monitors)
+                        eb.to_dict() for eb in client.get_edge_bindings(server_monitors)
                     ]
                     intra_client_bindings = client.get_intra_client_bindings(
                         server_monitors
@@ -745,9 +745,7 @@ class Server:
             try:
                 await self.save_config()
             except Exception as e:
-                self._logger.warning(
-                    f"Failed to persist layout reconciliation ({e})"
-                )
+                self._logger.warning(f"Failed to persist layout reconciliation ({e})")
 
         return orphans
 
@@ -795,7 +793,7 @@ class Server:
             except asyncio.CancelledError:
                 return
             except Exception as e:
-                self._logger.error(f"Error in monitor watch loop ({e})")
+                self._logger.error("monitor watch loop failed", error=str(e))
                 # Brief pause so a persistent error doesn't busy-spin.
                 await asyncio.sleep(self.MONITOR_WATCH_INTERVAL)
 
@@ -1217,13 +1215,9 @@ class Server:
             from utils.screen import Screen
 
             startup_monitors = Screen.get_monitors()
-            self._known_monitors_signature = self._monitors_signature(
-                startup_monitors
-            )
+            self._known_monitors_signature = self._monitors_signature(startup_monitors)
         except Exception as e:
-            self._logger.debug(
-                f"Could not prime monitor signature at startup ({e})"
-            )
+            self._logger.debug(f"Could not prime monitor signature at startup ({e})")
             self._known_monitors_signature = None
             startup_monitors = []
 
@@ -1242,18 +1236,14 @@ class Server:
                         f"longer abut any server monitor on startup"
                     )
             except Exception as e:
-                self._logger.warning(
-                    f"Failed to reconcile layouts at startup ({e})"
-                )
+                self._logger.warning(f"Failed to reconcile layouts at startup ({e})")
 
         try:
-            self._monitor_watch_task = asyncio.create_task(
-                self._monitor_watch_loop()
+            self._monitor_watch_task = self._bg_tasks.spawn(
+                self._monitor_watch_loop(), name="monitor_watch_loop"
             )
         except Exception as e:
-            self._logger.warning(
-                f"Failed to start monitor watch task ({e})"
-            )
+            self._logger.warning(f"Failed to start monitor watch task ({e})")
 
         self._logger.info(f"Server started on {self.config.host}:{self.config.port}")
         return True
@@ -1729,8 +1719,7 @@ class Server:
             await self.save_config()
         except Exception as e:
             self._logger.warning(
-                f"Failed to persist client {client.get_net_id()} monitor "
-                f"update ({e})"
+                f"Failed to persist client {client.get_net_id()} monitor update ({e})"
             )
 
         # Refresh the listener's edge-binding cache so the next
@@ -1743,9 +1732,7 @@ class Server:
             edge_bindings = [
                 eb.to_dict() for eb in client.get_edge_bindings(server_monitors)
             ]
-            intra_client_bindings = client.get_intra_client_bindings(
-                server_monitors
-            )
+            intra_client_bindings = client.get_intra_client_bindings(server_monitors)
             await self.event_bus.dispatch(
                 event_type=BusEventType.CLIENT_LAYOUT_UPDATED,
                 data=ClientLayoutUpdatedEvent(

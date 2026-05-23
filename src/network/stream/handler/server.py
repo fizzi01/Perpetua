@@ -57,10 +57,7 @@ class UnidirectionalStreamHandler(_ServerStreamHandler):
         self._logger.debug(f"Stream {self.stream_type} reconnected")
 
         client_uid = data.client_uid
-        if (
-            self._active_client is not None
-            and self._active_client.uid == client_uid
-        ):
+        if self._active_client is not None and self._active_client.uid == client_uid:
             try:
                 if not await self._configure_stream_transport_for_client(
                     client=self._active_client,
@@ -85,10 +82,7 @@ class UnidirectionalStreamHandler(_ServerStreamHandler):
             return
 
         client_uid = data.client_uid
-        if (
-            self._active_client is not None
-            and self._active_client.uid == client_uid
-        ):
+        if self._active_client is not None and self._active_client.uid == client_uid:
             try:
                 self._active_client = None
                 self._notify_send_not_ready()
@@ -200,10 +194,7 @@ class BidirectionalStreamHandler(_ServerStreamHandler):
             return
 
         client_uid = data.client_uid
-        if (
-            self._active_client is not None
-            and self._active_client.uid == client_uid
-        ):
+        if self._active_client is not None and self._active_client.uid == client_uid:
             self._active_client = None
             self._notify_send_not_ready()
             await self.msg_exchange.set_transport(
@@ -226,10 +217,7 @@ class BidirectionalStreamHandler(_ServerStreamHandler):
         self._logger.debug(f"Stream {self.stream_type} reconnected")
 
         client_uid = data.client_uid
-        if (
-            self._active_client is not None
-            and self._active_client.uid == client_uid
-        ):
+        if self._active_client is not None and self._active_client.uid == client_uid:
             try:
                 if not await self._configure_stream_transport_for_client(
                     client=self._active_client,
@@ -468,7 +456,7 @@ class MulticastStreamHandler(_ServerStreamHandler):
                     client=self._active_client,
                     stream_type=self.stream_type,
                     msg_exchange=self.msg_exchange,
-                    transport_id=active_screen,
+                    transport_id=active_uid,
                 ):
                     # If send enabled, we disable the active client if no valid transport
                     self._active_client = None

@@ -667,9 +667,7 @@ class MessageExchange:
                 "Call set_transport() first."
             )
         if self.config.multicast and message.target:
-            matched = [
-                (tr, cb) for tr, cb in callback_snapshot if tr == message.target
-            ]
+            matched = [(tr, cb) for tr, cb in callback_snapshot if tr == message.target]
             if matched:
                 callback_snapshot = matched
         for tr_id, send_callback in callback_snapshot:  # Round-robin

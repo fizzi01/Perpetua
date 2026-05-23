@@ -23,6 +23,9 @@ from enum import StrEnum
 from typing import Iterable, Optional
 
 from model.monitor import MonitorInfo
+from utils.logging import get_logger
+
+_logger = get_logger(__name__)
 
 
 @dataclass
@@ -75,6 +78,20 @@ class MonitorLayout:
             if m.contains(x, y):
                 return m
         return None
+
+    def nearest_monitor(self, x: float, y: float) -> Optional[MonitorInfo]:
+        hit = self.find_monitor_at(x, y)
+        if hit is not None or not self.monitors:
+            return hit
+        best: Optional[MonitorInfo] = None
+        best_dist: Optional[float] = None
+        for m in self.monitors:
+            cx = max(m.min_x, min(x, m.max_x - 1))
+            cy = max(m.min_y, min(y, m.max_y - 1))
+            d = (cx - x) ** 2 + (cy - y) ** 2
+            if best_dist is None or d < best_dist:
+                best, best_dist = m, d
+        return best
 
     def has_neighbor_left(self, monitor: MonitorInfo, y: float) -> bool:
         for m in self.monitors:
@@ -295,6 +312,14 @@ def reconcile_bindings_with_client_monitors(
         else:
             dropped.append(b)
             missing.add(b.client_monitor_id)
+
+    if dropped:
+        _logger.debug(
+            "dropped bindings for missing client monitors",
+            client_uid=client_uid,
+            dropped=len(dropped),
+            missing_monitor_ids=sorted(missing),
+        )
 
     return LayoutReconciliation(
         kept=tuple(kept),

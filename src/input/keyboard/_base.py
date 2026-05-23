@@ -18,7 +18,7 @@
 import asyncio
 import os
 import signal
-from typing import Any, Optional
+from typing import Optional
 
 from event import (
     BusEventType,
@@ -408,7 +408,6 @@ class ServerKeyboardListener(object):
             )
         except Exception as e:
             self._logger.error(f"Error dispatching cycle hotkey ({e})")
-
 
     async def _hotkey_switch_to_server(self) -> None:
         """Ctrl+Shift+P+Esc: release any active client and return focus to the server."""

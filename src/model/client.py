@@ -216,22 +216,13 @@ class ClientObj:
         return self.host_name if self.host_name is not None else self.ip_address
 
     def get_effective_placements(self, server_monitors) -> list[dict]:
-        """Return the placements that drive cross-screen routing.
-
-        Explicit placements are honoured verbatim. Monitors the admin
-        chose NOT to place are intentionally left off the workspace so
-        their OS-level adjacency to a placed monitor can't smuggle the
-        cursor into an unrouted region (which would then have no return
-        path to the server). Legacy clients that only carry a
-        ``screen_position`` get a single synthesised placement for the
-        client's primary monitor.
-        """
+        """Placements driving cross-screen routing; legacy fallback when empty."""
         if self.placements:
             return list(self.placements)
         return self._synthesize_legacy_placement(server_monitors)
 
     def _synthesize_legacy_placement(self, server_monitors) -> list[dict]:
-        """Fallback placement for clients that only carry ``screen_position``."""
+        """Single placement synthesised from ``screen_position`` for legacy clients."""
         if not server_monitors:
             return []
         primary = next(
@@ -275,12 +266,9 @@ class ClientObj:
         ]
 
     def get_edge_bindings(self, server_monitors) -> list:
-        """Per-placement EdgeBinding list driving cross-screen routing.
-
-        Server side reads ``server_*`` fields, client side reads
-        ``client_*``. Local import to keep ``utils.screen`` out of the
-        model layer's import graph.
-        """
+        """Per-placement EdgeBinding list driving cross-screen routing."""
+        # Local import to keep ``utils.screen`` out of the model layer's
+        # import graph.
         placements = self.get_effective_placements(server_monitors)
         if not placements:
             return []

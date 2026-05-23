@@ -27,8 +27,6 @@ _IS_WAYLAND = (
 
 class Screen(_base.Screen):
     _size_cache: tuple[int, int] | None = None
-    _bbox_cache: tuple[int, int, int, int] | None = None
-    _monitors_cache: "list[tuple[int, int, int, int]] | None" = None
     _wl_display = None  # Shared singleton kept alive for the process
 
     @classmethod
@@ -40,36 +38,28 @@ class Screen(_base.Screen):
     @classmethod
     def get_virtual_bbox(cls) -> tuple[int, int, int, int]:
         """Union of every connected output's geometry."""
-        if cls._bbox_cache is not None:
-            return cls._bbox_cache
         try:
             monitors = cls._enumerate_monitors()
         except Exception:
             monitors = None
         if not monitors:
-            bbox = super().get_virtual_bbox()
-        else:
-            min_x = min(m.min_x for m in monitors)
-            min_y = min(m.min_y for m in monitors)
-            max_x = max(m.max_x for m in monitors)
-            max_y = max(m.max_y for m in monitors)
-            bbox = (min_x, min_y, max_x, max_y)
-        if (bbox[2] - bbox[0]) <= 0 or (bbox[3] - bbox[1]) <= 0:
-            bbox = super().get_virtual_bbox()
-        cls._bbox_cache = bbox
-        return bbox
+            return super().get_virtual_bbox()
+        min_x = min(m.min_x for m in monitors)
+        min_y = min(m.min_y for m in monitors)
+        max_x = max(m.max_x for m in monitors)
+        max_y = max(m.max_y for m in monitors)
+        if (max_x - min_x) <= 0 or (max_y - min_y) <= 0:
+            return super().get_virtual_bbox()
+        return min_x, min_y, max_x, max_y
 
     @classmethod
     def get_monitors(cls) -> list[MonitorInfo]:
-        if cls._monitors_cache is not None:
-            return list(cls._monitors_cache)
         try:
             monitors = cls._enumerate_monitors()
         except Exception:
             monitors = None
         if not monitors:
-            monitors = super().get_monitors()
-        cls._monitors_cache = monitors
+            return super().get_monitors()
         return list(monitors)
 
     @classmethod
