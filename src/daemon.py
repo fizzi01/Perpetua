@@ -463,7 +463,7 @@ class Daemon:
             self._running = True
             # Signal handlers need a running loop + the daemon's bg_tasks.
             self._setup_signal_handlers()
-            self._logger.info(f"Daemon started, listening on {self.socket_path}")
+            self._logger.debug("Daemon started successfully", endpoint=self._endpoint_url)
             self._logger.info(
                 f"Platform: {'Windows (TCP Socket)' if IS_WINDOWS else 'Unix (Socket)'}"
             )
@@ -478,12 +478,15 @@ class Daemon:
                         version=self.app_config.version,
                     )
                     self._logger.debug(
-                        f"Endpoint published at {json_path} (txt: {txt_path})"
+                        "Endpoint published",
+                        json_path=json_path,
+                        txt_path=txt_path
                     )
                 except Exception as e:
                     self._logger.warning(
-                        f"Could not write endpoint file ({e}); "
-                        f"falling back to legacy discovery"
+                        "Could not write endpoint file",
+                        error=str(e),
+                        fallback="falling back to legacy discovery"
                     )
 
             if sys.platform == "darwin":
@@ -507,6 +510,9 @@ class Daemon:
 
         except Exception as e:
             self._logger.error(f"Failed to start daemon ({e})")
+            import traceback
+            traceback_str = traceback.format_exc()
+            self._logger.debug(f"Traceback: {traceback_str}")
             return False
 
     async def _start_unix_server(self):
@@ -534,8 +540,9 @@ class Daemon:
                 asyncio.TimeoutError,
             ) as e:
                 self._logger.warning(
-                    f"Socket exists but daemon not running (error: {type(e).__name__}). "
-                    f"Removing stale socket file..."
+                    "Socket exists but daemon not running. Removing stale socket file...",
+                    error=str(e),
+                    socket_path=self.socket_path
                 )
                 try:
                     os.unlink(self.socket_path)
@@ -573,7 +580,7 @@ class Daemon:
 
         # Defensive: re-chmod in case a future asyncio override the umask.
         os.chmod(self.socket_path, 0o600)
-        self._logger.info(f"Unix socket server created at {self.socket_path}")
+        self._logger.debug("Unix socket server created", path=self.socket_path)
         self._endpoint_url = format_unix_endpoint(self.socket_path)
 
     async def _start_tcp_server(self):
