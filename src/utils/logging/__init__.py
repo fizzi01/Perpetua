@@ -92,6 +92,7 @@ class BaseLogger(ABC):
         else:
             return logging.INFO
 
+    @property
     @abstractmethod
     def level(self) -> int:
         pass
@@ -135,7 +136,7 @@ class BaseLogger(ABC):
         anyway. Default fallback compares against self.level(); subclasses
         delegate to the underlying logging.Logger.isEnabledFor when available.
         """
-        return level >= self.level()
+        return level >= self.level
 
 
 class Logger(BaseLogger):
