@@ -75,7 +75,7 @@ class ServerMouseListener(object):
         self._intra_bindings_by_client: dict[str, list[dict]] = {}
 
         # Copy-on-write snapshots consumed by the pynput-thread hot path
-        # (on_move → _resolve_cross_screen_target) without locking. Writers
+        # (on_move -> _resolve_cross_screen_target) without locking. Writers
         # hold ``_bindings_write_lock`` and rebuild these tuples; readers
         # do a single atomic ref read (GIL-protected) and iterate the
         # immutable tuple. Tuples never mutate, so an iteration started
@@ -281,7 +281,7 @@ class ServerMouseListener(object):
 
             if not self._active_clients:
                 self._listening = False
-                # No active clients → reset the cycle index so the next
+                # No active clients -> reset the cycle index so the next
                 # press after a re-add starts from a sane position.
                 self._hotkey_cycle_index = -1
 
@@ -1234,7 +1234,7 @@ class ClientMouseController(object):
     def _has_intra_binding_between(
         self, src_monitor_id: int, dst_monitor_id: int
     ) -> bool:
-        """True iff the workspace authorises a ``src → dst`` cross-monitor transition."""
+        """True iff the workspace authorises a ``src -> dst`` cross-monitor transition."""
         return (src_monitor_id, dst_monitor_id) in self._intra_pairs
 
     @staticmethod

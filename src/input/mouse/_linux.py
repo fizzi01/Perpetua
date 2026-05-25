@@ -57,7 +57,7 @@ class ServerMouseListener(_base.ServerMouseListener):
             # UID of the captured client; None while the server owns the cursor.
             self._active_client_barrier: Optional[str] = None
             self._barrier_screen_size: tuple[int, int] = Screen.get_size()
-            # Edge → UID map rebuilt from _edge_bindings_by_client whenever
+            # Edge -> UID map rebuilt from _edge_bindings_by_client whenever
             # bindings change; resolves the edge name from the backend.
             self._edge_to_uid: dict[str, str] = {}
 
@@ -67,7 +67,7 @@ class ServerMouseListener(_base.ServerMouseListener):
             )
 
     def _refresh_edge_to_uid(self) -> dict[str, bool]:
-        """Rebuild edge → UID map from _edge_bindings_by_client and return
+        """Rebuild edge -> UID map from _edge_bindings_by_client and return
         the {edge: True} snapshot the barrier backend expects. First binding
         wins on edge collisions; per-axis partitioning is X11-only."""
         edge_to_uid: dict[str, str] = {}
@@ -158,7 +158,7 @@ class ServerMouseListener(_base.ServerMouseListener):
             self._listener.update_clients(self._refresh_edge_to_uid())
 
     async def _on_client_layout_updated(self, data):
-        # Refresh edge→UID and the barrier backend's edge set so the new
+        # Refresh edge->UID and the barrier backend's edge set so the new
         # topology takes effect immediately (mirrors X11 hot-reload).
         await super()._on_client_layout_updated(data)
         if self._barrier_mode and data is not None and self._listener:

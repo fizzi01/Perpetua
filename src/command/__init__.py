@@ -74,7 +74,7 @@ class CommandHandler:
             return
 
     async def handle_cross_screen(self, event: CommandEvent):
-        # target=="server": client returning the cursor → notify the
+        # target=="server": client returning the cursor -> notify the
         # cursor guard so the server stops sending to that client.
         # Otherwise the target client must become active.
         crs_event = CrossScreenCommandEvent().from_command_event(event)

@@ -941,7 +941,7 @@ class Client:
         """Send the current monitor list to the server over the command stream.
 
         Goes through the standard ``command_stream.send`` queue so the
-        message rides the same path as every other client→server command
+        message rides the same path as every other client->server command
         (CROSS_SCREEN, FORCE_SCREEN_CHANGE). The COMMAND stream is no
         longer ``active_only`` on the client, so the queue drains while
         the cursor is on the server too.

@@ -378,7 +378,7 @@ class PairingRequestEvent(NotificationEvent):
     """A client asked the server to start the pairing/cert-sharing flow.
 
     The OTP is included so the GUI can surface it to the admin without a
-    second event. The OTP still travels only inside the daemon→GUI IPC
+    second event. The OTP still travels only inside the daemon->GUI IPC
     channel - it never leaves the server host over the network.
     """
 

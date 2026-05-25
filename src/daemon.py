@@ -245,8 +245,8 @@ class Daemon:
         app_config: Optional[ApplicationConfig] = None,
         auto_load_config: bool = True,
     ):
-        # IPC endpoint precedence: explicit arg → PERPETUA_DAEMON_ENDPOINT
-        # env var → platform default.
+        # IPC endpoint precedence: explicit arg -> PERPETUA_DAEMON_ENDPOINT
+        # env var -> platform default.
         env_ep = env_endpoint_override()
         if socket_path:
             self.socket_path = socket_path
