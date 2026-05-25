@@ -583,7 +583,7 @@ class Server:
 
         # Overlap with server monitors.
         try:
-            server_monitors = Screen.get_monitors()
+            server_monitors = Screen.get_monitors_cached()
         except Exception:
             server_monitors = []
         for m in server_monitors:
@@ -819,6 +819,7 @@ class Server:
         admin plugs/unplugs a display but cheap enough to leave running.
         """
         from utils.screen import Screen
+        from utils.screen._base import invalidate_monitors_cache
 
         while self._running:
             try:
@@ -826,6 +827,8 @@ class Server:
                 if not self._running:
                     return
                 try:
+                    # Always query the OS here (not the cache), since this
+                    # loop is the cache's source of truth for change detection.
                     monitors = Screen.get_monitors()
                 except Exception as e:
                     self._logger.debug(
@@ -836,6 +839,9 @@ class Server:
                 if signature == self._known_monitors_signature:
                     continue
                 self._known_monitors_signature = signature
+                # Topology change: invalidate the cache so the next
+                # cached read picks up the new layout.
+                invalidate_monitors_cache()
                 self._logger.info(
                     f"Server monitor topology changed: "
                     f"{len(monitors)} monitor(s) now connected"
@@ -1630,7 +1636,7 @@ class Server:
         try:
             from utils.screen import Screen
 
-            server_monitors = Screen.get_monitors()
+            server_monitors = Screen.get_monitors_cached()
         except Exception:
             server_monitors = []
         edge_bindings = [
@@ -1803,7 +1809,7 @@ class Server:
         # Refresh the listener's edge-binding cache so the next
         # crossing routes against the new monitor topology.
         try:
-            server_monitors = Screen.get_monitors()
+            server_monitors = Screen.get_monitors_cached()
         except Exception:
             server_monitors = []
         try:
