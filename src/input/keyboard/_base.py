@@ -488,7 +488,7 @@ class ClientKeyboardController(object):
 
         self._logger.info(
             "keyboard controller backend selected",
-            extra={"backend": BACKEND.get("keyboard_controller", "unknown")}
+            extra={"backend": BACKEND.get("keyboard_controller", "unknown")},
         )
 
         self._queue: asyncio.Queue = asyncio.Queue(maxsize=1000)

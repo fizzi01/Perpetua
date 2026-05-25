@@ -283,9 +283,9 @@ class ConnectionHandler(BaseConnectionHandler):
                                     "Command stream is None after handshake"
                                 )
 
-                            self._client_obj.ip_address = (
-                                self._command_stream.get_sockname()[0]
-                            )
+                            sockname = self._command_stream.get_sockname()
+                            if sockname:
+                                self._client_obj.ip_address = sockname[0]
                             self.clients.update_client(self._client_obj)
 
                             # Call connected callback

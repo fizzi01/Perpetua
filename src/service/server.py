@@ -592,9 +592,15 @@ class Server:
                         f"placement must share at least one edge with the server."
                     )
 
-        # Overlap with OTHER clients' placements.
+        # Overlap with OTHER clients' placements. Compare on uid (stable identity)
+        # rather than net_id (hostname/ip), which collides between distinct clients
+        # behind the same NAT or sharing a hostname.
         for other in self.config.get_clients():
-            if other.get_net_id() == client.get_net_id():
+            if client.uid and other.uid and other.uid == client.uid:
+                continue
+            if (
+                not client.uid or not other.uid
+            ) and other.get_net_id() == client.get_net_id():
                 continue
             for op in other.placements:
                 op_norm = {

@@ -463,7 +463,9 @@ class Daemon:
             self._running = True
             # Signal handlers need a running loop + the daemon's bg_tasks.
             self._setup_signal_handlers()
-            self._logger.debug("Daemon started successfully", endpoint=self._endpoint_url)
+            self._logger.debug(
+                "Daemon started successfully", endpoint=self._endpoint_url
+            )
             self._logger.info(
                 f"Platform: {'Windows (TCP Socket)' if IS_WINDOWS else 'Unix (Socket)'}"
             )
@@ -478,15 +480,13 @@ class Daemon:
                         version=self.app_config.version,
                     )
                     self._logger.debug(
-                        "Endpoint published",
-                        json_path=json_path,
-                        txt_path=txt_path
+                        "Endpoint published", json_path=json_path, txt_path=txt_path
                     )
                 except Exception as e:
                     self._logger.warning(
                         "Could not write endpoint file",
                         error=str(e),
-                        fallback="falling back to legacy discovery"
+                        fallback="falling back to legacy discovery",
                     )
 
             if sys.platform == "darwin":
@@ -511,6 +511,7 @@ class Daemon:
         except Exception as e:
             self._logger.error(f"Failed to start daemon ({e})")
             import traceback
+
             traceback_str = traceback.format_exc()
             self._logger.debug(f"Traceback: {traceback_str}")
             return False
@@ -542,31 +543,29 @@ class Daemon:
                 self._logger.warning(
                     "Socket exists but daemon not running. Removing stale socket file...",
                     error=str(e),
-                    socket_path=self.socket_path
+                    socket_path=self.socket_path,
                 )
                 try:
                     os.unlink(self.socket_path)
                     self._logger.info("Removed stale socket file")
                 except Exception as remove_error:
-                    self._logger.error("Failed to remove stale socket", error=str(remove_error))
+                    self._logger.error(
+                        "Failed to remove stale socket", error=str(remove_error)
+                    )
                     raise
             except OSError as e:
-                if isinstance(e, OSError):
-                    if e.errno == errno.ENOTSOCK:
-                        self._logger.warning(
-                            f"File {self.socket_path} is not a socket. Removing it..."
+                if e.errno == errno.ENOTSOCK:
+                    self._logger.warning(
+                        f"File {self.socket_path} is not a socket. Removing it..."
+                    )
+                    try:
+                        os.unlink(self.socket_path)
+                        self._logger.info(f"Removed non-socket file {self.socket_path}")
+                    except Exception as remove_error:
+                        self._logger.error(
+                            "Failed to remove non-socket file", error=str(remove_error)
                         )
-                        try:
-                            os.unlink(self.socket_path)
-                            self._logger.info(
-                                f"Removed non-socket file {self.socket_path}"
-                            )
-                        except Exception as remove_error:
-                            self._logger.error(
-                                "Failed to remove non-socket file",
-                                error=str(remove_error)
-                            )
-                            raise
+                        raise
 
         # Tighten umask around bind so the socket inode is created with
         # mode 0o600 atomically.
@@ -885,7 +884,7 @@ class Daemon:
 
         finally:
             async with self._client_connection_lock:
-                if self._connected_client_writer == writer:
+                if self._connected_client_writer is writer:
                     self._connected_client_reader = None
                     self._connected_client_writer = None
 

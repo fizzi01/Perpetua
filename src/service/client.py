@@ -381,7 +381,9 @@ class Client:
         if self._cert_manager.certificate_exist(source_id=server_uid):
             cert_path = self._cert_manager.get_ca_cert_path(source_id=server_uid)
             if self._logger.is_enabled_for(Logger.DEBUG):
-                self._logger.debug("Certificate loaded", cert_path=cert_path, server_uid=server_uid)
+                self._logger.debug(
+                    "Certificate loaded", cert_path=cert_path, server_uid=server_uid
+                )
             else:
                 self._logger.info("Certificate loaded")
             return cert_path

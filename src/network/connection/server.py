@@ -231,7 +231,14 @@ class ConnectionHandler(BaseConnectionHandler):
         """
         if client.is_connected and client.get_connection() is not None:
             try:
-                await client.get_connection().wait_closed()  # type: ignore
+                conn = client.get_connection()
+                if conn is not None:
+                    await conn.wait_closed()
+                else:
+                    self._logger.warning(
+                        "Connection missing during forced disconnection",
+                        client=client.to_dict(),
+                    )
                 await asyncio.sleep(0.1)  # Small delay to ensure closure
                 self._logger.log(
                     f"Force disconnected client {client.get_net_id()}", Logger.INFO
@@ -845,8 +852,17 @@ class ConnectionHandler(BaseConnectionHandler):
         """Pulisce un pending stream specifico."""
         if ip_address in self._pending_streams:
             fut = self._pending_streams[ip_address].pop(stream_type, None)
-            if fut and not fut.done():
-                fut.cancel()
+            if fut:
+                if fut.done() and not fut.cancelled() and fut.exception() is None:
+                    # Peer race-arrived between timeout firing and cleanup:
+                    # close the orphan writer to avoid an fd leak.
+                    try:
+                        _reader, writer = fut.result()
+                        writer.close()
+                    except Exception:
+                        pass
+                elif not fut.done():
+                    fut.cancel()
             if not self._pending_streams[ip_address]:
                 del self._pending_streams[ip_address]
 
