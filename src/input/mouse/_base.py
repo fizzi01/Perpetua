@@ -625,7 +625,7 @@ class ServerMouseListener(object):
                 y=(y - min_y) / height,
                 button=button,
                 action=MouseEvent.CLICK_ACTION,
-                is_presed=pressed,
+                is_pressed=pressed,
             )
             try:
                 if not pressed and button in self._button_pressed:

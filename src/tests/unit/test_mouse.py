@@ -863,7 +863,7 @@ class TestClientMouseController:
                 dy=10,
                 button=1,
                 action=MouseEvent.MOVE_ACTION,
-                is_presed=False,
+                is_pressed=False,
             )
 
             message = MagicMock()
@@ -1372,7 +1372,7 @@ class TestClientMouseController:
                 dy=0,
                 button=None,
                 action=MouseEvent.MOVE_ACTION,
-                is_presed=False,
+                is_pressed=False,
             )
             await controller._queue.put(mouse_event_data)
 

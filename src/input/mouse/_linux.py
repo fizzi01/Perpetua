@@ -222,7 +222,7 @@ class ServerMouseListener(_base.ServerMouseListener):
                 MouseEvent(
                     button=button,
                     action=MouseEvent.CLICK_ACTION,
-                    is_presed=pressed,
+                    is_pressed=pressed,
                 )
             ),
             self._loop,
