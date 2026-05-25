@@ -41,6 +41,7 @@ from event.notification import (
     StreamDisabledEvent,
 )
 from event import (
+    ActiveScreenChangedEvent,
     BusEventType,
     ClientConnectedEvent,
     ClientDisconnectedEvent,
@@ -150,13 +151,29 @@ class Server:
         # are added/removed or resolutions change. Stays None until
         # ``start()`` spawns the task.
         self._monitor_watch_task: Optional[asyncio.Task] = None
-        self._known_monitors_signature: Optional[tuple] = None
+        self._known_monitors_signature: tuple = ()
         self.MONITOR_WATCH_INTERVAL = 2.0
         self._bg_tasks = BackgroundTasks()
+
+        # Per-uid asyncio.Lock used to serialize the four paths that mutate
+        # the same client's placements/monitors: set_client_layout,
+        # _on_client_monitors_updated, _reconcile_layouts_with_monitors,
+        # CLIENT_LAYOUT_UPDATED handlers. Locks are created lazily on first
+        # access via ``_lock_for`` and dropped when the client is removed.
+        self._client_locks: Dict[str, asyncio.Lock] = {}
 
     @property
     def clients_manager(self) -> ClientsManager:
         return self.config.clients_manager
+
+    def _lock_for(self, uid: Optional[str]) -> asyncio.Lock:
+        """Return (or create) the per-uid lock that serializes layout/monitor mutations."""
+        key = uid or ""
+        lock = self._client_locks.get(key)
+        if lock is None:
+            lock = asyncio.Lock()
+            self._client_locks[key] = lock
+        return lock
 
     def set_notification_callback(
         self, callback: Optional[Callable[[NotificationEvent], Awaitable[None]]]
@@ -462,6 +479,10 @@ class Server:
             if self._running and self.connection_handler is not None:
                 await self.connection_handler.force_disconnect_client(client)
             self.config.remove_client(client=client)
+            # Drop the per-uid lock so it doesn't grow unbounded across
+            # add/remove cycles. Safe: no other coroutine should hold a
+            # reference to this lock after remove.
+            self._client_locks.pop(client.uid or "", None)
 
             if auto_save:
                 await self.save_config()
@@ -509,6 +530,12 @@ class Server:
                 f"Client [uid={uid}, ip={ip_address}, host={hostname}] not found"
             )
 
+        async with self._lock_for(client.uid):
+            return await self._set_client_layout_locked(client, placements, auto_save)
+
+    async def _set_client_layout_locked(
+        self, client: ClientObj, placements: list[dict], auto_save: bool
+    ) -> ClientObj:
         # ------------------------------------------------------------------
         # Validation
         # ------------------------------------------------------------------
@@ -684,68 +711,26 @@ class Server:
 
         orphans: list[dict] = []
 
+        # Snapshot the client list once so add/remove churn during iteration
+        # doesn't trip us up. We acquire the per-client lock for each section
+        # (never two at once) to keep set_client_layout / monitor updates
+        # from racing against this reconciliation.
         for client in list(self.config.get_clients()):
-            placements = list(client.placements or [])
-            if not placements:
-                continue
-
-            # Server-adjacency rule: every placement must touch a server
-            # monitor on at least one edge. Chained client-only hops are
-            # rejected here so the cursor's return path back to the
-            # server is well-defined for every placed monitor.
-            kept: list[dict] = []
-            dropped: list[dict] = []
-            for p in placements:
-                try:
-                    bindings = compute_edge_bindings(p, server_monitors)
-                except Exception:
-                    bindings = []
-                if bindings:
-                    kept.append(p)
-                else:
-                    dropped.append(p)
-
-            if not dropped:
-                continue
-
-            for p in dropped:
-                orphans.append(
-                    {
-                        "client_uid": client.uid,
-                        "client_net_id": client.get_net_id(),
-                        "placement": dict(p),
-                    }
-                )
-
-            client.placements = kept
             try:
-                self.clients_manager.update_client(client)
-            except Exception as e:
+                async with asyncio.timeout(5.0):
+                    async with self._lock_for(client.uid):
+                        await self._reconcile_single_client(
+                            client,
+                            server_monitors,
+                            notify,
+                            orphans,
+                            compute_edge_bindings,
+                        )
+            except asyncio.TimeoutError:
                 self._logger.warning(
-                    f"Failed to persist pruned layout for {client.get_net_id()} ({e})"
+                    f"Reconciliation timeout for client {client.get_net_id()} "
+                    f"(uid={client.uid}); skipping"
                 )
-
-            if notify and client.is_connected:
-                try:
-                    edge_bindings = [
-                        eb.to_dict() for eb in client.get_edge_bindings(server_monitors)
-                    ]
-                    intra_client_bindings = client.get_intra_client_bindings(
-                        server_monitors
-                    )
-                    await self.event_bus.dispatch(
-                        event_type=BusEventType.CLIENT_LAYOUT_UPDATED,
-                        data=ClientLayoutUpdatedEvent(
-                            client_uid=client.uid,
-                            edge_bindings=edge_bindings,
-                            intra_client_bindings=intra_client_bindings,
-                        ),
-                    )
-                except Exception as e:
-                    self._logger.warning(
-                        f"Failed to refresh bindings for "
-                        f"{client.get_net_id()} after monitor change ({e})"
-                    )
 
         if orphans:
             try:
@@ -754,6 +739,76 @@ class Server:
                 self._logger.warning(f"Failed to persist layout reconciliation ({e})")
 
         return orphans
+
+    async def _reconcile_single_client(
+        self,
+        client: ClientObj,
+        server_monitors,
+        notify: bool,
+        orphans: list[dict],
+        compute_edge_bindings,
+    ) -> None:
+        placements = list(client.placements or [])
+        if not placements:
+            return
+
+        # Server-adjacency rule: every placement must touch a server
+        # monitor on at least one edge. Chained client-only hops are
+        # rejected here so the cursor's return path back to the
+        # server is well-defined for every placed monitor.
+        kept: list[dict] = []
+        dropped: list[dict] = []
+        for p in placements:
+            try:
+                bindings = compute_edge_bindings(p, server_monitors)
+            except Exception:
+                bindings = []
+            if bindings:
+                kept.append(p)
+            else:
+                dropped.append(p)
+
+        if not dropped:
+            return
+
+        for p in dropped:
+            orphans.append(
+                {
+                    "client_uid": client.uid,
+                    "client_net_id": client.get_net_id(),
+                    "placement": dict(p),
+                }
+            )
+
+        client.placements = kept
+        try:
+            self.clients_manager.update_client(client)
+        except Exception as e:
+            self._logger.warning(
+                f"Failed to persist pruned layout for {client.get_net_id()} ({e})"
+            )
+
+        if notify and client.is_connected:
+            try:
+                edge_bindings = [
+                    eb.to_dict() for eb in client.get_edge_bindings(server_monitors)
+                ]
+                intra_client_bindings = client.get_intra_client_bindings(
+                    server_monitors
+                )
+                await self.event_bus.dispatch(
+                    event_type=BusEventType.CLIENT_LAYOUT_UPDATED,
+                    data=ClientLayoutUpdatedEvent(
+                        client_uid=client.uid,
+                        edge_bindings=edge_bindings,
+                        intra_client_bindings=intra_client_bindings,
+                    ),
+                )
+            except Exception as e:
+                self._logger.warning(
+                    f"Failed to refresh bindings for "
+                    f"{client.get_net_id()} after monitor change ({e})"
+                )
 
     async def _monitor_watch_loop(self) -> None:
         """Background poller that surfaces server-monitor topology changes.
@@ -1224,7 +1279,7 @@ class Server:
             self._known_monitors_signature = self._monitors_signature(startup_monitors)
         except Exception as e:
             self._logger.debug(f"Could not prime monitor signature at startup ({e})")
-            self._known_monitors_signature = None
+            self._known_monitors_signature = ()
             startup_monitors = []
 
         # Drop stored placements that no longer abut any server monitor
@@ -1604,6 +1659,13 @@ class Server:
         )
 
     async def _on_client_disconnected(self, client: ClientObj, streams: list[int]):
+        # Hand cursor focus back to the server BEFORE announcing the
+        # disconnect: if this client was active, the listener would
+        # otherwise keep routing input toward a peer that's gone.
+        await self.event_bus.dispatch(
+            event_type=BusEventType.ACTIVE_SCREEN_CHANGED,
+            data=ActiveScreenChangedEvent(active_screen=None),
+        )
         await self.event_bus.dispatch(
             event_type=BusEventType.CLIENT_DISCONNECTED,
             data=ClientDisconnectedEvent(client_uid=client.uid, streams=streams),
@@ -1649,13 +1711,20 @@ class Server:
         if data is None or not data.client_uid:
             return
 
-        client = self.config.get_client(uid=data.client_uid)
-        if client is None:
-            self._logger.debug(
-                f"Ignoring monitor update for unknown client uid={data.client_uid}"
-            )
-            return
+        async with self._lock_for(data.client_uid):
+            # Re-fetch under the lock so a concurrent remove_client / save
+            # path can't hand us a stale reference.
+            client = self.config.get_client(uid=data.client_uid)
+            if client is None:
+                self._logger.debug(
+                    f"Ignoring monitor update for unknown client uid={data.client_uid}"
+                )
+                return
+            await self._apply_client_monitors_update(client, data)
 
+    async def _apply_client_monitors_update(
+        self, client: ClientObj, data: ClientMonitorsUpdatedEvent
+    ) -> None:
         from model.monitor import MonitorInfo
         from utils.screen import Screen
 

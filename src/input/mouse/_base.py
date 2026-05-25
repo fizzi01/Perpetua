@@ -73,6 +73,20 @@ class ServerMouseListener(object):
         # against the same data.
         self._edge_bindings_by_client: dict[str, list[dict]] = {}
         self._intra_bindings_by_client: dict[str, list[dict]] = {}
+
+        # Copy-on-write snapshots consumed by the pynput-thread hot path
+        # (on_move → _resolve_cross_screen_target) without locking. Writers
+        # hold ``_bindings_write_lock`` and rebuild these tuples; readers
+        # do a single atomic ref read (GIL-protected) and iterate the
+        # immutable tuple. Tuples never mutate, so an iteration started
+        # before a swap finishes on the pre-swap state.
+        self._bindings_write_lock = Lock()
+        self._edge_bindings_snapshot: tuple[tuple[str, tuple[dict, ...]], ...] = ()
+        self._intra_bindings_snapshot: tuple[tuple[str, tuple[dict, ...]], ...] = ()
+        self._active_clients_snapshot: tuple[str, ...] = ()
+        # One-shot warning per overlapping pair so an ambiguous layout
+        # logs once, not every cursor sample.
+        self._warned_overlap_keys: set[tuple[str, ...]] = set()
         # Edge detection uses the full MonitorLayout so the outer edges
         # of EACH monitor count - asymmetric layouts where the primary's
         # edges are interior to the union bbox would otherwise miss
@@ -213,6 +227,21 @@ class ServerMouseListener(object):
     def is_alive(self):
         return self._listener.is_alive() if self._listener else False
 
+    def _rebuild_snapshots(self) -> None:
+        """Rebuild the immutable read-side snapshots from the live dicts.
+
+        Caller MUST hold ``_bindings_write_lock``. Each snapshot is a
+        tuple of tuples so the hot reader can iterate without locking;
+        the GIL guarantees the attribute swap is atomic.
+        """
+        self._edge_bindings_snapshot = tuple(
+            (uid, tuple(b)) for uid, b in self._edge_bindings_by_client.items()
+        )
+        self._intra_bindings_snapshot = tuple(
+            (uid, tuple(b)) for uid, b in self._intra_bindings_by_client.items()
+        )
+        self._active_clients_snapshot = tuple(self._active_clients.keys())
+
     async def _on_client_connected(self, data: Optional[ClientConnectedEvent]):
         if data is None:
             return
@@ -223,13 +252,18 @@ class ServerMouseListener(object):
             return
 
         if client_uid and StreamType.MOUSE in client_streams:
-            self._active_clients[client_uid] = True
-            self._edge_bindings_by_client[client_uid] = list(
-                getattr(data, "edge_bindings", []) or []
-            )
-            self._intra_bindings_by_client[client_uid] = list(
-                getattr(data, "intra_client_bindings", []) or []
-            )
+            with self._bindings_write_lock:
+                # Drop any stale entry from a previous session before
+                # re-inserting so a reconnect can't briefly see the
+                # old bindings.
+                self._active_clients[client_uid] = True
+                self._edge_bindings_by_client[client_uid] = list(
+                    getattr(data, "edge_bindings", []) or []
+                )
+                self._intra_bindings_by_client[client_uid] = list(
+                    getattr(data, "intra_client_bindings", []) or []
+                )
+                self._rebuild_snapshots()
 
         await asyncio.sleep(0)
 
@@ -238,13 +272,18 @@ class ServerMouseListener(object):
             return
 
         client_uid = data.client_uid
-        if client_uid and client_uid in self._active_clients:
-            del self._active_clients[client_uid]
-        self._edge_bindings_by_client.pop(client_uid, None)
-        self._intra_bindings_by_client.pop(client_uid, None)
+        with self._bindings_write_lock:
+            if client_uid and client_uid in self._active_clients:
+                del self._active_clients[client_uid]
+            self._edge_bindings_by_client.pop(client_uid, None)
+            self._intra_bindings_by_client.pop(client_uid, None)
+            self._rebuild_snapshots()
 
-        if not self._active_clients:
-            self._listening = False
+            if not self._active_clients:
+                self._listening = False
+                # No active clients → reset the cycle index so the next
+                # press after a re-add starts from a sane position.
+                self._hotkey_cycle_index = -1
 
         await asyncio.sleep(0)
 
@@ -253,13 +292,15 @@ class ServerMouseListener(object):
         editor saves, so changes take effect on the next crossing."""
         if data is None or not data.client_uid:
             return
-        if data.client_uid in self._active_clients:
-            self._edge_bindings_by_client[data.client_uid] = list(
-                data.edge_bindings or []
-            )
-            self._intra_bindings_by_client[data.client_uid] = list(
-                getattr(data, "intra_client_bindings", []) or []
-            )
+        with self._bindings_write_lock:
+            if data.client_uid in self._active_clients:
+                self._edge_bindings_by_client[data.client_uid] = list(
+                    data.edge_bindings or []
+                )
+                self._intra_bindings_by_client[data.client_uid] = list(
+                    getattr(data, "intra_client_bindings", []) or []
+                )
+                self._rebuild_snapshots()
         await asyncio.sleep(0)
 
     async def _on_hotkey_directional(
@@ -310,7 +351,9 @@ class ServerMouseListener(object):
     async def _on_hotkey_cycle(self, data: Optional[ScreenSwitchCycleRequestEvent]):
         if data is None:
             return
-        uids = list(self._active_clients.keys())
+        # Use the immutable snapshot so an in-flight connect/disconnect
+        # can't trip the % len(uids) bounds.
+        uids = list(self._active_clients_snapshot)
         if not uids:
             return
 
@@ -373,9 +416,18 @@ class ServerMouseListener(object):
         cursor_x: float,
         cursor_y: float,
     ) -> Optional[tuple[str, dict, float]]:
-        """Match an edge crossing against a cached EdgeBinding."""
+        """Match an edge crossing against a cached EdgeBinding.
+
+        Reads the COW snapshot, no lock - the tuple is immutable and the
+        attribute swap done by writers is atomic under the GIL.
+        """
+        # Single atomic ref reads.
+        edge_snapshot = self._edge_bindings_snapshot
+        active_snapshot = self._active_clients_snapshot
+        if not edge_snapshot:
+            return None
         edge_str = self._EDGE_TO_STRING.get(edge)
-        if not edge_str or not self._edge_bindings_by_client:
+        if not edge_str:
             return None
 
         monitor = self._monitor_layout.nearest_monitor(cursor_x, cursor_y)
@@ -390,7 +442,13 @@ class ServerMouseListener(object):
             axis_norm = (cursor_x - monitor.min_x) / m_w
         axis_norm = max(0.0, min(1.0, axis_norm))
 
-        for client_uid, bindings in self._edge_bindings_by_client.items():
+        first_match: Optional[tuple[str, dict, float]] = None
+        matches: list[str] = []
+        for client_uid, bindings in edge_snapshot:
+            # Skip clients that disconnected between snapshot rebuilds:
+            # the cursor would otherwise warp to a dead peer.
+            if client_uid not in active_snapshot:
+                continue
             for b in bindings:
                 if b.get("server_monitor_id") != monitor.monitor_id:
                     continue
@@ -399,9 +457,22 @@ class ServerMouseListener(object):
                 s_start = b.get("server_axis_start", 0.0)
                 s_end = b.get("server_axis_end", 0.0)
                 if s_start <= axis_norm < s_end:
-                    return client_uid, b, axis_norm
+                    matches.append(client_uid)
+                    if first_match is None:
+                        first_match = (client_uid, b, axis_norm)
+                    break  # one match per client for this edge
 
-        return None
+        if len(matches) > 1:
+            key = tuple(sorted(matches))
+            if key not in self._warned_overlap_keys:
+                self._warned_overlap_keys.add(key)
+                self._logger.warning(
+                    "Overlapping cross-screen bindings on the same edge; "
+                    "routing to the first match. Disambiguate the layout to fix.",
+                    edge=edge_str,
+                    candidates=list(matches),
+                )
+        return first_match
 
     def resolve_neighbour(
         self,
@@ -415,7 +486,7 @@ class ServerMouseListener(object):
 
     def get_active_client_uids(self) -> list[str]:
         """Active client UIDs in insertion order - used by the cycling hotkey."""
-        return list(self._active_clients.keys())
+        return list(self._active_clients_snapshot)
 
     def _darwin_mouse_suppress_filter(self, event_type, event):
         raise NotImplementedError("Mouse suppress filter not implemented yet.")
