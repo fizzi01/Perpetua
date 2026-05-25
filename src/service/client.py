@@ -1324,8 +1324,8 @@ class Client:
                 self._logger.debug(f"Could not prime client monitor signature ({e})")
                 self._known_monitors_signature = None
             try:
-                self._monitor_watch_task = asyncio.create_task(
-                    self._monitor_watch_loop()
+                self._monitor_watch_task = self._bg_tasks.spawn(
+                    self._monitor_watch_loop(), name="client_monitor_watch"
                 )
             except Exception as e:
                 self._logger.warning(f"Failed to start client monitor watch task ({e})")
@@ -1443,8 +1443,10 @@ class Client:
         self._components.clear()
         self._stream_handlers.clear()
 
-        # We also reset event bus
-        self.event_bus = AsyncEventBus()
+        # Keep the bus identity stable: long-lived components hold a
+        # reference to it and a replacement would leave them dispatching
+        # to a dead bus.
+        self.event_bus.clear_listeners()
         self._logger.info("Client resources cleaned up.")
 
     def is_running(self) -> bool:

@@ -1182,20 +1182,17 @@ class Server:
             actual_pairing if actual_pairing else self.config.get_pairing_port()
         )
         extra_props = {"pairing_port": str(advertised_pairing)}
+        service_task = None
         try:
-            service_task = asyncio.create_task(
+            service_task = self._bg_tasks.spawn(
                 self._mdns_service.register_service(
                     host=self.config.host,
                     port=self.config.port,
                     uid=self.config.uid,
                     extra_props=extra_props,
-                )
+                ),
+                name="mdns_register_service",
             )
-        except RuntimeError as re:
-            self._logger.warning(f"Failed to start mDNS service ({re})")
-            # TODO: Should we stop on fail? mDNS is not critical
-
-        try:
             await service_task
             if self.config.uid is None:
                 self.config.uid = self._mdns_service.get_uid()
@@ -1206,8 +1203,11 @@ class Server:
                 self.connection_handler.set_server_uid(self.config.uid)
         except RuntimeError as re:
             self._logger.warning(f"Failed to start mDNS service ({re})")
+            # TODO: Should we stop on fail? mDNS is not critical
         except Exception as e:
             self._logger.error(f"Failed to start mDNS service ({e})")
+            if service_task is not None and not service_task.done():
+                service_task.cancel()
             await self.stop(True)
             return False
 
@@ -1329,7 +1329,10 @@ class Server:
         self._logger.info("Cleaning up resources...")
         self._components.clear()
         self._stream_handlers.clear()
-        self.event_bus = AsyncEventBus()
+        # Keep the bus identity stable: long-lived components hold a
+        # reference to it and a replacement would leave them dispatching
+        # to a dead bus.
+        self.event_bus.clear_listeners()
         self._logger.info("Resources cleaned up.")
 
     def is_running(self) -> bool:

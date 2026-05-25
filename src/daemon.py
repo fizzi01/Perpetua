@@ -490,18 +490,22 @@ class Daemon:
                     )
 
             if sys.platform == "darwin":
-                self._permission_watchdog_task = asyncio.create_task(
-                    self._permission_watchdog()
+                self._permission_watchdog_task = self._bg_tasks.spawn(
+                    self._permission_watchdog(), name="permission_watchdog"
                 )
 
             if service is not None and service in ("server", "client"):
                 self._logger.info("Auto-starting service", service=service)
                 if service == "server":
                     await self._handle_service_choice({"service": "server"})
-                    asyncio.create_task(self._handle_start_server({}))
+                    self._bg_tasks.spawn(
+                        self._handle_start_server({}), name="auto_start_server"
+                    )
                 elif service == "client":
                     await self._handle_service_choice({"service": "client"})
-                    asyncio.create_task(self._handle_start_client({}))
+                    self._bg_tasks.spawn(
+                        self._handle_start_client({}), name="auto_start_client"
+                    )
 
             return True
 
@@ -1197,9 +1201,7 @@ class Daemon:
             return
 
         try:
-            start_task = asyncio.create_task(self._client.start())
-
-            success = await start_task
+            success = await self._client.start()
             if success:
                 self._state["client"].start()
                 response_data = {

@@ -426,13 +426,24 @@ class ServerKeyboardListener(object):
             self._logger.error(f"Error during hotkey switch-to-server ({e})")
 
     async def _hotkey_panic(self) -> None:
-        """Ctrl+Shift+Q: panic button - SIGTERM then SIGKILL self."""
+        """Ctrl+Shift+Q: panic button - SIGTERM then SIGKILL self.
+
+        The SIGKILL fallback runs in a separate task so this handler
+        returns immediately, letting SIGTERM propagate without
+        blocking the keyboard listener loop for a full second.
+        """
         self._logger.warning("Panic hotkey triggered: sending SIGTERM to self.")
         os.kill(os.getpid(), signal.SIGTERM)
-        await asyncio.sleep(1)
-        if self.is_alive():
-            self._logger.warning("Process still alive after SIGTERM, sending SIGKILL.")
-            os.kill(os.getpid(), signal.SIGKILL)
+
+        async def _fallback_kill() -> None:
+            await asyncio.sleep(1)
+            if self.is_alive():
+                self._logger.warning(
+                    "Process still alive after SIGTERM, sending SIGKILL."
+                )
+                os.kill(os.getpid(), signal.SIGKILL)
+
+        asyncio.ensure_future(_fallback_kill())
 
 
 class ClientKeyboardController(object):
