@@ -360,7 +360,9 @@ class MessageExchange:
             self._running = False
             raise
         except RuntimeError as e:
-            self._logger.log(f"Error in receive loop {self._id} ({e})", Logger.CRITICAL)
+            self._logger.critical(
+                "Error in receive loop", exchange_id=self._id, error=str(e)
+            )
             self._running = False
             raise e
         except Exception as e:
@@ -374,21 +376,18 @@ class MessageExchange:
                     ConnectionAbortedError,
                 ),
             ):
-                self._logger.log(
-                    f"Connection error in receive loop ({e})", Logger.ERROR
-                )
+                self._logger.error("Connection error in receive loop", error=str(e))
                 self._running = False
                 raise e
             # Avoid infinite loop if no receive callback is set
             if receive_callback is None:
-                self._logger.log(
-                    "Receive callback is None, stopping receive loop.",
-                    Logger.DEBUG,
-                )
+                self._logger.debug("Receive callback is None, stopping receive loop.")
                 self._running = False
                 raise e
 
-            self._logger.log(f"Error in receive loop {self._id} ({e})", Logger.ERROR)
+            self._logger.error(
+                "Error in receive loop", exchange_id=self._id, error=str(e)
+            )
             await asyncio.sleep(0)
             return
 
@@ -624,7 +623,7 @@ class MessageExchange:
             await self.send_command_message(source=source, target=target, **kwargs)
             return
         else:
-            self._logger.log(f"Unknown stream type: {stream_type}", Logger.ERROR)
+            self._logger.error("Unknown stream type", stream_type=stream_type)
             return
 
     async def send_custom_message(

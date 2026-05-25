@@ -87,7 +87,7 @@ class UnidirectionalStreamHandler(_ClientStreamHandler):
         if self.stream_type not in data.streams:
             return
 
-        self._logger.debug(f"Stream {self.stream_type} reconnected")
+        self._logger.debug("Stream reconnected", stream_type=self.stream_type)
 
         # Reconfigure the transport for the main client
         if self._main_client is None:
@@ -201,7 +201,7 @@ class BidirectionalStreamHandler(_ClientStreamHandler):
         if self.stream_type not in data.streams:
             return
 
-        self._logger.debug(f"Stream {self.stream_type} reconnected")
+        self._logger.debug("Stream reconnected", stream_type=self.stream_type)
 
         # Reconfigure the transport for the main client
         if self._main_client is None:

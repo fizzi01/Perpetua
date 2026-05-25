@@ -54,7 +54,7 @@ class UnidirectionalStreamHandler(_ServerStreamHandler):
         if self.stream_type not in data.streams:
             return
 
-        self._logger.debug(f"Stream {self.stream_type} reconnected")
+        self._logger.debug("Stream reconnected", stream_type=self.stream_type)
 
         client_uid = data.client_uid
         if self._active_client is not None and self._active_client.uid == client_uid:
@@ -214,7 +214,7 @@ class BidirectionalStreamHandler(_ServerStreamHandler):
         if self.stream_type not in data.streams:
             return
 
-        self._logger.debug(f"Stream {self.stream_type} reconnected")
+        self._logger.debug("Stream reconnected", stream_type=self.stream_type)
 
         client_uid = data.client_uid
         if self._active_client is not None and self._active_client.uid == client_uid:
@@ -362,7 +362,7 @@ class MulticastStreamHandler(_ServerStreamHandler):
         if self.stream_type not in data.streams:
             return
 
-        self._logger.debug(f"Stream {self.stream_type} reconnected")
+        self._logger.debug("Stream reconnected", stream_type=self.stream_type)
 
         client_uid = data.client_uid
         try:

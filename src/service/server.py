@@ -41,6 +41,7 @@ from event.notification import (
     StreamDisabledEvent,
 )
 from event import (
+    ActiveScreenChangedEvent,
     BusEventType,
     ClientConnectedEvent,
     ClientDisconnectedEvent,
@@ -107,7 +108,7 @@ class Server:
             self.config.sync_load()
 
         self._logger = get_logger(self.__class__.__name__, level=self.config.log_level)
-        self._logger.info(f"Logger initialized at level: {self.config.log_level}")
+        self._logger.info("Logger initialized", level=self.config.log_level)
 
         self._load_authorized_clients()
 
@@ -150,13 +151,29 @@ class Server:
         # are added/removed or resolutions change. Stays None until
         # ``start()`` spawns the task.
         self._monitor_watch_task: Optional[asyncio.Task] = None
-        self._known_monitors_signature: Optional[tuple] = None
+        self._known_monitors_signature: tuple = ()
         self.MONITOR_WATCH_INTERVAL = 2.0
         self._bg_tasks = BackgroundTasks()
+
+        # Per-uid asyncio.Lock used to serialize the four paths that mutate
+        # the same client's placements/monitors: set_client_layout,
+        # _on_client_monitors_updated, _reconcile_layouts_with_monitors,
+        # CLIENT_LAYOUT_UPDATED handlers. Locks are created lazily on first
+        # access via ``_lock_for`` and dropped when the client is removed.
+        self._client_locks: Dict[str, asyncio.Lock] = {}
 
     @property
     def clients_manager(self) -> ClientsManager:
         return self.config.clients_manager
+
+    def _lock_for(self, uid: Optional[str]) -> asyncio.Lock:
+        """Return (or create) the per-uid lock that serializes layout/monitor mutations."""
+        key = uid or ""
+        lock = self._client_locks.get(key)
+        if lock is None:
+            lock = asyncio.Lock()
+            self._client_locks[key] = lock
+        return lock
 
     def set_notification_callback(
         self, callback: Optional[Callable[[NotificationEvent], Awaitable[None]]]
@@ -168,7 +185,7 @@ class Server:
             try:
                 await self._notification_callback(event)
             except Exception as e:
-                self._logger.error(f"Error sending notification: {e}")
+                self._logger.error("Error sending notification", error=str(e))
 
     def _load_authorized_clients(self) -> None:
         clients = self.clients_manager.get_clients()
@@ -186,7 +203,7 @@ class Server:
             await self._send_notification(ConfigSavedEvent(config_type="server"))
             return True
         except Exception as e:
-            self._logger.error(f"Error saving configuration: {e}")
+            self._logger.error("Error saving configuration", error=str(e))
             return False
 
     async def load_config(self) -> bool:
@@ -200,7 +217,7 @@ class Server:
                 self._logger.warning("Configuration file not found")
                 return False
         except Exception as e:
-            self._logger.error(f"Error loading configuration: {e}")
+            self._logger.error("Error loading configuration", error=str(e))
             return False
 
     def enable_ssl(self) -> bool:
@@ -251,7 +268,7 @@ class Server:
                 self._logger.info("SSL certificates found and loaded")
                 return certfile, keyfile
         except Exception as e:
-            self._logger.error(f"Error setting up SSL certificates ({e})")
+            self._logger.error("Error setting up SSL certificates", error=str(e))
             raise
 
     async def start_pairing_service(
@@ -327,7 +344,7 @@ class Server:
             hostname = info.get("hostname", "")
             was_active = info.get("was_active", "0") == "1"
         except Exception as e:
-            self._logger.error(f"Malformed pairing info payload: {e}")
+            self._logger.error("Malformed pairing info payload", error=str(e))
             return
 
         await self._send_notification(
@@ -395,7 +412,7 @@ class Server:
                 return False, None
 
         except Exception as e:
-            self._logger.error(f"Error starting certificate sharing ({e})")
+            self._logger.error("Error starting certificate sharing", error=str(e))
             return False, None
 
     async def stop_cert_sharing(self):
@@ -444,7 +461,7 @@ class Server:
             )
             return client
         except ValueError as ve:
-            self._logger.error(f"Error adding client: {ve}")
+            self._logger.error("Error adding client", error=str(ve))
             raise
 
     async def remove_client(
@@ -462,12 +479,16 @@ class Server:
             if self._running and self.connection_handler is not None:
                 await self.connection_handler.force_disconnect_client(client)
             self.config.remove_client(client=client)
+            # Drop the per-uid lock so it doesn't grow unbounded across
+            # add/remove cycles. Safe: no other coroutine should hold a
+            # reference to this lock after remove.
+            self._client_locks.pop(client.uid or "", None)
 
             if auto_save:
                 await self.save_config()
 
             net_id = ip_address or hostname or screen_position
-            self._logger.info(f"Removed client {net_id}")
+            self._logger.info("Removed client", net_id=net_id)
             return True
         return False
 
@@ -509,6 +530,12 @@ class Server:
                 f"Client [uid={uid}, ip={ip_address}, host={hostname}] not found"
             )
 
+        async with self._lock_for(client.uid):
+            return await self._set_client_layout_locked(client, placements, auto_save)
+
+    async def _set_client_layout_locked(
+        self, client: ClientObj, placements: list[dict], auto_save: bool
+    ) -> ClientObj:
         # ------------------------------------------------------------------
         # Validation
         # ------------------------------------------------------------------
@@ -556,7 +583,7 @@ class Server:
 
         # Overlap with server monitors.
         try:
-            server_monitors = Screen.get_monitors()
+            server_monitors = Screen.get_monitors_cached()
         except Exception:
             server_monitors = []
         for m in server_monitors:
@@ -592,9 +619,15 @@ class Server:
                         f"placement must share at least one edge with the server."
                     )
 
-        # Overlap with OTHER clients' placements.
+        # Overlap with OTHER clients' placements. Compare on uid (stable identity)
+        # rather than net_id (hostname/ip), which collides between distinct clients
+        # behind the same NAT or sharing a hostname.
         for other in self.config.get_clients():
-            if other.get_net_id() == client.get_net_id():
+            if client.uid and other.uid and other.uid == client.uid:
+                continue
+            if (
+                not client.uid or not other.uid
+            ) and other.get_net_id() == client.get_net_id():
                 continue
             for op in other.placements:
                 op_norm = {
@@ -678,76 +711,106 @@ class Server:
 
         orphans: list[dict] = []
 
+        # Snapshot the client list once so add/remove churn during iteration
+        # doesn't trip us up. We acquire the per-client lock for each section
+        # (never two at once) to keep set_client_layout / monitor updates
+        # from racing against this reconciliation.
         for client in list(self.config.get_clients()):
-            placements = list(client.placements or [])
-            if not placements:
-                continue
-
-            # Server-adjacency rule: every placement must touch a server
-            # monitor on at least one edge. Chained client-only hops are
-            # rejected here so the cursor's return path back to the
-            # server is well-defined for every placed monitor.
-            kept: list[dict] = []
-            dropped: list[dict] = []
-            for p in placements:
-                try:
-                    bindings = compute_edge_bindings(p, server_monitors)
-                except Exception:
-                    bindings = []
-                if bindings:
-                    kept.append(p)
-                else:
-                    dropped.append(p)
-
-            if not dropped:
-                continue
-
-            for p in dropped:
-                orphans.append(
-                    {
-                        "client_uid": client.uid,
-                        "client_net_id": client.get_net_id(),
-                        "placement": dict(p),
-                    }
-                )
-
-            client.placements = kept
             try:
-                self.clients_manager.update_client(client)
-            except Exception as e:
+                async with asyncio.timeout(5.0):
+                    async with self._lock_for(client.uid):
+                        await self._reconcile_single_client(
+                            client,
+                            server_monitors,
+                            notify,
+                            orphans,
+                            compute_edge_bindings,
+                        )
+            except asyncio.TimeoutError:
                 self._logger.warning(
-                    f"Failed to persist pruned layout for {client.get_net_id()} ({e})"
+                    f"Reconciliation timeout for client {client.get_net_id()} "
+                    f"(uid={client.uid}); skipping"
                 )
-
-            if notify and client.is_connected:
-                try:
-                    edge_bindings = [
-                        eb.to_dict() for eb in client.get_edge_bindings(server_monitors)
-                    ]
-                    intra_client_bindings = client.get_intra_client_bindings(
-                        server_monitors
-                    )
-                    await self.event_bus.dispatch(
-                        event_type=BusEventType.CLIENT_LAYOUT_UPDATED,
-                        data=ClientLayoutUpdatedEvent(
-                            client_uid=client.uid,
-                            edge_bindings=edge_bindings,
-                            intra_client_bindings=intra_client_bindings,
-                        ),
-                    )
-                except Exception as e:
-                    self._logger.warning(
-                        f"Failed to refresh bindings for "
-                        f"{client.get_net_id()} after monitor change ({e})"
-                    )
 
         if orphans:
             try:
                 await self.save_config()
             except Exception as e:
-                self._logger.warning(f"Failed to persist layout reconciliation ({e})")
+                self._logger.warning(
+                    "Failed to persist layout reconciliation", error=str(e)
+                )
 
         return orphans
+
+    async def _reconcile_single_client(
+        self,
+        client: ClientObj,
+        server_monitors,
+        notify: bool,
+        orphans: list[dict],
+        compute_edge_bindings,
+    ) -> None:
+        placements = list(client.placements or [])
+        if not placements:
+            return
+
+        # Server-adjacency rule: every placement must touch a server
+        # monitor on at least one edge. Chained client-only hops are
+        # rejected here so the cursor's return path back to the
+        # server is well-defined for every placed monitor.
+        kept: list[dict] = []
+        dropped: list[dict] = []
+        for p in placements:
+            try:
+                bindings = compute_edge_bindings(p, server_monitors)
+            except Exception:
+                bindings = []
+            if bindings:
+                kept.append(p)
+            else:
+                dropped.append(p)
+
+        if not dropped:
+            return
+
+        for p in dropped:
+            orphans.append(
+                {
+                    "client_uid": client.uid,
+                    "client_net_id": client.get_net_id(),
+                    "placement": dict(p),
+                }
+            )
+
+        client.placements = kept
+        try:
+            self.clients_manager.update_client(client)
+        except Exception as e:
+            self._logger.warning(
+                f"Failed to persist pruned layout for {client.get_net_id()} ({e})"
+            )
+
+        if notify and client.is_connected:
+            try:
+                edge_bindings = [
+                    eb.to_dict() for eb in client.get_edge_bindings(server_monitors)
+                ]
+                intra_client_bindings = client.get_intra_client_bindings(
+                    server_monitors
+                )
+                await self.event_bus.dispatch(
+                    event_type=BusEventType.CLIENT_LAYOUT_UPDATED,
+                    data=ClientLayoutUpdatedEvent(
+                        client_uid=client.uid,
+                        edge_bindings=edge_bindings,
+                        intra_client_bindings=intra_client_bindings,
+                    ),
+                )
+            except Exception as e:
+                self._logger.warning(
+                    f"Failed to refresh bindings for "
+                    f"{client.get_net_id()} after monitor change ({e})"
+                )
 
     async def _monitor_watch_loop(self) -> None:
         """Background poller that surfaces server-monitor topology changes.
@@ -758,6 +821,7 @@ class Server:
         admin plugs/unplugs a display but cheap enough to leave running.
         """
         from utils.screen import Screen
+        from utils.screen._base import invalidate_monitors_cache
 
         while self._running:
             try:
@@ -765,6 +829,8 @@ class Server:
                 if not self._running:
                     return
                 try:
+                    # Always query the OS here (not the cache), since this
+                    # loop is the cache's source of truth for change detection.
                     monitors = Screen.get_monitors()
                 except Exception as e:
                     self._logger.debug(
@@ -775,6 +841,9 @@ class Server:
                 if signature == self._known_monitors_signature:
                     continue
                 self._known_monitors_signature = signature
+                # Topology change: invalidate the cache so the next
+                # cached read picks up the new layout.
+                invalidate_monitors_cache()
                 self._logger.info(
                     f"Server monitor topology changed: "
                     f"{len(monitors)} monitor(s) now connected"
@@ -861,7 +930,7 @@ class Server:
 
         self.config.enable_stream(stream_type)
         await self.config.save()
-        self._logger.info(f"Enabled stream: {stream_type}")
+        self._logger.info("Enabled stream", stream_type=stream_type)
 
         await self._send_notification(StreamEnabledEvent(stream_type=stream_type))
 
@@ -876,7 +945,7 @@ class Server:
             return
         self.config.disable_stream(stream_type)
         await self.config.save()
-        self._logger.info(f"Disabled stream: {stream_type}")
+        self._logger.info("Disabled stream", stream_type=stream_type)
 
         await self._send_notification(StreamDisabledEvent(stream_type=stream_type))
 
@@ -891,7 +960,7 @@ class Server:
             return True
 
         if self.is_stream_enabled(stream_type):
-            self._logger.warning(f"Stream {stream_type} already enabled")
+            self._logger.warning("Stream already enabled", stream_type=stream_type)
             return True
 
         await self.enable_stream(stream_type)
@@ -904,17 +973,19 @@ class Server:
             elif stream_type == StreamType.CLIPBOARD:
                 await self._enable_clipboard_stream()
             else:
-                self._logger.error(f"Unknown stream type: {stream_type}")
+                self._logger.error("Unknown stream type", stream_type=stream_type)
                 return False
 
-            self._logger.info(f"Runtime enabled stream: {stream_type}")
+            self._logger.info("Runtime enabled stream", stream_type=stream_type)
             return True
         except Exception as e:
             import traceback
 
             traceback.print_exc()
             await self.disable_stream(stream_type)
-            self._logger.error(f"Failed to enable {stream_type} stream ({e})")
+            self._logger.error(
+                "Failed to enable stream", stream_type=stream_type, error=str(e)
+            )
             raise RuntimeError(f"Failed to enable {stream_type} stream ({e})")
 
     async def disable_stream_runtime(self, stream_type: int) -> bool:
@@ -933,16 +1004,16 @@ class Server:
             elif stream_type == StreamType.CLIPBOARD:
                 await self._disable_clipboard_stream()
             else:
-                self._logger.error(f"Unknown stream type: {stream_type}")
+                self._logger.error("Unknown stream type", stream_type=stream_type)
                 return False
 
-            self._logger.info(f"Runtime disabled stream: {stream_type}")
+            self._logger.info("Runtime disabled stream", stream_type=stream_type)
             return True
         except Exception as e:
-            self._logger.error(f"Failed to disable {stream_type} stream ({e})")
+            self._logger.error(
+                "Failed to disable stream", stream_type=stream_type, error=str(e)
+            )
             raise RuntimeError(f"Failed to disable {stream_type} stream ({e})")
-
-    # ==================== Client Approval (interactive) ====================
 
     async def _request_client_approval(
         self, peer_ip: str, hostname: str, uid: str
@@ -1054,7 +1125,9 @@ class Server:
                 auto_save=True,
             )
         except Exception as e:
-            self._logger.error(f"Failed to add approved client {peer_ip} ({e})")
+            self._logger.error(
+                "Failed to add approved client", peer_ip=peer_ip, error=str(e)
+            )
             await self._resolve_pending_approval(
                 peer_ip, None, reason=f"add_failed: {e}"
             )
@@ -1100,8 +1173,6 @@ class Server:
         except OSError:
             return False
 
-    # ==================== Server Lifecycle ====================
-
     async def start(self) -> bool:
         """Start the server with enabled components"""
         if self._running:
@@ -1130,7 +1201,7 @@ class Server:
         try:
             await self._initialize_streams()
         except Exception as e:
-            self._logger.error(f"Failed to initialize streams ({e})")
+            self._logger.error("Failed to initialize streams", error=str(e))
             await self.stop(True)
             return False
 
@@ -1151,7 +1222,7 @@ class Server:
         try:
             await self._initialize_components()
         except Exception as e:
-            self._logger.error(f"Failed to initialize components ({e})")
+            self._logger.error("Failed to initialize components", error=str(e))
             await self.stop(True)
             return False
 
@@ -1167,7 +1238,7 @@ class Server:
             try:
                 await self.start_pairing_service(host=self.config.host)
             except Exception as e:
-                self._logger.warning(f"Pairing service did not start ({e})")
+                self._logger.warning("Pairing service did not start", error=str(e))
 
         # Advertise the actually-bound pairing port over mDNS so clients
         # don't rely on the legacy ``port - 2`` convention.
@@ -1176,20 +1247,17 @@ class Server:
             actual_pairing if actual_pairing else self.config.get_pairing_port()
         )
         extra_props = {"pairing_port": str(advertised_pairing)}
+        service_task = None
         try:
-            service_task = asyncio.create_task(
+            service_task = self._bg_tasks.spawn(
                 self._mdns_service.register_service(
                     host=self.config.host,
                     port=self.config.port,
                     uid=self.config.uid,
                     extra_props=extra_props,
-                )
+                ),
+                name="mdns_register_service",
             )
-        except RuntimeError as re:
-            self._logger.warning(f"Failed to start mDNS service ({re})")
-            # TODO: Should we stop on fail? mDNS is not critical
-
-        try:
             await service_task
             if self.config.uid is None:
                 self.config.uid = self._mdns_service.get_uid()
@@ -1199,9 +1267,12 @@ class Server:
             if self.connection_handler is not None:
                 self.connection_handler.set_server_uid(self.config.uid)
         except RuntimeError as re:
-            self._logger.warning(f"Failed to start mDNS service ({re})")
+            self._logger.warning("Failed to start mDNS service", error=str(re))
+            # TODO: Should we stop on fail? mDNS is not critical
         except Exception as e:
-            self._logger.error(f"Failed to start mDNS service ({e})")
+            self._logger.error("Failed to start mDNS service", error=str(e))
+            if service_task is not None and not service_task.done():
+                service_task.cancel()
             await self.stop(True)
             return False
 
@@ -1217,8 +1288,10 @@ class Server:
             startup_monitors = Screen.get_monitors()
             self._known_monitors_signature = self._monitors_signature(startup_monitors)
         except Exception as e:
-            self._logger.debug(f"Could not prime monitor signature at startup ({e})")
-            self._known_monitors_signature = None
+            self._logger.debug(
+                "Could not prime monitor signature at startup", error=str(e)
+            )
+            self._known_monitors_signature = ()
             startup_monitors = []
 
         # Drop stored placements that no longer abut any server monitor
@@ -1236,16 +1309,20 @@ class Server:
                         f"longer abut any server monitor on startup"
                     )
             except Exception as e:
-                self._logger.warning(f"Failed to reconcile layouts at startup ({e})")
+                self._logger.warning(
+                    "Failed to reconcile layouts at startup", error=str(e)
+                )
 
         try:
             self._monitor_watch_task = self._bg_tasks.spawn(
                 self._monitor_watch_loop(), name="monitor_watch_loop"
             )
         except Exception as e:
-            self._logger.warning(f"Failed to start monitor watch task ({e})")
+            self._logger.warning("Failed to start monitor watch task", error=str(e))
 
-        self._logger.info(f"Server started on {self.config.host}:{self.config.port}")
+        self._logger.info(
+            "Server started", host=self.config.host, port=self.config.port
+        )
         return True
 
     async def stop(self, force: bool = False):
@@ -1284,7 +1361,7 @@ class Server:
             try:
                 await self._cert_sharing.stop_sharing()
             except Exception as e:
-                self._logger.warning(f"Error stopping pairing service ({e})")
+                self._logger.warning("Error stopping pairing service", error=str(e))
             self._cert_sharing = None
 
         for component_name, component in list(self._components.items()):
@@ -1295,14 +1372,22 @@ class Server:
                     else:
                         component.stop()
             except Exception as e:
-                self._logger.error(f"Error stopping component {component_name} ({e})")
+                self._logger.error(
+                    "Error stopping component",
+                    component=component_name,
+                    error=str(e),
+                )
 
         for stream_type, handler in list(self._stream_handlers.items()):
             try:
                 if hasattr(handler, "stop"):
                     tasks.append(asyncio.create_task(handler.stop()))
             except Exception as e:
-                self._logger.error(f"Error stopping stream handler {stream_type} ({e})")
+                self._logger.error(
+                    "Error stopping stream handler",
+                    stream_type=stream_type,
+                    error=str(e),
+                )
 
         tasks.append(asyncio.create_task(self._performance_monitor.stop()))
         tasks.append(asyncio.create_task(self._mdns_service.unregister_service()))
@@ -1313,7 +1398,7 @@ class Server:
             try:
                 await asyncio.gather(*tasks, return_exceptions=True)
             except Exception as e:
-                self._logger.error(f"Error during shutdown tasks ({e})")
+                self._logger.error("Error during shutdown tasks", error=str(e))
 
         self.cleanup()
         self._running = False
@@ -1323,7 +1408,10 @@ class Server:
         self._logger.info("Cleaning up resources...")
         self._components.clear()
         self._stream_handlers.clear()
-        self.event_bus = AsyncEventBus()
+        # Keep the bus identity stable: long-lived components hold a
+        # reference to it and a replacement would leave them dispatching
+        # to a dead bus.
+        self.event_bus.clear_listeners()
         self._logger.info("Resources cleaned up.")
 
     def is_running(self) -> bool:
@@ -1566,7 +1654,7 @@ class Server:
         try:
             from utils.screen import Screen
 
-            server_monitors = Screen.get_monitors()
+            server_monitors = Screen.get_monitors_cached()
         except Exception:
             server_monitors = []
         edge_bindings = [
@@ -1595,6 +1683,13 @@ class Server:
         )
 
     async def _on_client_disconnected(self, client: ClientObj, streams: list[int]):
+        # Hand cursor focus back to the server BEFORE announcing the
+        # disconnect: if this client was active, the listener would
+        # otherwise keep routing input toward a peer that's gone.
+        await self.event_bus.dispatch(
+            event_type=BusEventType.ACTIVE_SCREEN_CHANGED,
+            data=ActiveScreenChangedEvent(active_screen=None),
+        )
         await self.event_bus.dispatch(
             event_type=BusEventType.CLIENT_DISCONNECTED,
             data=ClientDisconnectedEvent(client_uid=client.uid, streams=streams),
@@ -1640,13 +1735,20 @@ class Server:
         if data is None or not data.client_uid:
             return
 
-        client = self.config.get_client(uid=data.client_uid)
-        if client is None:
-            self._logger.debug(
-                f"Ignoring monitor update for unknown client uid={data.client_uid}"
-            )
-            return
+        async with self._lock_for(data.client_uid):
+            # Re-fetch under the lock so a concurrent remove_client / save
+            # path can't hand us a stale reference.
+            client = self.config.get_client(uid=data.client_uid)
+            if client is None:
+                self._logger.debug(
+                    f"Ignoring monitor update for unknown client uid={data.client_uid}"
+                )
+                return
+            await self._apply_client_monitors_update(client, data)
 
+    async def _apply_client_monitors_update(
+        self, client: ClientObj, data: ClientMonitorsUpdatedEvent
+    ) -> None:
         from model.monitor import MonitorInfo
         from utils.screen import Screen
 
@@ -1725,7 +1827,7 @@ class Server:
         # Refresh the listener's edge-binding cache so the next
         # crossing routes against the new monitor topology.
         try:
-            server_monitors = Screen.get_monitors()
+            server_monitors = Screen.get_monitors_cached()
         except Exception:
             server_monitors = []
         try:

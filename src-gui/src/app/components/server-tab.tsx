@@ -255,7 +255,7 @@ export function ServerTab({onStatusChange, state}: ServerTabProps) {
         };
     };
 
-    // Re-emit INIT on upstream changes so the editor never opens stale (fixes "approve → editor opens empty" bug).
+    // Re-emit INIT on upstream changes so the editor never opens stale (fixes "approve -> editor opens empty" bug).
     useEffect(() => {
         if (!editorSession.open) return;
         emit(
@@ -695,7 +695,7 @@ export function ServerTab({onStatusChange, state}: ServerTabProps) {
     // dropped the new unlisten - leaking Tauri handlers that fired on
     // subsequent events.
     //
-    // Under React StrictMode this useEffect itself runs mount→cleanup→mount.
+    // Under React StrictMode this useEffect itself runs mount->cleanup->mount.
     // Tauri's ``listen`` API is async, so the cleanup of the first pass runs
     // *before* the promise resolves with the unlisten. The ``cancelled`` flag
     // catches the latecomers: if a promise resolves after cleanup, we
@@ -838,7 +838,7 @@ export function ServerTab({onStatusChange, state}: ServerTabProps) {
             return true;
         }
 
-        // Non-IP entry → treat as hostname (allow max 1)
+        // Non-IP entry -> treat as hostname (allow max 1)
         const existingHostname = clientIpTags.find(t => !isValidIpAddress(t));
         if (existingHostname) {
             addNotification('warning', 'Hostname already set');

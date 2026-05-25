@@ -30,7 +30,7 @@ from event.bus import EventBus
 from model.client import ClientsManager, ClientObj
 from network.data import MissingTransportError
 from network.data.exchange import MessageExchange, MessageExchangeConfig
-from utils.logging import get_logger, Logger
+from utils.logging import get_logger
 from utils.metrics import MetricsCollector
 
 
@@ -85,7 +85,7 @@ class StreamHandler:
         if self._sender:
             self._sender_task = asyncio.create_task(self._core_sender())
 
-        self._logger.log(f"StreamHandler for {self.stream_type} started.", Logger.DEBUG)
+        self._logger.debug("StreamHandler started", stream_type=self.stream_type)
         return True
 
     async def stop(self) -> bool:
@@ -101,18 +101,19 @@ class StreamHandler:
                 except asyncio.CancelledError:
                     pass
                 except asyncio.TimeoutError:
-                    self._logger.log(
-                        f"StreamHandler for {self.stream_type} sender task did not stop in time",
-                        Logger.WARNING,
+                    self._logger.warning(
+                        "StreamHandler sender task did not stop in time",
+                        stream_type=self.stream_type,
                     )
             except Exception as e:
-                self._logger.log(
-                    f"Error stopping StreamHandler for {self.stream_type}: {e}",
-                    Logger.ERROR,
+                self._logger.error(
+                    "Error stopping StreamHandler",
+                    stream_type=self.stream_type,
+                    error=str(e),
                 )
                 return False
 
-        self._logger.log(f"StreamHandler for {self.stream_type} stopped.", Logger.DEBUG)
+        self._logger.debug("StreamHandler stopped", stream_type=self.stream_type)
         return True
 
     def is_active(self) -> bool:
@@ -461,7 +462,7 @@ class _ServerStreamHandler(StreamHandler):
                 self._notify_send_not_ready()
                 await asyncio.sleep(0)  # yield control
             except (BrokenPipeError, ConnectionResetError) as e:
-                self._logger.warning(f"Connection error ({e})")
+                self._logger.warning("Connection error", error=str(e))
                 # Set active client to None on connection errors
                 self._active_client = None
                 self._notify_send_not_ready()
@@ -475,12 +476,12 @@ class _ServerStreamHandler(StreamHandler):
                     self._logger.warning("Transport closed")
                     await asyncio.sleep(0)  # yield control
                 else:
-                    self._logger.error(f"Runtime error in core loop ({e})")
+                    self._logger.error("Runtime error in core loop", error=str(e))
                     await asyncio.sleep(self._waiting_time)
                 self._active_client = None
                 self._notify_send_not_ready()
             except Exception as e:
-                self._logger.error(f"Error in core loop ({e})")
+                self._logger.error("Error in core loop", error=str(e))
                 await asyncio.sleep(self._waiting_time)
 
     async def stop(self):
@@ -676,7 +677,7 @@ class _ClientStreamHandler(StreamHandler):
                 self._logger.warning("Missing transport")
                 await asyncio.sleep(0)  # yield control
             except (ConnectionResetError, BrokenPipeError) as e:
-                self._logger.error(f"Connection error ({e})")
+                self._logger.error("Connection error", error=str(e))
                 # if connection lost error, close the stream
                 if "connection lost" in str(e).lower() or self._active_only:
                     await self._handle_disconnection()
@@ -687,7 +688,7 @@ class _ClientStreamHandler(StreamHandler):
                     self._logger.warning("Transport closed")
                     await asyncio.sleep(0)  # yield control
                 else:
-                    self._logger.error(f"Runtime error in core loop ({e})")
+                    self._logger.error("Runtime error in core loop", error=str(e))
                     await asyncio.sleep(self._waiting_time)
                 if self._active_only:
                     self._is_active = False
@@ -695,7 +696,7 @@ class _ClientStreamHandler(StreamHandler):
                     await self.msg_exchange.stop()
                     self._clear_buffer()
             except Exception as e:
-                self._logger.error(f"Error in core loop ({e})")
+                self._logger.error("Error in core loop", error=str(e))
                 await asyncio.sleep(self._waiting_time)
 
     def register_receive_callback(self, receive_callback, message_type: str):

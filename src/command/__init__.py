@@ -18,7 +18,6 @@
 #  along with this program.  If not, see <https://www.gnu.org/licenses/>.
 #
 
-import asyncio
 from event import (
     BusEventType,
     CommandEvent,
@@ -55,27 +54,27 @@ class CommandHandler:
         try:
             event = EventMapper.get_event(message)
             if not isinstance(event, CommandEvent):
-                self._logger.warning(f"Received non-command event -> {event}")
+                self._logger.warning("Received non-command event", event=repr(event))
                 return
 
             if event.command == CommandEvent.CROSS_SCREEN:
-                await asyncio.create_task(self.handle_cross_screen(event))
+                await self.handle_cross_screen(event)
             elif event.command == CommandEvent.FORCE_SCREEN_CHANGE:
-                await asyncio.create_task(self.handle_force_screen_change(event))
+                await self.handle_force_screen_change(event)
             elif event.command == CommandEvent.CLIENT_TOPOLOGY:
-                await asyncio.create_task(self.handle_client_topology(event))
+                await self.handle_client_topology(event)
             elif event.command == CommandEvent.CLIENT_MONITORS_UPDATE:
-                await asyncio.create_task(self.handle_client_monitors_update(event))
+                await self.handle_client_monitors_update(event)
             else:
-                self._logger.warning(f"Unknown command received -> {event.command}")
+                self._logger.warning("Unknown command received", command=event.command)
                 return
 
         except Exception as e:
-            self._logger.error(f"{e}")
+            self._logger.error("Command handler error", error=str(e))
             return
 
     async def handle_cross_screen(self, event: CommandEvent):
-        # target=="server": client returning the cursor → notify the
+        # target=="server": client returning the cursor -> notify the
         # cursor guard so the server stops sending to that client.
         # Otherwise the target client must become active.
         crs_event = CrossScreenCommandEvent().from_command_event(event)

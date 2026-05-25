@@ -107,11 +107,6 @@ class ServerKeyboardListener(object):
             # No event loop running yet - will be set when start() is called
             self._loop = None
 
-        # TODO: Work in progress
-        # self.command_stream.register_receive_callback(
-        #     self._command_callback, message_type=MessageType.COMMAND
-        # )
-
         # Subscribe with async callbacks
         self.event_bus.subscribe(
             event_type=BusEventType.ACTIVE_SCREEN_CHANGED,
@@ -240,7 +235,7 @@ class ServerKeyboardListener(object):
         try:
             event = EventMapper.get_event(message)
             if not isinstance(event, CommandEvent):
-                self._logger.warning(f"Received non-command event -> {event}")
+                self._logger.warning("Received non-command event", event=repr(event))
                 return
 
             if event.command == CommandEvent.KEYBOARD_STATE_SYNC:
@@ -251,7 +246,7 @@ class ServerKeyboardListener(object):
                         await self._sync_caps_lock_state(ext_state=True)
                         break
         except Exception as e:
-            self._logger.error(f"Error processing command message ({e})")
+            self._logger.error("Error processing command message", error=str(e))
             return
 
     async def _on_client_connected(self, data: Optional[ClientConnectedEvent]):
@@ -319,7 +314,7 @@ class ServerKeyboardListener(object):
                 asyncio.run_coroutine_threadsafe(coro, self._loop)
                 return
             except Exception as e:
-                self._logger.error(f"Error scheduling coroutine ({e})")
+                self._logger.error("Error scheduling coroutine", error=str(e))
 
         try:
             loop = asyncio.get_running_loop()
@@ -367,7 +362,7 @@ class ServerKeyboardListener(object):
             )
             self._schedule_async(self.stream.send(event))
         except Exception as e:
-            self._logger.error(f"Error handling key press ({e})")
+            self._logger.error("Error handling key press", error=str(e))
 
     def on_release(self, key: Key | KeyCode | None):
         if key is None:
@@ -386,7 +381,7 @@ class ServerKeyboardListener(object):
             )
             self._schedule_async(self.stream.send(event))
         except Exception as e:
-            self._logger.error(f"Error handling key release ({e})")
+            self._logger.error("Error handling key release", error=str(e))
 
     async def _hotkey_switch_direction(self, edge: ScreenEdge) -> None:
         """Ctrl+Shift+P+<Arrow>: spatial client switch. The mouse listener resolves the target."""
@@ -396,19 +391,19 @@ class ServerKeyboardListener(object):
                 data=ScreenSwitchDirectionalRequestEvent(edge=edge),
             )
         except Exception as e:
-            self._logger.error(f"Error dispatching directional hotkey ({e})")
+            self._logger.error("Error dispatching directional hotkey", error=str(e))
 
     async def _hotkey_cycle_client(self, direction: int) -> None:
         """Ctrl+Shift+P+Tab / Shift+Tab: cycle active client forward (1) or back (-1).
         Used when topology is too disjoint for directional hotkeys."""
         try:
-            self._logger.debug(f"Hotkey cycle client: direction={direction}")
+            self._logger.debug("Hotkey cycle client", direction=direction)
             await self.event_bus.dispatch(
                 event_type=BusEventType.SCREEN_SWITCH_CYCLE_REQUEST,
                 data=ScreenSwitchCycleRequestEvent(direction=direction),
             )
         except Exception as e:
-            self._logger.error(f"Error dispatching cycle hotkey ({e})")
+            self._logger.error("Error dispatching cycle hotkey", error=str(e))
 
     async def _hotkey_switch_to_server(self) -> None:
         """Ctrl+Shift+P+Esc: release any active client and return focus to the server."""
@@ -423,16 +418,27 @@ class ServerKeyboardListener(object):
             )
             await self.command_stream.send(ForceScreenChangeCommandEvent())
         except Exception as e:
-            self._logger.error(f"Error during hotkey switch-to-server ({e})")
+            self._logger.error("Error during hotkey switch-to-server", error=str(e))
 
     async def _hotkey_panic(self) -> None:
-        """Ctrl+Shift+Q: panic button - SIGTERM then SIGKILL self."""
+        """Ctrl+Shift+Q: panic button - SIGTERM then SIGKILL self.
+
+        The SIGKILL fallback runs in a separate task so this handler
+        returns immediately, letting SIGTERM propagate without
+        blocking the keyboard listener loop for a full second.
+        """
         self._logger.warning("Panic hotkey triggered: sending SIGTERM to self.")
         os.kill(os.getpid(), signal.SIGTERM)
-        await asyncio.sleep(1)
-        if self.is_alive():
-            self._logger.warning("Process still alive after SIGTERM, sending SIGKILL.")
-            os.kill(os.getpid(), signal.SIGKILL)
+
+        async def _fallback_kill() -> None:
+            await asyncio.sleep(1)
+            if self.is_alive():
+                self._logger.warning(
+                    "Process still alive after SIGTERM, sending SIGKILL."
+                )
+                os.kill(os.getpid(), signal.SIGKILL)
+
+        asyncio.ensure_future(_fallback_kill())
 
 
 class ClientKeyboardController(object):
@@ -488,7 +494,7 @@ class ClientKeyboardController(object):
 
         self._logger.info(
             "keyboard controller backend selected",
-            extra={"backend": BACKEND.get("keyboard_controller", "unknown")}
+            extra={"backend": BACKEND.get("keyboard_controller", "unknown")},
         )
 
         self._queue: asyncio.Queue = asyncio.Queue(maxsize=1000)
@@ -563,7 +569,7 @@ class ClientKeyboardController(object):
             except asyncio.CancelledError:
                 break
             except Exception as e:
-                self._logger.error(f"Error in worker ({e})")
+                self._logger.error("Error in worker", error=str(e))
                 await asyncio.sleep(0.01)
 
     async def _on_client_active(self, data: Optional[ClientActiveEvent]):
@@ -586,7 +592,7 @@ class ClientKeyboardController(object):
 
             await self._queue.put(message)
         except Exception as e:
-            self._logger.error(f"Failed to process mouse event ({e})")
+            self._logger.error("Failed to process mouse event", error=str(e))
             await asyncio.sleep(0)
 
     async def _clear_pressed_keys(self):
@@ -610,7 +616,7 @@ class ClientKeyboardController(object):
         """Apply key event. OS-specific subclasses override."""
         key = KeyUtilities.map_key(event.key)
         if key is None:
-            self._logger.warning(f"Unmapped key received: {event.key}")
+            self._logger.warning("Unmapped key received", key=event.key)
             return
 
         if event.action == KeyboardEvent.PRESS_ACTION:

@@ -146,14 +146,14 @@ class ConnectionHandler(BaseConnectionHandler):
             # Serve forever in background
             self._server_task = asyncio.create_task(self._serve_forever())
 
-            self._logger.log(f"Started on {self.host}:{self.port}", Logger.INFO)
+            self._logger.info("Started", host=self.host, port=self.port)
 
             # Start heartbeat task
             self._heartbeat_task = asyncio.create_task(self._heartbeat_loop())
 
             return True
         except Exception as e:
-            self._logger.exception(f"Failed to start server ({e})")
+            self._logger.exception("Failed to start server", error=str(e))
             self._running = False
             return False
 
@@ -231,7 +231,14 @@ class ConnectionHandler(BaseConnectionHandler):
         """
         if client.is_connected and client.get_connection() is not None:
             try:
-                await client.get_connection().wait_closed()  # type: ignore
+                conn = client.get_connection()
+                if conn is not None:
+                    await conn.wait_closed()
+                else:
+                    self._logger.warning(
+                        "Connection missing during forced disconnection",
+                        client=client.to_dict(),
+                    )
                 await asyncio.sleep(0.1)  # Small delay to ensure closure
                 self._logger.log(
                     f"Force disconnected client {client.get_net_id()}", Logger.INFO
@@ -250,7 +257,7 @@ class ConnectionHandler(BaseConnectionHandler):
                     callback=self.disconnected_callback, client=client, streams=[]
                 )
             except CallbackError as e:
-                self._logger.log(f"Error in disconnected callback ({e})", Logger.ERROR)
+                self._logger.error("Error in disconnected callback", error=str(e))
 
     async def _check_pending_streams(
         self, reader: asyncio.StreamReader, writer: asyncio.StreamWriter, address: str
@@ -315,7 +322,7 @@ class ConnectionHandler(BaseConnectionHandler):
         """Gestisce una nuova connessione client (handshake o stream aggiuntivo)"""
         set_socket_nodelay(writer)
         addr = writer.get_extra_info("peername")
-        self._logger.log(f"Accepted connection from {addr}", Logger.DEBUG)
+        self._logger.debug("Accepted connection", address=addr)
 
         try:
             client_obj = self.clients.get_client(ip_address=addr[0])
@@ -341,10 +348,10 @@ class ConnectionHandler(BaseConnectionHandler):
                 return
 
         except (ConnectionResetError, ConnectionAbortedError) as e:
-            self._logger.log(f"Connection lost from {addr} ({e})", Logger.WARNING)
+            self._logger.warning("Connection lost", address=addr, error=str(e))
             await self._clean_on_connection_lost(writer)
         except Exception as e:
-            self._logger.log(f"Error handling client {addr} ({e})", Logger.ERROR)
+            self._logger.error("Error handling client", address=addr, error=str(e))
             import traceback
 
             self._logger.log(traceback.format_exc(), Logger.ERROR)
@@ -845,8 +852,17 @@ class ConnectionHandler(BaseConnectionHandler):
         """Pulisce un pending stream specifico."""
         if ip_address in self._pending_streams:
             fut = self._pending_streams[ip_address].pop(stream_type, None)
-            if fut and not fut.done():
-                fut.cancel()
+            if fut:
+                if fut.done() and not fut.cancelled() and fut.exception() is None:
+                    # Peer race-arrived between timeout firing and cleanup:
+                    # close the orphan writer to avoid an fd leak.
+                    try:
+                        _reader, writer = fut.result()
+                        writer.close()
+                    except Exception:
+                        pass
+                elif not fut.done():
+                    fut.cancel()
             if not self._pending_streams[ip_address]:
                 del self._pending_streams[ip_address]
 
@@ -876,7 +892,7 @@ class ConnectionHandler(BaseConnectionHandler):
                 callback=self.disconnected_callback, client=client, streams=[]
             )
         except CallbackError as e:
-            self._logger.log(f"Error in disconnected callback ({e})", Logger.ERROR)
+            self._logger.error("Error in disconnected callback", error=str(e))
 
     async def _handle_streams_reconnection(
         self, client: ClientObj, closed_streams: list[int]

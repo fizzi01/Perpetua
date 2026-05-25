@@ -331,29 +331,17 @@ class CertificateSharing:
     async def _handle_client(
         self, reader: asyncio.StreamReader, writer: asyncio.StreamWriter
     ):
-        """
-        Handle a client connection on the pairing/cert-sharing port.
+        """Dispatch one pre-auth connection on the pairing/cert-sharing port.
 
-        Protocol (plaintext, line-oriented, terminated by empty line):
-
-        - ``REQUEST_PAIRING\\n[HOSTNAME:<name>\\n]\\n`` - ask the server to
-          generate (or refresh) an OTP and surface it to the local admin via
-          ``pairing_request_callback``. The server replies with
-          ``OK:<remaining_seconds>\\n``. The OTP itself is never sent over the
-          wire - it must reach the client out-of-band (e.g. read off the
-          server's GUI by a human).
-
-        - ``GET_CERTIFICATE\\n\\n`` - request the encrypted CA bundle. Replies
-          with ``TOKEN:<jwt>\\n`` or ``ERROR:<code>\\n``.
-
-        Legacy clients that immediately read without sending a request are
-        still served (treated as ``GET_CERTIFICATE``) to keep one-shot
-        ``start_sharing()`` flows working.
+        Routes to ``_handle_pairing_request`` or ``_handle_certificate_request``
+        based on the first line. Legacy clients that connect and read without
+        sending a request are treated as ``GET_CERTIFICATE`` so old one-shot
+        ``start_sharing()`` flows keep working.
         """
         addr = writer.get_extra_info("peername")
         peer_ip = addr[0] if addr else "unknown"
         peer_port = addr[1] if addr and len(addr) > 1 else 0
-        self._logger.log(f"Pairing client connected from {addr}", Logger.INFO)
+        self._logger.info("Pairing client connected", address=addr)
 
         try:
             request_type, headers = await self._read_request(reader)
@@ -370,7 +358,7 @@ class CertificateSharing:
                 await writer.drain()
 
         except Exception as e:
-            self._logger.log(f"Error handling client {addr} ({e})", Logger.ERROR)
+            self._logger.error("Error handling client", address=addr, error=str(e))
         finally:
             try:
                 writer.close()
@@ -526,7 +514,7 @@ class CertificateSharing:
         await writer.drain()
 
         self._shared = True
-        self._logger.log(f"Certificate sent to client {addr}", Logger.INFO)
+        self._logger.info("Certificate sent to client", address=addr)
 
     def _is_otp_valid(self) -> bool:
         """Check if OTP is still valid"""
@@ -578,7 +566,7 @@ class CertificateSharing:
             return True, self._otp
 
         except Exception as e:
-            self._logger.log(f"Failed to start sharing server ({e})", Logger.ERROR)
+            self._logger.error("Failed to start sharing server", error=str(e))
             self._otp = None
             self._otp_expiry = None
             return False, None
@@ -614,7 +602,7 @@ class CertificateSharing:
             )
             return True
         except Exception as e:
-            self._logger.log(f"Failed to start pairing service ({e})", Logger.ERROR)
+            self._logger.error("Failed to start pairing service", error=str(e))
             return False
 
     async def ensure_active_otp(
@@ -695,7 +683,7 @@ class CertificateSharing:
         """
         if self._is_otp_valid():
             remaining = int(self._otp_expiry - time.time())  # ty:ignore[unsupported-operator]
-            self._logger.log(f"OTP valid for {remaining}s more", Logger.DEBUG)
+            self._logger.debug("OTP still valid", remaining_seconds=remaining)
             return self._otp
         return None
 
@@ -819,7 +807,7 @@ class CertificateReceiver:
 
             if response.startswith(f"{RESP_ERROR}:"):
                 code = response.split(":", 1)[1]
-                self._logger.log(f"Pairing request rejected ({code})", Logger.WARNING)
+                self._logger.warning("Pairing request rejected", code=code)
                 return False, 0, code
 
             self._logger.log(
@@ -838,7 +826,7 @@ class CertificateReceiver:
             )
             return False, 0, "CONNECTION_REFUSED"
         except Exception as e:
-            self._logger.log(f"Pairing request failed: {e}", Logger.ERROR)
+            self._logger.error("Pairing request failed", error=str(e))
             return False, 0, "ERROR"
 
     async def receive_certificate(self, otp: str) -> Tuple[bool, Optional[str]]:
@@ -901,7 +889,7 @@ class CertificateReceiver:
 
             if response.startswith("ERROR:"):
                 error_type = response.split(":", 1)[1]
-                self._logger.log(f"Server error: {error_type}", Logger.ERROR)
+                self._logger.error("Server error", error_type=error_type)
                 return False, None
 
             if not response.startswith("TOKEN:"):
@@ -952,7 +940,7 @@ class CertificateReceiver:
                 self._logger.log("JWT expired", Logger.ERROR)
                 return False, None
             except jwt.InvalidTokenError as e:
-                self._logger.log(f"Invalid JWT or OTP: {e}", Logger.ERROR)
+                self._logger.error("Invalid JWT or OTP", error=str(e))
                 return False, None
             except Exception as e:
                 self._logger.log(
@@ -973,7 +961,7 @@ class CertificateReceiver:
             )
             return False, None
         except Exception as e:
-            self._logger.log(f"Error receiving certificate ({e})", Logger.ERROR)
+            self._logger.error("Error receiving certificate", error=str(e))
             import traceback
 
             self._logger.log(traceback.format_exc(), Logger.ERROR)

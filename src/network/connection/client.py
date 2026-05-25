@@ -191,7 +191,7 @@ class ConnectionHandler(BaseConnectionHandler):
             return True
 
         except Exception as e:
-            self._logger.log(f"Failed to start ({e})", Logger.ERROR)
+            self._logger.error("Failed to start", error=str(e))
             import traceback
 
             self._logger.log(traceback.format_exc(), Logger.ERROR)
@@ -283,9 +283,9 @@ class ConnectionHandler(BaseConnectionHandler):
                                     "Command stream is None after handshake"
                                 )
 
-                            self._client_obj.ip_address = (
-                                self._command_stream.get_sockname()[0]
-                            )
+                            sockname = self._command_stream.get_sockname()
+                            if sockname:
+                                self._client_obj.ip_address = sockname[0]
                             self.clients.update_client(self._client_obj)
 
                             # Call connected callback
@@ -365,7 +365,7 @@ class ConnectionHandler(BaseConnectionHandler):
                 self._running = False
                 break
             except Exception as e:
-                self._logger.exception(f"Error in core loop ({e})")
+                self._logger.exception("Error in core loop", error=str(e))
 
                 # Handle disconnection
                 if self._connected:
@@ -398,7 +398,7 @@ class ConnectionHandler(BaseConnectionHandler):
                 reader=_command_reader, writer=_command_writer
             )
 
-            self._logger.log(f"Connected to {self.host}:{self.port}", Logger.DEBUG)
+            self._logger.debug("Connected", host=self.host, port=self.port)
             return True
 
         except asyncio.TimeoutError:
@@ -412,7 +412,7 @@ class ConnectionHandler(BaseConnectionHandler):
             )
             return False
         except Exception as e:
-            self._logger.log(f"Connection error ({e})", Logger.ERROR)
+            self._logger.error("Connection error", error=str(e))
             return False
 
     async def _handshake(self) -> bool:
@@ -555,7 +555,7 @@ class ConnectionHandler(BaseConnectionHandler):
             # and stop reconnecting against a cert that can never verify.
             raise
         except Exception as e:
-            self._logger.log(f"Handshake error ({e})", Logger.ERROR)
+            self._logger.error("Handshake error", error=str(e))
             import traceback
 
             self._logger.log(traceback.format_exc(), Logger.ERROR)
@@ -624,7 +624,7 @@ class ConnectionHandler(BaseConnectionHandler):
                 self._client_obj.set_connection(connection=conn)
                 self.clients.update_client(self._client_obj)
 
-                self._logger.log(f"Stream {stream_type} connected", Logger.DEBUG)
+                self._logger.debug("Stream connected", stream_type=stream_type)
 
             except asyncio.TimeoutError:
                 self._logger.log(
@@ -800,9 +800,9 @@ class ConnectionHandler(BaseConnectionHandler):
                 callback=self.disconnected_callback, client=self._client_obj
             )
         except CallbackError as e:
-            self._logger.log(f"Error in disconnected callback ({e})", Logger.ERROR)
+            self._logger.error("Error in disconnected callback", error=str(e))
 
-        self._logger.warning(f"Client disconnected from server ({err})")
+        self._logger.warning("Client disconnected from server", error=str(err))
 
     async def _close_all_streams(self):
         """Close all stream connections"""
@@ -814,7 +814,7 @@ class ConnectionHandler(BaseConnectionHandler):
                     await conn.wait_closed()
 
         except Exception as e:
-            self._logger.warning(f"Error closing streams ({e})")
+            self._logger.warning("Error closing streams", error=str(e))
 
     def is_connected(self) -> bool:
         """Check if client is connected"""

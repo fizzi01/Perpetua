@@ -37,8 +37,6 @@ import {SplashScreen} from './Splash';
 import LayoutEditorWindow from './LayoutEditorWindow';
 
 export function Main() {
-    var r = document.querySelector(':root') as HTMLElement;
-    r.style.setProperty('--border-radius', '0px');
 
     const [mode, setMode] = useState<'client' | 'server'>('client');
     const [disableModeSwitch, setDisableModeSwitch] = useState<boolean>(false);
@@ -180,9 +178,9 @@ export function Main() {
     }
 
     return (
-        <div className="min-h-screen w-full flex items-center justify-center"
+        <div className="w-full h-full flex items-start justify-start overflow-hidden"
              style={{backgroundColor: 'var(--app-bg)'}}>
-            <div className="w-full h-[601px] overflow-hidden flex flex-col"
+            <div className="w-full h-full flex flex-col overflow-hidden min-h-0"
                  style={{backgroundColor: 'var(--app-bg-secondary)', borderColor: 'var(--app-border)'}}>
                 {/* Titlebar */}
                 <Titlebar disabled={disableModeSwitch} mode={mode} onModeChange={(newMode) => {
@@ -195,7 +193,7 @@ export function Main() {
                     });
                 }}/>
                 {/* Scrollable Content */}
-                <ScrollArea extraPadding='pl-10' className={`flex-1 rounded-lg overflow-y-auto px-8 py-6 relative`}>
+                <ScrollArea extraPadding='pl-10' className={`flex-1 min-h-0 overflow-y-auto px-8 py-6 relative`}>
                     {/* Content */}
                     <motion.div
                         key={mode}

@@ -162,6 +162,10 @@ class ProtocolMessage(msgspec.Struct):
             raise ValueError("Length must be provided if not validating")
 
         body_bytes = data[cls.prefix_lenght : cls.prefix_lenght + length]
+        if len(body_bytes) < length:
+            raise ValueError(
+                f"Truncated body: expected {length} bytes, got {len(body_bytes)}"
+            )
         return _get_wire_decoder().decode(body_bytes)
 
     def is_heartbeat(self) -> bool:

@@ -275,7 +275,7 @@ def mouse_event():
         dy=10,
         button=1,
         action=MouseEvent.MOVE_ACTION,
-        is_presed=False,
+        is_pressed=False,
     )
 
 
@@ -287,7 +287,7 @@ def mouse_click_event():
         y=200,
         button=1,
         action=MouseEvent.CLICK_ACTION,
-        is_presed=True,
+        is_pressed=True,
     )
 
 

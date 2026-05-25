@@ -300,7 +300,7 @@ class MouseEvent(Event):
         dy: float = 0,
         button: Optional[int] = None,
         action: Optional[str] = None,
-        is_presed: bool = False,
+        is_pressed: bool = False,
     ):
         self.x = x
         self.y = y
@@ -308,8 +308,7 @@ class MouseEvent(Event):
         self.dy = dy
         self.button = button
         self.action = action
-
-        self.is_pressed = is_presed
+        self.is_pressed = is_pressed
         self.timestamp = time()
 
     def to_dict(self) -> dict:
@@ -623,7 +622,7 @@ class EventMapper:
                 dy=message_payload.get("dy", 0),
                 button=message_payload.get("button"),
                 action=message_payload.get("event"),
-                is_presed=message_payload.get("is_pressed", False),
+                is_pressed=message_payload.get("is_pressed", False),
             )
         elif event_type == MessageType.COMMAND:
             return CommandEvent(

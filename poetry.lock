@@ -398,7 +398,7 @@ description = "Fundamental package for array computing in Python"
 optional = false
 python-versions = ">=3.11"
 groups = ["main"]
-markers = "python_version == \"3.11\" and (sys_platform == \"darwin\" or sys_platform == \"win32\")"
+markers = "python_version == \"3.11\" and sys_platform == \"darwin\""
 files = [
     {file = "numpy-2.4.4-cp311-cp311-macosx_10_9_x86_64.whl", hash = "sha256:f983334aea213c99992053ede6168500e5f086ce74fbc4acc3f2b00f5762e9db"},
     {file = "numpy-2.4.4-cp311-cp311-macosx_11_0_arm64.whl", hash = "sha256:72944b19f2324114e9dc86a159787333b77874143efcf89a5167ef83cfee8af0"},
@@ -4431,7 +4431,7 @@ description = "Cross platform GUI toolkit for Python, \"Phoenix\" version"
 optional = false
 python-versions = ">=3.10"
 groups = ["main"]
-markers = "sys_platform == \"darwin\" or sys_platform == \"win32\""
+markers = "sys_platform == \"darwin\""
 files = [
     {file = "wxpython-4.2.5-cp310-cp310-macosx_11_0_arm64.whl", hash = "sha256:c97ccd3f2da567eff43f71948d9ace86c91dc80aa834e7b2dbeacd95eabbe9c6"},
     {file = "wxpython-4.2.5-cp310-cp310-macosx_14_0_x86_64.whl", hash = "sha256:402c61ea6c9f2904b0e0c2ffbd04ed38ad6ae4f25e0d9de529dbf44da0685346"},
@@ -4663,4 +4663,4 @@ cffi = ["cffi (>=1.17,<2.0) ; platform_python_implementation != \"PyPy\" and pyt
 [metadata]
 lock-version = "2.1"
 python-versions = ">=3.11,<3.13"
-content-hash = "e434714f354e4f2bb087a3137ae751ddb0bbb51c535f28c6b64c9dde4a1e600b"
+content-hash = "50c76a16f823b661b7cde498feb600614c4e26f875cc0f19dd12fed83445baf5"

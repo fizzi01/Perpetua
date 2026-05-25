@@ -22,7 +22,7 @@ import {getCurrentWindow} from "@tauri-apps/api/window";
 
 import {LayoutEditor, type LayoutEditorClient} from "./components/LayoutEditor";
 import type {MonitorInfo, MonitorPlacement} from "./api/Interface";
-import {platform} from '@tauri-apps/plugin-os';
+
 
 // Payload exchanged with the main window. Main emits "init", editor replies "ready", then "save"/"cancel".
 export interface LayoutEditorInitPayload {
@@ -55,9 +55,7 @@ export default function LayoutEditorWindow() {
     // Mirror of `initialised` for the persistent listener: re-INIT must refresh sidebar without clobbering drags.
     const initialisedRef = useRef(false);
 
-    const currentPlatform = platform();
-    const root = document.documentElement;
-    root.style.setProperty('--border-radius', currentPlatform === 'windows' ? '0px' : '14px');
+    
 
     useEffect(() => {
         const handleResize = () => setWindowHeight(window.innerHeight);

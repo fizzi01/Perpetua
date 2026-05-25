@@ -130,6 +130,17 @@ class AsyncEventBus(EventBus):
                 self._failure_counts.pop((event_type, id(cb)), None)
                 return
 
+    def clear_listeners(self) -> None:
+        """Drop all subscribers without dropping the bus identity.
+
+        Preferred over re-instantiating the bus: long-lived components
+        (mouse/keyboard listeners, command handler) hold a reference to
+        this instance, and replacing it would leave them dispatching to
+        a dead bus.
+        """
+        self._subscribers.clear()
+        self._failure_counts.clear()
+
     async def dispatch(self, event_type: int, data: Optional[T] = None, **kwargs):
         """
         Async dispatch of an event to all registered listeners.
@@ -239,12 +250,3 @@ class AsyncEventBus(EventBus):
         # accumulate toward the auto-disable threshold.
         if key in self._failure_counts:
             del self._failure_counts[key]
-
-
-# Backward compatibility alias
-class ThreadSafeEventBus(EventBus):
-    """
-    Backward compatibility alias for AsyncEventBus.
-    """
-
-    pass
