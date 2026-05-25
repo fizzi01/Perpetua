@@ -19,6 +19,7 @@
 
 import React from "react";
 import ReactDOM from "react-dom/client";
+import {platform} from '@tauri-apps/plugin-os';
 import App from "./app/App";
 import { Provider } from 'react-redux';
 import {store} from './app/store/store';
@@ -41,6 +42,10 @@ function disableMenu() {
 }
 
 disableMenu();
+
+// Apply platform-specific border-radius to the HTML root so it affects all windows
+const currentPlatform = platform();
+document.documentElement.style.setProperty('--border-radius', currentPlatform === 'windows' ? '0px' : '14px');
 
 ReactDOM.createRoot(document.getElementById("root") as HTMLElement).render(
   <React.StrictMode>
