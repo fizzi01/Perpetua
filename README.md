@@ -26,6 +26,7 @@ Built with Python using uvloop (macOS/Linux) and winloop (Windows) as event loop
 
 - [Getting Started](#getting-started)
 - [Platform Support](#platform-support)
+- [Multi-monitor](#multi-monitor--layout)
 - [Usage](#usage)
 - [Configuration](#configuration)
 - [Troubleshooting](#troubleshooting)
