@@ -250,12 +250,3 @@ class AsyncEventBus(EventBus):
         # accumulate toward the auto-disable threshold.
         if key in self._failure_counts:
             del self._failure_counts[key]
-
-
-# Backward compatibility alias
-class ThreadSafeEventBus(EventBus):
-    """
-    Backward compatibility alias for AsyncEventBus.
-    """
-
-    pass

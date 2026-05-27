@@ -337,7 +337,7 @@ class ServiceDiscovery:
         except NonUniqueNameException:
             raise RuntimeError("Service name is already in use on the network")
         except Exception as e:
-            self._logger.exception(f"{e}")
+            self._logger.exception("Unhandled service error", error=str(e))
             raise RuntimeError(f"Failed to register mDNS service ({e})")
 
     async def _unregister_service(self):

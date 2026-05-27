@@ -115,7 +115,7 @@ class _XlibCursorHandler:
             pixmap.free()
             return xcursor.Cursor(self._display.display, cid, owner=1)
         except Exception as e:
-            self._logger.warning(f"Failed to create blank pixmap cursor: {e}")
+            self._logger.warning("Failed to create blank pixmap cursor", error=str(e))
             # Fallback: glyph cursor with all-black colours
             try:
                 font = self._display.open_font("cursor")
@@ -234,7 +234,7 @@ class _XlibCursorHandler:
         except (EOFError, BrokenPipeError):
             self._running = False
         except Exception as e:
-            self._logger.error(f"Error processing command: {e}")
+            self._logger.error("Error processing command", error=str(e))
 
     def _enable_capture(self):
         if self._captured:
@@ -296,7 +296,7 @@ class _XlibCursorHandler:
 
             self._result_conn.send({"type": "capture_enabled", "success": True})
         else:
-            self._logger.error(f"Failed to grab pointer, status={status}")
+            self._logger.error("Failed to grab pointer", status=status)
             self._window.unmap()
             self._display.sync()
             self._result_conn.send({"type": "capture_enabled", "success": False})
@@ -353,7 +353,7 @@ class _XlibCursorHandler:
 
             self._display.sync()
         except Exception as e:
-            self._logger.error(f"Recapture failed: {e}")
+            self._logger.error("Recapture failed", error=str(e))
 
     def _cleanup(self):
         if self._display is None:
@@ -373,7 +373,7 @@ class _XlibCursorHandler:
             self._display.flush()
             self._display.close()
         except Exception as e:
-            self._logger.error(f"Cleanup error: {e}")
+            self._logger.error("Cleanup error", error=str(e))
         finally:
             self._display = None
 

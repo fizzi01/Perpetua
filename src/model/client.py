@@ -38,7 +38,7 @@ class ScreenPosition(StrEnum):
     BOTTOM = "bottom"
     LEFT = "left"
     RIGHT = "right"
-    UKNOWN = "unknown"
+    UNKNOWN = "unknown"
     NONE = "none"
 
     @classmethod

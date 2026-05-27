@@ -54,7 +54,7 @@ class CommandHandler:
         try:
             event = EventMapper.get_event(message)
             if not isinstance(event, CommandEvent):
-                self._logger.warning(f"Received non-command event -> {event}")
+                self._logger.warning("Received non-command event", event=repr(event))
                 return
 
             if event.command == CommandEvent.CROSS_SCREEN:
@@ -66,11 +66,11 @@ class CommandHandler:
             elif event.command == CommandEvent.CLIENT_MONITORS_UPDATE:
                 await self.handle_client_monitors_update(event)
             else:
-                self._logger.warning(f"Unknown command received -> {event.command}")
+                self._logger.warning("Unknown command received", command=event.command)
                 return
 
         except Exception as e:
-            self._logger.error(f"{e}")
+            self._logger.error("Command handler error", error=str(e))
             return
 
     async def handle_cross_screen(self, event: CommandEvent):

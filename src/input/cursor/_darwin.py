@@ -114,7 +114,7 @@ class CursorHandlerWindow(_base.CursorHandlerWindow):
             ns_window.setIgnoresMouseEvents_(False)
             ns_window.makeKeyAndOrderFront_(None)
         except Exception as e:
-            self._logger.error(f"Error forcing overlay: {e}")
+            self._logger.error("Error forcing overlay", error=str(e))
 
     def HideOverlay(self, startup: bool = False):
         try:
@@ -132,7 +132,7 @@ class CursorHandlerWindow(_base.CursorHandlerWindow):
 
             super().HideOverlay(startup)
         except Exception as e:
-            self._logger.error(f"Error hiding overlay: {e}")
+            self._logger.error("Error hiding overlay", error=str(e))
 
     def RestorePreviousApp(self):
         try:
@@ -143,7 +143,7 @@ class CursorHandlerWindow(_base.CursorHandlerWindow):
             self.previous_app = None
             self.previous_app_pid = None
         except Exception as e:
-            self._logger.error(f"Error restoring previous app ({e})")
+            self._logger.error("Error restoring previous app", error=str(e))
 
     def _force_recapture(self):
         if not self.mouse_captured_flag.is_set():
@@ -166,13 +166,13 @@ class CursorHandlerWindow(_base.CursorHandlerWindow):
                     else:
                         self._recapture_timer.Stop()
                 except Exception as er:
-                    self._logger.error(f"Error during recapture attempt ({er})")
+                    self._logger.error("Error during recapture attempt", error=str(er))
 
             self.Bind(wx.EVT_TIMER, on_timer, self._recapture_timer)
             self._recapture_timer.Start(retry_interval)
 
         except Exception as e:
-            self._logger.error(f"Error during recapture attempt ({e})")
+            self._logger.error("Error during recapture attempt", error=str(e))
 
     def handle_cursor_visibility(self, visible: bool):
         """

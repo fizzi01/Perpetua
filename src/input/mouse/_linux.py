@@ -179,7 +179,7 @@ class ServerMouseListener(_base.ServerMouseListener):
 
         if active_screen:
             # Keyboard hotkey activation
-            self._logger.debug(f"[GUARD] hotkey activation screen={active_screen}")
+            self._logger.debug("[GUARD] hotkey activation", active_screen=active_screen)
             self._active_client_barrier = active_screen
             await self.event_bus.dispatch(
                 event_type=BusEventType.ACTIVE_SCREEN_CHANGED,
@@ -198,7 +198,10 @@ class ServerMouseListener(_base.ServerMouseListener):
             if y is None:
                 y = -1
             self._logger.debug(
-                f"[GUARD] RELEASE client={self._active_client_barrier} x={x} y={y}"
+                "[GUARD] RELEASE",
+                client=self._active_client_barrier,
+                x=x,
+                y=y,
             )
             if self._listener:
                 self._listener.disable_capture(x, y)
@@ -236,7 +239,7 @@ class ServerMouseListener(_base.ServerMouseListener):
 
     def _on_barrier_hit(self, edge, cx, cy):
         if self._logger.is_enabled_for(Logger.DEBUG):
-            self._logger.debug(f"[BARRIER_HIT] edge={edge} cx={cx} cy={cy}")
+            self._logger.debug("[BARRIER_HIT]", edge=edge, cx=cx, cy=cy)
         asyncio.run_coroutine_threadsafe(
             self._on_barrier_activated(edge, cx, cy),
             self._loop,
@@ -272,8 +275,11 @@ class ServerMouseListener(_base.ServerMouseListener):
             mouse_event.y = off
 
         self._logger.debug(
-            f"[BARRIER_ACT] SENDING position x={mouse_event.x:.4f} y={mouse_event.y:.4f} "
-            f"to client_uid={target_uid} via edge={edge}"
+            "[BARRIER_ACT] SENDING position",
+            x=round(mouse_event.x, 4),
+            y=round(mouse_event.y, 4),
+            client_uid=target_uid,
+            edge=edge,
         )
 
         try:
@@ -292,7 +298,7 @@ class ServerMouseListener(_base.ServerMouseListener):
             )
             await self.stream.send(mouse_event)
         except Exception as e:
-            self._logger.error(f"Error dispatching cross-screen event: {e}")
+            self._logger.error("Error dispatching cross-screen event", error=str(e))
             self._active_client_barrier = None
 
 

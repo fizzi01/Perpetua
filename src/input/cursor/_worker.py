@@ -149,13 +149,13 @@ class CursorHandlerWorker(object):
             try:
                 await self.enable_capture()
             except Exception as e:
-                self._logger.error(f"Error enabling cursor capture: {e}")
+                self._logger.error("Error enabling cursor capture", error=str(e))
             self._active_client = active_screen
         else:
             try:
                 await self.disable_capture(x=data.x, y=data.y)
             except Exception as e:
-                self._logger.error(f"Error disabling cursor capture: {e}")
+                self._logger.error("Error disabling cursor capture", error=str(e))
             # dispatch event after disabling capture
             await self.event_bus.dispatch(
                 # when ServerMouseController receives this event will set the correct cursor position
@@ -315,7 +315,7 @@ class CursorHandlerWorker(object):
                     )
 
             except Exception as e:
-                self._logger.warning(f"Error stopping process ({e})")
+                self._logger.warning("Error stopping process", error=str(e))
 
         # Clean up resources
         try:
@@ -323,7 +323,7 @@ class CursorHandlerWorker(object):
             await loop.run_in_executor(None, self._drain_pipe, self.command_conn_send)
             await loop.run_in_executor(None, self._drain_pipe, self.result_conn_rec)
         except Exception as e:
-            self._logger.warning(f"Error draining pipes ({e})")
+            self._logger.warning("Error draining pipes", error=str(e))
 
         # Close handles
         try:
@@ -334,7 +334,7 @@ class CursorHandlerWorker(object):
             self.mouse_conn_send.close()
             self.mouse_conn_rec.close()
         except Exception as e:
-            self._logger.warning(f"Error closing connections ({e})")
+            self._logger.warning("Error closing connections", error=str(e))
 
         self._logger.debug("Stopped")
 
@@ -429,7 +429,7 @@ class CursorHandlerWorker(object):
                 try:
                     await self.stream.send(mouse_event)
                 except Exception as e:
-                    self._logger.exception(f"Error sending mouse delta ({e})")
+                    self._logger.exception("Error sending mouse delta", error=str(e))
                     await asyncio.sleep(0.01)
         finally:
             # Signal the reader thread to wind down on cancellation/loop exit.

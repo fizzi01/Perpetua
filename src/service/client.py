@@ -81,65 +81,11 @@ class ClientAbortedError(Exception):
 
 
 class Client:
-    """
-    Manages client configurations, connections, and event-driven communication for various applications.
+    """Client-side service: OTP pairing, TLS connection, auto-reconnect, input injection.
 
-    This class is designed to handle the overall management of a client application in aspects such as
-    interaction with other clients, secure communication using certificates, and managing event streams
-    during runtime.
-
-    Example:
-    ::
-        # Create client with unified configuration
-        # Option 1: Use default config and configure programmatically
-        client = Client()
-
-        # Configure client
-        client.config.set_server_connection(
-            host="192.168.1.74", port=5555, auto_reconnect=True
-        )
-        client.config.set_logging(level=Logger.INFO)
-
-        # Enable streams
-        await client.enable_stream(StreamType.MOUSE)
-        await client.enable_stream(StreamType.KEYBOARD)
-        await client.enable_stream(StreamType.CLIPBOARD)
-
-        # Save configuration for next time
-        await client.save_config()
-
-        # Option 2: Load existing configuration
-        # client = Client(auto_load_config=True)
-
-        # Start client
-        if not await client.start():
-            print("Failed to start client")
-            return
-
-        print("Client started successfully")
-        print(
-            f"Connecting to {client.config.get_server_host()}:{client.config.get_server_port()}"
-        )
-        print(f"Enabled streams: {client.get_enabled_streams()}")
-
-        try:
-            # Wait for connection
-            await asyncio.sleep(5)
-
-            if client.is_connected():
-                print(f"Connected! Active streams: {client.get_active_streams()}")
-
-            # Keep running
-            while True:
-                await asyncio.sleep(1)
-
-        except KeyboardInterrupt:
-            print("Keyboard interrupt received")
-        finally:
-            print("Stopping client...")
-            await client.stop()
-            # Save configuration on exit
-            await client.save_config()
+    The daemon owns at most one ``Client`` instance and drives it through the
+    GUI commands (start/stop, stream enable/disable, OTP entry). See the
+    project README for the user-facing flow.
     """
 
     CLEANUP_DELAY = 0.5  # seconds to wait during cleanup
@@ -150,35 +96,7 @@ class Client:
         client_config: Optional[ClientConfig] = None,
         auto_load_config: bool = True,
     ):
-        """
-        Initializes an instance of the class by setting up configurations, core components, and registries
-        necessary for managing clients, event handling, and connections.
-
-        Args:
-            app_config: The application configuration settings. Defaults to None if not provided.
-            client_config: The client configuration settings including connection, SSL, logging, and streams.
-                Defaults to None if not provided.
-            auto_load_config: If True, automatically loads configuration from file if exists. Defaults to True.
-
-        Attributes:
-            _logger (Logger): Logger instance for the client.
-            app_config (ApplicationConfig): Holds the application configuration details.
-            config (ClientConfig): Holds all client settings including connection, SSL, logging, and streams.
-            _cert_manager (CertificateManager): Manages certificate-related operations including loading
-                certificates from directories.
-            _cert_receiver (Optional[CertificateReceiver]): Represents the entity responsible for handling
-                certificate reception. Default is None.
-            clients_manager (ClientsManager): Manages the collection of clients in client mode.
-            event_bus (AsyncEventBus): Handles asynchronous event-based communication.
-            main_client (ClientObj): Represents the main client object with a placeholder IP address and
-                hostname derived from the configuration.
-            _stream_handlers (Dict[int, StreamHandler]): A registry mapping identifiers to stream handlers.
-            _components (dict): Holds the registered components initialized for the application.
-            _running (bool): Indicates whether the main processing is running. Default value is False.
-            _connected (bool): Reflects the connection state of the client. Default value is False.
-            connection_handler (Optional[ConnectionHandler]): Responsible for handling the connection with
-                the external server. Default is None.
-        """
+        """Build a Client; ``auto_load_config`` syncs from disk when True."""
         # Initialize configurations
         self.app_config = app_config or ApplicationConfig()
         self.config = client_config or ClientConfig(self.app_config)
@@ -198,7 +116,7 @@ class Client:
 
         # Load certificate if available and SSL is enabled
         if self.config.ssl_enabled:
-            if self._cert_manager.certificate_exist(
+            if self._cert_manager.peer_certificate_exists(
                 source_id=self.config.get_server_host()
             ):
                 self._load_certificate()
@@ -305,7 +223,7 @@ class Client:
             try:
                 await self._notification_callback(event)
             except Exception as e:
-                self._logger.error(f"Error sending notification({e})")
+                self._logger.error("Error sending notification", error=str(e))
 
     # ==================== Configuration Management ====================
 
@@ -322,7 +240,7 @@ class Client:
             await self._send_notification(ConfigSavedEvent(config_type="client"))
             return True
         except Exception as e:
-            self._logger.error(f"Error saving configuration({e})")
+            self._logger.error("Error saving configuration", error=str(e))
             return False
 
     async def load_config(self) -> bool:
@@ -341,7 +259,7 @@ class Client:
                 self._logger.warning("Configuration file not found")
                 return False
         except Exception as e:
-            self._logger.error(f"Error loading configuration({e})")
+            self._logger.error("Error loading configuration", error=str(e))
             return False
 
     # ==================== Certificate Management ====================
@@ -366,7 +284,7 @@ class Client:
 
     def has_certificate(self) -> bool:
         """Check if certificate exists for the server"""
-        return self._cert_manager.certificate_exist(
+        return self._cert_manager.peer_certificate_exists(
             source_id=self.config.get_server_uid()
         )
 
@@ -378,7 +296,7 @@ class Client:
             Path to loaded certificate or None if not found
         """
         server_uid = self.config.get_server_uid()
-        if self._cert_manager.certificate_exist(source_id=server_uid):
+        if self._cert_manager.peer_certificate_exists(source_id=server_uid):
             cert_path = self._cert_manager.get_ca_cert_path(source_id=server_uid)
             if self._logger.is_enabled_for(Logger.DEBUG):
                 self._logger.debug(
@@ -489,7 +407,7 @@ class Client:
         """
 
         if not otp or len(otp) != OTP_LENGTH or not otp.isdigit():
-            self._logger.error(f"Invalid OTP format. Must be {OTP_LENGTH} digits")
+            self._logger.error("Invalid OTP format", expected_length=OTP_LENGTH)
             return False
 
         # Serialize with ``_futures_cleanup`` so a concurrent cancel-and-reset
@@ -533,7 +451,7 @@ class Client:
                 print("Certificate received successfully!")
         """
         if not otp or len(otp) != OTP_LENGTH or not otp.isdigit():
-            self._logger.error(f"Invalid OTP format. Must be {OTP_LENGTH} digits")
+            self._logger.error("Invalid OTP format", expected_length=OTP_LENGTH)
             return False
 
         # Use connection host if not specified
@@ -611,7 +529,7 @@ class Client:
         except CertificateSharingError:
             raise
         except Exception as e:
-            self._logger.error(f"Error receiving certificate ({e})")
+            self._logger.error("Error receiving certificate", error=str(e))
             import traceback
 
             self._logger.error(traceback.format_exc())
@@ -644,7 +562,7 @@ class Client:
 
         self.config.enable_stream(stream_type)
         await self.config.save()
-        self._logger.info(f"Enabled stream: {stream_type}")
+        self._logger.info("Enabled stream", stream_type=stream_type)
 
         await self._send_notification(StreamEnabledEvent(stream_type=stream_type))
 
@@ -665,7 +583,7 @@ class Client:
 
         self.config.disable_stream(stream_type)
         await self.config.save()
-        self._logger.info(f"Disabled stream: {stream_type}")
+        self._logger.info("Disabled stream", stream_type=stream_type)
 
         await self._send_notification(StreamDisabledEvent(stream_type=stream_type))
 
@@ -687,7 +605,7 @@ class Client:
 
         # Se già abilitato, non fare nulla
         if self.is_stream_enabled(stream_type):
-            self._logger.warning(f"Stream {stream_type} already enabled")
+            self._logger.warning("Stream already enabled", stream_type=stream_type)
             return True
 
         # Abilita nella configurazione
@@ -702,14 +620,16 @@ class Client:
             elif stream_type == StreamType.CLIPBOARD:
                 await self._enable_clipboard_stream()
             else:
-                self._logger.error(f"Unknown stream type: {stream_type}")
+                self._logger.error("Unknown stream type", stream_type=stream_type)
                 return False
 
-            self._logger.info(f"Runtime enabled stream: {stream_type}")
+            self._logger.info("Runtime enabled stream", stream_type=stream_type)
             return True
         except Exception as e:
             await self.disable_stream(stream_type)
-            self._logger.error(f"Failed to enable {stream_type} stream({e})")
+            self._logger.error(
+                "Failed to enable stream", stream_type=stream_type, error=str(e)
+            )
             raise RuntimeError(f"Failed to enable {stream_type} stream({e})")
 
     async def disable_stream_runtime(self, stream_type: int) -> bool:
@@ -737,16 +657,16 @@ class Client:
             elif stream_type == StreamType.CLIPBOARD:
                 await self._disable_clipboard_stream()
             else:
-                self._logger.error(f"Unknown stream type: {stream_type}")
+                self._logger.error("Unknown stream type", stream_type=stream_type)
                 return False
 
-            self._logger.info(f"Runtime disabled stream: {stream_type}")
+            self._logger.info("Runtime disabled stream", stream_type=stream_type)
             return True
         except Exception as e:
-            self._logger.error(f"Failed to disable {stream_type} stream({e})")
+            self._logger.error(
+                "Failed to disable stream", stream_type=stream_type, error=str(e)
+            )
             raise RuntimeError(f"Failed to disable {stream_type} stream({e})")
-
-    # ==================== Client Lifecycle ====================
 
     async def check_server_availability(self) -> bool:
         """
@@ -758,7 +678,6 @@ class Client:
         """
         if self._found_services is None or len(self._found_services) == 0:
             await self.discover_servers()
-            await asyncio.sleep(0)
 
         if (
             self.config.get_server_uid() is None
@@ -912,7 +831,7 @@ class Client:
                     ServerListFoundEvent(servers=servers_info)
                 )
         except Exception as e:
-            self._logger.error(f"Error during server discovery ({e})")
+            self._logger.error("Error during server discovery", error=str(e))
 
     @staticmethod
     def _monitors_signature(monitors) -> tuple:
@@ -990,7 +909,9 @@ class Client:
             )
             return True
         except Exception as e:
-            self._logger.warning(f"Failed to enqueue client monitor update ({e})")
+            self._logger.warning(
+                "Failed to enqueue client monitor update", error=str(e)
+            )
             return False
 
     async def _monitor_watch_loop(self) -> None:
@@ -1045,7 +966,7 @@ class Client:
             except asyncio.CancelledError:
                 return
             except Exception as e:
-                self._logger.error(f"Error in client monitor watch loop ({e})")
+                self._logger.error("Error in client monitor watch loop", error=str(e))
                 await asyncio.sleep(self.MONITOR_WATCH_INTERVAL)
 
     async def _discovery_refresh_loop(self) -> None:
@@ -1067,7 +988,9 @@ class Client:
                 try:
                     await self.discover_servers()
                 except Exception as e:
-                    self._logger.debug(f"Periodic discovery refresh failed ({e})")
+                    self._logger.debug(
+                        "Periodic discovery refresh failed", error=str(e)
+                    )
         except asyncio.CancelledError:
             return
 
@@ -1112,7 +1035,7 @@ class Client:
                                 f"({err or 'unknown'}); fall back to manual OTP"
                             )
                     except Exception as e:
-                        self._logger.warning(f"Pairing request failed: {e}")
+                        self._logger.warning("Pairing request failed", error=str(e))
 
                     # Send notification that OTP is needed
                     await self._send_notification(OtpNeededEvent(needed=True))
@@ -1125,7 +1048,7 @@ class Client:
                 source_id=self.config.get_server_uid(),
             )
         except Exception as e:
-            self._logger.error(f"Error during certificate check ({e})")
+            self._logger.error("Error during certificate check", error=str(e))
             raise CertificateReceiveError(e)
         finally:
             if not self._otp_needed.done():
@@ -1242,7 +1165,7 @@ class Client:
         except ClientAbortedError:
             raise
         except Exception as e:
-            self._logger.error(f"Error during server availability check ({e})")
+            self._logger.error("Error during server availability check", error=str(e))
             return False
         finally:
             if not self._need_server_choice.done():
@@ -1271,7 +1194,7 @@ class Client:
                     try:
                         await self._initialize_streams()
                     except Exception as e:
-                        self._logger.error(f"Failed to initialize streams({e})")
+                        self._logger.error("Failed to initialize streams", error=str(e))
                         return False
 
                     # Get enabled streams
@@ -1321,14 +1244,18 @@ class Client:
                     Screen.get_monitors()
                 )
             except Exception as e:
-                self._logger.debug(f"Could not prime client monitor signature ({e})")
+                self._logger.debug(
+                    "Could not prime client monitor signature", error=str(e)
+                )
                 self._known_monitors_signature = None
             try:
                 self._monitor_watch_task = self._bg_tasks.spawn(
                     self._monitor_watch_loop(), name="client_monitor_watch"
                 )
             except Exception as e:
-                self._logger.warning(f"Failed to start client monitor watch task ({e})")
+                self._logger.warning(
+                    "Failed to start client monitor watch task", error=str(e)
+                )
 
             server_host = self.config.get_server_host()
             server_port = self.config.get_server_port()
@@ -1411,7 +1338,7 @@ class Client:
                 self._logger.info("Client stopped")
                 return True
         except Exception as e:
-            self._logger.error(f"Error during client stop ({e})")
+            self._logger.error("Error during client stop", error=str(e))
             return False
         # finally:
         # self._is_starting.clear()
@@ -1696,7 +1623,7 @@ class Client:
         try:
             await self._initialize_components()
         except RuntimeError as e:
-            self._logger.error(f"Error initializing components ({e})")
+            self._logger.error("Error initializing components", error=str(e))
             await self._send_notification(
                 ServiceErrorEvent(
                     service_name="client",
@@ -1709,14 +1636,16 @@ class Client:
         for stream_type, handler in self._stream_handlers.items():
             if self.is_stream_enabled(stream_type):
                 if not await handler.start():
-                    self._logger.error(f"Failed to start stream handler: {stream_type}")
+                    self._logger.error(
+                        "Failed to start stream handler", stream_type=stream_type
+                    )
 
         # Dispatch event
         await self.event_bus.dispatch(event_type=BusEventType.CLIENT_ACTIVE, data=None)
 
         await self.save_config()
 
-        self._logger.info(f"Connected to server at {client.get_net_id()}")
+        self._logger.info("Connected to server", server=client.get_net_id())
 
         # Send connection notification
         await self._send_notification(
@@ -1740,7 +1669,11 @@ class Client:
             try:
                 await handler.stop()
             except Exception as e:
-                self._logger.error(f"Error stopping stream handler {stream_type}({e})")
+                self._logger.error(
+                    "Error stopping stream handler",
+                    stream_type=stream_type,
+                    error=str(e),
+                )
 
         # Stop all components
         for component_name, component in list(self._components.items()):
@@ -1751,9 +1684,13 @@ class Client:
                     else:
                         component.stop()
             except Exception as e:
-                self._logger.error(f"Error stopping component {component_name}({e})")
+                self._logger.error(
+                    "Error stopping component",
+                    component=component_name,
+                    error=str(e),
+                )
 
-        self._logger.info(f"Disconnected from server at {client.get_net_id()}")
+        self._logger.info("Disconnected from server", server=client.get_net_id())
 
         # Send disconnection notification
         await self._send_notification(
@@ -1789,7 +1726,7 @@ class Client:
         try:
             await self.config.save()
         except Exception as e:
-            self._logger.warning(f"Could not persist updated server UID ({e})")
+            self._logger.warning("Could not persist updated server UID", error=str(e))
 
     async def _on_stale_certificate(self) -> None:
         """Recover from a server cert that no longer verifies.
@@ -1826,7 +1763,7 @@ class Client:
                     f"hostname={server_hostname!r})"
                 )
         except Exception as e:
-            self._logger.error(f"Failed to remove stale certificate ({e})")
+            self._logger.error("Failed to remove stale certificate", error=str(e))
 
         # Force-reset the pairing futures unconditionally: in a successful
         # previous run ``_otp_needed`` ends with result False (done state),
@@ -1864,7 +1801,7 @@ class Client:
         try:
             await self.stop()
         except Exception as e:
-            self._logger.error(f"Error stopping client after stale cert ({e})")
+            self._logger.error("Error stopping client after stale cert", error=str(e))
 
     # ==================== Utility Methods ====================
 

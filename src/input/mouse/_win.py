@@ -390,13 +390,13 @@ class _RawMouseCapture:
             try:
                 self._user32.PostMessageW(hwnd, _WM_CLOSE, 0, 0)
             except Exception as e:
-                self._logger.error(f"PostMessageW(WM_CLOSE) failed ({e})")
+                self._logger.error("PostMessageW(WM_CLOSE) failed", error=str(e))
         thread = self._thread
         if thread is not None:
             thread.join(timeout=timeout)
             if thread.is_alive():
                 self._logger.warning(
-                    f"Raw input thread still alive after {timeout}s join"
+                    "Raw input thread still alive after join", timeout=timeout
                 )
         self._thread = None
         # Release from the caller too - if the thread died unexpectedly the
@@ -431,7 +431,7 @@ class _RawMouseCapture:
         try:
             self._pump_messages()
         except BaseException as e:
-            self._logger.error(f"Raw input pump crashed ({e})")
+            self._logger.error("Raw input pump crashed", error=str(e))
         finally:
             try:
                 self._user32.ClipCursor(None)
@@ -495,7 +495,7 @@ class _RawMouseCapture:
         rect = wintypes.RECT(cx, cy, cx + 1, cy + 1)
         if not self._user32.ClipCursor(ctypes.byref(rect)):
             err = self._kernel32.GetLastError()
-            self._logger.warning(f"ClipCursor failed (err={err})")
+            self._logger.warning("ClipCursor failed", err=err)
 
     def _pump_messages(self) -> None:
         msg = wintypes.MSG()
@@ -509,7 +509,7 @@ class _RawMouseCapture:
                 break
             if ret == -1:
                 err = self._kernel32.GetLastError()
-                self._logger.error(f"GetMessageW error (err={err})")
+                self._logger.error("GetMessageW error", err=err)
                 break
             translate(p_msg)
             dispatch(p_msg)
@@ -542,7 +542,7 @@ class _RawMouseCapture:
             # Never propagate Python exceptions through a WindowProc: the C
             # caller can't recover and will crash the process.
             try:
-                self._logger.error(f"WindowProc error ({e})")
+                self._logger.error("WindowProc error", error=str(e))
             except Exception:
                 pass
         return self._DefWindowProcW(hwnd, msg, wparam, lparam)
@@ -598,7 +598,7 @@ class _RawMouseCapture:
             try:
                 self._on_delta(dx, dy)
             except Exception as e:
-                self._logger.error(f"on_delta failed ({e})")
+                self._logger.error("on_delta failed", error=str(e))
 
 
 class ServerMouseListener(_base.ServerMouseListener):
@@ -675,7 +675,7 @@ class ServerMouseListener(_base.ServerMouseListener):
         try:
             self._user32.SetCursorPos(cx, cy)
         except Exception as e:
-            self._logger.error(f"SetCursorPos centre failed ({e})")
+            self._logger.error("SetCursorPos centre failed", error=str(e))
 
         loop = self._loop
         if loop is None or loop.is_closed():
@@ -708,7 +708,7 @@ class ServerMouseListener(_base.ServerMouseListener):
             try:
                 await asyncio.get_running_loop().run_in_executor(None, capture.stop)
             except Exception as e:
-                self._logger.error(f"Raw input stop failed ({e})")
+                self._logger.error("Raw input stop failed", error=str(e))
         _restore_system_cursors()
 
     def _on_raw_delta(self, dx: int, dy: int) -> None:

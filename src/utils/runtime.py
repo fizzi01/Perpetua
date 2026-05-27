@@ -1,30 +1,10 @@
-"""
-Daemon runtime endpoint discovery helpers.
+"""Daemon runtime endpoint discovery helpers.
 
-The daemon writes a small JSON file after it successfully binds its
-command socket, so that the GUI (and any other tooling: CLI, diagnostics,
-external scripts) can find the daemon regardless of:
-
-- platform (Unix socket path vs Windows TCP port);
-- the user customising ``ApplicationConfig.DEFAULT_DAEMON_PORT``;
-- the daemon falling back to a different port after EADDRINUSE.
-
-The file lives under ``<main_path>/runtime/daemon.endpoint`` and is removed
-on graceful shutdown. Stale files left by a crash are harmless: callers
-should always verify the endpoint is reachable before assuming it's the
-live daemon.
-
-Endpoint format on disk is JSON::
-
-    {
-      "endpoint": "tcp://127.0.0.1:55652" | "unix:///path/to/socket",
-      "pid": 1234,
-      "started_at": "2026-05-15T15:30:00.123456+00:00",
-      "version": "1.0.0"
-    }
-
-For tooling that doesn't want to parse JSON, the same string is also written
-to ``daemon.endpoint.txt`` next to it.
+The daemon writes ``<main_path>/runtime/daemon.endpoint`` (JSON + plain-text)
+after binding the command socket so the GUI/tooling can find it across
+platform (Unix vs TCP), custom ports, and EADDRINUSE fallback. See
+``write_endpoint`` for the on-disk schema and ``read_endpoint`` for the
+consumer side.
 """
 
 #  Perpetua - open-source and cross-platform KVM software.
@@ -90,7 +70,18 @@ def write_endpoint(
 ) -> Tuple[str, str]:
     """Persist the current daemon endpoint to disk.
 
-    Returns the (json_path, txt_path) that were written.
+    Two files are written atomically: the JSON form (consumed by the GUI
+    and tooling) plus a plain-text mirror (``daemon.endpoint.txt``) for
+    scripts that don't want to parse JSON. JSON schema::
+
+        {
+          "endpoint": "tcp://127.0.0.1:55652" | "unix:///path/to/socket",
+          "pid": 1234,
+          "started_at": "2026-05-15T15:30:00.123456+00:00",
+          "version": "1.0.0"
+        }
+
+    Returns the ``(json_path, txt_path)`` that were written.
     """
     json_path, txt_path = get_endpoint_paths(main_path)
     payload = {
