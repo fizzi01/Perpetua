@@ -1,0 +1,89 @@
+# Maintainer: fizzi01 <noreply@github.com>
+#
+# Arch User Repository package for Perpetua.
+#
+# This builds the ``perpetua-bin`` flavour: it downloads the AppImage from
+# upstream GitHub Releases, extracts the payload, and installs files to the
+# same locations as the .deb / .rpm so behaviour is identical across distros.
+# A from-source flavour (compiling Nuitka + Tauri locally) is a candidate for
+# a separate ``perpetua`` package later.
+
+pkgname=perpetua-bin
+pkgver=1.0.0
+pkgrel=1
+pkgdesc="Cross-platform mouse, keyboard, and clipboard sharing (KVM software)"
+arch=('x86_64' 'aarch64')
+url="https://github.com/fizzi01/Perpetua"
+license=('GPL-3.0-or-later')
+
+# Runtime deps. libei + liboeffis power the Wayland InputCapture backend on
+# GNOME/KDE; xclip / wl-clipboard back the cross-platform clipboard. The Tauri
+# webview pulls in webkit2gtk-4.1.
+depends=(
+  'libei'
+  'webkit2gtk-4.1'
+  'libayatana-appindicator'
+)
+optdepends=(
+  'xclip: clipboard sync on X11'
+  'wl-clipboard: clipboard sync on Wayland'
+  'liboeffis: Wayland portal helper for InputCapture'
+)
+provides=("perpetua=${pkgver}")
+conflicts=('perpetua')
+options=('!strip' '!debug')
+
+# The AppImage embeds an x86_64 / aarch64 squashfs payload; ``bsdtar`` (from
+# libarchive, a base-devel dep) can unpack it without mounting FUSE, which
+# matters for clean-chroot builds.
+source_x86_64=("Perpetua-${pkgver}-x86_64.AppImage::${url}/releases/download/v${pkgver}/Perpetua-${pkgver}-x86_64.AppImage")
+source_aarch64=("Perpetua-${pkgver}-aarch64.AppImage::${url}/releases/download/v${pkgver}/Perpetua-${pkgver}-aarch64.AppImage")
+
+# sha256sums are filled in by ``updpkgsums`` at release time. Placeholders
+# below let lint pass; replace before publishing to AUR.
+sha256sums_x86_64=('SKIP')
+sha256sums_aarch64=('SKIP')
+
+package() {
+  cd "${srcdir}"
+  local appimage="Perpetua-${pkgver}-${CARCH}.AppImage"
+  chmod +x "${appimage}"
+
+  # --appimage-extract dumps into ./squashfs-root (relative to cwd).
+  "./${appimage}" --appimage-extract >/dev/null
+
+  # /opt holds the Nuitka standalone bundle (matches .deb / .rpm layout).
+  install -d "${pkgdir}/opt/Perpetua"
+  cp -a "squashfs-root/usr/lib/Perpetua/." "${pkgdir}/opt/Perpetua/"
+
+  install -d "${pkgdir}/usr/bin"
+  ln -sf "/opt/Perpetua/Perpetua" "${pkgdir}/usr/bin/perpetua"
+
+  # Desktop integration files
+  install -Dm644 "squashfs-root/perpetua.desktop" \
+    "${pkgdir}/usr/share/applications/perpetua.desktop"
+  install -Dm644 "squashfs-root/usr/share/icons/hicolor/256x256/apps/perpetua.png" \
+    "${pkgdir}/usr/share/icons/hicolor/256x256/apps/perpetua.png"
+  if [ -f "squashfs-root/usr/share/metainfo/perpetua.metainfo.xml" ]; then
+    install -Dm644 "squashfs-root/usr/share/metainfo/perpetua.metainfo.xml" \
+      "${pkgdir}/usr/share/metainfo/perpetua.metainfo.xml"
+  fi
+
+  # Permissions
+  chmod 755 "${pkgdir}/opt/Perpetua/Perpetua"
+  [ -f "${pkgdir}/opt/Perpetua/_perpetua" ] && chmod 755 "${pkgdir}/opt/Perpetua/_perpetua"
+
+  # NOTE: We deliberately do NOT install the udev rules from
+  # ``scripts/enable_uinput.sh`` here — AUR policy frowns on packages
+  # mutating /etc unconditionally. The README points the user at the script
+  # for a one-time ``sudo`` invocation; the install message below reminds
+  # them on first install.
+  install -Dm644 /dev/stdin "${pkgdir}/usr/share/doc/${pkgname}/README.install" <<EOF
+Perpetua needs access to /dev/uinput and the input group to inject keyboard
+events. Run once with sudo:
+
+    curl -fsSL ${url}/raw/master/scripts/enable_uinput.sh | sudo bash
+
+Then log out and back in so the new group membership takes effect.
+EOF
+}

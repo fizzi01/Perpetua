@@ -207,8 +207,8 @@ Architecture: ${ARCH}
 Installed-Size: ${INSTALLED_SIZE}
 Maintainer: ${MAINTAINER}
 Homepage: ${HOMEPAGE}
-Depends: libc6
-Recommends: liboeffis1
+Depends: libc6, libei1
+Recommends: liboeffis1, xclip, wl-clipboard
 Description: ${DESCRIPTION_SHORT}
 ${DESCRIPTION_LONG}
 EOF

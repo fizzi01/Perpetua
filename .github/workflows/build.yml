@@ -60,6 +60,13 @@ jobs:
             build-output: .build/x86_64-unknown-linux-gnu/release
             archive-name: Perpetua-Linux-x86_64
             archive-ext: deb
+          - os: ubuntu-24.04-arm
+            platform: Linux-aarch64
+            rust-target: aarch64-unknown-linux-gnu
+            gui-exe-name: perpetua
+            build-output: .build/aarch64-unknown-linux-gnu/release
+            archive-name: Perpetua-Linux-aarch64
+            archive-ext: deb
 
     steps:
       - name: Checkout
@@ -108,7 +115,8 @@ jobs:
             libssl-dev \
             libayatana-appindicator3-dev \
             librsvg2-dev \
-            fakeroot
+            fakeroot \
+            rpm
 
       - name: Install Python dependencies
         run: poetry install --only main,build --no-interaction -v
@@ -186,14 +194,33 @@ jobs:
         run: |
           chmod +x ${{ matrix.build-output }}/Perpetua.dist/Perpetua
           chmod +x ${{ matrix.build-output }}/Perpetua.dist/_perpetua
+          # Build all three Linux package formats from the same Nuitka dist.
           bash scripts/make_deb.sh
-          cp .build/perpetua_*.deb ${{ matrix.build-output }}/${{ matrix.archive-name }}.deb
+          bash scripts/make_rpm.sh
+          bash scripts/make_appimage.sh
+          # Normalise filenames into ${build-output}/ so the upload step can
+          # glob a single directory regardless of the script's local naming.
+          cp .build/perpetua_*.deb       "${{ matrix.build-output }}/${{ matrix.archive-name }}.deb"
+          cp .build/perpetua-*.rpm       "${{ matrix.build-output }}/${{ matrix.archive-name }}.rpm"
+          cp .build/Perpetua-*.AppImage  "${{ matrix.build-output }}/${{ matrix.archive-name }}.AppImage"
 
-      - name: Upload build artifact
+      - name: Upload build artifact (non-Linux)
+        if: runner.os != 'Linux'
         uses: actions/upload-artifact@v6
         with:
           name: ${{ matrix.archive-name }}
           path: ${{ matrix.build-output }}/${{ matrix.archive-name }}.${{ matrix.archive-ext }}
+          if-no-files-found: error
+
+      - name: Upload build artifacts (Linux - deb/rpm/AppImage)
+        if: runner.os == 'Linux'
+        uses: actions/upload-artifact@v6
+        with:
+          name: ${{ matrix.archive-name }}
+          path: |
+            ${{ matrix.build-output }}/${{ matrix.archive-name }}.deb
+            ${{ matrix.build-output }}/${{ matrix.archive-name }}.rpm
+            ${{ matrix.build-output }}/${{ matrix.archive-name }}.AppImage
           if-no-files-found: error
 
   update-release:
@@ -223,3 +250,5 @@ jobs:
           files: |
             artifacts/*.zip
             artifacts/*.deb
+            artifacts/*.rpm
+            artifacts/*.AppImage
