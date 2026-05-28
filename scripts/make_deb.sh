@@ -19,7 +19,17 @@ DESCRIPTION_LONG=" Perpetua is an open-source, cross-platform KVM software that 
 # ── Build metadata ────────────────────────────────────────────────────────────
 VERSION="$(grep -m1 '^version\s*=\s*"' pyproject.toml | sed -E 's/^version\s*=\s*"([^"]+)"/\1/')"
 ARCH="$(dpkg --print-architecture)"
-BUILD_DIR=".build/x86_64-unknown-linux-gnu/release"
+# Map the Debian arch to the Rust target triple used by Nuitka's output dir.
+# Keeps the script working on both x86_64 and aarch64 runners.
+case "$ARCH" in
+  amd64)  RUST_TARGET="x86_64-unknown-linux-gnu" ;;
+  arm64)  RUST_TARGET="aarch64-unknown-linux-gnu" ;;
+  *)
+    echo "error: unsupported Debian architecture '$ARCH'" >&2
+    exit 1
+    ;;
+esac
+BUILD_DIR=".build/${RUST_TARGET}/release"
 DIST_DIR="$BUILD_DIR/${APP_DISPLAY_NAME}.dist"
 DEB_ROOT=".build/${APP_NAME}_${VERSION}_${ARCH}"
 DEB_OUT="${DEB_ROOT}.deb"
