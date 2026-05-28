@@ -215,8 +215,12 @@ class Daemon:
     if IS_WINDOWS:
         DEFAULT_SOCKET_PATH = f"127.0.0.1:{ApplicationConfig.DEFAULT_DAEMON_PORT}"
     else:
+        # Unix socket lives under $XDG_RUNTIME_DIR on Linux (tmpfs, per-session)
+        # and falls back to the state dir if that's not available; macOS keeps
+        # the historical location under ~/Library/Caches/Perpetua.
         DEFAULT_SOCKET_PATH: str = path.join(
-            ApplicationConfig.get_main_path(), ApplicationConfig.DEFAULT_UNIX_SOCK_NAME
+            ApplicationConfig.get_runtime_path(),
+            ApplicationConfig.DEFAULT_UNIX_SOCK_NAME,
         )
 
     MAX_CONNECTIONS = 1
@@ -475,7 +479,7 @@ class Daemon:
             if self._endpoint_url:
                 try:
                     json_path, txt_path = write_endpoint(
-                        self.app_config.get_save_path(),
+                        ApplicationConfig.get_state_path(),
                         self._endpoint_url,
                         version=self.app_config.version,
                     )
@@ -731,7 +735,7 @@ class Daemon:
             os.unlink(self.socket_path)
 
         try:
-            remove_endpoint(self.app_config.get_save_path())
+            remove_endpoint(ApplicationConfig.get_state_path())
         except Exception as e:
             self._logger.debug("Failed to clean endpoint file", error=str(e))
 
