@@ -166,12 +166,6 @@ jobs:
 
   # ---------------------------------------------------------------------------
   # Linux build inside ubuntu:24.04 container.
-  #
-  # Why a container? Pinning the build env stops ``ubuntu-latest`` drift from
-  # silently bumping our glibc baseline when GitHub rolls a new LTS. The
-  # container also gives us a hermetic place to install Tauri's webkit deps
-  # without sudo. The Nuitka dist produced here links against Ubuntu 24.04's
-  # glibc (2.39) which covers Ubuntu 24.04+, Debian 13+, Fedora 40+, Arch.
   # ---------------------------------------------------------------------------
   build-linux:
     name: Build (Linux-${{ matrix.arch }})
@@ -201,11 +195,6 @@ jobs:
 
     steps:
       - name: Prepare container (toolchain + build deps)
-        # actions/checkout (and other JS-based actions) need Node, git, and
-        # CA certificates inside the container before they can run. We also
-        # install Python 3.12, the Tauri/webkit headers, the .deb tooling,
-        # and pre-emptively the NodeSource repo so we get a Node version
-        # that matches the host workflow's NODE_VERSION.
         run: |
           set -eux
           apt-get update
@@ -301,14 +290,6 @@ jobs:
           # The dist is large (>200 MB) and only feeds the RPM job; nothing
           # external should depend on it.
           retention-days: 3
-
-  # ---------------------------------------------------------------------------
-  # Package the already-built Nuitka dist into an RPM inside fedora:latest.
-  # Running rpmbuild on its native distro produces the correct dist tag
-  # (.fc<N>) and lets the SPEC be validated against the canonical rpm
-  # toolchain — both things we'd lose by running ``rpmbuild`` from apt on
-  # Ubuntu.
-  # ---------------------------------------------------------------------------
   build-linux-rpm:
     name: Package RPM (Linux-${{ matrix.arch }})
     needs: build-linux
@@ -360,15 +341,6 @@ jobs:
           name: ${{ matrix.archive-name }}-rpm
           path: artifacts/${{ matrix.archive-name }}.rpm
           if-no-files-found: error
-
-  # ---------------------------------------------------------------------------
-  # Smoke-test: install each package format in a clean distro container and
-  # verify that the binary resolves all its shared-lib deps. Catches missing
-  # ``Depends:`` declarations and glibc-baseline regressions before release.
-  # x86_64 only (the matrix is small for cost reasons — the binary code is
-  # identical to the deb/rpm we already built; we're just checking package
-  # metadata against a real distro).
-  # ---------------------------------------------------------------------------
   smoke-test-linux:
     name: Smoke (${{ matrix.label }})
     needs: [build-linux, build-linux-rpm]
@@ -454,10 +426,6 @@ jobs:
             exit 1
           fi
           echo "OK: all libs resolved on ${{ matrix.label }}"
-
-  # ---------------------------------------------------------------------------
-  # Publish artifacts to the GitHub release.
-  # ---------------------------------------------------------------------------
   update-release:
     name: Update Release
     if: github.event_name == 'release' || inputs.update-release
