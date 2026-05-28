@@ -53,6 +53,11 @@ struct Cli {
     /// Enable debug mode
     #[arg(long)]
     debug: bool,
+
+    /// Start with the main window hidden (tray icon only). Used by the
+    /// autostart-at-login entries installed by the GUI.
+    #[arg(long = "start-minimized")]
+    start_minimized: bool,
 }
 
 impl Cli {
@@ -93,7 +98,7 @@ fn main() {
             daemon.wait();
         } else {
             // --- GUI mode: daemon is spawned during Tauri setup -----------
-            perpetua_lib::run(Some(config));
+            perpetua_lib::run(Some(config), cli.start_minimized);
         }
 
         eprintln!("[perpetua] bye.");
@@ -101,7 +106,8 @@ fn main() {
 
     #[cfg(debug_assertions)]
     {
+        let start_minimized = cli.start_minimized;
         let _ = cli; // acknowledge parsed args in debug (no daemon to forward to)
-        perpetua_lib::run(None);
+        perpetua_lib::run(None, start_minimized);
     }
 }

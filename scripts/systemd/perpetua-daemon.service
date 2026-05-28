@@ -1,0 +1,22 @@
+[Unit]
+Description=Perpetua daemon (KVM input sharing)
+Documentation=https://github.com/fizzi01/Perpetua
+# Tied to the graphical session because the daemon needs DISPLAY /
+# WAYLAND_DISPLAY for input capture and injection.
+After=graphical-session.target
+PartOf=graphical-session.target
+
+[Service]
+Type=simple
+# ``--daemon`` runs the launcher in headless mode (no GUI).
+ExecStart=/opt/Perpetua/Perpetua --daemon
+Restart=on-failure
+RestartSec=3
+# The daemon writes its own log file; keep journal noise low.
+StandardOutput=journal
+StandardError=journal
+# Allow the watchdog up to ``DELAYED_EXIT_TIMEOUT`` (30 s) plus margin.
+TimeoutStopSec=45
+
+[Install]
+WantedBy=graphical-session.target

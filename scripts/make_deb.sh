@@ -67,7 +67,8 @@ mkdir -p \
   "$DEB_ROOT/usr/share/icons/hicolor/256x256/apps" \
   "$DEB_ROOT/usr/share/doc/${APP_NAME}" \
   "$DEB_ROOT/usr/share/metainfo" \
-  "$DEB_ROOT/usr/share/lintian/overrides"
+  "$DEB_ROOT/usr/share/lintian/overrides" \
+  "$DEB_ROOT/usr/lib/systemd/user"
 
 # ── Application binary & data ─────────────────────────────────────────────────
 cp -a "$DIST_DIR/." "$DEB_ROOT${INSTALL_PREFIX}/"
@@ -82,6 +83,12 @@ ln -sf "${INSTALL_PREFIX}/${BINARY_NAME}" "$DEB_ROOT/usr/bin/${APP_NAME}"
 
 # ── Maintainer scripts ────────────────────────────────────────────────────────
 install -m 0775 "scripts/enable_uinput.sh" "$DEB_ROOT/DEBIAN/postinst"
+
+# ── systemd user unit (opt-in autostart via systemctl --user) ────────────────
+if [ -f "scripts/systemd/perpetua-daemon.service" ]; then
+  install -m 0644 "scripts/systemd/perpetua-daemon.service" \
+    "$DEB_ROOT/usr/lib/systemd/user/perpetua-daemon.service"
+fi
 
 # ── Icona ─────────────────────────────────────────────────────────────────────
 if [ -f "$ICON_SRC" ]; then

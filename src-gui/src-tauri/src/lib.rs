@@ -22,11 +22,10 @@ use tauri::{PhysicalPosition, Position, TitleBarStyle};
 #[cfg(target_os = "windows")]
 use tauri::tray::{MouseButton, TrayIconEvent};
 
-#[cfg(target_os = "linux")]
 use tauri::Listener;
 
 use tauri::{
-    menu::{MenuBuilder, MenuItem},
+    menu::{CheckMenuItem, MenuBuilder, MenuItem},
     tray::TrayIconBuilder,
     AppHandle, Emitter, Manager, Runtime, WebviewUrl, WebviewWindowBuilder,
 };
@@ -50,6 +49,10 @@ pub use process::{DaemonConfig, DaemonProcess};
 struct AppState {
     hard_close: bool,
     connected: bool,
+    /// True when the launcher was invoked with ``--start-minimized``. The
+    /// connection setup uses this to skip the initial window-show so the
+    /// GUI lives in the tray until the user clicks it.
+    start_minimized: bool,
 }
 
 fn force_close<R>(app: &AppHandle<R>)
@@ -84,7 +87,15 @@ async fn setup_connection<'a, R>(manager: AppHandle<R>) -> Result<(), Connection
 where
     R: Runtime,
 {
-    show_window(&manager, "splashscreen");
+    let start_minimized = {
+        let state = manager.state::<Mutex<AppState>>();
+        let s = state.lock().unwrap();
+        s.start_minimized
+    };
+
+    if !start_minimized {
+        show_window(&manager, "splashscreen");
+    }
 
     let (r, w) = match connect(Duration::from_millis(100), Duration::from_secs(5)).await {
         Ok(conn) => {
@@ -148,7 +159,17 @@ where
         handle_critical("Critical error on startup", "", &manager_clone);
     }
 
-    show_window(&manager_clone, "main");
+    if !start_minimized {
+        show_window(&manager_clone, "main");
+    }
+
+    // Sync the tray's "Launch at login" checkbox with the daemon-side state.
+    // Fire-and-forget; the response arrives as a ``command_success``
+    // notification which the tray listener picks up.
+    let writer = manager_clone.state::<AtomicAsyncWriter>();
+    if let Err(e) = commands::get_autostart(writer).await {
+        eprintln!("Failed to query autostart state: {}", e);
+    }
 
     Ok(())
 }
@@ -218,6 +239,16 @@ where
 
     let show = MenuItem::with_id(app, "show_window", "Show", true, None::<&str>)?;
     let quit_i = MenuItem::with_id(app, "quit", "Quit", true, None::<&str>)?;
+    // Checked state is hydrated asynchronously once the daemon connection is
+    // ready (see ``hydrate_autostart_state``); start unchecked.
+    let autostart_i = CheckMenuItem::with_id(
+        app,
+        "toggle_autostart",
+        "Launch at login",
+        true,
+        false,
+        None::<&str>,
+    )?;
     let mut menu = MenuBuilder::new(app);
 
     menu = menu.item(&show);
@@ -229,11 +260,48 @@ where
         true,
         None::<&str>,
     )?);
-    let menu = menu.separator().item(&quit_i).build()?;
+    let menu = menu
+        .separator()
+        .item(&autostart_i)
+        .separator()
+        .item(&quit_i)
+        .build()?;
+
+    let autostart_for_event = autostart_i.clone();
+    // Hydrate the check state from ``command_success`` notifications for
+    // ``get_autostart`` / ``set_autostart``. The event handler in
+    // [`handler::EventHandler`] forwards every notification as a JS-level
+    // ``app.emit`` call, so we listen to the same channel from Rust.
+    let autostart_for_listener = autostart_i.clone();
+    app.listen("command_success", move |evt| {
+        // Each emitted event payload is the full ``NotificationEvent`` JSON.
+        // Pull the originating command + result.enabled out of ``data``.
+        let payload: serde_json::Value = match serde_json::from_str(evt.payload()) {
+            Ok(v) => v,
+            Err(_) => return,
+        };
+        let data = match payload.get("data") {
+            Some(d) => d,
+            None => return,
+        };
+        let cmd = data.get("command").and_then(|v| v.as_str()).unwrap_or("");
+        if cmd != "get_autostart" && cmd != "set_autostart" {
+            return;
+        }
+        if let Some(enabled) = data
+            .get("result")
+            .and_then(|r| r.get("enabled"))
+            .and_then(|b| b.as_bool())
+        {
+            if let Err(e) = autostart_for_listener.set_checked(enabled) {
+                eprintln!("Failed to update autostart tray check state: {}", e);
+            }
+        }
+    });
 
     let tray = TrayIconBuilder::with_id("main")
         .menu(&menu)
-        .on_menu_event(|app, event| match event.id.as_ref() {
+        .on_menu_event(move |app, event| match event.id.as_ref() {
             "show_window" => {
                 show_window(app, "main");
             }
@@ -259,6 +327,18 @@ where
                     // Just close
                     force_close(&app);
                 }
+            }
+            "toggle_autostart" => {
+                // ``event`` doesn't expose the new checked state directly;
+                // read it back from the menu item we built above.
+                let handle = app.clone();
+                let new_state = autostart_for_event.is_checked().unwrap_or(false);
+                tauri::async_runtime::spawn(async move {
+                    let writer = handle.state::<AtomicAsyncWriter>();
+                    if let Err(e) = commands::set_autostart(new_state, writer).await {
+                        eprintln!("Failed to toggle autostart: {}", e);
+                    }
+                });
             }
             _ => {
                 println!("menu item {:?} not handled", event.id);
@@ -360,7 +440,7 @@ where
 }
 
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
-pub fn run(daemon_config: Option<DaemonConfig>) {
+pub fn run(daemon_config: Option<DaemonConfig>, start_minimized: bool) {
     let mut app = tauri::Builder::default();
 
     #[cfg(desktop)]
@@ -381,6 +461,7 @@ pub fn run(daemon_config: Option<DaemonConfig>) {
         .manage(Mutex::new(AppState {
             hard_close: false,
             connected: false,
+            start_minimized,
         }))
         .invoke_handler(tauri::generate_handler![
             // -- Server Commands --
@@ -413,6 +494,9 @@ pub fn run(daemon_config: Option<DaemonConfig>) {
             // -- UI Commands --
             commands::switch_tray_icon,
             commands::get_local_ip,
+            // -- Autostart-at-login --
+            commands::get_autostart,
+            commands::set_autostart,
         ])
         .setup(move |app| {
             // Spawn daemon (release) or create empty handle (debug)

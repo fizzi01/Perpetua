@@ -582,3 +582,59 @@ pub async fn get_local_ip() -> Result<String, String> {
         .map(|ip| ip.to_string())
         .map_err(|e| format!("Failed to get local IP address: {}", e))
 }
+
+#[tauri::command]
+pub async fn get_autostart(s: tauri::State<'_, AtomicAsyncWriter>) -> Result<(), String> {
+    let command = CommandEvent::build(CommandType::GetAutostart, "{}");
+    let command = EventParser::serialize(&command).map_err(|e| {
+        format!(
+            "Failed to serialize {} command: {}",
+            CommandType::GetAutostart,
+            e
+        )
+    })?;
+    s.send(command).await.map_err(|e| {
+        format!(
+            "Failed to send {} command ({})",
+            CommandType::GetAutostart,
+            e
+        )
+    })?;
+    Ok(())
+}
+
+#[tauri::command]
+pub async fn set_autostart(
+    enabled: bool,
+    s: tauri::State<'_, AtomicAsyncWriter>,
+) -> Result<(), String> {
+    // The daemon needs to know which executable to register. We resolve it
+    // here in the GUI process because the daemon runs detached and can't
+    // necessarily introspect us (think systemd user service).
+    let exec_path = std::env::current_exe()
+        .map_err(|e| format!("Failed to determine GUI executable path: {}", e))?
+        .to_string_lossy()
+        .to_string();
+
+    let params = format!(
+        r#"{{ "enabled": {}, "exec_path": "{}" }}"#,
+        enabled,
+        exec_path.replace('\\', r"\\").replace('"', r#"\""#)
+    );
+    let command = CommandEvent::build(CommandType::SetAutostart, &params);
+    let command = EventParser::serialize(&command).map_err(|e| {
+        format!(
+            "Failed to serialize {} command: {}",
+            CommandType::SetAutostart,
+            e
+        )
+    })?;
+    s.send(command).await.map_err(|e| {
+        format!(
+            "Failed to send {} command ({})",
+            CommandType::SetAutostart,
+            e
+        )
+    })?;
+    Ok(())
+}

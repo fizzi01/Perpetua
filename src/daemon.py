@@ -138,6 +138,10 @@ class DaemonCommand(StrEnum):
     SHUTDOWN = "shutdown"
     PING = "ping"
 
+    # Autostart-at-login (cross-platform)
+    GET_AUTOSTART = "get_autostart"
+    SET_AUTOSTART = "set_autostart"
+
     def __init__(self, params: Optional[Dict[str, Any]] = None):
         self._params = params if params is not None else {}
 
@@ -1540,6 +1544,69 @@ class Daemon:
 
             await self._notification_manager.notify_command_success(
                 command, f"Configuration reloaded ({config_type})"
+            )
+        except Exception as e:
+            await self._notification_manager.notify_command_error(command, f"{str(e)}")
+
+    @CommandHandler.register(DaemonCommand.GET_AUTOSTART)
+    async def _handle_get_autostart(self, params: Dict[str, Any]) -> None:
+        """Return whether the GUI is registered to start at login.
+
+        The result payload also includes the executable currently registered
+        so the GUI can detect a stale pointer after an install path change.
+        """
+        command = DaemonCommand.GET_AUTOSTART.value
+        try:
+            from utils.autostart import AutostartManager
+
+            status = AutostartManager().is_enabled()
+            await self._notification_manager.notify_command_success(
+                command,
+                "Autostart status retrieved",
+                result_data={
+                    "enabled": status.enabled,
+                    "exec_path": status.exec_path,
+                },
+            )
+        except Exception as e:
+            await self._notification_manager.notify_command_error(command, f"{str(e)}")
+
+    @CommandHandler.register(DaemonCommand.SET_AUTOSTART)
+    async def _handle_set_autostart(self, params: Dict[str, Any]) -> None:
+        """Enable or disable launch-at-login for the GUI.
+
+        Params:
+          - ``enabled`` (bool, required)
+          - ``exec_path`` (str, required when enabling): absolute path to the
+            Tauri GUI executable. The GUI knows its own path so we don't try
+            to guess it here.
+          - ``args`` (list[str], optional): defaults to ``["--start-minimized"]``
+            in each backend.
+        """
+        command = DaemonCommand.SET_AUTOSTART.value
+        try:
+            from utils.autostart import AutostartManager
+
+            enabled = bool(params.get("enabled"))
+            exec_path = params.get("exec_path")
+            args = params.get("args")
+
+            mgr = AutostartManager()
+            if enabled:
+                if not exec_path:
+                    raise ValueError("'exec_path' is required when enabling autostart")
+                mgr.enable(exec_path, args=args)
+            else:
+                mgr.disable()
+
+            status = mgr.is_enabled()
+            await self._notification_manager.notify_command_success(
+                command,
+                f"Autostart {'enabled' if status.enabled else 'disabled'}",
+                result_data={
+                    "enabled": status.enabled,
+                    "exec_path": status.exec_path,
+                },
             )
         except Exception as e:
             await self._notification_manager.notify_command_error(command, f"{str(e)}")
