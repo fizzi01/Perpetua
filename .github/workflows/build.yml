@@ -18,9 +18,6 @@ env:
   NODE_VERSION: "24"
 
 jobs:
-  # ---------------------------------------------------------------------------
-  # macOS + Windows builds (host-native, unchanged).
-  # ---------------------------------------------------------------------------
   build-desktop:
     name: Build (${{ matrix.platform }})
     runs-on: ${{ matrix.os }}
