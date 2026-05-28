@@ -209,6 +209,10 @@ pub enum CommandType {
     // Daemon control
     Shutdown,
     Ping,
+
+    // Autostart-at-login
+    GetAutostart,
+    SetAutostart,
 }
 
 impl Type for CommandType {}
