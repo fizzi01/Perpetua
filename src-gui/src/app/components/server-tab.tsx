@@ -161,6 +161,16 @@ export function ServerTab({onStatusChange, state}: ServerTabProps) {
     useEffect(() => {
         if (state.host === '' || state.host === '0.0.0.0') {
             getLocalIpAddress().then(ip => setHost(ip));
+        } else {
+            // If saved IP has changed, update it
+            getLocalIpAddress().then(ip => {
+                if (state.host !== ip) {
+                    setHost(ip);
+                }
+            }).catch(err => {
+                setHost('0.0.0.0'); // Fallback
+                console.error('Failed to get local IP address:', err);
+            });
         }
     }, []);
 
