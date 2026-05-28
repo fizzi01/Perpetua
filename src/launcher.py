@@ -39,13 +39,14 @@ class DaemonRunner:
 
     def __init__(self, args: Optional[Namespace] = None):
         self.main_path = ApplicationConfig.get_main_path()
-        self.pid_file = Path(os.path.join(self.main_path, "daemon.pid"))
-        self.log_file = Path(
-            os.path.join(
-                self.main_path,
-                ApplicationConfig.get_default_log_file() or "daemon.log",
-            )
+        # PID and log files are runtime/state, not config — keep them out of
+        # the XDG config dir on Linux. On macOS/Windows these helpers fold
+        # back to ``main_path`` so the layout is unchanged.
+        self.pid_file = Path(
+            os.path.join(ApplicationConfig.get_runtime_path(), "daemon.pid")
         )
+        log_file = ApplicationConfig.get_default_log_file()
+        self.log_file = Path(log_file) if log_file else None
         self._args = args
         # If --log-terminal, write logs to stdout only (no file)
         if self._args and self._args.log_terminal:

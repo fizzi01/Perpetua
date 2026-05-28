@@ -16,12 +16,11 @@ You should have received a copy of the GNU General Public License
 along with this program. If not, see <https://www.gnu.org/licenses/>.
 */
 
+use crate::paths;
 use crate::{AsyncReader, AsyncWriter};
 use std::{env, env::VarError, fs, io, path::PathBuf, time::Duration};
 use thiserror::Error;
 
-#[cfg(unix)]
-use std::path::Path;
 #[cfg(unix)]
 use tokio::net::UnixStream;
 
@@ -31,18 +30,7 @@ use tokio::net::TcpStream;
 #[cfg(windows)]
 const DEFAULT_DAEMON_PORT: u16 = 55652;
 
-const RUNTIME_DIR: &str = "runtime";
-const ENDPOINT_FILE: &str = "daemon.endpoint";
 const ENV_ENDPOINT: &str = "PERPETUA_DAEMON_ENDPOINT";
-
-#[cfg(not(target_os = "linux"))]
-pub const DEFAULT_APP_DIR: &str = "Perpetua";
-
-#[cfg(target_os = "linux")]
-pub const DEFAULT_APP_DIR: &str = ".perpetua";
-
-#[cfg(unix)]
-pub const DEFAULT_DAEMON_SOCKET: &str = "perpetua_daemon.sock";
 
 #[derive(Debug, Error)]
 pub enum ConnectionError {
@@ -66,28 +54,6 @@ enum DefaultPath {
     Tcp(String, u16),
 }
 
-/// Return the directory the daemon writes its runtime files into. Same logic
-/// as the Python side's ``ApplicationConfig.get_main_path()`` plus a
-/// ``runtime/`` subdirectory.
-fn runtime_dir() -> Result<PathBuf, SocketPathError> {
-    let home = env::var("HOME").map_err(SocketPathError::HomeDirNotFound)?;
-    let main = if cfg!(target_os = "macos") {
-        PathBuf::from(&home)
-            .join("Library")
-            .join("Caches")
-            .join(DEFAULT_APP_DIR)
-    } else if cfg!(target_os = "linux") {
-        PathBuf::from(&home).join(DEFAULT_APP_DIR)
-    } else {
-        // Windows: $LOCALAPPDATA\Perpetua. Fall back to %USERPROFILE% so we
-        // still produce something usable if LOCALAPPDATA isn't set.
-        let base = env::var("LOCALAPPDATA")
-            .or_else(|_| env::var("USERPROFILE"))
-            .unwrap_or_else(|_| home.clone());
-        PathBuf::from(base).join("AppData").join("Local").join(DEFAULT_APP_DIR)
-    };
-    Ok(main.join(RUNTIME_DIR))
-}
 
 #[derive(serde::Deserialize)]
 struct EndpointPayload {
@@ -131,14 +97,23 @@ fn parse_endpoint(s: &str) -> Option<DefaultPath> {
 }
 
 /// Try to discover the daemon's IPC endpoint via the runtime file the daemon
-/// writes after a successful bind. Returns None if the file is absent or
-/// malformed - callers should then fall back to the legacy default.
+/// writes after a successful bind. Returns None if no candidate location
+/// holds a readable, well-formed file - callers should then fall back to the
+/// legacy default.
 fn discover_endpoint_file() -> Option<DefaultPath> {
-    let dir = runtime_dir().ok()?;
-    let path = dir.join(ENDPOINT_FILE);
-    let raw = fs::read_to_string(&path).ok()?;
-    let payload: EndpointPayload = serde_json::from_str(&raw).ok()?;
-    parse_endpoint(&payload.endpoint)
+    for dir in paths::runtime_dirs() {
+        let path = dir.join(paths::ENDPOINT_FILE);
+        let Ok(raw) = fs::read_to_string(&path) else {
+            continue;
+        };
+        let Ok(payload) = serde_json::from_str::<EndpointPayload>(&raw) else {
+            continue;
+        };
+        if let Some(parsed) = parse_endpoint(&payload.endpoint) {
+            return Some(parsed);
+        }
+    }
+    None
 }
 
 fn default_path() -> Result<DefaultPath, SocketPathError> {
@@ -158,26 +133,23 @@ fn default_path() -> Result<DefaultPath, SocketPathError> {
         return Ok(found);
     }
 
-    // 3. Platform default - same as before.
+    // 3. Platform default - matches the daemon's ``DEFAULT_SOCKET_PATH``.
     #[cfg(unix)]
     {
-        let home = env::var("HOME").map_err(SocketPathError::HomeDirNotFound)?;
-
-        #[cfg(target_os = "macos")]
-        return Ok(DefaultPath::Unix(
-            Path::new(&home)
-                .join("Library")
-                .join("Caches")
-                .join(DEFAULT_APP_DIR)
-                .join(DEFAULT_DAEMON_SOCKET),
-        ));
-
-        #[cfg(not(target_os = "macos"))]
-        return Ok(DefaultPath::Unix(
-            Path::new(&home)
-                .join(DEFAULT_APP_DIR)
-                .join(DEFAULT_DAEMON_SOCKET),
-        ));
+        let candidates = paths::default_socket_paths();
+        if candidates.is_empty() {
+            // The only way ``state_dirs()`` returns empty on unix is when the
+            // home dir can't be resolved.
+            return Err(SocketPathError::HomeDirNotFound(VarError::NotPresent));
+        }
+        // Prefer the first existing path; otherwise fall back to the first
+        // candidate so the connect loop can create the socket location.
+        let chosen = candidates
+            .iter()
+            .find(|p| p.exists())
+            .cloned()
+            .unwrap_or_else(|| candidates[0].clone());
+        return Ok(DefaultPath::Unix(chosen));
     }
 
     #[cfg(windows)]

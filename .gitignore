@@ -154,3 +154,5 @@ logo/**
 **/nuitka-crash-report.xml
 **/node_modules
 .tests/
+
+**/CLAUDE.md

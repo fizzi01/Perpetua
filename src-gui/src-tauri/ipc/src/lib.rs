@@ -35,6 +35,7 @@ use tokio::net::tcp::{OwnedReadHalf, OwnedWriteHalf};
 pub mod connection;
 pub mod event;
 pub mod log_reader;
+pub mod paths;
 
 pub use event::{CommandEvent, EventType, NotificationEvent};
 pub use event::{EventParser, Parser};
