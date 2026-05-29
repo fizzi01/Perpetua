@@ -22,6 +22,11 @@ license=('GPL-3.0-or-later')
 depends=(
   'libei'
   'webkit2gtk-4.1'
+  'libsoup3'
+  'gtk3'
+  'cairo'
+  'glib2'
+  'gdk-pixbuf2'
   'libayatana-appindicator'
 )
 optdepends=(
