@@ -217,7 +217,16 @@ Architecture: ${ARCH}
 Installed-Size: ${INSTALLED_SIZE}
 Maintainer: ${MAINTAINER}
 Homepage: ${HOMEPAGE}
-Depends: libc6, libei1
+Depends: libc6,
+ libei1,
+ libgtk-3-0 | libgtk-3-0t64,
+ libwebkit2gtk-4.1-0,
+ libjavascriptcoregtk-4.1-0,
+ libsoup-3.0-0,
+ libcairo2,
+ libglib2.0-0 | libglib2.0-0t64,
+ libgdk-pixbuf-2.0-0,
+ libayatana-appindicator3-1
 Recommends: liboeffis1, xclip, wl-clipboard
 Description: ${DESCRIPTION_SHORT}
 ${DESCRIPTION_LONG}

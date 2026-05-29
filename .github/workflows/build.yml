@@ -269,13 +269,18 @@ jobs:
           cp .build/perpetua_*.deb       "${{ matrix.build-output }}/${{ matrix.archive-name }}.deb"
           cp .build/Perpetua-*.AppImage  "${{ matrix.build-output }}/${{ matrix.archive-name }}.AppImage"
 
-      - name: Upload .deb + .AppImage
+      - name: Upload .deb
         uses: actions/upload-artifact@v6
         with:
-          name: ${{ matrix.archive-name }}
-          path: |
-            ${{ matrix.build-output }}/${{ matrix.archive-name }}.deb
-            ${{ matrix.build-output }}/${{ matrix.archive-name }}.AppImage
+          name: ${{ matrix.archive-name }}-deb
+          path: ${{ matrix.build-output }}/${{ matrix.archive-name }}.deb
+          if-no-files-found: error
+
+      - name: Upload .AppImage
+        uses: actions/upload-artifact@v6
+        with:
+          name: ${{ matrix.archive-name }}-appimage
+          path: ${{ matrix.build-output }}/${{ matrix.archive-name }}.AppImage
           if-no-files-found: error
 
       - name: Upload Nuitka dist (input for RPM packaging)
@@ -370,6 +375,12 @@ jobs:
 
     steps:
       - name: Prepare container (needs tools to download + inspect)
+        # For deb/rpm we install only the inspection tools — the package
+        # manager pulls the runtime libs (gtk3 / webkit2gtk-4.1 / glib /
+        # cairo / libsoup / libei / appindicator) via the package's
+        # Depends/Requires when we install ``pkg.deb`` / ``pkg.rpm``.
+        # For the AppImage case there's no package metadata, so we install
+        # the same runtime libs by hand
         run: |
           set -eux
           if command -v apt-get >/dev/null; then
@@ -378,13 +389,16 @@ jobs:
           elif command -v dnf >/dev/null; then
             dnf install -y file glibc
           elif command -v pacman >/dev/null; then
-            pacman -Sy --noconfirm file fuse2 libei
+            pacman -Syu --noconfirm \
+              file fuse2 libei \
+              webkit2gtk-4.1 libsoup3 gtk3 cairo glib2 gdk-pixbuf2 \
+              libayatana-appindicator
           fi
 
       - name: Download artifact
         uses: actions/download-artifact@v7
         with:
-          name: ${{ matrix.kind == 'rpm' && 'Perpetua-Linux-x86_64-rpm' || 'Perpetua-Linux-x86_64' }}
+          name: Perpetua-Linux-x86_64-${{ matrix.kind }}
           path: artifacts
 
       - name: Stage package as ./pkg.${{ matrix.kind }}
