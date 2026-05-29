@@ -391,8 +391,8 @@ jobs:
           elif command -v pacman >/dev/null; then
             pacman -Syu --noconfirm \
               file fuse2 libei \
-              webkit2gtk-4.1 libsoup3 gtk3 cairo glib2 gdk-pixbuf2 \
-              libayatana-appindicator
+              webkit2gtk-4.1 libsoup3 gtk3 cairo pango glib2 gdk-pixbuf2 \
+              libayatana-appindicator openssl
           fi
 
       - name: Download artifact
@@ -415,7 +415,7 @@ jobs:
         if: matrix.kind != 'appimage'
         run: ${{ matrix.install }}
 
-      - name: Verify binary resolves all shared libs
+      - name: Verify binaries resolve all shared libs
         run: |
           set -eux
           if [ "${{ matrix.kind }}" = "appimage" ]; then
@@ -423,19 +423,27 @@ jobs:
             # FUSE may be unavailable in the container; --appimage-extract
             # works without it.
             ./pkg.AppImage --appimage-extract >/dev/null
-            BIN=squashfs-root/usr/lib/Perpetua/Perpetua
+            ROOT=squashfs-root/usr/lib/Perpetua
           else
-            BIN=/opt/Perpetua/Perpetua
+            ROOT=/opt/Perpetua
           fi
-          file "$BIN"
-          # ldd's exit code is unreliable (it returns 0 even with "not
-          # found"), so grep for the marker explicitly. Exit non-zero if any
-          # unresolved lib remains.
-          if ldd "$BIN" | grep -E 'not found'; then
-            echo "::error::Unresolved shared library on ${{ matrix.label }}"
-            ldd "$BIN"
-            exit 1
-          fi
+
+          # We check both binaries. Nuitka
+          # ``--standalone`` bundles Python's pure-Python files and most
+          # ``.so`` extensions link against at load time, so we have to verify both.
+          fail=0
+          for bin in "$ROOT/Perpetua" "$ROOT/_perpetua"; do
+            [ -f "$bin" ] || { echo "missing: $bin"; fail=1; continue; }
+            file "$bin"
+            # ldd's exit code is unreliable (it returns 0 even with "not
+            # found"), so grep for the marker explicitly.
+            if ldd "$bin" 2>&1 | grep -E 'not found'; then
+              echo "::error::Unresolved shared library in $bin on ${{ matrix.label }}"
+              ldd "$bin" || true
+              fail=1
+            fi
+          done
+          if [ "$fail" -ne 0 ]; then exit 1; fi
           echo "OK: all libs resolved on ${{ matrix.label }}"
   update-release:
     name: Update Release

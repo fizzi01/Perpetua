@@ -25,9 +25,11 @@ depends=(
   'libsoup3'
   'gtk3'
   'cairo'
+  'pango'
   'glib2'
   'gdk-pixbuf2'
   'libayatana-appindicator'
+  'openssl'
 )
 optdepends=(
   'xclip: clipboard sync on X11'

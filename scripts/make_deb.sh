@@ -224,9 +224,12 @@ Depends: libc6,
  libjavascriptcoregtk-4.1-0,
  libsoup-3.0-0,
  libcairo2,
+ libcairo-gobject2,
+ libpango-1.0-0,
  libglib2.0-0 | libglib2.0-0t64,
  libgdk-pixbuf-2.0-0,
- libayatana-appindicator3-1
+ libayatana-appindicator3-1,
+ libssl3 | libssl3t64
 Recommends: liboeffis1, xclip, wl-clipboard
 Description: ${DESCRIPTION_SHORT}
 ${DESCRIPTION_LONG}
