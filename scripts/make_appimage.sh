@@ -148,8 +148,11 @@ chmod 755 "$APPDIR/AppRun"
 
 # ── Build ─────────────────────────────────────────────────────────────────────
 echo "Building ${APPIMAGE_OUT}…"
+# appimagetool is itself an AppImage and tries to self-mount via FUSE, 
+# ``--appimage-extract-and-run`` makes it unpack to a temp dir
+# and run the AppRun directly.
 # ARCH env var is honoured by appimagetool to set runtime image arch.
-ARCH="$ARCH" "$APPIMAGETOOL" --no-appstream "$APPDIR" "$APPIMAGE_OUT"
+ARCH="$ARCH" "$APPIMAGETOOL" --appimage-extract-and-run --no-appstream "$APPDIR" "$APPIMAGE_OUT"
 
 echo ""
 echo "  AppImage ready: $APPIMAGE_OUT"
