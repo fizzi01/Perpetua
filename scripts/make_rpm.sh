@@ -165,9 +165,12 @@ Requires:       webkit2gtk4.1
 Requires:       gtk3
 Requires:       libsoup3
 Requires:       cairo
+Requires:       cairo-gobject
+Requires:       pango
 Requires:       glib2
 Requires:       gdk-pixbuf2
 Requires:       libayatana-appindicator-gtk3
+Requires:       openssl-libs
 Recommends:     xclip
 Recommends:     wl-clipboard
 Recommends:     liboeffis
