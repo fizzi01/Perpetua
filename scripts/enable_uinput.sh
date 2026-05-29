@@ -18,6 +18,11 @@ write_rule() {
   path="$1"
   content="$2"
 
+  # Minimal containers (used by CI smoke-tests) don't ship the udev rules
+  # directory; create it lazily so the same script works on both bare
+  # containers and real desktop installs.
+  mkdir -p -- "$(dirname "$path")"
+
   if [ -f "$path" ] && [ "$(cat "$path")" = "$content" ]; then
     echo "perpetua: $path already up to date - skipping."
     return 0
@@ -43,8 +48,11 @@ reload_udev() {
   fi
 }
 
-case "$1" in
-  configure)
+case "${1:-configure}" in
+  # Debian: "configure" on install/upgrade.
+  # RPM (%post): numeric - "1" on first install, "2"+ on upgrade.
+  # No argument (manual ``sudo bash enable_uinput.sh``): treat as install.
+  configure|1|2)
     write_rule "$RULE_PATH" "$RULE_CONTENT"
     write_rule "$DUMPYKEYS_RULE_PATH" "$DUMPYKEYS_RULE_CONTENT"
 
