@@ -32,13 +32,11 @@ _logger = get_logger(__name__)
 class MonitorLayout:
     """Aggregate of the connected displays.
 
-    ``edge_routes`` is reserved for future user-configurable arrangements
-    keyed on ``(monitor_id, edge_name)``; today edge routing is driven
-    by the EdgeBinding cache on the mouse listener.
+    Edge routing is driven by the EdgeBinding cache on the mouse
+    listener, not stored here.
     """
 
     monitors: tuple[MonitorInfo, ...] = field(default_factory=tuple)
-    edge_routes: dict[tuple[int, str], str] = field(default_factory=dict)
 
     @classmethod
     def from_bboxes(

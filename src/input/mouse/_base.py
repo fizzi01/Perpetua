@@ -19,7 +19,7 @@ import asyncio
 from collections import deque
 from typing import Optional
 from time import time
-from threading import Event, Lock
+from threading import Lock
 
 from event import (
     BusEventType,
@@ -98,8 +98,12 @@ class ServerMouseListener(object):
             if self._monitor_layout.monitors
             else Screen.get_virtual_bbox()
         )
-        self._cross_screen_event = Event()
         self._cross_screen_lock = asyncio.Lock()
+        # Set synchronously on the pynput thread the instant a crossing is
+        # scheduled, and reset by ``_handle_cross_screen`` when it finishes
+        # (or here if scheduling fails). This is the ONLY guard against a
+        # back-to-back ``on_move`` sample scheduling a duplicate handler
+        # before the coroutine runs.
         self._handling_cross_screen = False
         # Shared between the pynput listener thread and the asyncio loop.
         # Held only across O(1) ops; NEVER across an ``await``.
@@ -306,7 +310,17 @@ class ServerMouseListener(object):
     async def _on_hotkey_directional(
         self, data: Optional[ScreenSwitchDirectionalRequestEvent]
     ):
-        """Resolve a directional hotkey to an adjacent screen via the layout topology."""
+        """Resolve a directional hotkey to an adjacent screen via the layout topology.
+
+        NOTE: directional resolution is anchored to the SERVER monitors
+        (``resolve_neighbour`` only matches server-monitor edge bindings).
+        It is reliable only while the server owns the cursor, i.e. for
+        server -> client. There is no client -> client routing over the
+        cursor: the client side knows only return-to-server bindings and
+        intra-client (same-client) warps. To move directly between two
+        clients, use the Tab / Shift+Tab cycle hotkey (:meth:`_on_hotkey_cycle`),
+        which targets a client UID regardless of topology.
+        """
         if data is None:
             return
 
@@ -381,7 +395,6 @@ class ServerMouseListener(object):
                 self._movement_history.clear()
             self._listening = True
             self._active_client_uid = active_screen
-            self._cross_screen_event.clear()
         else:
             # Don't clear movement history on return-to-server: the
             # samples accumulated before the original crossing describe
@@ -501,7 +514,7 @@ class ServerMouseListener(object):
         # is mutated on the event loop, and concurrent moves must observe
         # a consistent value or two handlers could fire.
         with self._server_state_lock:
-            if self._cross_screen_event.is_set() or self._handling_cross_screen:
+            if self._handling_cross_screen:
                 return True
             should_buffer = not self._listening
             if should_buffer:
@@ -563,53 +576,67 @@ class ServerMouseListener(object):
                 else:
                     client_axis_norm = c_start
 
-                try:
-                    self._cross_screen_event.set()
-                    # ``(x, y)`` is normalised over the destination
-                    # client monitor's bbox, not the full client virtual
-                    # desktop - the client denormalises against
-                    # ``_active_target_bbox``.
-                    if edge == ScreenEdge.LEFT:
-                        mouse_event.x = 1
-                        mouse_event.y = client_axis_norm
-                    elif edge == ScreenEdge.RIGHT:
-                        mouse_event.x = 0
-                        mouse_event.y = client_axis_norm
-                    elif edge == ScreenEdge.TOP:
-                        mouse_event.x = client_axis_norm
-                        mouse_event.y = 1
-                    elif edge == ScreenEdge.BOTTOM:
-                        mouse_event.x = client_axis_norm
-                        mouse_event.y = 0
-                    self._schedule_async(
-                        self._handle_cross_screen(
-                            edge, mouse_event, target_screen, target_monitor_id
-                        )
+                # ``(x, y)`` is normalised over the destination
+                # client monitor's bbox, not the full client virtual
+                # desktop - the client denormalises against
+                # ``_active_target_bbox``.
+                if edge == ScreenEdge.LEFT:
+                    mouse_event.x = 1
+                    mouse_event.y = client_axis_norm
+                elif edge == ScreenEdge.RIGHT:
+                    mouse_event.x = 0
+                    mouse_event.y = client_axis_norm
+                elif edge == ScreenEdge.TOP:
+                    mouse_event.x = client_axis_norm
+                    mouse_event.y = 1
+                elif edge == ScreenEdge.BOTTOM:
+                    mouse_event.x = client_axis_norm
+                    mouse_event.y = 0
+
+                # Mark the crossing in-flight synchronously BEFORE
+                # scheduling: pynput fires ``on_move`` back to back, and
+                # the coroutine only flips this flag once it actually
+                # runs on the loop. Setting it here closes the window in
+                # which a second sample could schedule a duplicate
+                # handler. ``_handle_cross_screen`` resets it when done;
+                # we reset it here only if scheduling fails, otherwise a
+                # dead loop would leave the listener wedged.
+                with self._server_state_lock:
+                    self._handling_cross_screen = True
+                if not self._schedule_async(
+                    self._handle_cross_screen(
+                        edge, mouse_event, target_screen, target_monitor_id
                     )
-                except Exception as e:
-                    self._logger.error("failed to dispatch mouse event", error=str(e))
-                finally:
-                    self._cross_screen_event.clear()
+                ):
+                    with self._server_state_lock:
+                        self._handling_cross_screen = False
 
         return True
 
-    def _schedule_async(self, coro):
-        """Schedule an async coroutine from the pynput thread."""
+    def _schedule_async(self, coro) -> bool:
+        """Schedule an async coroutine from the pynput thread.
+
+        Returns ``True`` when the coroutine was handed to a running loop,
+        ``False`` otherwise - the cross-screen guard relies on this to
+        avoid wedging itself when no loop is available.
+        """
         if self._loop is not None and not self._loop.is_closed():
             try:
                 asyncio.run_coroutine_threadsafe(coro, self._loop)
-                return
+                return True
             except Exception as e:
                 self._logger.error("failed to schedule coroutine", error=str(e))
 
         try:
             loop = asyncio.get_running_loop()
             asyncio.run_coroutine_threadsafe(coro, loop)
+            return True
         except RuntimeError:
             try:
                 loop = asyncio.get_event_loop()
                 if loop.is_running():
                     asyncio.run_coroutine_threadsafe(coro, loop)
+                    return True
                 else:
                     self._logger.warning(
                         "Event loop not running. Cannot schedule async operation"
@@ -618,6 +645,7 @@ class ServerMouseListener(object):
                 self._logger.warning(
                     f"No event loop available for async operation ({e})"
                 )
+        return False
 
     async def _handle_cross_screen(
         self,
@@ -681,7 +709,6 @@ class ServerMouseListener(object):
         finally:
             with self._server_state_lock:
                 self._handling_cross_screen = False
-            self._cross_screen_event.clear()
 
     def on_click(self, x, y, button: Button, pressed):
         if self._listening:
@@ -759,8 +786,14 @@ class ServerMouseController(object):
                 x = data.x
                 y = data.y
                 if x > -1 and y > -1:
-                    # Position multiple times so absolute placement converges
-                    # across platforms.
+                    # Position multiple times so absolute placement
+                    # converges across platforms. This is NOT replaceable
+                    # by a "set + read-back + retry" loop: on some OSes the
+                    # controller reports the target position immediately
+                    # while the real cursor has not moved yet, so a
+                    # read-back check would pass spuriously and stop early.
+                    # The fixed-repeat write is the reliable workaround -
+                    # do not "optimize" it into a verified single set.
                     for _ in range(50):
                         self.position_cursor(x, y)
 
@@ -954,7 +987,10 @@ class ClientMouseController(object):
                     await self._check_edge()
                 elif event.action == MouseEvent.POSITION_ACTION:
                     # Position multiple times so absolute placement
-                    # converges across platforms.
+                    # converges across platforms. A read-back check can't
+                    # replace this: some OSes report the target position
+                    # before the cursor actually moves (see the matching
+                    # note in ServerMouseController._on_active_screen_changed).
                     for _ in range(10):
                         await self._position_cursor(event.x, event.y)
                     await self._check_edge()
@@ -998,7 +1034,10 @@ class ClientMouseController(object):
         # Position at the landing point if the server packed the coords
         # into CLIENT_ACTIVE. Done AFTER ``_is_active`` flips True so
         # the parallel POSITION_ACTION on the mouse stream can't race
-        # the activation event and silently drop the landing.
+        # the activation event and silently drop the landing. The
+        # fixed-repeat write is intentional (see the note in
+        # ServerMouseController._on_active_screen_changed) - a read-back
+        # check would pass before the cursor really moves on some OSes.
         if data is not None and data.position_x >= 0 and data.position_y >= 0:
             for _ in range(10):
                 await self._position_cursor(data.position_x, data.position_y)
@@ -1074,6 +1113,14 @@ class ClientMouseController(object):
         Fallback for when the OS clamps the cursor against a monitor
         bound - the position history stalls but the delta still reveals
         which edge the user is pushing toward.
+
+        Boundary convention: "cursor sits ON the inner edge pixel, still
+        inside the monitor" - ``x <= min_x`` (column 0) / ``x >= max_x-1``
+        (last valid column, since a monitor occupies ``[min, max)``). This
+        is deliberately different from :meth:`_infer_exit_edge`, which
+        tests "already OUTSIDE the box". Do not unify the two - they run
+        in different contexts and merging the comparisons breaks the drift
+        handler.
         """
         if monitor is None:
             return None
@@ -1104,6 +1151,11 @@ class ClientMouseController(object):
         neighbour, which is right on the server (OS layout = intent)
         but wrong on the client when the workspace topology contradicts
         the OS one.
+
+        Boundary convention: "cursor ON the inner edge pixel, still
+        inside" (``x <= min_x`` / ``x >= max_x-1``) - same as
+        :meth:`_detect_edge_via_delta` and distinct from
+        :meth:`_infer_exit_edge` (which tests "already outside").
         """
         size = len(movement_history)
         if size < 2 or monitor is None:
@@ -1246,6 +1298,15 @@ class ClientMouseController(object):
         Reconstructing the exit edge from the cursor's offset lets the
         drift handler still resolve a workspace edge binding before
         falling back to a clamp.
+
+        Boundary convention: "cursor is already OUTSIDE ``previous``" -
+        ``x < min_x`` / ``x >= max_x`` (the box is half-open ``[min,
+        max)``, so ``max`` itself is outside). This is intentionally NOT
+        the same as :meth:`_detect_edge_via_delta` /
+        :meth:`_detect_directed_edge` ("at the inner edge, still inside",
+        ``x >= max-1``): this helper only runs after the OS has already
+        moved the cursor onto an adjacent monitor, so ``x == min_x`` is
+        still inside ``previous`` and correctly returns no edge here.
         """
         if previous is None:
             return None

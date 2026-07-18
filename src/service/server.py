@@ -1651,9 +1651,16 @@ class Server:
     async def _on_client_connected(self, client: ClientObj, streams: list[int]):
         # Same binding list drives forward routing (server listener) and
         # reverse routing (pushed via the CLIENT_TOPOLOGY command).
+        # Force a fresh monitor read: the watch loop only invalidates the
+        # cache at its polling cadence, so a client connecting within that
+        # window could otherwise get bindings computed against a stale
+        # server topology. Refreshing here also repopulates the shared
+        # cache for subsequent hot reads.
         try:
             from utils.screen import Screen
+            from utils.screen._base import invalidate_monitors_cache
 
+            invalidate_monitors_cache()
             server_monitors = Screen.get_monitors_cached()
         except Exception:
             server_monitors = []

@@ -99,16 +99,6 @@ class Screen:
 
         return MonitorLayout(monitors=tuple(cls.get_monitors()))
 
-
-def invalidate_monitors_cache() -> None:
-    """Drop the cached ``Screen.get_monitors()`` result.
-
-    Call this when a real topology change is detected (the monitor watch
-    loop does) so the next ``get_monitors()`` re-queries the OS.
-    """
-    global _monitors_cache
-    _monitors_cache = None
-
     @classmethod
     def is_screen_locked(cls) -> bool:
         raise NotImplementedError(
@@ -118,3 +108,13 @@ def invalidate_monitors_cache() -> None:
     @classmethod
     def hide_icon(cls):
         raise NotImplementedError("Icon hiding not implemented for this OS.")
+
+
+def invalidate_monitors_cache() -> None:
+    """Drop the cached ``Screen.get_monitors()`` result.
+
+    Call this when a real topology change is detected (the monitor watch
+    loop does) so the next ``get_monitors()`` re-queries the OS.
+    """
+    global _monitors_cache
+    _monitors_cache = None

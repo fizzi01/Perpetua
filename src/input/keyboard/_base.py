@@ -59,8 +59,6 @@ class ServerKeyboardListener(object):
         self.stream = stream_handler  # Should be a keyboard stream
         self.command_stream = command_stream
         self.event_bus = event_bus
-        # Index into _active_clients used by Tab/Shift+Tab cycling.
-        self._hotkey_cycle_index: int = -1
 
         self._listening = False
         self._active_clients: dict[str, bool] = {}

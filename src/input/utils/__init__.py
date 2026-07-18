@@ -22,8 +22,6 @@ import enum
 from collections import deque
 from typing import Callable
 
-from model.client import ScreenPosition
-
 
 class ButtonMapping(enum.Enum):
     """Cross-platform mouse buttons remapped to a stable set."""
@@ -241,40 +239,6 @@ class EdgeDetector:
         edge = self.is_at_edge(movement_history, x, y, screen_size, is_dragging)
         if edge and edge in callbacks:
             callbacks[edge]()
-
-    @staticmethod
-    def get_crossing_coords(
-        x: float | int,
-        y: float | int,
-        screen_size: tuple,
-        edge: ScreenEdge,
-        screen: str | None,
-    ) -> tuple[float, float]:
-        """Coordinates for the cursor landing on the server after a crossing.
-
-        The pinned axis flips to the opposite side; the free axis is
-        normalized over the virtual-desktop bbox so the landing point is
-        proportional to the source position.
-        """
-        if screen == "" or screen is None:
-            return -1, -1
-
-        min_x, min_y, max_x, max_y = _as_bbox(screen_size)
-        width = max(1, max_x - min_x)
-        height = max(1, max_y - min_y)
-        x_norm = (x - min_x) / width
-        y_norm = (y - min_y) / height
-
-        if edge == ScreenEdge.BOTTOM and screen == ScreenPosition.TOP:
-            return x_norm, 0.0
-        elif edge == ScreenEdge.TOP and screen == ScreenPosition.BOTTOM:
-            return x_norm, 1.0
-        elif edge == ScreenEdge.LEFT and screen == ScreenPosition.RIGHT:
-            return 1.0, y_norm
-        elif edge == ScreenEdge.RIGHT and screen == ScreenPosition.LEFT:
-            return 0.0, y_norm
-        else:
-            return -1, -1
 
 
 class KeyUtilities:

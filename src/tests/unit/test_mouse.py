@@ -282,60 +282,6 @@ class TestEdgeDetector:
 
         callback_mock.assert_not_called()
 
-    def test_get_crossing_coords_bottom_to_top(self, screen_size):
-        """Test crossing coordinates from bottom edge to top position."""
-        x, y = EdgeDetector.get_crossing_coords(
-            500, 1079, screen_size, ScreenEdge.BOTTOM, ScreenPosition.TOP
-        )
-        assert x == pytest.approx(500 / 1920)
-        assert y == 0.0
-
-    def test_get_crossing_coords_top_to_bottom(self, screen_size):
-        """Test crossing coordinates from top edge to bottom position."""
-        x, y = EdgeDetector.get_crossing_coords(
-            500, 0, screen_size, ScreenEdge.TOP, ScreenPosition.BOTTOM
-        )
-        assert x == pytest.approx(500 / 1920)
-        assert y == 1.0
-
-    def test_get_crossing_coords_left_to_right(self, screen_size):
-        """Test crossing coordinates from left edge to right position."""
-        x, y = EdgeDetector.get_crossing_coords(
-            0, 500, screen_size, ScreenEdge.LEFT, ScreenPosition.RIGHT
-        )
-        assert x == 1.0
-        assert y == pytest.approx(500 / 1080)
-
-    def test_get_crossing_coords_right_to_left(self, screen_size):
-        """Test crossing coordinates from right edge to left position."""
-        x, y = EdgeDetector.get_crossing_coords(
-            1919, 500, screen_size, ScreenEdge.RIGHT, ScreenPosition.LEFT
-        )
-        assert x == 0.0
-        assert y == pytest.approx(500 / 1080)
-
-    def test_get_crossing_coords_invalid_screen(self, screen_size):
-        """Test invalid screen returns -1, -1."""
-        x, y = EdgeDetector.get_crossing_coords(
-            500, 0, screen_size, ScreenEdge.TOP, None
-        )
-        assert x == -1
-        assert y == -1
-
-    def test_get_crossing_coords_empty_screen(self, screen_size):
-        """Test empty screen returns -1, -1."""
-        x, y = EdgeDetector.get_crossing_coords(500, 0, screen_size, ScreenEdge.TOP, "")
-        assert x == -1
-        assert y == -1
-
-    def test_get_crossing_coords_mismatched_edge_position(self, screen_size):
-        """Test mismatched edge and position returns -1, -1."""
-        x, y = EdgeDetector.get_crossing_coords(
-            500, 0, screen_size, ScreenEdge.BOTTOM, ScreenPosition.BOTTOM
-        )
-        assert x == -1
-        assert y == -1
-
     def test_clamp_to_screen_within_bounds(self, screen_size):
         """Test coordinates within bounds remain unchanged."""
         x, y = EdgeDetector.clamp_to_screen(100, 200, screen_size)
