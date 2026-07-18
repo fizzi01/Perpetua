@@ -18,7 +18,7 @@
  */
 
 import {useCallback, useState} from 'react';
-import {ClientObj} from '../api/Interface';
+import {ClientObj, MonitorInfo, MonitorPlacement} from '../api/Interface';
 
 interface Client {
     id: string;
@@ -26,8 +26,13 @@ interface Client {
     name: string;
     ips?: string[];
     status: 'online' | 'offline';
-    position: 'top' | 'bottom' | 'left' | 'right';
     connectedAt?: Date;
+    monitors?: MonitorInfo[];
+    placements?: MonitorPlacement[];
+}
+
+export function isPlaced(client: {placements?: MonitorPlacement[]}): boolean {
+    return (client.placements?.length ?? 0) > 0;
 }
 
 /**
@@ -90,10 +95,11 @@ export function useClientManagement() {
             name: clientData.host_name,
             ips: clientData.ip_addresses,
             status: connected ? 'online' : 'offline' as const,
-            position: clientData.screen_position as 'top' | 'bottom' | 'left' | 'right',
             connectedAt: connected
                 ? new Date(clientData.last_connection_date || clientData.first_connection_date)
                 : undefined,
+            monitors: clientData.monitors,
+            placements: clientData.placements,
         };
     }, [generateClientId]);
 
@@ -121,6 +127,9 @@ export function useClientManagement() {
                             connectedAt: connected
                                 ? new Date(clientData.last_connection_date || clientData.first_connection_date)
                                 : c.connectedAt,
+                            // Preserve cached monitors when the status payload doesn't carry them (transient).
+                            monitors: clientData.monitors ?? c.monitors,
+                            placements: clientData.placements ?? c.placements,
                         };
                     }
                     return c;
@@ -138,16 +147,13 @@ export function useClientManagement() {
         });
     }, [findExistingClient, createClient]);
 
-    /**
-     * Add a client manually (for authorization)
-     */
-    const addClient = useCallback((hostname: string, ips: string[], position: 'top' | 'bottom' | 'left' | 'right') => {
+    /** Add a client manually (for authorization); lands unplaced until the Layout Editor positions it. */
+    const addClient = useCallback((hostname: string, ips: string[]) => {
         const newClient: Client = {
             id: ips[0] || hostname,
             name: hostname,
             ips: ips,
             status: 'offline' as const,
-            position,
         };
 
         setClients(prev => {

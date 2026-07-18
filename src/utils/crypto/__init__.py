@@ -110,7 +110,7 @@ class CertificateManager:
 
             return True
         except Exception as e:
-            self._logger.log(f"CA generation error: {e}", Logger.ERROR)
+            self._logger.error("CA generation error", error=str(e))
             return False
 
     def generate_server_certificate(
@@ -194,7 +194,7 @@ class CertificateManager:
 
             return True
         except Exception as e:
-            self._logger.log(f"Server certificate generation error: {e}", Logger.ERROR)
+            self._logger.error("Server certificate generation error", error=str(e))
             return False
 
     def certificates_exist(self) -> bool:
@@ -208,8 +208,12 @@ class CertificateManager:
             and self.server_key_path.exists()
         )
 
-    def certificate_exist(self, source_id: Optional[str] = None) -> bool:
-        """Check if CA certificate exists for a specific server"""
+    def peer_certificate_exists(self, source_id: Optional[str] = None) -> bool:
+        """Return True if a CA certificate is pinned for the given peer.
+
+        With ``source_id=None`` falls back to the local CA cert existence
+        (used by the client before any pairing has happened).
+        """
         if source_id is None:
             return self.ca_cert_path.exists()
 
@@ -227,7 +231,7 @@ class CertificateManager:
             shutil.copy(self.ca_cert_path, export_path)
             return True
         except Exception as e:
-            self._logger.log(f"CA export error: {e}", Logger.ERROR)
+            self._logger.error("CA export error", error=str(e))
             return False
 
     def get_server_credentials(self) -> Tuple[Optional[str], Optional[str]]:
@@ -261,7 +265,7 @@ class CertificateManager:
             with open(cert_path, "rb") as f:
                 return f.read()
         except Exception as e:
-            self._logger.log(f"Error loading CA data: {e}", Logger.ERROR)
+            self._logger.error("Error loading CA data", error=str(e))
             return None
 
     def save_ca_data(self, data: bytes | str, source_id: str) -> bool:
@@ -290,7 +294,7 @@ class CertificateManager:
             )
             return True
         except Exception as e:
-            self._logger.log(f"Error saving CA data: {e}", Logger.ERROR)
+            self._logger.error("Error saving CA data", error=str(e))
             return False
 
     def remove_ca_data(self, *source_ids: Optional[str]) -> bool:
@@ -355,7 +359,7 @@ class CertificateManager:
             )
             return False
         except Exception as e:
-            self._logger.log(f"Error removing CA data: {e}", Logger.ERROR)
+            self._logger.error("Error removing CA data", error=str(e))
             return False
 
     def extend_mapping(
@@ -389,7 +393,7 @@ class CertificateManager:
             mapping[source_id] = cert_filename
             return self._save_cert_mapping(mapping)
         except Exception as e:
-            self._logger.log(f"Error extending cert mapping: {e}", Logger.ERROR)
+            self._logger.error("Error extending cert mapping", error=str(e))
             return False
 
     def _get_cert_mapping_path(self) -> Path:
@@ -405,7 +409,7 @@ class CertificateManager:
                     content = f.read()
                     return _decoder.decode(content.encode())
             except Exception as e:
-                self._logger.log(f"Error loading cert mapping: {e}", Logger.ERROR)
+                self._logger.error("Error loading cert mapping", error=str(e))
         return {}
 
     def _save_cert_mapping(self, mapping: Dict[str, str]) -> bool:
@@ -417,5 +421,5 @@ class CertificateManager:
             )
             return True
         except Exception as e:
-            self._logger.log(f"Error saving cert mapping: {e}", Logger.ERROR)
+            self._logger.error("Error saving cert mapping", error=str(e))
             return False

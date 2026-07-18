@@ -244,7 +244,7 @@ class TestHandleCrossScreen:
         # Check event data
         event_data = call_args.kwargs["data"]
         assert isinstance(event_data, ClientActiveEvent)
-        assert event_data.client_screen == "client1"
+        assert event_data.client_uid == "client1"
 
     async def test_cross_screen_with_zero_coordinates(
         self, command_handler, mock_event_bus
@@ -410,7 +410,7 @@ class TestIntegrationScenarios:
         # Verify event data
         event_data = call_args.kwargs["data"]
         assert isinstance(event_data, ClientActiveEvent)
-        assert event_data.client_screen == "client1"
+        assert event_data.client_uid == "client1"
 
     async def test_multiple_commands_sequence(self, command_handler, mock_event_bus):
         """Test handling multiple commands in sequence."""

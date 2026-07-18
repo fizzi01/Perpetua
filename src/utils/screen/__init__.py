@@ -18,6 +18,20 @@
 from utils import backend_module
 from typing import TYPE_CHECKING
 
+from ._monitor import (
+    Edge,
+    EdgeBinding,
+    LayoutBinding,
+    LayoutReconciliation,
+    LayoutSlot,
+    LayoutValidator,
+    MonitorInfo,
+    MonitorLayout,
+    compute_edge_bindings,
+    compute_intra_client_bindings,
+    reconcile_bindings_with_client_monitors,
+)
+
 if TYPE_CHECKING:
     from ._base import Screen
 else:
@@ -26,3 +40,18 @@ else:
 
     Screen = _backend_module.Screen
     del _backend_module
+
+__all__ = [
+    "Screen",
+    "MonitorInfo",
+    "MonitorLayout",
+    "Edge",
+    "LayoutSlot",
+    "LayoutBinding",
+    "LayoutValidator",
+    "LayoutReconciliation",
+    "reconcile_bindings_with_client_monitors",
+    "EdgeBinding",
+    "compute_edge_bindings",
+    "compute_intra_client_bindings",
+]

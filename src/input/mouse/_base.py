@@ -19,25 +19,29 @@ import asyncio
 from collections import deque
 from typing import Optional
 from time import time
-from threading import Event, Lock
+from threading import Lock
 
 from event import (
     BusEventType,
     MouseEvent,
     EventMapper,
+    ClientTopologyCommandEvent,
+    ClientTopologyUpdatedEvent,
     CrossScreenCommandEvent,
     ActiveScreenChangedEvent,
     ClientConnectedEvent,
     ClientDisconnectedEvent,
     ClientActiveEvent,
+    ClientLayoutUpdatedEvent,
+    ScreenSwitchDirectionalRequestEvent,
+    ScreenSwitchCycleRequestEvent,
 )
 from event.bus import EventBus
-from model.client import ScreenPosition
 
 from network.stream import StreamType
 from network.stream.handler import StreamHandler
 
-from utils.logging import get_logger, Logger
+from utils.logging import get_logger
 from utils.screen import Screen
 from input.utils import ScreenEdge, EdgeDetector, ButtonMapping
 
@@ -45,10 +49,7 @@ from .backend import MouseListener, MouseController, Button, BACKEND
 
 
 class ServerMouseListener(object):
-    """
-    Base class for server-side mouse listeners.
-    Its main purpose is to listen to mouse events and dispatch them
-    """
+    """Base class for server-side mouse listeners."""
 
     MOVEMENT_HISTORY_N_THRESHOLD = 6
     MOVEMENT_HISTORY_LEN = 8
@@ -60,34 +61,55 @@ class ServerMouseListener(object):
         command_stream: StreamHandler,
         filtering: bool = True,
     ):
-        """
-        Initializes the server mouse listener.
-
-        Args:
-            event_bus (EventBus): The event bus for dispatching events.
-            stream_handler (StreamHandler): The stream handler for mouse events.
-            command_stream (StreamHandler): The stream handler for command events.
-            filtering (bool): Whether to apply platform-specific mouse event filtering.
-        """
-
-        self.stream = stream_handler  # Should be a mouse stream
+        self.stream = stream_handler
         self.command_stream = command_stream
         self.event_bus = event_bus
 
         self._listening = False
-        self._active_screens = {}
-        self._screen_size: tuple[int, int] = Screen.get_size()
-        self._cross_screen_event = Event()
-        self._cross_screen_lock = asyncio.Lock()
-        self._handling_cross_screen = False
-        # threading.Lock for state shared between the pynput listener thread
-        # and the asyncio event loop (`_handling_cross_screen` flag and
-        # `_movement_history` deque). Held only across O(1) operations; NEVER
-        # held across an `await`.
-        self._server_state_lock = Lock()
-        self._button_pressed: set[int] = set()  # Track pressed buttons
+        self._active_clients: dict[str, bool] = {}
+        # Spatial cross-screen routing tables keyed by client UID. Both
+        # are pushed verbatim to the active client on activation so the
+        # client can resolve return-to-server and intra-client warps
+        # against the same data.
+        self._edge_bindings_by_client: dict[str, list[dict]] = {}
+        self._intra_bindings_by_client: dict[str, list[dict]] = {}
 
-        # Check platform to set appropriate mouse filter
+        # Copy-on-write snapshots consumed by the pynput-thread hot path
+        # (on_move -> _resolve_cross_screen_target) without locking. Writers
+        # hold ``_bindings_write_lock`` and rebuild these tuples; readers
+        # do a single atomic ref read (GIL-protected) and iterate the
+        # immutable tuple. Tuples never mutate, so an iteration started
+        # before a swap finishes on the pre-swap state.
+        self._bindings_write_lock = Lock()
+        self._edge_bindings_snapshot: tuple[tuple[str, tuple[dict, ...]], ...] = ()
+        self._intra_bindings_snapshot: tuple[tuple[str, tuple[dict, ...]], ...] = ()
+        self._active_clients_snapshot: tuple[str, ...] = ()
+        # One-shot warning per overlapping pair so an ambiguous layout
+        # logs once, not every cursor sample.
+        self._warned_overlap_keys: set[tuple[str, ...]] = set()
+        # Edge detection uses the full MonitorLayout so the outer edges
+        # of EACH monitor count - asymmetric layouts where the primary's
+        # edges are interior to the union bbox would otherwise miss
+        # crossings.
+        self._screen_size: tuple[int, int] = Screen.get_size()
+        self._monitor_layout = Screen.get_monitor_layout()
+        self._screen_bbox: tuple[int, int, int, int] = (
+            self._monitor_layout.virtual_bbox
+            if self._monitor_layout.monitors
+            else Screen.get_virtual_bbox()
+        )
+        self._cross_screen_lock = asyncio.Lock()
+        # Set synchronously on the pynput thread the instant a crossing is
+        # scheduled, and reset by ``_handle_cross_screen`` when it finishes
+        # (or here if scheduling fails). This is the ONLY guard against a
+        # back-to-back ``on_move`` sample scheduling a duplicate handler
+        # before the coroutine runs.
+        self._handling_cross_screen = False
+        # Shared between the pynput listener thread and the asyncio loop.
+        # Held only across O(1) ops; NEVER across an ``await``.
+        self._server_state_lock = Lock()
+        self._button_pressed: set[int] = set()
+
         self._filter_args = {}
         if filtering:
             try:
@@ -107,24 +129,32 @@ class ServerMouseListener(object):
 
         self._listener = None
 
-        # Queue for mouse movements history to detect screen edge reaching
         self._movement_history = deque(maxlen=self.MOVEMENT_HISTORY_LEN)
         self._is_dragging = False
 
         self._logger = get_logger(self.__class__.__name__)
 
         self._logger.info(
-            f"Mouse listener backend: {BACKEND.get('mouse_listener', 'unknown')}"
+            "mouse listener backend selected",
+            backend=BACKEND.get("mouse_listener", "unknown"),
         )
 
-        # Store event loop reference for thread-safe async scheduling
         try:
             self._loop = asyncio.get_running_loop()
         except RuntimeError:
-            # No event loop running yet - will be set when start() is called
             self._loop = None
 
-        # Subscribe with async callbacks
+        self._hotkey_cycle_index = -1
+
+        self._active_client_uid: Optional[str] = None
+        # Fallback "from" anchor for the directional hotkey resolver when
+        # ``MouseController().position`` fails or the cursor is on a
+        # client (OS position is stale). Seeded to the virtual desktop
+        # centre so the first press has a plausible default.
+        cx = (self._screen_bbox[0] + self._screen_bbox[2]) // 2
+        cy = (self._screen_bbox[1] + self._screen_bbox[3]) // 2
+        self._last_server_cursor_pos: tuple[float, float] = (float(cx), float(cy))
+
         self.event_bus.subscribe(
             event_type=BusEventType.ACTIVE_SCREEN_CHANGED,
             callback=self._on_active_screen_changed,
@@ -140,11 +170,23 @@ class ServerMouseListener(object):
             callback=self._on_client_disconnected,
             priority=True,
         )
+        self.event_bus.subscribe(
+            event_type=BusEventType.CLIENT_LAYOUT_UPDATED,
+            callback=self._on_client_layout_updated,
+            priority=True,
+        )
+        self.event_bus.subscribe(
+            event_type=BusEventType.SCREEN_SWITCH_DIRECTIONAL_REQUEST,
+            callback=self._on_hotkey_directional,
+            priority=True,
+        )
+        self.event_bus.subscribe(
+            event_type=BusEventType.SCREEN_SWITCH_CYCLE_REQUEST,
+            callback=self._on_hotkey_cycle,
+            priority=True,
+        )
 
     def _create_listener(self) -> MouseListener:
-        """
-        Creates a new mouse listener instance.
-        """
         return MouseListener(
             on_move=self.on_move,
             on_scroll=self.on_scroll,
@@ -153,11 +195,8 @@ class ServerMouseListener(object):
         )
 
     def start(self) -> bool:
-        """
-        Starts the mouse listener.
-        """
         # Always re-capture the running loop: a previous start() may have
-        # cached a loop that has since been closed (e.g. between tests).
+        # cached one that has since been closed (e.g. between tests).
         try:
             self._loop = asyncio.get_running_loop()
         except RuntimeError:
@@ -167,25 +206,19 @@ class ServerMouseListener(object):
             )
 
         if not self.is_alive():
-            # Screen.hide_icon()
             self._listener = self._create_listener()
             self._listener.start()
         self._logger.debug("Started.")
         return True
 
-    LISTENER_JOIN_TIMEOUT = 2.0  # sec - cap how long stop() will wait
+    LISTENER_JOIN_TIMEOUT = 2.0
 
     def stop(self) -> bool:
-        """
-        Stops the mouse listener. ``pynput.Listener.stop`` returns
-        immediately; we explicitly wait for the OS-level listener thread.
-        """
         if self._listener is not None and self.is_alive():
             self._listener.stop()
             try:
                 self._listener.join(timeout=self.LISTENER_JOIN_TIMEOUT)
             except RuntimeError:
-                # join() raises if the thread never started; safe to ignore.
                 pass
             if self._listener.is_alive():
                 self._logger.warning(
@@ -198,69 +231,275 @@ class ServerMouseListener(object):
     def is_alive(self):
         return self._listener.is_alive() if self._listener else False
 
+    def _rebuild_snapshots(self) -> None:
+        """Rebuild the immutable read-side snapshots from the live dicts.
+
+        Caller MUST hold ``_bindings_write_lock``. Each snapshot is a
+        tuple of tuples so the hot reader can iterate without locking;
+        the GIL guarantees the attribute swap is atomic.
+        """
+        self._edge_bindings_snapshot = tuple(
+            (uid, tuple(b)) for uid, b in self._edge_bindings_by_client.items()
+        )
+        self._intra_bindings_snapshot = tuple(
+            (uid, tuple(b)) for uid, b in self._intra_bindings_by_client.items()
+        )
+        self._active_clients_snapshot = tuple(self._active_clients.keys())
+
     async def _on_client_connected(self, data: Optional[ClientConnectedEvent]):
-        """
-        Async event handler for when a client connects.
-        """
         if data is None:
             return
 
-        client_screen = data.client_screen
-        # We need this check in order to not dispatch cross-screen events to clients without mouse stream
-        client_streams = data.streams  # We check if client has mouse stream enabled
+        client_uid = data.client_uid
+        client_streams = data.streams
         if client_streams is None:
-            await asyncio.sleep(0)
             return
 
-        if client_screen and StreamType.MOUSE in client_streams:  # If not, we ignore
-            self._active_screens[client_screen] = True
+        if client_uid and StreamType.MOUSE in client_streams:
+            with self._bindings_write_lock:
+                # Drop any stale entry from a previous session before
+                # re-inserting so a reconnect can't briefly see the
+                # old bindings.
+                self._active_clients[client_uid] = True
+                self._edge_bindings_by_client[client_uid] = list(
+                    getattr(data, "edge_bindings", []) or []
+                )
+                self._intra_bindings_by_client[client_uid] = list(
+                    getattr(data, "intra_client_bindings", []) or []
+                )
+                self._rebuild_snapshots()
 
         await asyncio.sleep(0)
 
     async def _on_client_disconnected(self, data: Optional[ClientDisconnectedEvent]):
-        """
-        Async event handler for when a client disconnects.
-        """
         if data is None:
             return
 
-        # try to get client from data to remove from active screens
-        client = data.client_screen
-        if client and client in self._active_screens:
-            del self._active_screens[client]
+        client_uid = data.client_uid
+        with self._bindings_write_lock:
+            if client_uid and client_uid in self._active_clients:
+                del self._active_clients[client_uid]
+            self._edge_bindings_by_client.pop(client_uid, None)
+            self._intra_bindings_by_client.pop(client_uid, None)
+            self._rebuild_snapshots()
 
-        # if active screens is empty, we stop listening
-        if len(self._active_screens.items()) == 0:
-            self._listening = False
+            if not self._active_clients:
+                self._listening = False
+                # No active clients -> reset the cycle index so the next
+                # press after a re-add starts from a sane position.
+                self._hotkey_cycle_index = -1
 
         await asyncio.sleep(0)
 
-    async def _on_active_screen_changed(self, data: Optional[ActiveScreenChangedEvent]):
-        """
-        Async event handler for when the active screen changes.
+    async def _on_client_layout_updated(self, data: Optional[ClientLayoutUpdatedEvent]):
+        """Hot-swap a client's cached EdgeBindings after the layout
+        editor saves, so changes take effect on the next crossing."""
+        if data is None or not data.client_uid:
+            return
+        with self._bindings_write_lock:
+            if data.client_uid in self._active_clients:
+                self._edge_bindings_by_client[data.client_uid] = list(
+                    data.edge_bindings or []
+                )
+                self._intra_bindings_by_client[data.client_uid] = list(
+                    getattr(data, "intra_client_bindings", []) or []
+                )
+                self._rebuild_snapshots()
+        await asyncio.sleep(0)
+
+    async def _on_hotkey_directional(
+        self, data: Optional[ScreenSwitchDirectionalRequestEvent]
+    ):
+        """Resolve a directional hotkey to an adjacent screen via the layout topology.
+
+        NOTE: directional resolution is anchored to the SERVER monitors
+        (``resolve_neighbour`` only matches server-monitor edge bindings).
+        It is reliable only while the server owns the cursor, i.e. for
+        server -> client. There is no client -> client routing over the
+        cursor: the client side knows only return-to-server bindings and
+        intra-client (same-client) warps. To move directly between two
+        clients, use the Tab / Shift+Tab cycle hotkey (:meth:`_on_hotkey_cycle`),
+        which targets a client UID regardless of topology.
         """
         if data is None:
             return
 
-        # If active screen is not none then we can start listening to mouse events
+        # When a client is active the OS cursor position is stale (it
+        # holds the server's last position before the crossing); refresh
+        # from the controller only while the server still owns the cursor.
+        x, y = self._last_server_cursor_pos
+        if self._listening:
+            try:
+                from input.mouse.backend import MouseController
+
+                pos = MouseController().position
+                if pos and len(pos) == 2:
+                    x, y = float(pos[0]), float(pos[1])
+                    self._last_server_cursor_pos = (x, y)
+            except Exception as e:
+                self._logger.debug(
+                    "hotkey resolver controller refresh failed",
+                    error=str(e),
+                )
+
+        client_uid = self.resolve_neighbour(data.edge, x, y)
+        if not client_uid:
+            self._logger.debug(
+                f"Directional hotkey {data.edge} from ({x:.0f}, {y:.0f}) "
+                f"resolved no neighbour - no-op."
+            )
+            return
+
+        if client_uid == self._active_client_uid:
+            return
+
+        try:
+            await self.event_bus.dispatch(
+                event_type=BusEventType.SCREEN_CHANGE_GUARD,
+                data=ActiveScreenChangedEvent(active_screen=client_uid),
+            )
+            await self.command_stream.send(CrossScreenCommandEvent(target=client_uid))
+        except Exception as e:
+            self._logger.error("hotkey directional switch failed", error=str(e))
+
+    async def _on_hotkey_cycle(self, data: Optional[ScreenSwitchCycleRequestEvent]):
+        if data is None:
+            return
+        # Use the immutable snapshot so an in-flight connect/disconnect
+        # can't trip the % len(uids) bounds.
+        uids = list(self._active_clients_snapshot)
+        if not uids:
+            return
+
+        self._hotkey_cycle_index = (self._hotkey_cycle_index + data.direction) % len(
+            uids
+        )
+        client_uid = uids[self._hotkey_cycle_index]
+        try:
+            await self.event_bus.dispatch(
+                event_type=BusEventType.SCREEN_CHANGE_GUARD,
+                data=ActiveScreenChangedEvent(active_screen=client_uid),
+            )
+            await self.command_stream.send(CrossScreenCommandEvent(target=client_uid))
+        except Exception as e:
+            self._logger.error("hotkey cycle switch failed", error=str(e))
+
+    async def _on_active_screen_changed(self, data: Optional[ActiveScreenChangedEvent]):
+        if data is None:
+            return
+
         active_screen = data.active_screen
 
         if active_screen is not None:
             with self._server_state_lock:
                 self._movement_history.clear()
             self._listening = True
-            self._cross_screen_event.clear()
+            self._active_client_uid = active_screen
         else:
+            # Don't clear movement history on return-to-server: the
+            # samples accumulated before the original crossing describe
+            # the push toward the edge and stay relevant for the next
+            # crossing in the same direction. A fresh outward push only
+            # generates 1-2 ``on_move`` events before the OS clamps
+            # against the screen bound, so requiring fresh samples would
+            # starve the edge detector.
             self._listening = False
+            self._active_client_uid = None
 
         await asyncio.sleep(0)
 
     def _screen_size_valid(self) -> bool:
-        """Guard against (0,0) or negative dimensions (display disconnected
-        / not yet probed). Prevents ZeroDivisionError and inf/nan
-        coordinates from propagating through the event stream.
-        """
         return self._screen_size[0] > 0 and self._screen_size[1] > 0
+
+    def _bbox_span(self) -> "tuple[int, int, int, int, int, int]":
+        """Return ``(min_x, min_y, max_x, max_y, width, height)`` with width/height clamped to >= 1."""
+        min_x, min_y, max_x, max_y = self._screen_bbox
+        return min_x, min_y, max_x, max_y, max(1, max_x - min_x), max(1, max_y - min_y)
+
+    _EDGE_TO_STRING: dict = {
+        ScreenEdge.LEFT: "left",
+        ScreenEdge.RIGHT: "right",
+        ScreenEdge.TOP: "top",
+        ScreenEdge.BOTTOM: "bottom",
+    }
+
+    def _resolve_cross_screen_target(
+        self,
+        edge: ScreenEdge,
+        cursor_x: float,
+        cursor_y: float,
+    ) -> Optional[tuple[str, dict, float]]:
+        """Match an edge crossing against a cached EdgeBinding.
+
+        Reads the COW snapshot, no lock - the tuple is immutable and the
+        attribute swap done by writers is atomic under the GIL.
+        """
+        # Single atomic ref reads.
+        edge_snapshot = self._edge_bindings_snapshot
+        active_snapshot = self._active_clients_snapshot
+        if not edge_snapshot:
+            return None
+        edge_str = self._EDGE_TO_STRING.get(edge)
+        if not edge_str:
+            return None
+
+        monitor = self._monitor_layout.nearest_monitor(cursor_x, cursor_y)
+        if monitor is None:
+            return None
+
+        m_w = max(1, monitor.max_x - monitor.min_x)
+        m_h = max(1, monitor.max_y - monitor.min_y)
+        if edge == ScreenEdge.LEFT or edge == ScreenEdge.RIGHT:
+            axis_norm = (cursor_y - monitor.min_y) / m_h
+        else:
+            axis_norm = (cursor_x - monitor.min_x) / m_w
+        axis_norm = max(0.0, min(1.0, axis_norm))
+
+        first_match: Optional[tuple[str, dict, float]] = None
+        matches: list[str] = []
+        for client_uid, bindings in edge_snapshot:
+            # Skip clients that disconnected between snapshot rebuilds:
+            # the cursor would otherwise warp to a dead peer.
+            if client_uid not in active_snapshot:
+                continue
+            for b in bindings:
+                if b.get("server_monitor_id") != monitor.monitor_id:
+                    continue
+                if b.get("server_edge") != edge_str:
+                    continue
+                s_start = b.get("server_axis_start", 0.0)
+                s_end = b.get("server_axis_end", 0.0)
+                if s_start <= axis_norm < s_end:
+                    matches.append(client_uid)
+                    if first_match is None:
+                        first_match = (client_uid, b, axis_norm)
+                    break  # one match per client for this edge
+
+        if len(matches) > 1:
+            key = tuple(sorted(matches))
+            if key not in self._warned_overlap_keys:
+                self._warned_overlap_keys.add(key)
+                self._logger.warning(
+                    "Overlapping cross-screen bindings on the same edge; "
+                    "routing to the first match. Disambiguate the layout to fix.",
+                    edge=edge_str,
+                    candidates=list(matches),
+                )
+        return first_match
+
+    def resolve_neighbour(
+        self,
+        edge: ScreenEdge,
+        cursor_x: float,
+        cursor_y: float,
+    ) -> Optional[str]:
+        """Which client UID lives off ``edge`` of the server monitor under the cursor."""
+        resolved = self._resolve_cross_screen_target(edge, cursor_x, cursor_y)
+        return resolved[0] if resolved is not None else None
+
+    def get_active_client_uids(self) -> list[str]:
+        """Active client UIDs in insertion order - used by the cycling hotkey."""
+        return list(self._active_clients_snapshot)
 
     def _darwin_mouse_suppress_filter(self, event_type, event):
         raise NotImplementedError("Mouse suppress filter not implemented yet.")
@@ -269,19 +508,13 @@ class ServerMouseListener(object):
         raise NotImplementedError("Mouse suppress filter not implemented yet.")
 
     def on_move(self, x, y):
-        """
-        Event handler for mouse movement.
-        While not listening, it needs to check if the cursor is reaching the screen edges.
-        Since pynput runs in its own thread, we need to schedule async operations.
-        """
         if not self._screen_size_valid():
             return True
-        # Snapshot the cross-screen guard atomically under the shared state
-        # lock - `_handling_cross_screen` is mutated by `_handle_cross_screen`
-        # on the event loop, and concurrent moves must observe a consistent
-        # value to avoid two simultaneous cross-screen handlers.
+        # Snapshot the cross-screen guard atomically: ``_handling_cross_screen``
+        # is mutated on the event loop, and concurrent moves must observe
+        # a consistent value or two handlers could fire.
         with self._server_state_lock:
-            if self._cross_screen_event.is_set() or self._handling_cross_screen:
+            if self._handling_cross_screen:
                 return True
             should_buffer = not self._listening
             if should_buffer:
@@ -289,102 +522,121 @@ class ServerMouseListener(object):
                     self._movement_history.append((x, y))
                 except Exception:
                     pass
+                # Only update the cached anchor while NOT listening: when
+                # the cursor is on a client the OS position is the
+                # server's last-known-before-crossing position, not the
+                # client's live cursor.
+                self._last_server_cursor_pos = (float(x), float(y))
             history_ready = (
                 should_buffer
                 and len(self._movement_history) >= self.MOVEMENT_HISTORY_N_THRESHOLD
             )
 
-        # The border check has to take in account only when we are moving forward and not backward or staying still
         if not self._listening:
             if history_ready:
-                # Check all the previous movements to determine the direction
                 edge = EdgeDetector.is_at_edge(
                     movement_history=self._movement_history,
                     x=x,
                     y=y,
-                    screen_size=self._screen_size,
+                    screen_size=self._monitor_layout,
                     is_dragging=self._is_dragging,
                 )
                 if edge is None:
-                    # No edge reached yet; nothing more to do for this event.
                     return True
 
                 mouse_event = MouseEvent(x=x, y=y, action=MouseEvent.POSITION_ACTION)
 
-                try:
-                    self._cross_screen_event.set()
-                    if edge == ScreenEdge.LEFT and self._active_screens.get(
-                        ScreenPosition.LEFT, False
-                    ):
-                        # Normalize position to avoid sticking
-                        mouse_event.x = 1
-                        mouse_event.y = y / self._screen_size[1]
-                        # Schedule async operations
-                        self._schedule_async(
-                            self._handle_cross_screen(
-                                edge, mouse_event, ScreenPosition.LEFT
-                            )
-                        )
-                    elif edge == ScreenEdge.RIGHT and self._active_screens.get(
-                        ScreenPosition.RIGHT, False
-                    ):
-                        mouse_event.x = 0
-                        mouse_event.y = y / self._screen_size[1]
-                        self._schedule_async(
-                            self._handle_cross_screen(
-                                edge, mouse_event, ScreenPosition.RIGHT
-                            )
-                        )
-                    elif edge == ScreenEdge.TOP and self._active_screens.get(
-                        ScreenPosition.TOP, False
-                    ):
-                        mouse_event.x = x / self._screen_size[0]
-                        mouse_event.y = 1
-                        self._schedule_async(
-                            self._handle_cross_screen(
-                                edge, mouse_event, ScreenPosition.TOP
-                            )
-                        )
-                    elif edge == ScreenEdge.BOTTOM and self._active_screens.get(
-                        ScreenPosition.BOTTOM, False
-                    ):
-                        mouse_event.x = x / self._screen_size[0]
-                        mouse_event.y = 0
-                        self._schedule_async(
-                            self._handle_cross_screen(
-                                edge, mouse_event, ScreenPosition.BOTTOM
-                            )
-                        )
-                except Exception as e:
-                    self._logger.error(f"Failed to dispatch mouse event ({e})")
-                finally:
-                    self._cross_screen_event.clear()
+                resolved = self._resolve_cross_screen_target(
+                    edge=edge,
+                    cursor_x=x,
+                    cursor_y=y,
+                )
+                if resolved is None:
+                    return True
+                target_screen, binding, server_axis_norm = resolved
+                target_monitor_id = binding.get("client_monitor_id")
+                if target_monitor_id is not None:
+                    target_monitor_id = int(target_monitor_id)
+
+                # Linear map from server-edge axis_norm to client-edge
+                # axis_norm. Inlined here to keep the pynput thread off
+                # the EdgeBinding import path.
+                c_start = binding.get("client_axis_start", 0.0)
+                c_end = binding.get("client_axis_end", 0.0)
+                s_start = binding.get("server_axis_start", 0.0)
+                s_end = binding.get("server_axis_end", 0.0)
+                span = s_end - s_start
+                if span > 0:
+                    local = (server_axis_norm - s_start) / span
+                    if local < 0.0:
+                        local = 0.0
+                    elif local > 1.0:
+                        local = 1.0
+                    client_axis_norm = c_start + local * (c_end - c_start)
+                else:
+                    client_axis_norm = c_start
+
+                # ``(x, y)`` is normalised over the destination
+                # client monitor's bbox, not the full client virtual
+                # desktop - the client denormalises against
+                # ``_active_target_bbox``.
+                if edge == ScreenEdge.LEFT:
+                    mouse_event.x = 1
+                    mouse_event.y = client_axis_norm
+                elif edge == ScreenEdge.RIGHT:
+                    mouse_event.x = 0
+                    mouse_event.y = client_axis_norm
+                elif edge == ScreenEdge.TOP:
+                    mouse_event.x = client_axis_norm
+                    mouse_event.y = 1
+                elif edge == ScreenEdge.BOTTOM:
+                    mouse_event.x = client_axis_norm
+                    mouse_event.y = 0
+
+                # Mark the crossing in-flight synchronously BEFORE
+                # scheduling: pynput fires ``on_move`` back to back, and
+                # the coroutine only flips this flag once it actually
+                # runs on the loop. Setting it here closes the window in
+                # which a second sample could schedule a duplicate
+                # handler. ``_handle_cross_screen`` resets it when done;
+                # we reset it here only if scheduling fails, otherwise a
+                # dead loop would leave the listener wedged.
+                with self._server_state_lock:
+                    self._handling_cross_screen = True
+                if not self._schedule_async(
+                    self._handle_cross_screen(
+                        edge, mouse_event, target_screen, target_monitor_id
+                    )
+                ):
+                    with self._server_state_lock:
+                        self._handling_cross_screen = False
 
         return True
 
-    def _schedule_async(self, coro):
-        """
-        Helper to schedule async coroutines from sync context (pynput thread).
-        Uses saved event loop reference for thread-safe scheduling.
+    def _schedule_async(self, coro) -> bool:
+        """Schedule an async coroutine from the pynput thread.
+
+        Returns ``True`` when the coroutine was handed to a running loop,
+        ``False`` otherwise - the cross-screen guard relies on this to
+        avoid wedging itself when no loop is available.
         """
         if self._loop is not None and not self._loop.is_closed():
-            # Best case: we have a valid loop reference
             try:
                 asyncio.run_coroutine_threadsafe(coro, self._loop)
-                return
+                return True
             except Exception as e:
-                self._logger.error(f"Error scheduling coroutine ({e})")
+                self._logger.error("failed to schedule coroutine", error=str(e))
 
-        # Fallback: try to get running loop
         try:
             loop = asyncio.get_running_loop()
             asyncio.run_coroutine_threadsafe(coro, loop)
+            return True
         except RuntimeError:
-            # Last resort: try to get event loop (may not work from thread)
             try:
                 loop = asyncio.get_event_loop()
                 if loop.is_running():
                     asyncio.run_coroutine_threadsafe(coro, loop)
+                    return True
                 else:
                     self._logger.warning(
                         "Event loop not running. Cannot schedule async operation"
@@ -393,78 +645,99 @@ class ServerMouseListener(object):
                 self._logger.warning(
                     f"No event loop available for async operation ({e})"
                 )
+        return False
 
     async def _handle_cross_screen(
-        self, edge: ScreenEdge, mouse_event: MouseEvent, screen: str
+        self,
+        edge: ScreenEdge,
+        mouse_event: MouseEvent,
+        screen: str,
+        client_monitor_id: Optional[int] = None,
     ):
-        """Async handler for cross-screen events"""
-        # Mark the cross-screen handler as in-flight under the shared state
-        # lock so concurrent `on_move` calls observe it. The flag is reset
-        # in the finally block - also under the lock.
         with self._server_state_lock:
             self._handling_cross_screen = True
         try:
-            # Acquire lock to serialize cross-screen handling
             async with self._cross_screen_lock:
                 with self._server_state_lock:
                     history_len = len(self._movement_history)
-                if (
-                    history_len < self.MOVEMENT_HISTORY_N_THRESHOLD
-                ):  # Check again because of async
+                if history_len < self.MOVEMENT_HISTORY_N_THRESHOLD:
                     return
 
-                # Reset movement history under the shared state lock since
-                # the pynput thread may concurrently append to it.
                 with self._server_state_lock:
                     self._movement_history.clear()
 
-                # We notify the system that an active screen change has occurred
                 await self.event_bus.dispatch(
-                    event_type=BusEventType.SCREEN_CHANGE_GUARD,  # We first notify the cursor guard (cursor handler)
+                    event_type=BusEventType.SCREEN_CHANGE_GUARD,
                     data=ActiveScreenChangedEvent(active_screen=screen),
                 )
 
-                # Wait for message dispatch to complete
-                await self.command_stream.send(CrossScreenCommandEvent(target=screen))
+                # Push the topology to the activating client so it can
+                # resolve return-to-server crossings AND enforce the
+                # workspace topology over its OS-level monitor adjacency.
+                bindings = self._edge_bindings_by_client.get(screen) or []
+                intra_bindings = self._intra_bindings_by_client.get(screen) or []
+                if bindings or intra_bindings:
+                    await self.command_stream.send(
+                        ClientTopologyCommandEvent(
+                            target=screen,
+                            edge_bindings=bindings,
+                            server_bbox=self._screen_bbox,
+                            intra_client_bindings=intra_bindings,
+                        )
+                    )
+
+                # Carry the landing coords on the activation packet
+                # itself: the mouse stream can outrun the command stream
+                # and a POSITION_ACTION delivered before ``_is_active``
+                # flips True is silently dropped, leaving the cursor at
+                # screen centre. The parallel POSITION_ACTION below is
+                # kept for old clients that don't read ``position_x/_y``
+                # off CLIENT_ACTIVE - idempotent on new clients.
+                await self.command_stream.send(
+                    CrossScreenCommandEvent(
+                        target=screen,
+                        client_monitor_id=client_monitor_id,
+                        x=mouse_event.x,
+                        y=mouse_event.y,
+                    )
+                )
                 await self.stream.send(mouse_event)
                 await asyncio.sleep(0)
 
         except Exception as e:
-            self._logger.error(f"Error handling cross-screen ({e})")
+            self._logger.error("failed to handle cross-screen", error=str(e))
         finally:
-            # Reset states under the shared lock so the pynput thread sees a
-            # consistent flag transition.
             with self._server_state_lock:
                 self._handling_cross_screen = False
-            self._cross_screen_event.clear()
 
     def on_click(self, x, y, button: Button, pressed):
         if self._listening:
             if not self._screen_size_valid():
                 return True
             button = ButtonMapping[button.name].value
+            # Normalise over the virtual-desktop bbox so a click on a
+            # secondary monitor doesn't end up past the primary's [0, 1].
+            min_x, min_y, _max_x, _max_y, width, height = self._bbox_span()
             mouse_event = MouseEvent(
-                x=x / self._screen_size[0],
-                y=y / self._screen_size[1],
+                x=(x - min_x) / width,
+                y=(y - min_y) / height,
                 button=button,
                 action=MouseEvent.CLICK_ACTION,
-                is_presed=pressed,
+                is_pressed=pressed,
             )
             try:
-                # Schedule async send
                 if not pressed and button in self._button_pressed:
                     self._button_pressed.remove(button)
                 elif pressed:
                     self._button_pressed.add(button)
                 else:
-                    return True  # Ignore this event
+                    return True
 
                 self._schedule_async(self.stream.send(mouse_event))
             except Exception as e:
-                self._logger.error(f"Failed to dispatch mouse click event ({e})")
+                self._logger.error("failed to dispatch mouse click", error=str(e))
 
         else:
-            # Track dragging state to avoid edge crossing
             self._is_dragging = pressed and ButtonMapping[button.name].value in [
                 ButtonMapping.left.value,
                 ButtonMapping.right.value,
@@ -475,103 +748,85 @@ class ServerMouseListener(object):
         if self._listening:
             mouse_event = MouseEvent(dx=dx, dy=dy, action=MouseEvent.SCROLL_ACTION)
             try:
-                # Schedule async send
                 self._schedule_async(self.stream.send(mouse_event))
             except Exception as e:
-                self._logger.error(f"Failed to dispatch mouse scroll event ({e})")
+                self._logger.error("failed to dispatch mouse scroll", error=str(e))
         return True
 
 
 class ServerMouseController(object):
-    """
-    Base class for server-side mouse controllers.
-    Its main purpose is to control the mouse cursor position
-    when the active screen changes.
-    """
+    """Base class for server-side mouse controllers."""
 
     def __init__(self, event_bus: EventBus):
-        """
-        Initializes the server mouse controller.
-
-        Args:
-            event_bus (EventBus): The event bus for dispatching events.
-        """
         self.event_bus = event_bus
 
         self._screen_size: tuple[int, int] = Screen.get_size()
+        # Spans every connected monitor; the cursor may need to land on
+        # any of them when control returns from a client.
+        self._screen_bbox: tuple[int, int, int, int] = Screen.get_virtual_bbox()
 
-        # Screen.hide_icon()
         self._controller = MouseController()
         self._logger = get_logger(self.__class__.__name__)
 
         self._logger.info(
-            f"Mouse controller backend: {BACKEND.get('mouse_controller', 'unknown')}"
+            "mouse controller backend selected",
+            backend=BACKEND.get("mouse_controller", "unknown"),
         )
 
-        # Register for active screen changed events to reposition the cursor
         self.event_bus.subscribe(
             event_type=BusEventType.ACTIVE_SCREEN_CHANGED,
             callback=self._on_active_screen_changed,
         )
 
     async def _on_active_screen_changed(self, data: Optional[ActiveScreenChangedEvent]):
-        """
-        Activate only when the active screen becomes None.
-        """
+        """Reposition the server cursor when control returns (active screen None)."""
         if data is not None:
             active_screen = data.active_screen
             if active_screen is None:
-                # Get the cursor position from data if available
                 x = data.x
                 y = data.y
                 if x > -1 and y > -1:
-                    # We need to position the cursor multiple times to ensure it works across platforms
+                    # Position multiple times so absolute placement
+                    # converges across platforms. This is NOT replaceable
+                    # by a "set + read-back + retry" loop: on some OSes the
+                    # controller reports the target position immediately
+                    # while the real cursor has not moved yet, so a
+                    # read-back check would pass spuriously and stop early.
+                    # The fixed-repeat write is the reliable workaround -
+                    # do not "optimize" it into a verified single set.
                     for _ in range(50):
                         self.position_cursor(x, y)
 
         await asyncio.sleep(0)
 
     def position_cursor(self, x: float | int, y: float | int):
-        """
-        Position the mouse cursor to the specified (x, y) coordinates.
-        """
+        """Place the cursor from normalised ``(x, y)`` over the virtual desktop bbox."""
         try:
-            # Denormalize coordinates by mapping into the client screen size.
-            # Skip silently if screen size is unknown (display disconnected /
-            # not yet probed) to avoid pinning the cursor at (0,0).
-            w, h = self._screen_size
-            if w <= 0 or h <= 0:
+            min_x, min_y, max_x, max_y = self._screen_bbox
+            width = max_x - min_x
+            height = max_y - min_y
+            if width <= 0 or height <= 0:
                 return
-            # round() over int(): int() truncates and accumulates sub-pixel
-            # bias on repeated cross-screen round-trips. Clamp to [0, w-1] / [0, h-1] so a peer that sends
-            # values slightly >1.0 (rounding noise) doesn't land off-screen.
-            x = max(0, min(w - 1, round(x * w)))
-            y = max(0, min(h - 1, round(y * h)))
+            x = max(min_x, min(max_x - 1, round(min_x + x * width)))
+            y = max(min_y, min(max_y - 1, round(min_y + y * height)))
         except ValueError:
-            self._logger.log(f"Invalid x or y values: x={x}, y={y}", Logger.ERROR)
+            self._logger.error("invalid cursor coordinates", x=x, y=y)
             return
 
         try:
             self._controller.position = (x, y)
         except Exception as e:
-            # On some platforms, positioning may fail when cursor misses
-            self._logger.log(f"Failed to position cursor ({e})", Logger.ERROR)
+            self._logger.error("failed to position cursor", error=str(e))
 
 
-# TODO: Optimize edge detection to avoid false positives during crossing
 class ClientMouseController(object):
-    """
-    Async mouse controller for client side.
-    Handles mouse movements, clicks, and scrolls based on received events.
-    Converted from multiprocessing to fully async with asyncio tasks.
-    """
+    """Async client-side mouse controller (movements, clicks, scrolls)."""
 
     MOVEMENT_HISTORY_N_THRESHOLD = 6
     MOVEMENT_HISTORY_LEN = 8
-    # Time window within which consecutive presses on the same button are
-    # treated as part of a multi-click sequence (double, triple, ...).
+    # Consecutive presses on the same button within this window are
+    # tagged as a multi-click sequence (double, triple, ...).
     DOUBLE_CLICK_THRESHOLD = 0.4
-    # Safety cap on the click_count we forward to the OS.
     MAX_CLICK_COUNT = 10
 
     def __init__(
@@ -580,16 +835,8 @@ class ClientMouseController(object):
         stream_handler: StreamHandler,
         command_stream: StreamHandler,
     ):
-        """
-        Initializes the client mouse controller.
-
-        Args:
-            event_bus (EventBus): The event bus for dispatching events.
-            stream_handler (StreamHandler): The stream handler for mouse events.
-            command_stream (StreamHandler): The stream handler for command events.
-        """
-        self.stream = stream_handler  # Should be a mouse stream
-        self.command_stream = command_stream  # Should be a command stream
+        self.stream = stream_handler
+        self.command_stream = command_stream
         self.event_bus = event_bus
         self._cross_screen_event = asyncio.Event()
         self._edge_check_lock = asyncio.Lock()
@@ -597,11 +844,50 @@ class ClientMouseController(object):
 
         self._is_active = False
         self._current_screen = None
+        # Target monitor signalled by the server's most recent
+        # CrossScreenCommandEvent. ``None`` falls back to the virtual
+        # desktop bbox (legacy / single-monitor client).
+        self._active_monitor_id: Optional[int] = None
+        # Topology pushed by the server: each entry carries both
+        # server-side and client-side axis ranges, so the same dict
+        # drives the server's forward routing AND the client's
+        # return-to-server lookup here (via ``client_*`` fields).
+        self._edge_bindings: list[dict] = []
+        # Cross-monitor warp bindings within this client. Used to
+        # enforce the workspace topology over the OS-level adjacency:
+        # an unbound OS-driven drift is reverted; a bound transition
+        # is honoured via explicit warp.
+        self._intra_client_bindings: list[dict] = []
+        # O(1) lookups derived from ``_intra_client_bindings``.
+        # Rebuilt only when the server pushes a topology.
+        self._intra_by_src: dict[int, list[dict]] = {}
+        self._intra_pairs: set[tuple[int, int]] = set()
+        # Monitor last observed under the cursor - used to detect
+        # OS-driven drift between client monitors.
+        self._last_known_monitor_id: Optional[int] = None
+        # Fast-path cache for ``find_monitor_at`` (cursor usually stays
+        # within the same monitor across ticks).
+        self._cached_monitor = None
+        # Latest relative MOVE_ACTION delta from the server. Used as a
+        # direction fallback when the OS clamps the cursor against a
+        # monitor bound and the position history stalls - without it
+        # the cursor pinned at ``x = monitor.min_x`` can't trigger the
+        # return-to-server crossing.
+        self._last_move_delta: tuple[int, int] = (0, 0)
+        # Server's virtual desktop bbox - return-to-server (x, y) is
+        # normalised over this.
+        self._server_bbox: Optional[tuple[int, int, int, int]] = None
         self._screen_size: tuple[int, int] = Screen.get_size()
-        # Screen.hide_icon()  # On macOs calling controller.position can spawn a dock icon...
+        self._monitor_layout = Screen.get_monitor_layout()
+        self._screen_bbox: tuple[int, int, int, int] = (
+            self._monitor_layout.virtual_bbox
+            if self._monitor_layout.monitors
+            else Screen.get_virtual_bbox()
+        )
+        # Pre-resolved on activation so every mouse tick avoids the
+        # O(N) monitor scan.
+        self._active_target_bbox: tuple[int, int, int, int] = self._screen_bbox
 
-        # Instead of creating a listener, we just check edge cases after a mouse move event is received
-        # Using deque for better performance and async compatibility
         self._movement_history = deque(maxlen=self.MOVEMENT_HISTORY_LEN)
 
         self._controller = MouseController()
@@ -614,51 +900,46 @@ class ClientMouseController(object):
         self._logger = get_logger(self.__class__.__name__)
 
         self._logger.info(
-            f"Mouse controller backend: {BACKEND.get('mouse_controller', 'unknown')}"
+            "mouse controller backend selected",
+            backend=BACKEND.get("mouse_controller", "unknown"),
         )
 
-        # Check for cursor validity
         if not self.check_cursor_validity():
             raise RuntimeError("No valid cursor found.")
 
-        # Async queue instead of multiprocessing queue
         self._queue: asyncio.Queue = asyncio.Queue(maxsize=10000)
         self._worker_task: Optional[asyncio.Task] = None
         self._running = False
 
-        # Register to receive mouse events from the stream (async callback)
         self.stream.register_receive_callback(
             self._mouse_event_callback, message_type="mouse"
         )
 
-        # Subscribe with async callbacks
         self.event_bus.subscribe(
             event_type=BusEventType.CLIENT_ACTIVE, callback=self._on_client_active
         )
         self.event_bus.subscribe(
             event_type=BusEventType.CLIENT_INACTIVE, callback=self._on_client_inactive
         )
+        self.event_bus.subscribe(
+            event_type=BusEventType.CLIENT_TOPOLOGY_UPDATED,
+            callback=self._on_client_topology_updated,
+        )
 
     def check_cursor_validity(self) -> bool:
-        """
-        We use this check to ensure a cursor is available (On windows may fail if no cursor)
-        """
+        """Ensure a cursor is available - may fail on Windows when no cursor is present."""
         try:
             pos = self._controller.position
             if pos is None or len(pos) != 2:
                 return False
             return True
         except Exception:
-            self._logger.log("Cursor not available.", Logger.ERROR)
+            self._logger.error("cursor not available")
             return False
 
     async def start(self):
-        """
-        Starts the async mouse controller worker task.
-        """
         if not self._running:
             self._running = True
-            # Clear queue
             while not self._queue.empty():
                 try:
                     self._queue.get_nowait()
@@ -667,15 +948,11 @@ class ClientMouseController(object):
                 finally:
                     await asyncio.sleep(0)
 
-            # Start worker task
             self._worker_task = asyncio.create_task(self._run_worker())
-            self._logger.log("Async worker started.", Logger.DEBUG)
+            self._logger.debug("async worker started")
             await asyncio.sleep(0)
 
     async def stop(self):
-        """
-        Stops the async mouse controller worker task.
-        """
         if self._running:
             self._running = False
 
@@ -687,12 +964,9 @@ class ClientMouseController(object):
                     pass
                 self._worker_task = None
 
-            self._logger.log("Async worker stopped.", Logger.DEBUG)
+            self._logger.debug("async worker stopped")
 
     def is_alive(self) -> bool:
-        """
-        Checks if the async mouse controller worker task is running.
-        """
         return (
             self._running
             and self._worker_task is not None
@@ -700,33 +974,27 @@ class ClientMouseController(object):
         )
 
     async def _run_worker(self):
-        """
-        Async worker task to handle mouse events.
-        Replaces the multiprocessing worker.
-        """
         while self._running:
             try:
-                # Get message from async queue
                 message = await self._queue.get()
 
                 event = EventMapper.get_event(message)
                 if not isinstance(event, MouseEvent):
                     continue
 
-                # Execute mouse actions in executor to avoid blocking
                 if event.action == MouseEvent.MOVE_ACTION:
                     self._move_cursor(event.x, event.y, event.dx, event.dy)
-                    # Check for edge crossing after movement
                     await self._check_edge()
                 elif event.action == MouseEvent.POSITION_ACTION:
-                    for _ in range(
-                        10
-                    ):  # We position multiple times to ensure it works across platforms
+                    # Position multiple times so absolute placement
+                    # converges across platforms. A read-back check can't
+                    # replace this: some OSes report the target position
+                    # before the cursor actually moves (see the matching
+                    # note in ServerMouseController._on_active_screen_changed).
+                    for _ in range(10):
                         await self._position_cursor(event.x, event.y)
-                    # Check for edge crossing after positioning
                     await self._check_edge()
                 elif event.action == MouseEvent.CLICK_ACTION:
-                    # Click is fast enough to run directly
                     self._click(event.button, event.is_pressed)
                 elif event.action == MouseEvent.SCROLL_ACTION:
                     self._scroll(event.dx, event.dy)
@@ -737,59 +1005,448 @@ class ClientMouseController(object):
             except asyncio.CancelledError:
                 break
             except Exception as e:
-                self._logger.log(f"Error in worker ({e})", Logger.ERROR)
+                self._logger.error("worker error", error=str(e))
                 await asyncio.sleep(0.01)
 
     async def _on_client_active(self, data: Optional[ClientActiveEvent]):
-        """
-        Async event handler for when client becomes active.
-        """
         if data is not None:
-            self._current_screen = data.client_screen
-        # Reset movement history
+            self._current_screen = data.client_uid
+            self._active_monitor_id = data.client_monitor_id
+
+            self._active_target_bbox = self._screen_bbox
+            if self._active_monitor_id is not None and self._monitor_layout.monitors:
+                for m in self._monitor_layout.monitors:
+                    if m.monitor_id == self._active_monitor_id:
+                        self._active_target_bbox = (m.min_x, m.min_y, m.max_x, m.max_y)
+                        break
+            # Prime "last seen" with the landing target so the first
+            # ``_check_edge`` doesn't flag the landing as drift.
+            self._last_known_monitor_id = self._active_monitor_id
         self._movement_history.clear()
+        self._last_move_delta = (0, 0)
 
         self._is_active = True
         self._cross_screen_event.clear()
 
-        # Auto-start if not running
         if not self._running:
             await self.start()
 
+        # Position at the landing point if the server packed the coords
+        # into CLIENT_ACTIVE. Done AFTER ``_is_active`` flips True so
+        # the parallel POSITION_ACTION on the mouse stream can't race
+        # the activation event and silently drop the landing. The
+        # fixed-repeat write is intentional (see the note in
+        # ServerMouseController._on_active_screen_changed) - a read-back
+        # check would pass before the cursor really moves on some OSes.
+        if data is not None and data.position_x >= 0 and data.position_y >= 0:
+            for _ in range(10):
+                await self._position_cursor(data.position_x, data.position_y)
+
     async def _on_client_inactive(self, data: Optional[ClientActiveEvent]):
-        """
-        Async event handler for when a client becomes inactive.
-        """
-        # Reset movement history
         self._movement_history.clear()
         self._cross_screen_event.clear()
         self._is_active = False
+        self._active_monitor_id = None
+        self._active_target_bbox = self._screen_bbox
+        self._last_known_monitor_id = None
+        self._last_move_delta = (0, 0)
+
+    async def _on_client_topology_updated(
+        self, data: Optional[ClientTopologyUpdatedEvent]
+    ):
+        """Cache the topology pushed by the server for ``_check_edge``."""
+        if data is None:
+            return
+        self._edge_bindings = list(data.edge_bindings or [])
+        self._intra_client_bindings = list(
+            getattr(data, "intra_client_bindings", []) or []
+        )
+        # Pre-build O(1) lookups for the hot path.
+        by_src: dict[int, list[dict]] = {}
+        pairs: set[tuple[int, int]] = set()
+        for b in self._intra_client_bindings:
+            src_id = b.get("src_monitor_id")
+            dst_id = b.get("dst_monitor_id")
+            if src_id is None or dst_id is None:
+                continue
+            by_src.setdefault(int(src_id), []).append(b)
+            pairs.add((int(src_id), int(dst_id)))
+        self._intra_by_src = by_src
+        self._intra_pairs = pairs
+        if data.server_bbox:
+            try:
+                self._server_bbox = (
+                    int(data.server_bbox[0]),
+                    int(data.server_bbox[1]),
+                    int(data.server_bbox[2]),
+                    int(data.server_bbox[3]),
+                )
+            except (TypeError, ValueError, IndexError):
+                self._server_bbox = None
+        await asyncio.sleep(0)
+
+    _EDGE_TO_STRING_CLIENT: dict = {
+        ScreenEdge.LEFT: "left",
+        ScreenEdge.RIGHT: "right",
+        ScreenEdge.TOP: "top",
+        ScreenEdge.BOTTOM: "bottom",
+    }
+
+    def _find_monitor_for_cursor(self, x: float, y: float):
+        """Monitor containing ``(x, y)``, or the nearest one for L-shape dead zones."""
+        cached = self._cached_monitor
+        if cached is not None and cached.contains(x, y):
+            return cached
+        m = self._monitor_layout.nearest_monitor(x, y)
+        if m is not None:
+            self._cached_monitor = m
+        return m
+
+    def _detect_edge_via_delta(
+        self,
+        x: float,
+        y: float,
+        monitor,
+    ) -> Optional[ScreenEdge]:
+        """Edge detection via the latest forwarded delta.
+
+        Fallback for when the OS clamps the cursor against a monitor
+        bound - the position history stalls but the delta still reveals
+        which edge the user is pushing toward.
+
+        Boundary convention: "cursor sits ON the inner edge pixel, still
+        inside the monitor" - ``x <= min_x`` (column 0) / ``x >= max_x-1``
+        (last valid column, since a monitor occupies ``[min, max)``). This
+        is deliberately different from :meth:`_infer_exit_edge`, which
+        tests "already OUTSIDE the box". Do not unify the two - they run
+        in different contexts and merging the comparisons breaks the drift
+        handler.
+        """
+        if monitor is None:
+            return None
+        dx, dy = self._last_move_delta
+        if dx == 0 and dy == 0:
+            return None
+        if x <= monitor.min_x and dx < 0:
+            return ScreenEdge.LEFT
+        if x >= monitor.max_x - 1 and dx > 0:
+            return ScreenEdge.RIGHT
+        if y <= monitor.min_y and dy < 0:
+            return ScreenEdge.TOP
+        if y >= monitor.max_y - 1 and dy > 0:
+            return ScreenEdge.BOTTOM
+        return None
+
+    @staticmethod
+    def _detect_directed_edge(
+        movement_history,
+        x: float,
+        y: float,
+        monitor,
+        direction_ratio: float = 0.85,
+    ) -> Optional[ScreenEdge]:
+        """Edge approach detection on a single monitor, ignoring OS adjacency.
+
+        :meth:`EdgeDetector.is_at_edge` filters edges with an OS-level
+        neighbour, which is right on the server (OS layout = intent)
+        but wrong on the client when the workspace topology contradicts
+        the OS one.
+
+        Boundary convention: "cursor ON the inner edge pixel, still
+        inside" (``x <= min_x`` / ``x >= max_x-1``) - same as
+        :meth:`_detect_edge_via_delta` and distinct from
+        :meth:`_infer_exit_edge` (which tests "already outside").
+        """
+        size = len(movement_history)
+        if size < 2 or monitor is None:
+            return None
+
+        x_edge = None
+        x_axis_sign = 0
+        if x <= monitor.min_x:
+            x_edge = ScreenEdge.LEFT
+            x_axis_sign = -1
+        elif x >= monitor.max_x - 1:
+            x_edge = ScreenEdge.RIGHT
+            x_axis_sign = 1
+
+        y_edge = None
+        y_axis_sign = 0
+        if y <= monitor.min_y:
+            y_edge = ScreenEdge.TOP
+            y_axis_sign = -1
+        elif y >= monitor.max_y - 1:
+            y_edge = ScreenEdge.BOTTOM
+            y_axis_sign = 1
+
+        if x_edge is None and y_edge is None:
+            return None
+
+        pairs = size - 1
+        min_agreements = int(pairs * direction_ratio)
+
+        if x_edge is not None:
+            agreements = 0
+            for i in range(pairs):
+                if (
+                    movement_history[i + 1][0] - movement_history[i][0]
+                ) * x_axis_sign > 0:
+                    agreements += 1
+            if agreements >= min_agreements:
+                return x_edge
+
+        if y_edge is not None:
+            agreements = 0
+            for i in range(pairs):
+                if (
+                    movement_history[i + 1][1] - movement_history[i][1]
+                ) * y_axis_sign > 0:
+                    agreements += 1
+            if agreements >= min_agreements:
+                return y_edge
+
+        return None
+
+    def _resolve_intra_client_warp(
+        self,
+        edge: ScreenEdge,
+        x: float,
+        y: float,
+        monitor,
+    ) -> Optional[tuple[int, float, float]]:
+        """Match an edge approach against an intra-client binding.
+
+        Returns ``(dst_monitor_id, target_x, target_y)`` or ``None`` when
+        no binding covers ``(monitor, edge, axis_norm)``.
+        """
+        if monitor is None:
+            return None
+        candidates = self._intra_by_src.get(monitor.monitor_id)
+        if not candidates:
+            return None
+        edge_str = self._EDGE_TO_STRING_CLIENT.get(edge)
+        if edge_str is None:
+            return None
+
+        m_w = max(1, monitor.max_x - monitor.min_x)
+        m_h = max(1, monitor.max_y - monitor.min_y)
+        if edge == ScreenEdge.LEFT or edge == ScreenEdge.RIGHT:
+            axis_norm = (y - monitor.min_y) / m_h
+        else:
+            axis_norm = (x - monitor.min_x) / m_w
+        axis_norm = max(0.0, min(1.0, axis_norm))
+
+        for b in candidates:
+            if b.get("src_edge") != edge_str:
+                continue
+            s_start = b.get("src_axis_start", 0.0)
+            s_end = b.get("src_axis_end", 0.0)
+            if s_end <= s_start or not (s_start <= axis_norm < s_end):
+                continue
+
+            local = (axis_norm - s_start) / (s_end - s_start)
+            if local < 0.0:
+                local = 0.0
+            elif local > 1.0:
+                local = 1.0
+            d_start = b.get("dst_axis_start", 0.0)
+            d_end = b.get("dst_axis_end", 0.0)
+            dst_axis = d_start + local * (d_end - d_start)
+
+            dst_id = int(b.get("dst_monitor_id", -1))
+            dst_edge = b.get("dst_edge")
+            d_min_x = int(b.get("dst_monitor_min_x", 0))
+            d_min_y = int(b.get("dst_monitor_min_y", 0))
+            d_max_x = int(b.get("dst_monitor_max_x", 0))
+            d_max_y = int(b.get("dst_monitor_max_y", 0))
+            d_w = max(1, d_max_x - d_min_x)
+            d_h = max(1, d_max_y - d_min_y)
+
+            # Land JUST INSIDE the destination edge so the next tick
+            # doesn't re-trigger the same warp from the other side.
+            if dst_edge == "right":
+                target_x = d_max_x - 2
+                target_y = d_min_y + dst_axis * d_h
+            elif dst_edge == "left":
+                target_x = d_min_x + 1
+                target_y = d_min_y + dst_axis * d_h
+            elif dst_edge == "bottom":
+                target_x = d_min_x + dst_axis * d_w
+                target_y = d_max_y - 2
+            elif dst_edge == "top":
+                target_x = d_min_x + dst_axis * d_w
+                target_y = d_min_y + 1
+            else:
+                continue
+
+            return dst_id, target_x, target_y
+
+        return None
+
+    def _has_intra_binding_between(
+        self, src_monitor_id: int, dst_monitor_id: int
+    ) -> bool:
+        """True iff the workspace authorises a ``src -> dst`` cross-monitor transition."""
+        return (src_monitor_id, dst_monitor_id) in self._intra_pairs
+
+    @staticmethod
+    def _infer_exit_edge(previous, x: float, y: float) -> Optional[ScreenEdge]:
+        """Infer which edge of ``previous`` the cursor crossed to reach (x, y).
+
+        When the OS warps the cursor across physically-adjacent monitors
+        in a single tick, the edge detector never fires on ``previous``.
+        Reconstructing the exit edge from the cursor's offset lets the
+        drift handler still resolve a workspace edge binding before
+        falling back to a clamp.
+
+        Boundary convention: "cursor is already OUTSIDE ``previous``" -
+        ``x < min_x`` / ``x >= max_x`` (the box is half-open ``[min,
+        max)``, so ``max`` itself is outside). This is intentionally NOT
+        the same as :meth:`_detect_edge_via_delta` /
+        :meth:`_detect_directed_edge` ("at the inner edge, still inside",
+        ``x >= max-1``): this helper only runs after the OS has already
+        moved the cursor onto an adjacent monitor, so ``x == min_x`` is
+        still inside ``previous`` and correctly returns no edge here.
+        """
+        if previous is None:
+            return None
+        if x < previous.min_x:
+            return ScreenEdge.LEFT
+        if x >= previous.max_x:
+            return ScreenEdge.RIGHT
+        if y < previous.min_y:
+            return ScreenEdge.TOP
+        if y >= previous.max_y:
+            return ScreenEdge.BOTTOM
+        return None
+
+    def _lookup_return_to_server(
+        self,
+        monitor,
+        edge: ScreenEdge,
+        x: float,
+        y: float,
+    ) -> Optional[tuple[float, float]]:
+        """Edge binding lookup against an explicit (monitor, edge, x, y).
+
+        Used by the drift handler when cursor has already crossed off
+        ``monitor`` in the OS, so ``find_monitor_at(x, y)`` would return
+        the WRONG monitor for the lookup.
+        """
+        if not self._edge_bindings or monitor is None or self._server_bbox is None:
+            return None
+        edge_str = self._EDGE_TO_STRING_CLIENT.get(edge)
+        if edge_str is None:
+            return None
+
+        m_w = max(1, monitor.max_x - monitor.min_x)
+        m_h = max(1, monitor.max_y - monitor.min_y)
+        if edge == ScreenEdge.LEFT or edge == ScreenEdge.RIGHT:
+            axis_norm = (y - monitor.min_y) / m_h
+        else:
+            axis_norm = (x - monitor.min_x) / m_w
+        axis_norm = max(0.0, min(1.0, axis_norm))
+
+        for b in self._edge_bindings:
+            if b.get("client_monitor_id") != monitor.monitor_id:
+                continue
+            if b.get("client_edge") != edge_str:
+                continue
+            c_start = b.get("client_axis_start", 0.0)
+            c_end = b.get("client_axis_end", 0.0)
+            c_span = c_end - c_start
+            if c_span <= 0 or not (c_start <= axis_norm < c_end):
+                continue
+
+            local_norm = (axis_norm - c_start) / c_span
+            s_start = b.get("server_axis_start", 0.0)
+            s_end = b.get("server_axis_end", 0.0)
+            server_axis = s_start + local_norm * (s_end - s_start)
+
+            s_min_x = int(b.get("server_monitor_min_x", 0))
+            s_min_y = int(b.get("server_monitor_min_y", 0))
+            s_max_x = int(b.get("server_monitor_max_x", 0))
+            s_max_y = int(b.get("server_monitor_max_y", 0))
+            s_edge = b.get("server_edge")
+            s_w = max(1, s_max_x - s_min_x)
+            s_h = max(1, s_max_y - s_min_y)
+            edge_margin = 6
+            if s_edge == "right":
+                target_x = s_max_x - edge_margin
+                target_y = s_min_y + server_axis * s_h
+            elif s_edge == "left":
+                target_x = s_min_x + edge_margin
+                target_y = s_min_y + server_axis * s_h
+            elif s_edge == "bottom":
+                target_x = s_min_x + server_axis * s_w
+                target_y = s_max_y - edge_margin
+            elif s_edge == "top":
+                target_x = s_min_x + server_axis * s_w
+                target_y = s_min_y + edge_margin
+            else:
+                continue
+
+            bx0, by0, bx1, by1 = self._server_bbox
+            bw = max(1, bx1 - bx0)
+            bh = max(1, by1 - by0)
+            x_norm = (target_x - bx0) / bw
+            y_norm = (target_y - by0) / bh
+            if x_norm < 0.0:
+                x_norm = 0.0
+            elif x_norm > 1.0:
+                x_norm = 1.0
+            if y_norm < 0.0:
+                y_norm = 0.0
+            elif y_norm > 1.0:
+                y_norm = 1.0
+            return x_norm, y_norm
+
+        return None
+
+    def _clamp_cursor_to_monitor(self, monitor) -> None:
+        """Pin the cursor just inside ``monitor``'s bbox."""
+        if monitor is None:
+            return
+        try:
+            pos = self._controller.position
+            if not pos or len(pos) != 2:
+                return
+            cx, cy = pos
+            new_x = max(monitor.min_x + 1, min(monitor.max_x - 2, cx))
+            new_y = max(monitor.min_y + 1, min(monitor.max_y - 2, cy))
+            if (new_x, new_y) != (cx, cy):
+                self._controller.position = (new_x, new_y)
+        except Exception as e:
+            self._logger.error("failed to clamp cursor to monitor", error=str(e))
+
+    def _resolve_return_to_server(
+        self,
+        edge: ScreenEdge,
+        x: float,
+        y: float,
+    ) -> Optional[tuple[float, float]]:
+        """Dual of ``ServerMouseListener._resolve_cross_screen_target``."""
+        monitor = self._monitor_layout.nearest_monitor(x, y)
+        if monitor is None:
+            return None
+        return self._lookup_return_to_server(monitor, edge, x, y)
 
     async def _mouse_event_callback(self, message):
-        """
-        Async callback function to handle mouse events received from the stream.
-        """
         try:
-            # Auto-start if not running
             if not self._running:
                 await self.start()
 
-            # Ignore events if crossing screen or inactive
             if self._cross_screen_event.is_set() or not self._is_active:
                 return await asyncio.sleep(0)
 
-            # Put message in async queue
             await self._queue.put(message)
             return None
         except Exception as e:
-            self._logger.log(f"Failed to process mouse event ({e})", Logger.ERROR)
+            self._logger.error("failed to process mouse event", error=str(e))
             return None
 
     async def _check_edge(self):
-        """
-        Check if the mouse cursor is at the edge of the screen and handle accordingly.
-        This is called after cursor movement. Optimized for maximum speed.
-        """
+        """Enforce the workspace topology on every cursor tick."""
         if (
             self._checking_edge
             or self._cross_screen_event.is_set()
@@ -798,100 +1455,209 @@ class ClientMouseController(object):
             return await asyncio.sleep(0)
 
         try:
-            # Acquisisci il lock per serializzare i controlli edge
             async with self._edge_check_lock:
-                # Double-check dopo aver acquisito il lock
                 if self._cross_screen_event.is_set() or not self._is_active:
                     return await asyncio.sleep(0)
 
                 self._checking_edge = True
 
-                # Get the current cursor position
                 pos = self._controller.position
-                if pos is None or len(pos) != 2:  # Invalid position
+                if pos is None or len(pos) != 2:
                     return None
                 x, y = pos
-
-                # Add the current position to the movement history
                 self._movement_history.append((x, y))
 
-                # Need at least 2 positions to determine direction
-                if len(self._movement_history) < self.MOVEMENT_HISTORY_N_THRESHOLD:
+                current_monitor = self._find_monitor_for_cursor(x, y)
+                if current_monitor is not None:
+                    self._active_target_bbox = (
+                        current_monitor.min_x,
+                        current_monitor.min_y,
+                        current_monitor.max_x,
+                        current_monitor.max_y,
+                    )
+                    self._active_monitor_id = current_monitor.monitor_id
+
+                if await self._handle_os_drift(x, y, current_monitor):
                     return None
 
-                edge = EdgeDetector.is_at_edge(
-                    movement_history=self._movement_history,
-                    x=x,
-                    y=y,
-                    screen_size=self._screen_size,
-                    is_dragging=False,  # Force to false, we will handle it separately
-                )
+                if current_monitor is not None:
+                    self._last_known_monitor_id = current_monitor.monitor_id
 
-                if edge:
-                    # Clamp cursor position to screen bounds
-                    cx, cy = EdgeDetector.clamp_to_screen(x, y, self._screen_size)
-                    if (cx, cy) != (x, y):
-                        try:
-                            self._controller.position = (cx, cy)
-                            x, y = cx, cy
-                        except Exception as e:
-                            self._logger.log(
-                                f"Failed to clamp cursor to screen ({e})", Logger.ERROR
-                            )
-
-                # If we reach an edge, dispatch event to deactivate client and send cross screen message to server
-                if (
-                    edge and not self._is_dragging
-                ):  # Don't trigger edge crossing if dragging
-                    x, y = EdgeDetector.get_crossing_coords(
+                edge = None
+                if len(self._movement_history) >= self.MOVEMENT_HISTORY_N_THRESHOLD:
+                    edge = self._detect_directed_edge(
+                        movement_history=self._movement_history,
                         x=x,
                         y=y,
-                        screen_size=self._screen_size,
-                        edge=edge,
-                        screen=self._current_screen,
+                        monitor=current_monitor,
                     )
+                if edge is None:
+                    edge = self._detect_edge_via_delta(x, y, current_monitor)
 
-                    if x == -1 and y == -1:
-                        # Invalid crossing coords for current screen setup
-                        return None
+                if edge is None or self._is_dragging:
+                    return None
 
-                    # Set event BEFORE clearing history to block concurrent checks
-                    self._cross_screen_event.set()
-
-                    # Clear movement history atomically
-                    self._movement_history.clear()
-
-                    command = CrossScreenCommandEvent(x=x, y=y)
-
-                    # Send command and dispatch event sequentially
-                    await self.command_stream.send(command)
-                    await self.event_bus.dispatch(
-                        event_type=BusEventType.CLIENT_INACTIVE, data=None
-                    )
-
+                if await self._try_return_to_server(edge, x, y):
                     return await asyncio.sleep(0)
 
+                if self._try_intra_client_warp_sync(edge, x, y, current_monitor):
+                    return None
+
+                if current_monitor is not None:
+                    self._clamp_cursor_to_monitor(current_monitor)
+                    self._movement_history.clear()
+                return None
+
         except Exception as e:
-            self._logger.log(f"Failed to dispatch screen event ({e})", Logger.ERROR)
+            self._logger.error("failed to dispatch screen event", error=str(e))
         finally:
             self._checking_edge = False
 
-        return await asyncio.sleep(0)
+    async def _handle_os_drift(self, x: float, y: float, current_monitor) -> bool:
+        """Detect/consume unauthorised OS-driven monitor transitions.
+
+        ``True`` ⇒ drift was handled (caller must return). The fast-motion
+        case bypasses ``_detect_directed_edge`` so the exit edge has to be
+        re-inferred to honour workspace return-to-server/intra-warp bindings.
+        """
+        if not (
+            current_monitor is not None
+            and self._last_known_monitor_id is not None
+            and current_monitor.monitor_id != self._last_known_monitor_id
+            and not self._has_intra_binding_between(
+                self._last_known_monitor_id, current_monitor.monitor_id
+            )
+            and not self._is_dragging
+        ):
+            return False
+
+        previous = next(
+            (
+                m
+                for m in self._monitor_layout.monitors
+                if m.monitor_id == self._last_known_monitor_id
+            ),
+            None,
+        )
+        if previous is None:
+            return False
+
+        exit_edge = self._infer_exit_edge(previous, x, y)
+        self._logger.debug(
+            "OS drift detected",
+            from_monitor=previous.monitor_id,
+            to_monitor=current_monitor.monitor_id,
+            exit_edge=str(exit_edge) if exit_edge else None,
+            bindings=len(self._edge_bindings),
+            has_server_bbox=self._server_bbox is not None,
+        )
+
+        if exit_edge is not None:
+            edge_x = max(previous.min_x, min(previous.max_x - 1, x))
+            edge_y = max(previous.min_y, min(previous.max_y - 1, y))
+
+            resolved = self._lookup_return_to_server(
+                previous, exit_edge, edge_x, edge_y
+            )
+            if resolved is not None:
+                target_x, target_y = resolved
+                self._cross_screen_event.set()
+                self._movement_history.clear()
+                # Pull the local cursor back inside ``previous`` so it
+                # doesn't visually remain stranded on the unplaced
+                # OS-neighbour after handing control back to the server.
+                self._clamp_cursor_to_monitor(previous)
+                self._logger.debug(
+                    "return-to-server from drift",
+                    monitor=previous.monitor_id,
+                    edge=str(exit_edge),
+                    target_x=target_x,
+                    target_y=target_y,
+                )
+                await self.command_stream.send(
+                    CrossScreenCommandEvent(x=target_x, y=target_y)
+                )
+                await self.event_bus.dispatch(
+                    event_type=BusEventType.CLIENT_INACTIVE, data=None
+                )
+                return True
+
+            self._logger.debug(
+                "no return-to-server binding for drift edge",
+                monitor=previous.monitor_id,
+                edge=str(exit_edge),
+            )
+            if self._try_intra_client_warp_sync(exit_edge, edge_x, edge_y, previous):
+                return True
+
+        self._clamp_cursor_to_monitor(previous)
+        pos = self._controller.position
+        if pos and len(pos) == 2:
+            nx, ny = pos
+            self._movement_history.clear()
+            self._movement_history.append((nx, ny))
+            self._active_target_bbox = (
+                previous.min_x,
+                previous.min_y,
+                previous.max_x,
+                previous.max_y,
+            )
+            self._active_monitor_id = previous.monitor_id
+        return True
+
+    async def _try_return_to_server(self, edge: ScreenEdge, x: float, y: float) -> bool:
+        """Return True if a cross-screen binding consumed the edge approach."""
+        resolved = self._resolve_return_to_server(edge, x, y)
+        if resolved is None:
+            return False
+        target_x, target_y = resolved
+        self._cross_screen_event.set()
+        self._movement_history.clear()
+        await self.command_stream.send(CrossScreenCommandEvent(x=target_x, y=target_y))
+        await self.event_bus.dispatch(
+            event_type=BusEventType.CLIENT_INACTIVE, data=None
+        )
+        return True
+
+    def _try_intra_client_warp_sync(
+        self, edge: ScreenEdge, x: float, y: float, current_monitor
+    ) -> bool:
+        """Execute an intra-client warp if a binding covers the edge."""
+        warp = self._resolve_intra_client_warp(edge, x, y, current_monitor)
+        if warp is None:
+            return False
+        dst_monitor_id, target_x, target_y = warp
+        try:
+            self._controller.position = (int(target_x), int(target_y))
+        except Exception as e:
+            self._logger.error("failed to warp cursor intra-client", error=str(e))
+            return True
+        # Update last-known to the warp destination so the next tick
+        # doesn't flag this as drift.
+        self._last_known_monitor_id = dst_monitor_id
+        self._active_monitor_id = dst_monitor_id
+        for m in self._monitor_layout.monitors:
+            if m.monitor_id == dst_monitor_id:
+                self._active_target_bbox = (
+                    m.min_x,
+                    m.min_y,
+                    m.max_x,
+                    m.max_y,
+                )
+                break
+        self._movement_history.clear()
+        return True
 
     async def _position_cursor(self, x: float | int, y: float | int):
-        """
-        Position the mouse cursor to the specified (x, y) coordinates.
-        """
+        """Position the cursor at normalised ``(x, y)`` over the active target bbox."""
         try:
-            # Denormalize coordinates by mapping into the client screen size.
-            # round() + clamp: int() truncation introduces sub-pixel jitter
-            # on every cross-screen round-trip; clamping prevents off-screen
-            # positions when a peer sends slightly out-of-range floats.
-            w, h = self._screen_size
-            if w <= 0 or h <= 0:
+            min_x, min_y, max_x, max_y = self._active_target_bbox
+            width = max_x - min_x
+            height = max_y - min_y
+            if width <= 0 or height <= 0:
                 return
-            x = max(0, min(w - 1, round(x * w)))
-            y = max(0, min(h - 1, round(y * h)))
+            x = max(min_x, min(max_x - 1, round(min_x + x * width)))
+            y = max(min_y, min(max_y - 1, round(min_y + y * height)))
         except ValueError:
             return
 
@@ -899,18 +1665,14 @@ class ClientMouseController(object):
             self._controller.position = (x, y)
             await asyncio.sleep(0)
         except Exception as e:
-            # On some platforms, positioning may fail when cursor misses
-            self._logger.log(f"Failed to position cursor ({e})", Logger.ERROR)
+            self._logger.error("failed to position cursor", error=str(e))
 
     def _move_cursor(
         self, x: float | int, y: float | int, dx: float | int, dy: float | int
     ):
-        """
-        Move the mouse cursor to the specified (x, y) coordinates.
-        """
-        # if dx and dy are provided, use relative movement
+        # (-1, -1) signals relative movement; otherwise absolute over
+        # ``_active_target_bbox``.
         if x == -1 and y == -1:
-            # Convert to int for pynput
             try:
                 dx = int(dx)
                 dy = int(dy)
@@ -918,33 +1680,33 @@ class ClientMouseController(object):
                 dx = 0
                 dy = 0
 
+            # Cached so ``_check_edge`` can detect a push toward an edge
+            # when OS clamping has stalled the position history.
+            self._last_move_delta = (dx, dy)
             self._controller.move(dx=dx, dy=dy)
         else:
             try:
-                # Denormalize coordinates by mapping into the client screen
-                # size. round() + clamp for smooth, in-bounds positioning.
-                w, h = self._screen_size
-                if w <= 0 or h <= 0:
+                min_x, min_y, max_x, max_y = self._active_target_bbox
+                width = max_x - min_x
+                height = max_y - min_y
+                if width <= 0 or height <= 0:
                     return
-                x = max(0, min(w - 1, round(x * w)))
-                y = max(0, min(h - 1, round(y * h)))
+                x = max(min_x, min(max_x - 1, round(min_x + x * width)))
+                y = max(min_y, min(max_y - 1, round(min_y + y * height)))
             except ValueError:
                 return
 
             try:
                 self._controller.position = (x, y)
             except Exception as e:
-                # On some platforms, positioning may fail when cursor misses
-                self._logger.log(f"Failed to position cursor ({e})", Logger.ERROR)
+                self._logger.error("failed to position cursor", error=str(e))
 
     def _click(self, button: int | None, is_pressed: bool):
-        """
-        Perform a mouse click action.
+        """Forward press/release to the OS, tagging multi-click sequences.
 
-        Each press/release is forwarded 1:1 to the OS so no click is dropped.
-        Consecutive presses on the same button within DOUBLE_CLICK_THRESHOLD are
-        tagged with an incrementing click_count (1, 2, 3, ...) which lets the OS
-        recognise double/triple clicks.
+        Consecutive presses on the same button within
+        ``DOUBLE_CLICK_THRESHOLD`` increment ``click_count`` so the OS
+        recognises double/triple clicks.
         """
         try:
             name = ButtonMapping(button).name
@@ -953,15 +1715,13 @@ class ClientMouseController(object):
             return
 
         if is_pressed:
-            # Defensive: if we're already pressed (e.g. duplicated or
-            # reordered press event), release first so we don't get stuck.
+            # Release first if already pressed (duplicated/reordered
+            # press) so we don't get stuck.
             if self._pressed:
                 try:
                     self._controller.release(btn)
                 except Exception as e:
-                    self._logger.log(
-                        f"Failed to release stuck button ({e})", Logger.ERROR
-                    )
+                    self._logger.error("failed to release stuck button", error=str(e))
                 self._pressed = False
 
             current_time = time()
@@ -980,7 +1740,7 @@ class ClientMouseController(object):
                 self._controller.press(btn)
                 self._pressed = True
             except Exception as e:
-                self._logger.log(f"Failed to press button ({e})", Logger.ERROR)
+                self._logger.error("failed to press button", error=str(e))
 
             self._last_press_time = current_time
             self._previous_button = button
@@ -990,7 +1750,7 @@ class ClientMouseController(object):
                 try:
                     self._controller.release(btn)
                 except Exception as e:
-                    self._logger.log(f"Failed to release button ({e})", Logger.ERROR)
+                    self._logger.error("failed to release button", error=str(e))
                 self._pressed = False
 
         self._is_dragging = is_pressed and ButtonMapping(button).value in [
@@ -999,26 +1759,21 @@ class ClientMouseController(object):
         ]
 
     def _apply_click_count(self, count: int):
-        """
-        Hint the next press/release with the desired click_count.
+        """Hint pynput's macOS controller about the desired click_count.
 
-        Only meaningful on macOS where pynput.Controller increments its
-        ``_click`` attribute inside ``_press`` and tags the Quartz event with
-        ``kCGMouseEventClickState``.
+        Only meaningful on macOS where ``_press`` increments ``_click``
+        and tags the Quartz event with ``kCGMouseEventClickState``.
         """
         if not hasattr(self._controller, "_click"):
             return
         try:
-            # pynput's macOS _press does `self._click += 1` before posting,
-            # so set count-1 to land on the desired value.
+            # macOS _press does ``self._click += 1`` before posting, so
+            # we set count-1 to land on the desired value.
             self._controller._click = max(count - 1, 0)
         except Exception:
             pass
 
     def _scroll(self, dx: int | float, dy: int | float):
-        """
-        Perform a mouse scroll action.
-        """
         try:
             dx = int(dx)
             dy = int(dy)

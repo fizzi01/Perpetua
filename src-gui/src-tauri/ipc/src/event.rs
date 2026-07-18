@@ -103,6 +103,7 @@ pub enum EventType {
     ScreenChanged,
     ScreenTransitionStarted,
     ScreenTransitionCompleted,
+    MonitorTopologyChanged,
 
     // Transfer events
     FileTransferStarted,
@@ -186,6 +187,7 @@ pub enum CommandType {
     ApproveClient,
     DenyClient,
     ListPendingApprovals,
+    SetClientLayout,
 
     // SSL/Certificate management
     EnableSsl,

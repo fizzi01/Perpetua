@@ -126,9 +126,14 @@ class _EiConnection:
 
     @property
     def device(self):
-        if self._error is not None:
-            raise self._error
-        return self._device
+        # Read under the module lock so a concurrent _dispatch_loop tear-down
+        # (which nulls _device and sets _error) is observed atomically: we
+        # either see a live device or re-raise the real reason, never a bare
+        # None that would surface as an opaque 'NoneType' attribute error.
+        with _conn_lock:
+            if self._error is not None:
+                raise self._error
+            return self._device
 
     @property
     def paused(self) -> bool:
@@ -240,15 +245,23 @@ class _EiConnection:
                             self._device.start_emulating(0)
 
                     elif etype == EventType.DEVICE_REMOVED:
-                        self._error = RuntimeError(
-                            "libei: device removed by compositor"
-                        )
-                        self._device = None
+                        # Null the device and set the error atomically so the
+                        # controller's `device` property never observes a live
+                        # None (which would raise an opaque 'NoneType' error
+                        # instead of this reason).
+                        with _conn_lock:
+                            self._device = None
+                            self._error = RuntimeError(
+                                "libei: device removed by compositor"
+                            )
                         return
 
                     elif etype == EventType.DISCONNECT:
-                        self._error = RuntimeError("libei: disconnected by compositor")
-                        self._device = None
+                        with _conn_lock:
+                            self._device = None
+                            self._error = RuntimeError(
+                                "libei: disconnected by compositor"
+                            )
                         return
         finally:
             _restore_stderr(saved_stderr)
@@ -262,17 +275,25 @@ def _get_connection() -> _EiConnection:
     global _conn
     with _conn_lock:
         if _conn is None:
-            _conn = _EiConnection()
-            _conn.connect()
+            # Build locally and publish the singleton ONLY after connect()
+            # succeeds. A connect() that raises (e.g. the RemoteDesktop portal
+            # isn't authorized yet) must not leave a half-initialized instance
+            # (_device=None, _error=None) cached: that would make _ensure_conn
+            # believe the connection is healthy and hand out a None device
+            # forever, until the process restarts.
+            conn = _EiConnection()
+            conn.connect()
+            _conn = conn
         return _conn
 
 
 def _reconnect() -> _EiConnection:
     global _conn
     with _conn_lock:
-        _conn = _EiConnection()
-        _conn.connect()
-        return _conn
+        conn = _EiConnection()
+        conn.connect()
+        _conn = conn
+        return conn
 
 
 def _scroll_discrete(device, dx: int, dy: int):
@@ -285,12 +306,31 @@ class MouseController:
     def __init__(self):
         self._x = 0
         self._y = 0
-        self._conn = _get_connection()
+        self._logger = get_logger(self.__class__.__name__)
+        # Best-effort: if the RemoteDesktop portal isn't ready yet (common right
+        # after enabling sharing), don't abort client startup. _ensure_conn
+        # establishes the connection lazily on the first injection and keeps
+        # retrying until the portal becomes available.
+        try:
+            self._conn = _get_connection()
+        except Exception as exc:
+            self._conn = None
+            self._logger.warning("libei connection deferred", error=str(exc))
 
-    def _ensure_device(self):
-        if self._conn._error is not None:
+    def _ensure_conn(self) -> "_EiConnection":
+        """Return a live connection, (re)connecting lazily if needed.
+
+        Reconnects when there is no connection yet (deferred at startup), when
+        the previous one errored, or when the compositor tore the device down.
+        Returns a non-None connection or raises the real underlying error.
+        """
+        if (
+            self._conn is None
+            or self._conn._error is not None
+            or self._conn._device is None
+        ):
             self._conn = _reconnect()
-        return self._conn.device
+        return self._conn
 
     @property
     def position(self) -> tuple[int, int]:
@@ -299,9 +339,12 @@ class MouseController:
     @position.setter
     def position(self, value: tuple[int, int]):
         x, y = int(value[0]), int(value[1])
-        if not self._conn.paused:
-            device = self._ensure_device()
-            if self._conn._has_pointer and not self._conn._has_pointer_abs:
+        # Ensure the connection first (lazy connect / self-heal); using the
+        # returned local keeps the paused/capability reads on a non-None value.
+        conn = self._ensure_conn()
+        if not conn.paused:
+            device = conn.device
+            if conn._has_pointer and not conn._has_pointer_abs:
                 device.pointer_motion(float(x - self._x), float(y - self._y))
             else:
                 device.pointer_motion_absolute(float(x), float(y))
@@ -313,9 +356,10 @@ class MouseController:
         dx, dy = int(dx), int(dy)
         self._x += dx
         self._y += dy
-        if not self._conn.paused:
-            device = self._ensure_device()
-            if self._conn._has_pointer:
+        conn = self._ensure_conn()
+        if not conn.paused:
+            device = conn.device
+            if conn._has_pointer:
                 device.pointer_motion(float(dx), float(dy))
             else:
                 device.pointer_motion_absolute(float(self._x), float(self._y))
@@ -323,13 +367,19 @@ class MouseController:
 
     def press(self, button: Button):
         code = ButtonToEcodeMap.get(button.name)
-        if code is not None and not self._conn.paused:
-            self._ensure_device().button_button(code, True).frame(_now_us())
+        if code is None:
+            return
+        conn = self._ensure_conn()
+        if not conn.paused:
+            conn.device.button_button(code, True).frame(_now_us())
 
     def release(self, button: Button):
         code = ButtonToEcodeMap.get(button.name)
-        if code is not None and not self._conn.paused:
-            self._ensure_device().button_button(code, False).frame(_now_us())
+        if code is None:
+            return
+        conn = self._ensure_conn()
+        if not conn.paused:
+            conn.device.button_button(code, False).frame(_now_us())
 
     def click(self, button: Button, count: int = 1):
         for _ in range(count):
@@ -337,9 +387,12 @@ class MouseController:
             self.release(button)
 
     def scroll(self, dx: int, dy: int):
-        if not self._conn.paused and (dx or dy):
+        if not (dx or dy):
+            return
+        conn = self._ensure_conn()
+        if not conn.paused:
             # 1 wheel click = 120 hi-res units
-            device = self._ensure_device()
+            device = conn.device
             _scroll_discrete(device, int(dx) * 120, int(dy) * 120)
             device.frame(_now_us())
 

@@ -18,51 +18,50 @@
 from abc import ABC
 from enum import IntEnum
 from time import time
-from typing import Optional, Self
+from typing import Optional, Self, TYPE_CHECKING
 
 from network.protocol.message import ProtocolMessage, MessageType
 
+if TYPE_CHECKING:
+    # Keep ``ScreenEdge`` out of the runtime import graph to preserve
+    # the event-layer / input-layer separation.
+    from input.utils import ScreenEdge
+
 
 class BusEventType(IntEnum):
-    """
-    Events type to subscribe to and dispatch.
+    """Events to subscribe to and dispatch on the bus."""
 
-    Events:
-    - ACTIVE_SCREEN_CHANGED: Dispatched when the active screen changes.
-    - SCREEN_CHANGE_GUARD: Internal event to notify the cursor guard about screen changes.
-
-    - CLIENT_CONNECTED: Dispatched when a new client connects.
-    - CLIENT_DISCONNECTED: Dispatched when a client disconnects.
-    - CLIENT_ACTIVE: Dispatched when the client becomes active.
-    - CLIENT_INACTIVE: Dispatched when the client becomes inactive.
-    """
-
-    # Both uses ActiveScreenChangedEvent as data
-    ACTIVE_SCREEN_CHANGED = (
-        1  # Dispatched when the active screen effectively changes (after guard check)
-    )
-    SCREEN_CHANGE_GUARD = (
-        6  # Internal event to notify the cursor guard about screen changes
-    )
+    ACTIVE_SCREEN_CHANGED = 1
+    SCREEN_CHANGE_GUARD = 6
 
     CLIENT_CONNECTED = 4
     CLIENT_DISCONNECTED = 5
 
-    # Client only events
     CLIENT_ACTIVE = 2
     CLIENT_INACTIVE = 3
 
-    CLIENT_STREAM_RECONNECTED = 7  # Dispatched when a client stream reconnects
+    CLIENT_STREAM_RECONNECTED = 7
+
+    SCREEN_SWITCH_DIRECTIONAL_REQUEST = 10
+    SCREEN_SWITCH_CYCLE_REQUEST = 11
+
+    # Dispatched when a client's workspace placements change at runtime
+    # (e.g. the GUI saves a new layout). Lets the listener refresh its
+    # cached EdgeBindings without forcing the client to reconnect.
+    CLIENT_LAYOUT_UPDATED = 8
+
+    # Dispatched on the CLIENT side when the server pushes a fresh
+    # topology (reverse edge bindings + server bbox).
+    CLIENT_TOPOLOGY_UPDATED = 9
+
+    # Dispatched on the SERVER side when a connected client reports its
+    # monitor list changed at runtime. Triggers placement reconciliation
+    # against the new monitor ids.
+    CLIENT_MONITORS_UPDATED = 12
 
 
 class BusEvent(ABC):
-    """
-    Base class for events dispatched on the EventBus.
-
-    ``__slots__ = ()`` on the base lets concrete subclasses opt into real
-    slot-based instances (no per-event ``__dict__`` allocation) without
-    fighting the ABC metaclass.
-    """
+    """Base class for events dispatched on the EventBus."""
 
     __slots__ = ()
 
@@ -71,21 +70,21 @@ class BusEvent(ABC):
 
 
 class ClientStreamReconnectedEvent(BusEvent):
-    """
-    Event dispatched when a client stream reconnects.
-    """
+    """Event dispatched when a client stream reconnects."""
 
-    def __init__(self, client_screen: str, streams: list[int]):
-        self.client_screen = client_screen
+    def __init__(self, client_uid: str, streams: list[int]):
+        self.client_uid = client_uid
         self.streams = streams
 
     def to_dict(self) -> dict:
-        return {"client_screen": self.client_screen, "stream_id": self.streams}
+        return {"client_uid": self.client_uid, "stream_id": self.streams}
 
 
 class ActiveScreenChangedEvent(BusEvent):
-    """
-    Event dispatched when the active screen changes.
+    """Event dispatched when the active client changes.
+
+    ``active_screen`` carries the active client's UID, or ``None`` for
+    "back to server". Never set it to a ``ScreenPosition`` string.
     """
 
     def __init__(
@@ -94,17 +93,6 @@ class ActiveScreenChangedEvent(BusEvent):
         source: str = "",
         position: tuple[float, float] = (-1, -1),
     ):
-        """
-        Represents a change in the active screen (e.g., when a server crosses to another client's screen).
-
-        Args:
-            active_screen: Optional[str]
-                Identifier for the active screen. Can be None if no active screen is set (so the server).
-            source: str, optional
-                Source information related to the object. Defaults to an empty string.
-            position: tuple[float, float], optional
-                A tuple defining the x and y coordinates of the object. Defaults to (-1.0, -1.0).
-        """
         self.active_screen = active_screen
         self.client = source
         self.x = position[0]
@@ -119,47 +107,169 @@ class ActiveScreenChangedEvent(BusEvent):
         }
 
 
-class ClientConnectedEvent(BusEvent):
-    """
-    Event dispatched when a new client connects.
-    """
+class ScreenSwitchDirectionalRequestEvent(BusEvent):
+    """Dispatched when the user presses a directional spatial hotkey."""
 
-    def __init__(self, client_screen: str, streams: Optional[list[int]] = None):
-        self.client_screen = client_screen
-        self.streams = streams
+    def __init__(self, edge: "ScreenEdge"):
+        super().__init__()
+        self.edge = edge
 
     def to_dict(self) -> dict:
-        return {"client_screen": self.client_screen, "streams": self.streams}
+        # ``.name`` keeps the payload bus-instrumentation friendly
+        # without leaking the enum type across the layer boundary.
+        return {"edge": getattr(self.edge, "name", str(self.edge))}
+
+
+class ScreenSwitchCycleRequestEvent(BusEvent):
+    """Dispatched when the user presses the screen cycle hotkey."""
+
+    def __init__(self, direction: int):
+        super().__init__()
+        self.direction = direction
+
+    def to_dict(self) -> dict:
+        return {"direction": self.direction}
+
+
+class ClientConnectedEvent(BusEvent):
+    """Event dispatched when a new client connects.
+
+    ``edge_bindings`` carries the spatial cross-screen contract derived
+    from the client's effective placements (real or synthesized from
+    the legacy ``screen_position``) and the server's monitor list. The
+    same record drives forward routing on the server AND return-to-
+    server routing on the client (pushed via the ``CLIENT_TOPOLOGY``
+    command).
+    """
+
+    def __init__(
+        self,
+        client_uid: str,
+        streams: Optional[list[int]] = None,
+        edge_bindings: Optional[list[dict]] = None,
+        intra_client_bindings: Optional[list[dict]] = None,
+    ):
+        self.client_uid = client_uid
+        self.streams = streams
+        self.edge_bindings: list[dict] = list(edge_bindings) if edge_bindings else []
+        self.intra_client_bindings: list[dict] = (
+            list(intra_client_bindings) if intra_client_bindings else []
+        )
+
+    def to_dict(self) -> dict:
+        return {
+            "client_uid": self.client_uid,
+            "streams": self.streams,
+            "edge_bindings": list(self.edge_bindings),
+            "intra_client_bindings": list(self.intra_client_bindings),
+        }
 
 
 class ClientDisconnectedEvent(ClientConnectedEvent):
-    """
-    Event dispatched when a client disconnects.
-    """
+    """Event dispatched when a client disconnects."""
 
     pass
 
 
-class ClientActiveEvent(BusEvent):
-    """
-    Event dispatched when the client becomes active.
-    """
+class ClientTopologyUpdatedEvent(BusEvent):
+    """Topology pushed by the server: edge bindings + server virtual bbox."""
 
-    def __init__(self, client_screen: str):
-        self.client_screen = client_screen
+    def __init__(
+        self,
+        edge_bindings: Optional[list[dict]] = None,
+        server_bbox: Optional[tuple[int, int, int, int]] = None,
+        intra_client_bindings: Optional[list[dict]] = None,
+    ):
+        self.edge_bindings: list[dict] = list(edge_bindings) if edge_bindings else []
+        self.server_bbox = server_bbox
+        self.intra_client_bindings: list[dict] = (
+            list(intra_client_bindings) if intra_client_bindings else []
+        )
 
     def to_dict(self) -> dict:
-        return {"client_screen": self.client_screen}
+        return {
+            "edge_bindings": list(self.edge_bindings),
+            "server_bbox": list(self.server_bbox) if self.server_bbox else None,
+            "intra_client_bindings": list(self.intra_client_bindings),
+        }
+
+
+class ClientLayoutUpdatedEvent(BusEvent):
+    """Refreshed edge bindings after the admin edits a client's placements."""
+
+    def __init__(
+        self,
+        client_uid: str,
+        edge_bindings: Optional[list[dict]] = None,
+        intra_client_bindings: Optional[list[dict]] = None,
+    ):
+        self.client_uid = client_uid
+        self.edge_bindings: list[dict] = list(edge_bindings) if edge_bindings else []
+        self.intra_client_bindings: list[dict] = (
+            list(intra_client_bindings) if intra_client_bindings else []
+        )
+
+    def to_dict(self) -> dict:
+        return {
+            "client_uid": self.client_uid,
+            "edge_bindings": list(self.edge_bindings),
+            "intra_client_bindings": list(self.intra_client_bindings),
+        }
+
+
+class ClientMonitorsUpdatedEvent(BusEvent):
+    """Client-reported monitor list change; raw dicts pending reconciliation."""
+
+    def __init__(
+        self,
+        client_uid: str,
+        monitors: Optional[list[dict]] = None,
+    ):
+        self.client_uid = client_uid
+        self.monitors: list[dict] = list(monitors) if monitors else []
+
+    def to_dict(self) -> dict:
+        return {
+            "client_uid": self.client_uid,
+            "monitors": list(self.monitors),
+        }
+
+
+class ClientActiveEvent(BusEvent):
+    """Event dispatched on the CLIENT side when the server activates it.
+
+    ``client_monitor_id`` (optional) selects which of the client's own
+    monitors the cursor lands on. ``position_x`` / ``position_y`` carry
+    landing coords on the SAME packet that flips ``_is_active``, so they
+    can't race the activation against a parallel ``POSITION_ACTION`` on
+    the mouse stream (which would get dropped by the ``_is_active``
+    gate and leave the cursor at the previous session's position).
+    ``-1`` means "no explicit landing requested" (legacy / hotkey path).
+    """
+
+    def __init__(
+        self,
+        client_uid: str,
+        client_monitor_id: Optional[int] = None,
+        position_x: float = -1,
+        position_y: float = -1,
+    ):
+        self.client_uid = client_uid
+        self.client_monitor_id = client_monitor_id
+        self.position_x = position_x
+        self.position_y = position_y
+
+    def to_dict(self) -> dict:
+        return {
+            "client_uid": self.client_uid,
+            "client_monitor_id": self.client_monitor_id,
+            "position_x": self.position_x,
+            "position_y": self.position_y,
+        }
 
 
 class Event(ABC):
-    """
-    Base event class.
-
-    ``__slots__ = ()`` lets concrete subclasses (e.g. :class:`MouseEvent`)
-    opt into real slot-based instances — no per-event ``__dict__`` alloc on
-    a hot path that creates 1000s of events per second under heavy mouse use.
-    """
+    """Base event class. Slot-based so subclasses can avoid per-instance dicts."""
 
     __slots__ = ()
 
@@ -168,10 +278,9 @@ class Event(ABC):
 
 
 class MouseEvent(Event):
-    """
-    Mouse event data structure.
+    """Mouse event data structure.
 
-    Slot-based: each event is the hottest allocation in the project (one per
+    Slot-based: this is the hottest allocation in the project (one per
     mouse move on a fast pointer = thousands per second).
     """
 
@@ -191,7 +300,7 @@ class MouseEvent(Event):
         dy: float = 0,
         button: Optional[int] = None,
         action: Optional[str] = None,
-        is_presed: bool = False,
+        is_pressed: bool = False,
     ):
         self.x = x
         self.y = y
@@ -199,11 +308,9 @@ class MouseEvent(Event):
         self.dy = dy
         self.button = button
         self.action = action
-
-        self.is_pressed = is_presed
+        self.is_pressed = is_pressed
         self.timestamp = time()
 
-    # When passing mouse event data as function parameter it should be converted to dictionary
     def to_dict(self) -> dict:
         return {
             "x": self.x,
@@ -217,12 +324,7 @@ class MouseEvent(Event):
 
 
 class KeyboardEvent(Event):
-    """
-    Keyboard event data structure.
-
-    Slot-based for the same reason as :class:`MouseEvent`: high allocation
-    rate when keys are held / repeated.
-    """
+    """Keyboard event data structure. Slot-based; allocated on every key event."""
 
     __slots__ = ("key", "action", "timestamp")
 
@@ -239,13 +341,13 @@ class KeyboardEvent(Event):
 
 
 class CommandEvent(Event):
-    """
-    Command event data structure.
-    """
+    """Command event data structure."""
 
     CROSS_SCREEN = "cross_screen"
     FORCE_SCREEN_CHANGE = "force_screen_change"
     KEYBOARD_STATE_SYNC = "keyboard_state_sync"
+    CLIENT_TOPOLOGY = "client_topology"
+    CLIENT_MONITORS_UPDATE = "client_monitors_update"
 
     def __init__(
         self,
@@ -270,9 +372,7 @@ class CommandEvent(Event):
 
 
 class CrossScreenCommandEvent(CommandEvent):
-    """
-    Cross screen command event data structure.
-    """
+    """Cross-screen command; ``client_monitor_id=None`` falls back to client bbox."""
 
     def __init__(
         self,
@@ -280,37 +380,156 @@ class CrossScreenCommandEvent(CommandEvent):
         target: str = "",
         x: float | int = -1,
         y: float | int = -1,
+        client_monitor_id: Optional[int] = None,
     ):
         super().__init__(
             command=CommandEvent.CROSS_SCREEN,
             source=source,
             target=target,
-            params={"x": x, "y": y},
+            params={
+                "x": x,
+                "y": y,
+                "client_monitor_id": client_monitor_id,
+            },
         )
 
     def get_position(self) -> tuple[float | int, float | int]:
         return self.params.get("x", -1), self.params.get("y", -1)
+
+    def get_client_monitor_id(self) -> Optional[int]:
+        v = self.params.get("client_monitor_id")
+        return int(v) if v is not None else None
+
+    @classmethod
+    def from_command_event(cls, event: CommandEvent) -> Self:
+        cm_raw = event.params.get("client_monitor_id")
+        return cls(
+            source=event.source,
+            target=event.target,
+            x=event.params.get("x", -1),
+            y=event.params.get("y", -1),
+            client_monitor_id=int(cm_raw) if cm_raw is not None else None,
+        )
+
+    def to_dict(self) -> dict:
+        return {
+            "command": self.command,
+            "params": {
+                "x": self.params.get("x", -1),
+                "y": self.params.get("y", -1),
+                "client_monitor_id": self.params.get("client_monitor_id"),
+            },
+        }
+
+
+class ClientTopologyCommandEvent(CommandEvent):
+    """Server-to-client topology push; mapped to ``ClientTopologyUpdatedEvent``."""
+
+    def __init__(
+        self,
+        source: str = "",
+        target: str = "",
+        edge_bindings: Optional[list[dict]] = None,
+        server_bbox: Optional[tuple[int, int, int, int]] = None,
+        intra_client_bindings: Optional[list[dict]] = None,
+    ):
+        super().__init__(
+            command=CommandEvent.CLIENT_TOPOLOGY,
+            source=source,
+            target=target,
+            params={
+                "edge_bindings": list(edge_bindings) if edge_bindings else [],
+                "server_bbox": list(server_bbox) if server_bbox else None,
+                "intra_client_bindings": (
+                    list(intra_client_bindings) if intra_client_bindings else []
+                ),
+            },
+        )
+
+    def get_edge_bindings(self) -> list[dict]:
+        return list(self.params.get("edge_bindings") or [])
+
+    def get_intra_client_bindings(self) -> list[dict]:
+        return list(self.params.get("intra_client_bindings") or [])
+
+    def get_server_bbox(self) -> Optional[tuple[int, int, int, int]]:
+        raw = self.params.get("server_bbox")
+        if not raw or len(raw) != 4:
+            return None
+        return (int(raw[0]), int(raw[1]), int(raw[2]), int(raw[3]))
+
+    @classmethod
+    def from_command_event(cls, event: CommandEvent) -> Self:
+        raw_bbox = event.params.get("server_bbox")
+        return cls(
+            source=event.source,
+            target=event.target,
+            edge_bindings=event.params.get("edge_bindings") or [],
+            server_bbox=tuple(raw_bbox) if raw_bbox and len(raw_bbox) == 4 else None,
+            intra_client_bindings=event.params.get("intra_client_bindings") or [],
+        )
+
+    def to_dict(self) -> dict:
+        bbox = self.params.get("server_bbox")
+        return {
+            "command": self.command,
+            "params": {
+                "edge_bindings": list(self.params.get("edge_bindings") or []),
+                "server_bbox": list(bbox) if bbox else None,
+                "intra_client_bindings": list(
+                    self.params.get("intra_client_bindings") or []
+                ),
+            },
+        }
+
+
+class ClientMonitorsUpdateCommandEvent(CommandEvent):
+    """Client-to-server monitor list change; ``client_uid`` routes to the right ClientObj."""
+
+    def __init__(
+        self,
+        source: str = "",
+        target: str = "server",
+        client_uid: str = "",
+        monitors: Optional[list[dict]] = None,
+    ):
+        super().__init__(
+            command=CommandEvent.CLIENT_MONITORS_UPDATE,
+            source=source,
+            target=target,
+            params={
+                "client_uid": client_uid,
+                "monitors": list(monitors) if monitors else [],
+            },
+        )
+
+    def get_client_uid(self) -> str:
+        return str(self.params.get("client_uid", ""))
+
+    def get_monitors(self) -> list[dict]:
+        return list(self.params.get("monitors") or [])
 
     @classmethod
     def from_command_event(cls, event: CommandEvent) -> Self:
         return cls(
             source=event.source,
             target=event.target,
-            x=event.params.get("x", -1),
-            y=event.params.get("y", -1),
+            client_uid=str(event.params.get("client_uid", "")),
+            monitors=list(event.params.get("monitors") or []),
         )
 
     def to_dict(self) -> dict:
         return {
             "command": self.command,
-            "params": {"x": self.params.get("x", -1), "y": self.params.get("y", -1)},
+            "params": {
+                "client_uid": self.params.get("client_uid", ""),
+                "monitors": list(self.params.get("monitors") or []),
+            },
         }
 
 
 class ForceScreenChangeCommandEvent(CommandEvent):
-    """
-    Force screen change command event data structure.
-    """
+    """Force screen change command event."""
 
     def __init__(self, source: str = "", target: str = ""):
         super().__init__(
@@ -332,9 +551,7 @@ class ForceScreenChangeCommandEvent(CommandEvent):
 
 
 class KeyboardStateSyncCommandEvent(CommandEvent):
-    """
-    Keyboard state sync command event data structure.
-    """
+    """Keyboard state sync command event."""
 
     def __init__(
         self,
@@ -368,21 +585,17 @@ class KeyboardStateSyncCommandEvent(CommandEvent):
 
 
 class ScreenEvent(Event):
-    """
-    Screen event data structure.
-    """
+    """Screen event data structure."""
 
     def __init__(self, data: dict):
-        self.data = data  # It should contain information about client cursor position
+        self.data = data
 
     def to_dict(self) -> dict:
         return {"data": self.data}
 
 
 class ClipboardEvent(Event):
-    """
-    Clipboard event data structure.
-    """
+    """Clipboard event data structure."""
 
     def __init__(self, content: str | None, content_type: str = "text"):
         self.content = content
@@ -394,9 +607,7 @@ class ClipboardEvent(Event):
 
 
 class EventMapper:
-    """
-    Maps protocol messages to event objects.
-    """
+    """Maps protocol messages to event objects."""
 
     @staticmethod
     def get_event(message: ProtocolMessage) -> Optional[Event]:
@@ -411,7 +622,7 @@ class EventMapper:
                 dy=message_payload.get("dy", 0),
                 button=message_payload.get("button"),
                 action=message_payload.get("event"),
-                is_presed=message_payload.get("is_pressed", False),
+                is_pressed=message_payload.get("is_pressed", False),
             )
         elif event_type == MessageType.COMMAND:
             return CommandEvent(

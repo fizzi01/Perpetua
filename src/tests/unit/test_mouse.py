@@ -47,6 +47,41 @@ from input.mouse._base import (  # noqa: E402
     ClientMouseController,
     ButtonMapping,
 )
+from utils.screen import MonitorLayout  # noqa: E402
+
+
+def _patch_screen_geometry(w: int, h: int):
+    # Patch every Screen accessor the mouse code uses so the listener
+    # and controller see a single (w, h) display at origin (0, 0).
+    layout = MonitorLayout.from_bboxes([(0, 0, w, h)])
+    return [
+        patch("input.mouse._base.Screen.get_size", return_value=(w, h)),
+        patch(
+            "input.mouse._base.Screen.get_virtual_bbox",
+            return_value=(0, 0, w, h),
+        ),
+        patch(
+            "input.mouse._base.Screen.get_monitor_layout",
+            return_value=layout,
+        ),
+    ]
+
+
+from contextlib import ExitStack  # noqa: E402
+
+
+class _ScreenGeometry:
+    def __init__(self, w: int, h: int):
+        self._patches = _patch_screen_geometry(w, h)
+        self._stack = ExitStack()
+
+    def __enter__(self):
+        for p in self._patches:
+            self._stack.enter_context(p)
+        return self
+
+    def __exit__(self, exc_type, exc_val, exc_tb):
+        self._stack.close()
 
 
 # ============================================================================
@@ -247,60 +282,6 @@ class TestEdgeDetector:
 
         callback_mock.assert_not_called()
 
-    def test_get_crossing_coords_bottom_to_top(self, screen_size):
-        """Test crossing coordinates from bottom edge to top position."""
-        x, y = EdgeDetector.get_crossing_coords(
-            500, 1079, screen_size, ScreenEdge.BOTTOM, ScreenPosition.TOP
-        )
-        assert x == pytest.approx(500 / 1920)
-        assert y == 0.0
-
-    def test_get_crossing_coords_top_to_bottom(self, screen_size):
-        """Test crossing coordinates from top edge to bottom position."""
-        x, y = EdgeDetector.get_crossing_coords(
-            500, 0, screen_size, ScreenEdge.TOP, ScreenPosition.BOTTOM
-        )
-        assert x == pytest.approx(500 / 1920)
-        assert y == 1.0
-
-    def test_get_crossing_coords_left_to_right(self, screen_size):
-        """Test crossing coordinates from left edge to right position."""
-        x, y = EdgeDetector.get_crossing_coords(
-            0, 500, screen_size, ScreenEdge.LEFT, ScreenPosition.RIGHT
-        )
-        assert x == 1.0
-        assert y == pytest.approx(500 / 1080)
-
-    def test_get_crossing_coords_right_to_left(self, screen_size):
-        """Test crossing coordinates from right edge to left position."""
-        x, y = EdgeDetector.get_crossing_coords(
-            1919, 500, screen_size, ScreenEdge.RIGHT, ScreenPosition.LEFT
-        )
-        assert x == 0.0
-        assert y == pytest.approx(500 / 1080)
-
-    def test_get_crossing_coords_invalid_screen(self, screen_size):
-        """Test invalid screen returns -1, -1."""
-        x, y = EdgeDetector.get_crossing_coords(
-            500, 0, screen_size, ScreenEdge.TOP, None
-        )
-        assert x == -1
-        assert y == -1
-
-    def test_get_crossing_coords_empty_screen(self, screen_size):
-        """Test empty screen returns -1, -1."""
-        x, y = EdgeDetector.get_crossing_coords(500, 0, screen_size, ScreenEdge.TOP, "")
-        assert x == -1
-        assert y == -1
-
-    def test_get_crossing_coords_mismatched_edge_position(self, screen_size):
-        """Test mismatched edge and position returns -1, -1."""
-        x, y = EdgeDetector.get_crossing_coords(
-            500, 0, screen_size, ScreenEdge.BOTTOM, ScreenPosition.BOTTOM
-        )
-        assert x == -1
-        assert y == -1
-
     def test_clamp_to_screen_within_bounds(self, screen_size):
         """Test coordinates within bounds remain unchanged."""
         x, y = EdgeDetector.clamp_to_screen(100, 200, screen_size)
@@ -410,14 +391,14 @@ class TestServerMouseListener:
         )
 
         event = ClientConnectedEvent(
-            client_screen="client1",
+            client_uid="client1",
             streams=[StreamType.MOUSE, StreamType.KEYBOARD],
         )
 
         await listener._on_client_connected(event)
 
-        assert "client1" in listener._active_screens
-        assert listener._active_screens["client1"] is True
+        assert "client1" in listener._active_clients
+        assert listener._active_clients["client1"] is True
 
     @pytest.mark.anyio
     async def test_on_client_connected_ignores_without_mouse_stream(
@@ -434,13 +415,13 @@ class TestServerMouseListener:
         )
 
         event = ClientConnectedEvent(
-            client_screen="client1",
+            client_uid="client1",
             streams=[StreamType.KEYBOARD],  # No MOUSE stream
         )
 
         await listener._on_client_connected(event)
 
-        assert "client1" not in listener._active_screens
+        assert "client1" not in listener._active_clients
 
     @pytest.mark.anyio
     async def test_on_client_disconnected_removes_from_active_screens(
@@ -457,17 +438,17 @@ class TestServerMouseListener:
                 mock_stream_handler,
                 filtering=False,
             )
-            listener._active_screens["client1"] = True
+            listener._active_clients["client1"] = True
             listener._listening = True
 
             event = ClientDisconnectedEvent(
-                client_screen="client1",
+                client_uid="client1",
                 streams=[StreamType.MOUSE],
             )
 
             await listener._on_client_disconnected(event)
 
-            assert "client1" not in listener._active_screens
+            assert "client1" not in listener._active_clients
 
     @pytest.mark.anyio
     async def test_on_client_disconnected_stops_listening_when_empty(
@@ -484,11 +465,11 @@ class TestServerMouseListener:
                 mock_stream_handler,
                 filtering=False,
             )
-            listener._active_screens["client1"] = True
+            listener._active_clients["client1"] = True
             listener._listening = True
 
             event = ClientDisconnectedEvent(
-                client_screen="client1",
+                client_uid="client1",
                 streams=[StreamType.MOUSE],
             )
 
@@ -561,16 +542,14 @@ class TestServerMouseListener:
         Button = MagicMock()
         Button.left.name = "left"
 
-        listener = ServerMouseListener(
-            event_bus,
-            mock_stream_handler,
-            mock_stream_handler,
-            filtering=False,
-        )
-        listener._listening = True
-
-        with patch("input.mouse._base.Screen.get_size", return_value=(1920, 1080)):
-            listener._screen_size = (1920, 1080)
+        with _ScreenGeometry(1920, 1080):
+            listener = ServerMouseListener(
+                event_bus,
+                mock_stream_handler,
+                mock_stream_handler,
+                filtering=False,
+            )
+            listener._listening = True
             listener.on_click(100, 200, Button.left, True)
 
         mock_stream_handler.send.assert_called_once()
@@ -654,7 +633,7 @@ class TestServerMouseController:
                 position=(0.5, 0.3),
             )
 
-            with patch("input.mouse._base.Screen.get_size", return_value=(1920, 1080)):
+            with _ScreenGeometry(1920, 1080):
                 await controller._on_active_screen_changed(event)
 
             mock_mouse_controller.position = (960, 324)
@@ -667,7 +646,7 @@ class TestServerMouseController:
         with patch(
             "input.mouse._base.MouseController", return_value=mock_mouse_controller
         ):
-            with patch("input.mouse._base.Screen.get_size", return_value=(1920, 1080)):
+            with _ScreenGeometry(1920, 1080):
                 controller = ServerMouseController(event_bus)
 
                 # Coordinates are normalized (0-1 range)
@@ -684,7 +663,7 @@ class TestServerMouseController:
         with patch(
             "input.mouse._base.MouseController", return_value=mock_mouse_controller
         ):
-            with patch("input.mouse._base.Screen.get_size", return_value=(1920, 1080)):
+            with _ScreenGeometry(1920, 1080):
                 controller = ServerMouseController(event_bus)
 
                 # Normalized 2.0 > 1.0: must clamp to last on-screen pixel
@@ -770,7 +749,7 @@ class TestClientMouseController:
                 mock_stream_handler,
             )
 
-            event = ClientActiveEvent(client_screen="server")
+            event = ClientActiveEvent(client_uid="server")
 
             await controller._on_client_active(event)
 
@@ -798,7 +777,7 @@ class TestClientMouseController:
             controller._is_active = True
             controller._movement_history.append((100, 200))
 
-            event = ClientActiveEvent(client_screen="server")
+            event = ClientActiveEvent(client_uid="server")
 
             await controller._on_client_inactive(event)
 
@@ -830,7 +809,7 @@ class TestClientMouseController:
                 dy=10,
                 button=1,
                 action=MouseEvent.MOVE_ACTION,
-                is_presed=False,
+                is_pressed=False,
             )
 
             message = MagicMock()
@@ -856,7 +835,7 @@ class TestClientMouseController:
         with patch(
             "input.mouse._base.MouseController", return_value=mock_mouse_controller
         ):
-            with patch("input.mouse._base.Screen.get_size", return_value=(1920, 1080)):
+            with _ScreenGeometry(1920, 1080):
                 controller = ClientMouseController(
                     event_bus,
                     mock_stream_handler,
@@ -1062,33 +1041,47 @@ class TestClientMouseController:
         mock_stream_handler,
         mock_mouse_controller,
     ):
-        """Test edge detection on left edge."""
+        """Client LEFT edge bound to server RIGHT dispatches a return-to-server crossing."""
         with patch(
             "input.mouse._base.MouseController", return_value=mock_mouse_controller
         ):
-            with patch("input.mouse._base.Screen.get_size", return_value=(1920, 1080)):
+            with _ScreenGeometry(1920, 1080):
                 controller = ClientMouseController(
                     event_bus,
                     mock_stream_handler,
                     mock_stream_handler,
                 )
                 controller._is_active = True
-                controller._current_screen = ScreenPosition.RIGHT
+                # Server-pushed binding: client's LEFT edge of monitor 0
+                # abuts the server's RIGHT edge on (0, 0, 1920, 1080).
+                controller._edge_bindings = [
+                    {
+                        "server_monitor_id": 0,
+                        "server_edge": "right",
+                        "server_axis_start": 0.0,
+                        "server_axis_end": 1.0,
+                        "server_monitor_min_x": 0,
+                        "server_monitor_min_y": 0,
+                        "server_monitor_max_x": 1920,
+                        "server_monitor_max_y": 1080,
+                        "client_monitor_id": 0,
+                        "client_edge": "left",
+                        "client_axis_start": 0.0,
+                        "client_axis_end": 1.0,
+                    }
+                ]
+                controller._server_bbox = (0, 0, 1920, 1080)
 
-                # Build enough movement history (MOVEMENT_HISTORY_N_THRESHOLD = 6)
-                # _check_edge will add current position, so we need 5 in history
+                # MOVEMENT_HISTORY_N_THRESHOLD = 6: _check_edge adds the
+                # current position so we need 5 in history beforehand.
                 for x in range(10, 0, -2):
                     controller._movement_history.append((x, 500))
-
-                # Ensure we have 5 positions in history
                 assert len(controller._movement_history) == 5
 
-                # Set controller position to edge (will be added as 6th position)
                 mock_mouse_controller.position = (0, 500)
 
                 await controller._check_edge()
 
-                # Should have dispatched cross-screen command
                 assert controller.command_stream.send.called
 
     @pytest.mark.anyio
@@ -1102,7 +1095,7 @@ class TestClientMouseController:
         with patch(
             "input.mouse._base.MouseController", return_value=mock_mouse_controller
         ):
-            with patch("input.mouse._base.Screen.get_size", return_value=(1920, 1080)):
+            with _ScreenGeometry(1920, 1080):
                 controller = ClientMouseController(
                     event_bus,
                     mock_stream_handler,
@@ -1124,6 +1117,156 @@ class TestClientMouseController:
                 mock_stream_handler.send.assert_not_called()
 
     @pytest.mark.anyio
+    async def test_check_edge_uses_delta_fallback_when_clamped(
+        self,
+        event_bus,
+        mock_stream_handler,
+        mock_mouse_controller,
+    ):
+        """OS-clamped cursor: the last move delta drives the crossing when history stalls."""
+        with patch(
+            "input.mouse._base.MouseController", return_value=mock_mouse_controller
+        ):
+            with _ScreenGeometry(1920, 1080):
+                controller = ClientMouseController(
+                    event_bus,
+                    mock_stream_handler,
+                    mock_stream_handler,
+                )
+                controller._is_active = True
+                controller._edge_bindings = [
+                    {
+                        "server_monitor_id": 0,
+                        "server_edge": "right",
+                        "server_axis_start": 0.0,
+                        "server_axis_end": 1.0,
+                        "server_monitor_min_x": 0,
+                        "server_monitor_min_y": 0,
+                        "server_monitor_max_x": 1920,
+                        "server_monitor_max_y": 1080,
+                        "client_monitor_id": 0,
+                        "client_edge": "left",
+                        "client_axis_start": 0.0,
+                        "client_axis_end": 1.0,
+                    }
+                ]
+                controller._server_bbox = (0, 0, 1920, 1080)
+
+                # Cursor pinned at the left edge, history full of the
+                # same (0, y) because previous moves all hit the bound.
+                for _ in range(8):
+                    controller._movement_history.append((0, 500))
+                mock_mouse_controller.position = (0, 500)
+                # User keeps pushing left -> last delta is leftward.
+                controller._last_move_delta = (-3, 0)
+
+                await controller._check_edge()
+
+                assert controller.command_stream.send.called
+
+    @pytest.mark.anyio
+    async def test_check_edge_warps_intra_client(
+        self,
+        event_bus,
+        mock_stream_handler,
+        mock_mouse_controller,
+    ):
+        """Intra-client binding triggers an explicit warp, not a return-to-server."""
+        with patch(
+            "input.mouse._base.MouseController", return_value=mock_mouse_controller
+        ):
+            # Two-monitor layout: primary on top, secondary below.
+            from utils.screen import MonitorLayout
+
+            layout = MonitorLayout.from_bboxes(
+                [(0, 0, 1920, 1080), (0, 1080, 1920, 2160)]
+            )
+            with (
+                patch("input.mouse._base.Screen.get_size", return_value=(1920, 2160)),
+                patch(
+                    "input.mouse._base.Screen.get_virtual_bbox",
+                    return_value=(0, 0, 1920, 2160),
+                ),
+                patch(
+                    "input.mouse._base.Screen.get_monitor_layout",
+                    return_value=layout,
+                ),
+            ):
+                controller = ClientMouseController(
+                    event_bus,
+                    mock_stream_handler,
+                    mock_stream_handler,
+                )
+                controller._is_active = True
+                # primary.BOTTOM <-> secondary.TOP intra-client binding.
+                topology = [
+                    {
+                        "src_monitor_id": 0,
+                        "src_edge": "bottom",
+                        "src_axis_start": 0.0,
+                        "src_axis_end": 1.0,
+                        "dst_monitor_id": 1,
+                        "dst_edge": "top",
+                        "dst_axis_start": 0.0,
+                        "dst_axis_end": 1.0,
+                        "dst_monitor_min_x": 0,
+                        "dst_monitor_min_y": 1080,
+                        "dst_monitor_max_x": 1920,
+                        "dst_monitor_max_y": 2160,
+                    },
+                ]
+                controller._intra_client_bindings = topology
+                controller._intra_by_src = {0: topology}
+                controller._intra_pairs = {(0, 1)}
+                controller._last_known_monitor_id = 0
+
+                for y in range(1070, 1080):
+                    controller._movement_history.append((960, y))
+                mock_mouse_controller.position = (960, 1079)
+
+                await controller._check_edge()
+
+                # Warped onto the secondary monitor.
+                warped_x, warped_y = mock_mouse_controller.position
+                assert warped_x == 960
+                assert 1080 <= warped_y < 1090
+                mock_stream_handler.send.assert_not_called()
+
+    @pytest.mark.anyio
+    async def test_check_edge_clamps_on_void(
+        self,
+        event_bus,
+        mock_stream_handler,
+        mock_mouse_controller,
+    ):
+        """Edge with no workspace binding clamps the cursor inside the monitor."""
+        with patch(
+            "input.mouse._base.MouseController", return_value=mock_mouse_controller
+        ):
+            with _ScreenGeometry(1920, 1080):
+                controller = ClientMouseController(
+                    event_bus,
+                    mock_stream_handler,
+                    mock_stream_handler,
+                )
+                controller._is_active = True
+                # No bindings -> every outer edge is void.
+                controller._edge_bindings = []
+                controller._intra_client_bindings = []
+                controller._intra_by_src = {}
+                controller._intra_pairs = set()
+
+                for x in range(10, 0, -2):
+                    controller._movement_history.append((x, 500))
+                mock_mouse_controller.position = (0, 500)
+
+                await controller._check_edge()
+
+                cx, cy = mock_mouse_controller.position
+                assert cx > 0
+                mock_stream_handler.send.assert_not_called()
+
+    @pytest.mark.anyio
     async def test_position_cursor_clamps_coordinates(
         self,
         event_bus,
@@ -1134,7 +1277,7 @@ class TestClientMouseController:
         with patch(
             "input.mouse._base.MouseController", return_value=mock_mouse_controller
         ):
-            with patch("input.mouse._base.Screen.get_size", return_value=(1920, 1080)):
+            with _ScreenGeometry(1920, 1080):
                 controller = ClientMouseController(
                     event_bus,
                     mock_stream_handler,
@@ -1175,7 +1318,7 @@ class TestClientMouseController:
                 dy=0,
                 button=None,
                 action=MouseEvent.MOVE_ACTION,
-                is_presed=False,
+                is_pressed=False,
             )
             await controller._queue.put(mouse_event_data)
 

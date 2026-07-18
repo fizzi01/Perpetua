@@ -24,7 +24,17 @@
 
 html{
 overscroll-behavior: none;
+height: 100%;
+width: 100%;
 }
 body {
-overflow-y: scroll;
+overflow: hidden;
+height: 100%;
+width: 100%;
+margin: 0;
+}
+
+#root {
+	height: 100%;
+	width: 100%;
 }

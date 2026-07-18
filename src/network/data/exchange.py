@@ -360,7 +360,9 @@ class MessageExchange:
             self._running = False
             raise
         except RuntimeError as e:
-            self._logger.log(f"Error in receive loop {self._id} ({e})", Logger.CRITICAL)
+            self._logger.critical(
+                "Error in receive loop", exchange_id=self._id, error=str(e)
+            )
             self._running = False
             raise e
         except Exception as e:
@@ -374,21 +376,18 @@ class MessageExchange:
                     ConnectionAbortedError,
                 ),
             ):
-                self._logger.log(
-                    f"Connection error in receive loop ({e})", Logger.ERROR
-                )
+                self._logger.error("Connection error in receive loop", error=str(e))
                 self._running = False
                 raise e
             # Avoid infinite loop if no receive callback is set
             if receive_callback is None:
-                self._logger.log(
-                    "Receive callback is None, stopping receive loop.",
-                    Logger.DEBUG,
-                )
+                self._logger.debug("Receive callback is None, stopping receive loop.")
                 self._running = False
                 raise e
 
-            self._logger.log(f"Error in receive loop {self._id} ({e})", Logger.ERROR)
+            self._logger.error(
+                "Error in receive loop", exchange_id=self._id, error=str(e)
+            )
             await asyncio.sleep(0)
             return
 
@@ -577,8 +576,13 @@ class MessageExchange:
         source: Optional[str] = None,
         target: Optional[str] = None,
         server_uid: Optional[str] = None,
+        monitors: Optional[List[Dict[str, Any]]] = None,
     ):
-        """Send handshake message."""
+        """Send handshake message.
+
+        ``monitors`` carries the client's per-monitor layout. Legacy peers that don't know about it
+        simply ignore the field.
+        """
         message = self.builder.create_handshake_message(
             client_name,
             screen_resolution,
@@ -590,6 +594,7 @@ class MessageExchange:
             source=source,
             target=target,
             server_uid=server_uid,
+            monitors=monitors,
         )
         await self._send_message(message)
 
@@ -618,7 +623,7 @@ class MessageExchange:
             await self.send_command_message(source=source, target=target, **kwargs)
             return
         else:
-            self._logger.log(f"Unknown stream type: {stream_type}", Logger.ERROR)
+            self._logger.error("Unknown stream type", stream_type=stream_type)
             return
 
     async def send_custom_message(
@@ -645,6 +650,12 @@ class MessageExchange:
         Internal method to send a message via the transport layer.
         If multicast is enabled, sends via all configured transports.
         Handles automatic chunking if enabled.
+
+        In multicast mode, ``message.target`` is treated as a routing key:
+        when it matches a configured ``tr_id`` the send is unicast to
+        that peer only. Targets that don't match any tr_id fall back to
+        broadcast (legacy semantics for routes that label the wire with
+        a peer-defined string like ``"server"``).
         """
         # Cycle through all send callbacks
         callback_snapshot = list(self._send_callbacks.items())
@@ -654,6 +665,10 @@ class MessageExchange:
                 "Transport layer not configured (no send callbacks). "
                 "Call set_transport() first."
             )
+        if self.config.multicast and message.target:
+            matched = [(tr, cb) for tr, cb in callback_snapshot if tr == message.target]
+            if matched:
+                callback_snapshot = matched
         for tr_id, send_callback in callback_snapshot:  # Round-robin
             if not send_callback:
                 raise MissingTransportError(

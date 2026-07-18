@@ -19,7 +19,7 @@
 
 import {invoke} from '@tauri-apps/api/core';
 import {getType} from '../api/Utility';
-import {CommandType, StreamType} from '../api/Interface';
+import {CommandType, MonitorPlacement, StreamType} from '../api/Interface';
 
 // -- SERVER-SPECIFIC API CALLS --
 
@@ -31,11 +31,10 @@ export function stopServer(): Promise<void> {
     return invoke(getType(CommandType, CommandType.StopServer));
 }
 
-export function addClient(hostname: string, ip_addresses: string[], screen_position: string): Promise<void> {
+export function addClient(hostname: string, ip_addresses: string[]): Promise<void> {
     return invoke(getType(CommandType, CommandType.AddClient), {
         hostname,
         ipAddresses: ip_addresses,
-        screenPosition: screen_position
     });
 }
 
@@ -43,15 +42,35 @@ export function removeClient(hostname: string, ip_address: string): Promise<void
     return invoke(getType(CommandType, CommandType.RemoveClient), {hostname, ipAddress: ip_address});
 }
 
-export function approveClient(peer_ip: string, screen_position: string): Promise<void> {
+export function approveClient(peer_ip: string): Promise<void> {
     return invoke(getType(CommandType, CommandType.ApproveClient), {
         peerIp: peer_ip,
-        screenPosition: screen_position,
     });
 }
 
 export function denyClient(peer_ip: string): Promise<void> {
     return invoke(getType(CommandType, CommandType.DenyClient), {peerIp: peer_ip});
+}
+
+/** Persist a client's workspace placements. UID is preferred; hostname/IP fallbacks for unpaired clients. */
+export function setClientLayout(
+    clientUid: string | undefined,
+    placements: MonitorPlacement[],
+    extra: {hostname?: string; ipAddress?: string} = {},
+): Promise<void> {
+    return invoke(getType(CommandType, CommandType.SetClientLayout), {
+        clientUid,
+        hostname: extra.hostname,
+        ipAddress: extra.ipAddress,
+        // Snake-case keys match the daemon's expected dict shape.
+        placements: placements.map((p) => ({
+            client_monitor_id: p.client_monitor_id,
+            workspace_x: p.workspace_x,
+            workspace_y: p.workspace_y,
+            width: p.width,
+            height: p.height,
+        })),
+    });
 }
 
 export function saveServerConfig(host: string, port: number, sslEnabled: boolean): Promise<void> {

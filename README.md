@@ -26,6 +26,7 @@ Built with Python using uvloop (macOS/Linux) and winloop (Windows) as event loop
 
 - [Getting Started](#getting-started)
 - [Platform Support](#platform-support)
+- [Multi-monitor](#multi-monitor--layout)
 - [Usage](#usage)
 - [Configuration](#configuration)
 - [Troubleshooting](#troubleshooting)
@@ -55,18 +56,15 @@ Install Perpetua on both machines, then run through these steps once. After this
 
 1. On the machine that owns the keyboard and mouse, open Perpetua and pick `Server`. Press the power button to start it.
 2. On the other machine, open Perpetua and pick `Client`. Press the power button. The client auto-discovers the server on the local network.
-3. On the `Server`, an OTP card appears under the power button when the client asks to pair. Share the 6-digit code with the user of the client.
-4. On the `Client`, enter the OTP when prompted.
-5. The `Server` shows an Allow/Deny card with a screen position selector (top, bottom, left, right). Pick a position and press Allow.
-6. Done!
-
-The OTP is shown only on the server's screen and entered manually on the client; it never travels over the network.
+3. Pair the two machines using the one-time code shown on the server. The full flow (OTP, Allow/Deny, manual pre-registration) is described in [First Connection and OTP Pairing](#configuration).
+4. After approval, the server opens the **Layout Editor**: drag each client monitor next to your server monitors and press **Save**. Details and edge cases in [Multi-monitor & layout](#multi-monitor--layout).
+5. Done!
 
 > [!TIP]
-> You can pre-register clients in `Server > Clients` instead. Pre-registered clients skip the Allow/Deny prompt and connect directly.
+> You can pre-register clients in `Server > Clients` to skip the Allow/Deny prompt entirely. See [Server Configuration](#configuration).
 
 > [!NOTE]
-> If anything goes wrong and the cursor gets stuck on the wrong machine, press `Ctrl + Shift + Q` on the server to force-quit Perpetua. See [Keyboard Shortcuts](#keyboard-shortcuts) for the full list.
+> If the cursor gets stuck on the wrong machine, press `Ctrl + Shift + Q` on the server to force-quit Perpetua. Full hotkey list in [Keyboard Shortcuts](#keyboard-shortcuts).
 
 
 ## Platform Support
@@ -102,6 +100,28 @@ Other Wayland compositors (wlroots-based, Hyprland, Sway, etc.) are not yet supp
 > - **Input Capture Conflicts**: Perpetua cannot control the mouse when other applications have exclusive input capture (e.g., video games). This is an architectural limitation.
 
 
+## Multi-monitor & layout
+
+Perpetua supports multi-monitor setups on both the server and the client. Instead of saying "the client is on the right", you tell Perpetua exactly **where each client monitor sits** next to your server. This lets you arrange a laptop with an external display, two laptops side by side, or any mix you like.
+
+### The Layout Editor
+
+After a client is approved (or any time you open `Server > Clients > <client> > Layout`), the server shows a grid with your server monitors on one side and the client's monitors on the other. **Drag each client monitor to where you want the cursor to enter that screen**, then press **Save**. Subsequent reconnections of the same client skip the editor and reuse the saved layout.
+
+> [!TIP]
+> At least one client monitor must touch a server monitor (sharing an edge). Without that, the cursor has no way to cross over. The editor refuses to save a layout that breaks this rule, and explains why.
+
+### Hot-plug
+
+Plugging or unplugging a display on either machine is detected automatically, no restart needed. If a monitor disappears, the placements that pointed to it become **orphaned**: the GUI marks them so you can either remove them or drag them somewhere valid. The cursor keeps working for the monitors that are still there.
+
+### Backwards compatibility
+
+Older configurations that use a single `screen_position` (`top` / `bottom` / `left` / `right`) keep working as a fallback when a client has no explicit `placements`. The first time you open the Layout Editor for a legacy client and save, the configuration is upgraded automatically.
+
+If you prefer to skip the GUI and edit the JSON config file directly, see [Manual placements](#manual-placements) in the Configuration section.
+
+
 ## Usage
 
 ### Background Mode
@@ -134,11 +154,12 @@ The following hotkeys are available on the **server** machine to control input f
 | `Ctrl + Shift + P + →` | Switch focus to the **right** client |
 | `Ctrl + Shift + P + ↑` | Switch focus to the **top** client |
 | `Ctrl + Shift + P + ↓` | Switch focus to the **bottom** client |
+| `Ctrl + Shift + P + 1` / `2` | **Cycle** through connected clients (prev / next) |
 | `Ctrl + Shift + P + Esc` | Return focus to the **server** |
 | `Ctrl + Shift + Q` | **Panic** - force-quit Perpetua |
 
 > [!NOTE]
-> Client switch hotkeys require the server to be running and at least one client to be connected.
+> Client switch hotkeys require the server to be running and at least one client to be connected. The cycle shortcut is useful in multi-monitor setups where direction-based switching becomes ambiguous (e.g. two clients placed on the same edge).
 
 
 ## Configuration
@@ -148,14 +169,10 @@ Perpetua uses JSON to define client and server settings. The configuration file 
 <details>
 <summary><b>Server Configuration</b></summary>
 
-The server configuration is managed automatically for basic setup (certificate generation, network binding). To accept client connections, you can:
+Basic server setup (certificates, network binding) is handled automatically. To accept client connections you have two options:
 
-- Let the GUI handle it: when a new client tries to connect, the `Server` shows an Allow/Deny card with a screen position selector. Picking Allow adds the client to the allowlist with the chosen position.
-- Or pre-register each client manually in `Server > Clients` section (or in the config file) before they connect. Specify:
-    - Client IPs and/or Hostname
-    - Screen Position: The spatial arrangement relative to the server (left, right, top, bottom)
-
-This configuration defines how devices are arranged in your workspace for a seamless cursor transition between them.
+- **Let the GUI handle it**: when a new client tries to connect, the `Server` shows an Allow/Deny card. Approving opens the Layout Editor. The full flow is described in [First Connection and OTP Pairing](#first-connection-and-otp-pairing).
+- **Pre-register each client manually** in `Server > Clients` (or by editing the config file). Pre-registered clients skip the Allow/Deny prompt. For each entry specify the client's IPs and/or hostname, plus either a legacy `screen_position` (`left`, `right`, `top`, `bottom`) or a list of `placements` (recommended for multi-monitor setups, see [Manual placements](#manual-placements)).
 
 </details>
 
@@ -174,6 +191,7 @@ Manual Configuration:
 
 </details>
 
+<a id="first-connection-and-otp-pairing"></a>
 <details>
 <summary><b>First Connection and OTP Pairing</b></summary>
 
@@ -182,7 +200,7 @@ When a client connects to a new server for the first time, it needs to get the s
 1. The `Client` starts the connection process and signals the `Server` it wants to pair ("*Secure connection*" must be **enabled**, it is by default).
 2. The `Server` generates an OTP automatically and shows it on the GUI under the power button.
 3. Share the OTP with the user of the `Client` and enter it when prompted.
-4. The `Server` shows an Allow/Deny card with a screen position selector. Picking Allow adds the client to the allowlist; picking Deny rejects the handshake.
+4. The `Server` shows an Allow/Deny card. Picking **Allow** adds the client to the allowlist and opens the **Layout Editor** to position the client's monitors; picking Deny rejects the handshake.
 5. Done!
 
 You can also generate the OTP manually from the `Security` section on the `Server` (the same card appears under the power button). This is useful when pre-registering clients without waiting for an incoming request.
@@ -191,6 +209,7 @@ The OTP is just for the initial certificate exchange. After that, connections to
 
 </details>
 
+<a id="configuration-file-structure"></a>
 <details>
 <summary><b>Configuration File Structure</b></summary>
 
@@ -256,6 +275,15 @@ These parameters affect the application's internal behavior. Only modify them if
                 "last_connection_date": "2026-02-02 19:16:12",
                 "screen_position": "top",
                 "screen_resolution": "1920x1080",
+                "placements": [
+                    {
+                        "client_monitor_id": 0,
+                        "workspace_x": 1920,
+                        "workspace_y": 0,
+                        "width": 1920,
+                        "height": 1080
+                    }
+                ],
                 "ssl": true,
                 "is_connected": true,
                 "additional_params": {}
@@ -290,6 +318,91 @@ These parameters affect the application's internal behavior. Only modify them if
     }
 }
 ```
+
+</details>
+
+<a id="manual-placements"></a>
+<details>
+<summary><b>Manual placements (multi-monitor)</b></summary>
+
+> If you're using the GUI's Layout Editor (described in [Multi-monitor & layout](#multi-monitor--layout)) you can skip this section, since the editor writes the same JSON for you. Read on only if you want to edit the config file by hand or prepare a configuration before the client ever connects.
+
+#### The idea, in one paragraph
+
+Imagine all your screens laid out on a giant virtual canvas. The server's own monitors sit at fixed positions on this canvas (top-left of the primary monitor is `(0, 0)`, just like the OS does). A **placement** is a rectangle on the same canvas that says: "client monitor X is positioned **here**". When the cursor walks off the edge of a server monitor and finds a placement on the other side, it crosses over to that client monitor.
+
+That's it. Everything below is just how to write that idea down in the config file.
+
+#### Anatomy of a placement
+
+A placement is a JSON object with five fields, living inside a client's entry in `authorized_clients` (see the example in [Configuration File Structure](#configuration-file-structure) above):
+
+```json
+{
+  "client_monitor_id": 0,
+  "workspace_x": 1920,
+  "workspace_y": 0,
+  "width": 1920,
+  "height": 1080
+}
+```
+
+| Field | What it means |
+|---|---|
+| `client_monitor_id` | The ID the **client's OS** assigned to one of its monitors. The client reports its monitors at connect time, and the IDs show up in the GUI's Layout Editor (or, if you must, in the client's logs at INFO level). If in doubt, start with `0` (that's almost always the primary). |
+| `workspace_x` | Where the **left edge** of this client monitor sits on the canvas (pixels). |
+| `workspace_y` | Where the **top edge** of this client monitor sits on the canvas (pixels). |
+| `width` | How wide the placement rectangle is (pixels). Usually the client monitor's actual width. |
+| `height` | How tall the placement rectangle is (pixels). Usually the client monitor's actual height. |
+
+#### Rules the server enforces
+
+1. A placement can't **overlap** any server monitor.
+2. A placement can't **overlap** another client's placement (or another of its own placements).
+3. Every placement must **touch** a server monitor on at least one edge, either directly or through a chain of placements on the same client. The cursor needs a way home.
+4. `width` and `height` must be greater than zero.
+
+If any rule fails, the save is rejected with a clear error message. Nothing is half-written.
+
+#### A worked example
+
+Setup:
+- The **server** has a single 1920×1080 monitor. Its canvas goes from `(0, 0)` to `(1920, 1080)`.
+- The **client** is a laptop with two monitors: the built-in screen (1920×1080, monitor id `0`) and an external (2560×1440, monitor id `1`).
+- You want the laptop's built-in screen **to the right** of the server, and the external **to the right of the laptop**.
+
+The `placements` block, inside that client's entry in `authorized_clients`:
+
+```json
+"placements": [
+  {
+    "client_monitor_id": 0,
+    "workspace_x": 1920,
+    "workspace_y": 0,
+    "width": 1920,
+    "height": 1080
+  },
+  {
+    "client_monitor_id": 1,
+    "workspace_x": 3840,
+    "workspace_y": 0,
+    "width": 2560,
+    "height": 1440
+  }
+]
+```
+
+Reading the canvas left-to-right:
+- `0 → 1920` is your server monitor.
+- `1920 → 3840` is the client's built-in screen. Its left edge touches the server's right edge → moving the cursor right off the server enters this monitor.
+- `3840 → 6400` is the external. Its left edge touches the laptop's right edge → moving the cursor right off the laptop enters the external. From here, going left walks back through the laptop and then back to the server.
+
+#### Tips
+
+- **Single monitor**: write one placement that touches the chosen server edge (left, right, top or bottom). Use the client monitor's native width and height.
+- **Stacking vertically**: change `workspace_y` instead of `workspace_x`.
+- **Two clients on the same side**: allowed, as long as their placements don't overlap. Put them at different `workspace_y` values, or one above the other. If two placements end up sharing the exact same entry edge, the server picks the first one and logs a warning. Just move one of them to disambiguate.
+- **Easiest way**: open the Layout Editor in the GUI, drag the boxes where you want them, then look at the JSON the editor saved. Copy it as a starting point.
 
 </details>
 
@@ -328,6 +441,17 @@ You can also generate the OTP manually from the `Security` section on the `Serve
 Check the client's screen position in `Server > Clients`. The position (top, bottom, left, right) defines which edge of the server screen the cursor uses to enter the client. If the client is offline, the cursor stays on the server side.
 
 If the cursor gets stuck on the wrong machine, press `Ctrl + Shift + Q` on the server to force-quit Perpetua.
+
+</details>
+
+<details>
+<summary><b>Cursor warps to the wrong client monitor (or to no client at all)</b></summary>
+
+Open `Server > Layout` and verify that each client monitor sits adjacent to a server monitor; or to another client monitor that itself reaches the server.
+
+After a hot-plug, placements pointing to a disconnected monitor are flagged as **orphan**. Drag them back into a valid position or delete them.
+
+If two clients share the exact same server edge, the server picks the first one and logs a warning. Reposition one of them in the Layout Editor to disambiguate.
 
 </details>
 
@@ -558,6 +682,7 @@ poetry run python build.py --skip-gui
 ## Roadmap
 
 - [X] Linux support
+- [X] Multi-monitor placements
 - [ ] File transfers
 - [ ] Advanced clipboard format support (including proprietary formats)
 

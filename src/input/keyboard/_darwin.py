@@ -39,7 +39,12 @@ class ServerKeyboardListener(_base.ServerKeyboardListener):
         command_stream: StreamHandler,
         filtering: bool = True,
     ):
-        super().__init__(event_bus, stream_handler, command_stream, filtering)
+        super().__init__(
+            event_bus,
+            stream_handler,
+            command_stream,
+            filtering,
+        )
 
     @staticmethod
     def _get_lock_state() -> bool:

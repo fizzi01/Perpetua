@@ -113,11 +113,6 @@ class CursorHandlerWindow(wx.Frame):
         if not self._debug:
             self.SetTransparent(0)
 
-        # self.last_mouse_send_time = 0
-        # self.mouse_send_interval_ns = int(self.DATA_SEND_INTERVAL * 1_000_000_000)
-        # self.accumulated_delta_x = 0
-        # self.accumulated_delta_y = 0
-
         # Screen lock monitoring
         self._screen_monitor_timer = wx.Timer(self)
         self._last_screen_locked_state: Optional[bool] = None
@@ -177,7 +172,7 @@ class CursorHandlerWindow(wx.Frame):
                     # time.sleep(0)
                     continue
         except Exception as e:
-            self._logger.error(f"Error processing commands ({e})")
+            self._logger.error("Error processing commands", error=str(e))
 
     def _quit_app(self, event=None):
         """Quit the wx application properly"""
@@ -199,14 +194,14 @@ class CursorHandlerWindow(wx.Frame):
         try:
             self._stop_screen_monitor()
         except Exception as e:
-            self._logger.debug(f"Error stopping screen monitor: {e}")
+            self._logger.debug("Error stopping screen monitor", error=str(e))
             pass
 
         self._logger.debug("Disabling mouse capture...")
         try:
             self.disable_mouse_capture()
         except Exception as e:
-            self._logger.debug(f"Error disabling mouse capture: {e}")
+            self._logger.debug("Error disabling mouse capture", error=str(e))
             pass
 
         self._logger.debug("Destroying window...")
@@ -214,7 +209,7 @@ class CursorHandlerWindow(wx.Frame):
             if not self.IsBeingDeleted():
                 self.Destroy()
         except Exception as e:
-            self._logger.debug(f"Error destroying window ({e})")
+            self._logger.debug("Error destroying window", error=str(e))
             pass
 
         self._logger.debug("Exiting main loop...")
@@ -224,7 +219,7 @@ class CursorHandlerWindow(wx.Frame):
                 app.DeletePendingEvents()
                 app.ExitMainLoop()
         except Exception as e:
-            self._logger.debug(f"Error exiting main loop ({e})")
+            self._logger.debug("Error exiting main loop", error=str(e))
             pass
 
     def on_mouse_capture_lost(self, event):
@@ -232,10 +227,6 @@ class CursorHandlerWindow(wx.Frame):
         Handle the EVT_MOUSE_CAPTURE_LOST event.
         This is called by wxWidgets when the mouse capture is lost.
         """
-        # if self.mouse_captured_flag.is_set():
-        # self._logger.warning(
-        #     "EVT_MOUSE_CAPTURE_LOST received - capture was lost by system"
-        # )
         event.Skip()
 
     def on_kill_focus(self, event):
@@ -283,15 +274,12 @@ class CursorHandlerWindow(wx.Frame):
         if not self.mouse_captured_flag.is_set():
             return
 
-        # self._logger.info("Attempting to recapture mouse and restore focus...")
         try:
             self.Raise()
             self.SetFocus()
             self.ForceOverlay()
-
-            # self._logger.info("Recapture attempt completed")
         except Exception as e:
-            self._logger.error(f"Error during recapture attempt ({e})")
+            self._logger.error("Error during recapture attempt", error=str(e))
 
     def RestoreFocus(self, event):
         """
@@ -310,7 +298,7 @@ class CursorHandlerWindow(wx.Frame):
             self.SetSize(self.WINDOW_SIZE)
             self.Show(True)
         except Exception as e:
-            self._logger.debug(f"Error forcing overlay: {e}")
+            self._logger.debug("Error forcing overlay", error=str(e))
 
     def HideOverlay(self, startup: bool = False):
         """
@@ -324,7 +312,7 @@ class CursorHandlerWindow(wx.Frame):
             # Resize to 0x0 to avoid interaction
             self.SetSize(Size(0, 0))
         except Exception as e:
-            self._logger.debug(f"Error hiding overlay: {e}")
+            self._logger.debug("Error hiding overlay", error=str(e))
 
     def RestorePreviousApp(self):
         """
@@ -375,7 +363,7 @@ class CursorHandlerWindow(wx.Frame):
         try:
             self.Move(x, y)
         except Exception as e:
-            self._logger.error(f"Error moving window ({e})")
+            self._logger.error("Error moving window", error=str(e))
 
     def _get_centered_coords(self) -> Point:
         """
@@ -555,7 +543,7 @@ class CursorHandlerWindow(wx.Frame):
             self._last_screen_locked_state = current_locked_state
 
         except Exception as e:
-            self._logger.error(f"Error in screen monitor timer ({e})")
+            self._logger.error("Error in screen monitor timer", error=str(e))
 
     def _start_screen_monitor(self):
         """Start the screen lock monitoring thread."""
@@ -645,14 +633,14 @@ class _CursorHandlerProcess:
             result_conn.send({"type": "process_ended"})
             _logger.debug("Main loop left")
         except Exception as e:
-            _logger.error(f"{e}")
+            _logger.error("Unhandled error", error=str(e))
         finally:
             # Clean up wx resources first
             try:
                 if window and not window.IsBeingDeleted():
                     window.Destroy()
             except Exception as e:
-                _logger.error(f"Error destroying window ({e})")
+                _logger.error("Error destroying window", error=str(e))
                 pass
 
             try:
@@ -660,7 +648,7 @@ class _CursorHandlerProcess:
                     app.DeletePendingEvents()
                     app.ExitMainLoop()
             except Exception as e:
-                _logger.error(f"Error exiting app main loop ({e})")
+                _logger.error("Error exiting app main loop", error=str(e))
                 pass
 
             # Then clean up IPC resources

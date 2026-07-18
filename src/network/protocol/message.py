@@ -162,6 +162,10 @@ class ProtocolMessage(msgspec.Struct):
             raise ValueError("Length must be provided if not validating")
 
         body_bytes = data[cls.prefix_lenght : cls.prefix_lenght + length]
+        if len(body_bytes) < length:
+            raise ValueError(
+                f"Truncated body: expected {length} bytes, got {len(body_bytes)}"
+            )
         return _get_wire_decoder().decode(body_bytes)
 
     def is_heartbeat(self) -> bool:
@@ -535,8 +539,10 @@ class MessageBuilder:
         source: Optional[str] = None,
         target: Optional[str] = None,
         server_uid: Optional[str] = None,
+        monitors: Optional[List[Dict[str, Any]]] = None,
     ) -> ProtocolMessage:
-        """Create a handshake message with timestamp."""
+        """Create a handshake message with timestamp. ``monitors`` is the
+        optional per-monitor layout; legacy peers ignore unknown keys."""
         return ProtocolMessage(
             message_type=MessageType.EXCHANGE,
             timestamp=time.time(),
@@ -550,6 +556,7 @@ class MessageBuilder:
                 "streams": streams or [],
                 "additional_params": additional_params or {},
                 "server_uid": server_uid,
+                "monitors": monitors or [],
             },
             source=source,
             target=target,

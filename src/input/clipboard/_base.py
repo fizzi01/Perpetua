@@ -128,7 +128,7 @@ class Clipboard:
             except CopykittenError:
                 return None, ClipboardType.EMPTY
             except Exception as e:
-                self._logger.warning(f"Failed to access clipboard ({e})")
+                self._logger.warning("Failed to access clipboard", error=str(e))
                 return None, ClipboardType.ERROR
 
             # Determine the content type
@@ -153,7 +153,7 @@ class Clipboard:
             return content, content_type
 
         except Exception as e:
-            self._logger.error(f"Error reading clipboard ({e})")
+            self._logger.error("Error reading clipboard", error=str(e))
             return None, ClipboardType.ERROR
 
     async def _set_clipboard_content(self, content: str) -> bool:
@@ -176,7 +176,7 @@ class Clipboard:
 
             return True
         except Exception as e:
-            self._logger.error(f"Error writing to clipboard ({e})")
+            self._logger.error("Error writing to clipboard", error=str(e))
             return False
 
     async def _poll_loop(self):
@@ -216,7 +216,9 @@ class Clipboard:
                                         None, self.on_change, content, content_type
                                     )
                             except Exception as e:
-                                self._logger.error(f"Error in callback ({e})")
+                                self._logger.error(
+                                    "Error in clipboard callback", error=str(e)
+                                )
 
                 # Sleep until next poll
                 await asyncio.sleep(self.poll_interval)
@@ -226,7 +228,7 @@ class Clipboard:
                 self._running = False
                 break
             except Exception as e:
-                self._logger.debug(f"Error in poll loop ({e})")
+                self._logger.debug("Error in poll loop", error=str(e))
                 # Continue polling even on error
                 await asyncio.sleep(self.poll_interval)
 
@@ -242,7 +244,9 @@ class Clipboard:
 
         self._running = True
         self._task = asyncio.create_task(self._poll_loop())
-        self._logger.debug(f"Started monitoring (poll interval: {self.poll_interval}s)")
+        self._logger.debug(
+            "Started clipboard monitoring", poll_interval=self.poll_interval
+        )
 
     async def stop(self):
         """
@@ -289,7 +293,9 @@ class Clipboard:
             interval: New polling interval in seconds
         """
         self.poll_interval = max(0.1, interval)  # Minimum 100ms
-        self._logger.debug(f"Clipboard poll interval updated to {self.poll_interval}s")
+        self._logger.debug(
+            "Clipboard poll interval updated", poll_interval=self.poll_interval
+        )
 
     async def set_clipboard(self, content: str) -> bool:
         """
@@ -323,7 +329,7 @@ class Clipboard:
             # so the polling loop will detect this as a change
             return True
         except Exception as e:
-            self._logger.error(f"Error writing to clipboard (debug) ({e})")
+            self._logger.error("Error writing to clipboard (debug)", error=str(e))
             return False
 
 
@@ -354,7 +360,7 @@ class ClipboardListener:
         )
         self.command_stream = command_stream
 
-        self._active_screens = {}
+        self._active_clients: dict[str, bool] = {}
         # Internal flag to track if we should be listening (When at least one client is active or connected)
         # This flag should not be set directly, but via event handlers
         self._listening = False
@@ -436,8 +442,9 @@ class ClipboardListener:
         if data is None:
             return
 
-        client_screen = data.client_screen
-        self._active_screens[client_screen] = True
+        client_uid = data.client_uid
+        if client_uid:
+            self._active_clients[client_uid] = True
         self._listening = True
 
         if not self.clipboard.is_listening():
@@ -453,13 +460,12 @@ class ClipboardListener:
         if data is None:
             return
 
-        # try to get client from data to remove from active screens
-        client = data.client_screen
-        if client and client in self._active_screens:
-            del self._active_screens[client]
+        client_uid = data.client_uid
+        if client_uid and client_uid in self._active_clients:
+            del self._active_clients[client_uid]
 
-        # if active screens is empty, we stop listening
-        if len(self._active_screens.items()) == 0:
+        # if no clients are active anymore, stop listening
+        if not self._active_clients:
             self._listening = False
             if self.clipboard.is_listening():
                 await self.clipboard.stop()

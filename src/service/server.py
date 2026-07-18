@@ -1,7 +1,4 @@
-"""
-Unified Server API
-Provides a clean interface to configure and manage server components.
-"""
+"""Unified server API to configure and manage server components."""
 
 
 #  Perpetua - open-source and cross-platform KVM software.
@@ -37,17 +34,22 @@ from event.notification import (
     ClientConnectedEvent as ClientConnectedNotification,
     ClientDisconnectedEvent as ClientDisconnectedNotification,
     ConfigSavedEvent,
+    MonitorTopologyChangedEvent,
     OtpGeneratedEvent,
     PairingRequestEvent,
     StreamEnabledEvent,
     StreamDisabledEvent,
 )
 from event import (
+    ActiveScreenChangedEvent,
     BusEventType,
     ClientConnectedEvent,
     ClientDisconnectedEvent,
+    ClientLayoutUpdatedEvent,
+    ClientMonitorsUpdatedEvent,
     ClientStreamReconnectedEvent,
 )
+
 from network.connection.server import ConnectionHandler
 from network.stream.handler.server import (
     UnidirectionalStreamHandler,
@@ -64,6 +66,7 @@ from input.mouse import ServerMouseListener, ServerMouseController
 from input.keyboard import ServerKeyboardListener
 from input.clipboard import ClipboardListener, ClipboardController
 
+from utils import BackgroundTasks
 from utils.metrics import PerformanceMonitor
 from utils.net import get_local_ip
 from utils.crypto import CertificateManager
@@ -75,10 +78,10 @@ from . import ServiceDiscovery
 
 
 class ServerStartError(Exception):
-    """Raised by :meth:`Server.start` when startup fails for a known,
-    user-actionable reason. The daemon surfaces ``str(exc)`` directly as the
-    CommandError message so the GUI shows a useful description without us
-    having to fire a second notification event.
+    """Startup failure for a known, user-actionable reason.
+
+    The daemon surfaces ``str(exc)`` as the CommandError message so the
+    GUI shows something useful without a second notification.
     """
 
     def __init__(self, message: str, reason: str = "", **details):
@@ -88,16 +91,9 @@ class ServerStartError(Exception):
 
 
 class Server:
-    """
-    Manages server configurations, clients, connections, SSL setup, and certificate sharing.
+    """Manages server configuration, clients, connections, SSL and cert sharing."""
 
-    This class provides features for configuring the server, managing client connections,
-    enabling and disabling SSL, managing SSL certificates, sharing certificates securely,
-    and maintaining an allowlist of clients. It abstracts away the complexities involved
-    in handling connections, certificate generation, and client management.
-    """
-
-    CLEANUP_DELAY = 0.5  # seconds to wait during cleanup
+    CLEANUP_DELAY = 0.5
 
     def __init__(
         self,
@@ -105,148 +101,93 @@ class Server:
         server_config: Optional[ServerConfig] = None,
         auto_load_config: bool = True,
     ):
-        """
-        Initializes the primary configuration and components of the server application.
-
-        The constructor initializes core configurations, logging, components, and
-        registries required for the server application. It loads application-specific
-        settings, manages secure connections with optional SSL certificates, and sets
-        up core communication components and registries for managing client connections
-        and event handling.
-
-        Args:
-            app_config: The application-level settings such as directory paths and
-                app-specific preferences. Defaults to None, in which case a default
-                configuration is initialized.
-            server_config: The server's runtime configuration including connection,
-                SSL, logging, streams, and authorized clients. Defaults to None, using
-                a default configuration.
-            auto_load_config: If True, automatically loads configuration from file if exists.
-                Defaults to True.
-
-        Attributes:
-            app_config (ApplicationConfig): Initialized or passed application
-                configuration object.
-            config (ServerConfig): Holds all server settings including connection,
-                SSL, logging, streams, and authorized clients.
-            _cert_manager (CertificateManager): Manages SSL certificates for secure
-                connections.
-            _cert_sharing (Optional[CertificateSharing]): Facilitates certificate
-                sharing between components, initialized only in SSL mode. Defaults to
-                None.
-            clients_manager (ClientsManager): Handles and tracks currently connected
-                clients.
-            event_bus (AsyncEventBus): Manages asynchronous events and their
-                distribution across the application services.
-            _stream_handlers (Dict[int, StreamHandler]): Registry mapping stream
-                identifiers to their respective handlers.
-            _components (dict): Storage for application components or services
-                initialized during runtime by the server.
-            _running (bool): Indicates the server's running state. Initialized as
-                False.
-            connection_handler (Optional[ConnectionHandler]): Coordinates incoming and
-                outgoing connections. Defaults to None, and is set during runtime.
-
-        Raises:
-            The constructor does not explicitly raise exceptions but may encounter
-            errors indirectly if components initialization or configurations fail.
-        """
-        # Initialize configurations
         self.app_config = app_config or ApplicationConfig()
         self.config = server_config or ServerConfig(self.app_config)
 
-        # Try to load existing configuration if requested
         if auto_load_config:
             self.config.sync_load()
 
-        # Set logging level
         self._logger = get_logger(self.__class__.__name__, level=self.config.log_level)
-        self._logger.info(f"Logger initialized at level: {self.config.log_level}")
+        self._logger.info("Logger initialized", level=self.config.log_level)
 
-        # Log loaded clients
         self._load_authorized_clients()
 
-        # Initialize certificate manager
         self._cert_manager = CertificateManager(
             cert_dir=self.app_config.get_certificate_path()
         )
         self._cert_sharing: Optional[CertificateSharing] = None
 
-        # Setup SSL if enabled
         self.certfile, self.keyfile = None, None
         if self.config.ssl_enabled:
             self.certfile, self.keyfile = self._setup_certificates()
 
-        # Initialize event bus
         self.event_bus = AsyncEventBus()
 
-        # Stream handlers registry
         self._stream_handlers: Dict[int, StreamHandler] = {}
-
-        # Components registry
         self._components = {}
         self._running = False
 
-        # Metrics and performance monitoring
-        # self._metrics_collector = MetricsCollector()
-        # self._performance_monitor = PerformanceMonitor(self._metrics_collector)
         self._metrics_collector = None
         self._performance_monitor = PerformanceMonitor(self._metrics_collector)
 
-        # mDNS
         self._mdns_service = ServiceDiscovery()
 
-        # Connection handler
         self.connection_handler: Optional[ConnectionHandler] = None
 
-        # Notification callback (set by daemon or external controller)
         self._notification_callback: Optional[
             Callable[[NotificationEvent], Awaitable[None]]
         ] = None
 
-        # Pending client-approval requests: each unknown client that initiates
-        # a handshake spawns a Future stored here, resolved by the admin via
-        # approve_pending_client / deny_pending_client (or by timeout).
+        # Pending approvals: each unknown client awaiting admin OK
+        # spawns a Future resolved via approve_pending_client /
+        # deny_pending_client (or by timeout).
         self._pending_approvals: Dict[str, "asyncio.Future[Optional[ClientObj]]"] = {}
         self._pending_approval_meta: Dict[str, Dict[str, str]] = {}
         self._pending_approvals_lock = asyncio.Lock()
-        self._approval_request_timeout = 60  # seconds
+        self._approval_request_timeout = 60
+
+        # Monitor-change watcher: polls the OS for the server's monitor
+        # topology and reconciles stored client placements when displays
+        # are added/removed or resolutions change. Stays None until
+        # ``start()`` spawns the task.
+        self._monitor_watch_task: Optional[asyncio.Task] = None
+        self._known_monitors_signature: tuple = ()
+        self.MONITOR_WATCH_INTERVAL = 2.0
+        self._bg_tasks = BackgroundTasks()
+
+        # Per-uid asyncio.Lock used to serialize the four paths that mutate
+        # the same client's placements/monitors: set_client_layout,
+        # _on_client_monitors_updated, _reconcile_layouts_with_monitors,
+        # CLIENT_LAYOUT_UPDATED handlers. Locks are created lazily on first
+        # access via ``_lock_for`` and dropped when the client is removed.
+        self._client_locks: Dict[str, asyncio.Lock] = {}
 
     @property
     def clients_manager(self) -> ClientsManager:
-        """Access the ClientsManager from configuration"""
         return self.config.clients_manager
 
-    # ==================== Notification Callback Management ====================
+    def _lock_for(self, uid: Optional[str]) -> asyncio.Lock:
+        """Return (or create) the per-uid lock that serializes layout/monitor mutations."""
+        key = uid or ""
+        lock = self._client_locks.get(key)
+        if lock is None:
+            lock = asyncio.Lock()
+            self._client_locks[key] = lock
+        return lock
 
     def set_notification_callback(
         self, callback: Optional[Callable[[NotificationEvent], Awaitable[None]]]
     ) -> None:
-        """
-        Set callback for sending notifications about state changes.
-
-        Args:
-            callback: Async callback function that receives NotificationEvent
-        """
         self._notification_callback = callback
 
     async def _send_notification(self, event: NotificationEvent) -> None:
-        """
-        Send notification to registered callback.
-
-        Args:
-            event: NotificationEvent to send
-        """
         if self._notification_callback:
             try:
                 await self._notification_callback(event)
             except Exception as e:
-                self._logger.error(f"Error sending notification: {e}")
-
-    # ==================== Configuration Management ====================
+                self._logger.error("Error sending notification", error=str(e))
 
     def _load_authorized_clients(self) -> None:
-        """Log info about loaded authorized clients (clients are loaded by config)"""
         clients = self.clients_manager.get_clients()
         if len(clients) > 0:
             self._logger.info(
@@ -256,32 +197,18 @@ class Server:
             self._logger.info("No authorized clients found in configuration")
 
     async def save_config(self) -> bool:
-        """
-        Save current configuration to file.
-
-        Returns:
-            True if saved successfully, False otherwise
-        """
         try:
-            # Clients are already in config.clients_manager, just save
             await self.config.save()
             self._logger.info("Configuration saved successfully")
             await self._send_notification(ConfigSavedEvent(config_type="server"))
             return True
         except Exception as e:
-            self._logger.error(f"Error saving configuration: {e}")
+            self._logger.error("Error saving configuration", error=str(e))
             return False
 
     async def load_config(self) -> bool:
-        """
-        Load configuration from file.
-
-        Returns:
-            True if loaded successfully, False otherwise
-        """
         try:
             if await self.config.load():
-                # Clients are already loaded by config
                 self._load_authorized_clients()
                 self._logger.set_level(self.config.log_level)
                 self._logger.info("Configuration loaded successfully")
@@ -290,16 +217,11 @@ class Server:
                 self._logger.warning("Configuration file not found")
                 return False
         except Exception as e:
-            self._logger.error(f"Error loading configuration: {e}")
+            self._logger.error("Error loading configuration", error=str(e))
             return False
 
-    # ==================== Certificate Management ====================
-
     def enable_ssl(self) -> bool:
-        """
-        Enable SSL for server connections. It will take effect on next start.
-        We won't auto save config here, need a manual save after this call.
-        """
+        """Enable SSL on next start. Caller must save config manually."""
         try:
             self.certfile, self.keyfile = self._setup_certificates()
         except Exception:
@@ -312,22 +234,13 @@ class Server:
         return True
 
     def disable_ssl(self) -> None:
-        """
-        Disable SSL for server connections. It will take effect on next start.
-        We won't auto save config here, need a manual save after this call.
-        """
+        """Disable SSL on next start. Caller must save config manually."""
         self.certfile = None
         self.keyfile = None
         self.config.disable_ssl()
         self._logger.info("SSL disabled for server connections")
 
     def _setup_certificates(self) -> Tuple[str, str]:
-        """
-        Ensure SSL certificates are available.
-
-        Returns:
-            Tuple of (certfile_path, keyfile_path)
-        """
         try:
             if not self._cert_manager.certificates_exist():
                 self._logger.warning(
@@ -355,7 +268,7 @@ class Server:
                 self._logger.info("SSL certificates found and loaded")
                 return certfile, keyfile
         except Exception as e:
-            self._logger.error(f"Error setting up SSL certificates ({e})")
+            self._logger.error("Error setting up SSL certificates", error=str(e))
             raise
 
     async def start_pairing_service(
@@ -363,17 +276,12 @@ class Server:
         host: Optional[str] = None,
         port: Optional[int] = None,
     ) -> bool:
-        """
-        Start the always-on pairing/cert-sharing listener.
+        """Start the always-on pairing/cert-sharing listener.
 
-        While this listener is running, clients can:
-
-        - send ``REQUEST_PAIRING`` to ask the server to auto-generate an OTP
-          and surface it on the admin GUI (no OTP travels over the network);
-        - send ``GET_CERTIFICATE`` to download the encrypted CA bundle once an
-          OTP is active.
-
-        Idempotent: if the service is already running, this is a no-op.
+        While running, clients can send ``REQUEST_PAIRING`` (server
+        auto-generates an OTP shown on the admin GUI) and
+        ``GET_CERTIFICATE`` (download the encrypted CA bundle once an
+        OTP is active). Idempotent.
         """
         if not self._cert_manager.certificates_exist():
             self._logger.warning(
@@ -382,8 +290,7 @@ class Server:
             return False
 
         if self._cert_sharing and self._cert_sharing.is_sharing_active():
-            # Refresh the callback so it captures the current notification
-            # callback even if it changed since last start.
+            # Refresh the callback in case it changed since last start.
             self._cert_sharing.set_pairing_request_callback(self._on_pairing_requested)
             return True
 
@@ -393,9 +300,8 @@ class Server:
             return False
 
         bind_host = host if host is not None else "0.0.0.0"
-        # Resolve effective pairing port: explicit arg -> config override ->
-        # legacy "port - 2" convention. Keeping the resolution centralised so
-        # both server.py and the mDNS TXT record agree.
+        # Pairing port precedence: explicit arg, config override, legacy
+        # "port - 2" convention. Centralised so server.py and mDNS agree.
         bind_port = port if port is not None else self.config.get_pairing_port()
         self._cert_sharing = CertificateSharing(
             cert_data=cert_data,
@@ -420,8 +326,7 @@ class Server:
         return True
 
     def get_pairing_actual_port(self) -> Optional[int]:
-        """Return the port the pairing listener actually bound to (with
-        fallback applied), or None if not running."""
+        """Port the pairing listener actually bound to (after fallback), or None."""
         if self._cert_sharing is None:
             return None
         return self._cert_sharing.get_actual_port()
@@ -429,9 +334,8 @@ class Server:
     async def _on_pairing_requested(self, info: Dict[str, str]) -> None:
         """Bridge a pairing request from CertificateSharing into notifications.
 
-        Emits two events so the GUI can react with either:
-        - the legacy ``OtpGenerated`` path (existing UI just works);
-        - the richer ``PairingRequested`` path (shows which client asked).
+        Emits both PairingRequested (richer payload) and the legacy
+        OtpGenerated event so existing GUI listeners keep working.
         """
         try:
             otp = info.get("otp", "")
@@ -440,7 +344,7 @@ class Server:
             hostname = info.get("hostname", "")
             was_active = info.get("was_active", "0") == "1"
         except Exception as e:
-            self._logger.error(f"Malformed pairing info payload: {e}")
+            self._logger.error("Malformed pairing info payload", error=str(e))
             return
 
         await self._send_notification(
@@ -452,8 +356,6 @@ class Server:
                 was_active=was_active,
             )
         )
-        # Mirror as OtpGenerated so existing GUI listeners keep working
-        # without needing to know about pairing-vs-manual provenance.
         if otp:
             await self._send_notification(
                 OtpGeneratedEvent(otp=otp, timeout=timeout_val)
@@ -465,26 +367,10 @@ class Server:
         port: Optional[int] = None,
         timeout: int = 30,
     ) -> Tuple[bool, Optional[str]]:
-        """
-        Start (or refresh) certificate sharing with an OTP.
+        """Start or refresh certificate sharing with an OTP.
 
-        If the always-on pairing service is running, this just ensures an OTP
-        is active and returns it - no new socket is opened. Otherwise it falls
-        back to the legacy one-shot flow that opens a temporary server.
-
-        Args:
-            host: Host address for temporary server (default: all interfaces)
-            port: Port for temporary server (default: 55556)
-            timeout: OTP validity window in seconds (default: 30)
-
-        Returns:
-            Tuple of (success, otp). OTP is None if failed.
-
-        Example:
-        ::
-            success, otp = await server.share_certificate()
-            if success:
-                print(f"Share this OTP with client: {otp}")
+        If the always-on pairing service is running, refreshes the OTP
+        in place. Otherwise falls back to the legacy one-shot flow.
         """
         if not self._cert_manager.certificates_exist():
             self._logger.error("No certificates available to share")
@@ -526,54 +412,35 @@ class Server:
                 return False, None
 
         except Exception as e:
-            self._logger.error(f"Error starting certificate sharing ({e})")
+            self._logger.error("Error starting certificate sharing", error=str(e))
             return False, None
 
     async def stop_cert_sharing(self):
-        """
-        Stop certificate sharing server.
-
-        Invalidates OTP and closes temporary server.
-        """
         if self._cert_sharing:
             await self._cert_sharing.stop_sharing()
             self._logger.info("Certificate sharing stopped")
 
     def get_sharing_otp(self) -> Optional[str]:
-        """
-        Get current OTP for certificate sharing.
-
-        Returns:
-            OTP string if valid and sharing is active, None otherwise
-        """
         if self._cert_sharing:
             return self._cert_sharing.get_otp()
         return None
 
     def is_cert_sharing_active(self) -> bool:
-        """Check if certificate sharing is currently active"""
         return self._cert_sharing is not None and self._cert_sharing.is_sharing_active()
-
-    # ==================== Client Management ====================
 
     async def add_client(
         self,
         ip_addresses: Optional[list[str] | str] = None,
         hostname: Optional[str] = None,
-        screen_position: str = "top",
+        screen_position: Optional[str] = None,
         auto_save: bool = True,
     ) -> ClientObj:
-        """
-        Add a client to the authorized list.
+        """Add a client to the authorized list.
 
-        Args:
-            ip_addresses: IP address(es) of the client (single str or list)
-            hostname: Hostname of the client
-            screen_position: Screen position relative to server
-            auto_save: If True, automatically saves configuration after adding
-
-        Returns:
-            The created ClientObj
+        ``screen_position`` is optional; ``None`` leaves the client
+        unplaced (admin positions its monitors via the Layout Editor).
+        Legacy values are stored verbatim and feed the synthesis shim
+        in :meth:`ClientObj.get_effective_placements`.
         """
         try:
             client = self.config.add_client(
@@ -585,12 +452,16 @@ class Server:
             if auto_save:
                 await self.save_config()
 
+            placement_hint = (
+                f"at position {screen_position}" if screen_position else "(unplaced)"
+            )
             self._logger.info(
-                f"Added client {ip_addresses if ip_addresses else hostname} at position {screen_position}"
+                f"Added client {ip_addresses if ip_addresses else hostname} "
+                f"{placement_hint}"
             )
             return client
         except ValueError as ve:
-            self._logger.error(f"Error adding client: {ve}")
+            self._logger.error("Error adding client", error=str(ve))
             raise
 
     async def remove_client(
@@ -600,39 +471,28 @@ class Server:
         screen_position: Optional[str] = None,
         auto_save: bool = True,
     ) -> bool:
-        """
-        Remove a client from the authorized list.
-
-        Args:
-            ip_address: One of the client's known IP addresses (used for lookup)
-            hostname: Hostname of the client
-            screen_position: Screen position of the client
-            auto_save: If True, automatically saves configuration after removal
-
-        Returns:
-            True if client was removed, False if not found
-        """
+        """Remove a client from the authorized list."""
         client = self.config.get_client(
             ip_address=ip_address, hostname=hostname, screen_position=screen_position
         )
         if client:
-            if (
-                self._running and self.connection_handler is not None
-            ):  # If server is running, disconnect client first
+            if self._running and self.connection_handler is not None:
                 await self.connection_handler.force_disconnect_client(client)
-            # Finally remove from allowlist
             self.config.remove_client(client=client)
+            # Drop the per-uid lock so it doesn't grow unbounded across
+            # add/remove cycles. Safe: no other coroutine should hold a
+            # reference to this lock after remove.
+            self._client_locks.pop(client.uid or "", None)
 
             if auto_save:
                 await self.save_config()
 
             net_id = ip_address or hostname or screen_position
-            self._logger.info(f"Removed client {net_id}")
+            self._logger.info("Removed client", net_id=net_id)
             return True
         return False
 
     def get_clients(self) -> list[ClientObj]:
-        """Get all registered clients"""
         return self.config.get_clients()
 
     def get_client(
@@ -641,10 +501,370 @@ class Server:
         hostname: Optional[str] = None,
         screen_position: Optional[str] = None,
     ) -> Optional[ClientObj]:
-        """Get a specific client"""
         return self.config.get_client(
             ip_address=ip_address, hostname=hostname, screen_position=screen_position
         )
+
+    async def set_client_layout(
+        self,
+        placements: list[dict],
+        uid: Optional[str] = None,
+        hostname: Optional[str] = None,
+        ip_address: Optional[str] = None,
+        auto_save: bool = True,
+    ) -> ClientObj:
+        """Replace the multi-monitor placements of one client.
+
+        Validates positive width/height and no overlap (self, with the
+        server's monitors, or with other clients' placements). On
+        success, persists and hot-reloads the mouse listener's routing
+        cache via CLIENT_LAYOUT_UPDATED.
+        """
+        client = self.config.get_client(
+            uid=uid,
+            ip_address=ip_address,
+            hostname=hostname,
+        )
+        if not client:
+            raise ValueError(
+                f"Client [uid={uid}, ip={ip_address}, host={hostname}] not found"
+            )
+
+        async with self._lock_for(client.uid):
+            return await self._set_client_layout_locked(client, placements, auto_save)
+
+    async def _set_client_layout_locked(
+        self, client: ClientObj, placements: list[dict], auto_save: bool
+    ) -> ClientObj:
+        # ------------------------------------------------------------------
+        # Validation
+        # ------------------------------------------------------------------
+        from utils.screen import Screen
+
+        normalized: list[dict] = []
+        for raw in placements or []:
+            try:
+                width = int(raw["width"])
+                height = int(raw["height"])
+            except (KeyError, TypeError, ValueError):
+                raise ValueError(f"Placement missing width/height: {raw!r}")
+            if width <= 0 or height <= 0:
+                raise ValueError(f"Placement has non-positive size: {raw!r}")
+            normalized.append(
+                {
+                    "client_monitor_id": int(raw.get("client_monitor_id", 0)),
+                    "workspace_x": int(raw.get("workspace_x", 0)),
+                    "workspace_y": int(raw.get("workspace_y", 0)),
+                    "width": width,
+                    "height": height,
+                }
+            )
+
+        def _rects_overlap(a: dict, b: dict) -> bool:
+            ax2 = a["workspace_x"] + a["width"]
+            ay2 = a["workspace_y"] + a["height"]
+            bx2 = b["workspace_x"] + b["width"]
+            by2 = b["workspace_y"] + b["height"]
+            return not (
+                ax2 <= b["workspace_x"]
+                or bx2 <= a["workspace_x"]
+                or ay2 <= b["workspace_y"]
+                or by2 <= a["workspace_y"]
+            )
+
+        # Self-overlap.
+        for i, a in enumerate(normalized):
+            for b in normalized[i + 1 :]:
+                if _rects_overlap(a, b):
+                    raise ValueError(
+                        f"Placements of {client.get_net_id()} overlap each other: "
+                        f"{a} vs {b}"
+                    )
+
+        # Overlap with server monitors.
+        try:
+            server_monitors = Screen.get_monitors_cached()
+        except Exception:
+            server_monitors = []
+        for m in server_monitors:
+            sm = {
+                "workspace_x": m.min_x,
+                "workspace_y": m.min_y,
+                "width": m.max_x - m.min_x,
+                "height": m.max_y - m.min_y,
+            }
+            for p in normalized:
+                if _rects_overlap(p, sm):
+                    raise ValueError(
+                        f"Placement {p} overlaps server monitor #{m.monitor_id}"
+                    )
+
+        # Server-adjacency rule: every client monitor must abut at least
+        # one server monitor on a shared edge. Chained client-only hops
+        # (A↔server, B↔A but B not touching the server) are forbidden
+        # because the cursor's reverse routing has nowhere to land back
+        # to the server when it leaves B's outer edge.
+        if server_monitors and normalized:
+            from utils.screen import compute_edge_bindings
+
+            for p in normalized:
+                try:
+                    bindings = compute_edge_bindings(p, server_monitors)
+                except Exception:
+                    bindings = []
+                if not bindings:
+                    raise ValueError(
+                        f"Placement for client_monitor_id={p['client_monitor_id']} "
+                        f"is not adjacent to any server monitor. Every client "
+                        f"placement must share at least one edge with the server."
+                    )
+
+        # Overlap with OTHER clients' placements. Compare on uid (stable identity)
+        # rather than net_id (hostname/ip), which collides between distinct clients
+        # behind the same NAT or sharing a hostname.
+        for other in self.config.get_clients():
+            if client.uid and other.uid and other.uid == client.uid:
+                continue
+            if (
+                not client.uid or not other.uid
+            ) and other.get_net_id() == client.get_net_id():
+                continue
+            for op in other.placements:
+                op_norm = {
+                    "workspace_x": int(op.get("workspace_x", 0)),
+                    "workspace_y": int(op.get("workspace_y", 0)),
+                    "width": int(op.get("width", 0)),
+                    "height": int(op.get("height", 0)),
+                }
+                if op_norm["width"] <= 0 or op_norm["height"] <= 0:
+                    continue
+                for p in normalized:
+                    if _rects_overlap(p, op_norm):
+                        raise ValueError(
+                            f"Placement {p} overlaps {other.get_net_id()}'s "
+                            f"placement {op_norm}"
+                        )
+
+        # Commit.
+        client.placements = normalized
+        self.clients_manager.update_client(client)
+        if auto_save:
+            await self.save_config()
+
+        # Hot-reload the listener's routing cache so the new placements
+        # take effect on the next crossing, without forcing a reconnect.
+        edge_bindings = [
+            eb.to_dict() for eb in client.get_edge_bindings(server_monitors)
+        ]
+        intra_client_bindings = client.get_intra_client_bindings(server_monitors)
+        await self.event_bus.dispatch(
+            event_type=BusEventType.CLIENT_LAYOUT_UPDATED,
+            data=ClientLayoutUpdatedEvent(
+                client_uid=client.uid,
+                edge_bindings=edge_bindings,
+                intra_client_bindings=intra_client_bindings,
+            ),
+        )
+
+        self._logger.info(
+            f"Set layout for client {client.get_net_id()}: "
+            f"{len(normalized)} placement(s)"
+        )
+        return client
+
+    @staticmethod
+    def _monitors_signature(monitors) -> tuple:
+        """Hashable fingerprint of a monitor list.
+
+        Two enumerations with the same (id, bbox, primary) tuple are
+        treated as identical even if Python recreated the dataclasses;
+        anything else triggers a topology-changed event.
+        """
+        sig = []
+        for m in monitors or []:
+            sig.append(
+                (
+                    int(getattr(m, "monitor_id", 0)),
+                    int(getattr(m, "min_x", 0)),
+                    int(getattr(m, "min_y", 0)),
+                    int(getattr(m, "max_x", 0)),
+                    int(getattr(m, "max_y", 0)),
+                    bool(getattr(m, "is_primary", False)),
+                )
+            )
+        sig.sort()
+        return tuple(sig)
+
+    async def _reconcile_layouts_with_monitors(
+        self,
+        server_monitors,
+        notify: bool = True,
+    ) -> list[dict]:
+        """Drop client placements that no longer touch any server monitor.
+
+        Returns a list of orphan descriptors (one per dropped placement)
+        so the GUI can show the admin which placements went away. When
+        ``notify`` is True the bus is also re-dispatched per affected
+        client so the mouse listener's edge-binding cache stays in sync.
+        """
+        from utils.screen import compute_edge_bindings
+
+        orphans: list[dict] = []
+
+        # Snapshot the client list once so add/remove churn during iteration
+        # doesn't trip us up. We acquire the per-client lock for each section
+        # (never two at once) to keep set_client_layout / monitor updates
+        # from racing against this reconciliation.
+        for client in list(self.config.get_clients()):
+            try:
+                async with asyncio.timeout(5.0):
+                    async with self._lock_for(client.uid):
+                        await self._reconcile_single_client(
+                            client,
+                            server_monitors,
+                            notify,
+                            orphans,
+                            compute_edge_bindings,
+                        )
+            except asyncio.TimeoutError:
+                self._logger.warning(
+                    f"Reconciliation timeout for client {client.get_net_id()} "
+                    f"(uid={client.uid}); skipping"
+                )
+
+        if orphans:
+            try:
+                await self.save_config()
+            except Exception as e:
+                self._logger.warning(
+                    "Failed to persist layout reconciliation", error=str(e)
+                )
+
+        return orphans
+
+    async def _reconcile_single_client(
+        self,
+        client: ClientObj,
+        server_monitors,
+        notify: bool,
+        orphans: list[dict],
+        compute_edge_bindings,
+    ) -> None:
+        placements = list(client.placements or [])
+        if not placements:
+            return
+
+        # Server-adjacency rule: every placement must touch a server
+        # monitor on at least one edge. Chained client-only hops are
+        # rejected here so the cursor's return path back to the
+        # server is well-defined for every placed monitor.
+        kept: list[dict] = []
+        dropped: list[dict] = []
+        for p in placements:
+            try:
+                bindings = compute_edge_bindings(p, server_monitors)
+            except Exception:
+                bindings = []
+            if bindings:
+                kept.append(p)
+            else:
+                dropped.append(p)
+
+        if not dropped:
+            return
+
+        for p in dropped:
+            orphans.append(
+                {
+                    "client_uid": client.uid,
+                    "client_net_id": client.get_net_id(),
+                    "placement": dict(p),
+                }
+            )
+
+        client.placements = kept
+        try:
+            self.clients_manager.update_client(client)
+        except Exception as e:
+            self._logger.warning(
+                f"Failed to persist pruned layout for {client.get_net_id()} ({e})"
+            )
+
+        if notify and client.is_connected:
+            try:
+                edge_bindings = [
+                    eb.to_dict() for eb in client.get_edge_bindings(server_monitors)
+                ]
+                intra_client_bindings = client.get_intra_client_bindings(
+                    server_monitors
+                )
+                await self.event_bus.dispatch(
+                    event_type=BusEventType.CLIENT_LAYOUT_UPDATED,
+                    data=ClientLayoutUpdatedEvent(
+                        client_uid=client.uid,
+                        edge_bindings=edge_bindings,
+                        intra_client_bindings=intra_client_bindings,
+                    ),
+                )
+            except Exception as e:
+                self._logger.warning(
+                    f"Failed to refresh bindings for "
+                    f"{client.get_net_id()} after monitor change ({e})"
+                )
+
+    async def _monitor_watch_loop(self) -> None:
+        """Background poller that surfaces server-monitor topology changes.
+
+        The OS does not expose a portable hot-plug callback at this layer
+        so the poll cadence is the time-to-detect upper bound. Two
+        seconds is small enough that the GUI feels reactive when the
+        admin plugs/unplugs a display but cheap enough to leave running.
+        """
+        from utils.screen import Screen
+        from utils.screen._base import invalidate_monitors_cache
+
+        while self._running:
+            try:
+                await asyncio.sleep(self.MONITOR_WATCH_INTERVAL)
+                if not self._running:
+                    return
+                try:
+                    # Always query the OS here (not the cache), since this
+                    # loop is the cache's source of truth for change detection.
+                    monitors = Screen.get_monitors()
+                except Exception as e:
+                    self._logger.debug(
+                        f"Monitor enumeration failed in watch loop ({e})"
+                    )
+                    continue
+                signature = self._monitors_signature(monitors)
+                if signature == self._known_monitors_signature:
+                    continue
+                self._known_monitors_signature = signature
+                # Topology change: invalidate the cache so the next
+                # cached read picks up the new layout.
+                invalidate_monitors_cache()
+                self._logger.info(
+                    f"Server monitor topology changed: "
+                    f"{len(monitors)} monitor(s) now connected"
+                )
+                orphans = await self._reconcile_layouts_with_monitors(monitors)
+                try:
+                    monitor_dicts = [m.to_dict() for m in monitors]
+                except Exception:
+                    monitor_dicts = []
+                await self._send_notification(
+                    MonitorTopologyChangedEvent(
+                        monitors=monitor_dicts,
+                        orphans=orphans,
+                    )
+                )
+            except asyncio.CancelledError:
+                return
+            except Exception as e:
+                self._logger.error("monitor watch loop failed", error=str(e))
+                # Brief pause so a persistent error doesn't busy-spin.
+                await asyncio.sleep(self.MONITOR_WATCH_INTERVAL)
 
     async def edit_client(
         self,
@@ -655,20 +875,7 @@ class Server:
         new_ip_addresses: Optional[list[str] | str] = None,
         auto_save: bool = True,
     ) -> ClientObj:
-        """
-        Edit a client's properties.
-
-        Args:
-            ip_address: One of the client's known IP addresses (used for lookup)
-            hostname: Hostname of the client to edit
-            old_screen_position: Current screen position (used for lookup)
-            new_screen_position: New screen position
-            new_ip_addresses: New IP address(es) to set (replaces existing list)
-            auto_save: If True, automatically saves configuration after editing
-
-        Returns:
-            The updated ClientObj
-        """
+        """Edit a client's properties."""
         client = self.config.get_client(
             ip_address=ip_address,
             hostname=hostname,
@@ -677,7 +884,6 @@ class Server:
         if not client:
             raise ValueError(f"Client [IP {ip_address}, Host {hostname}] not found")
 
-        # if client is connected do not allow changing screen_position
         if client.is_connected:
             raise RuntimeError("Cannot edit a connected client's properties")
 
@@ -703,7 +909,6 @@ class Server:
     def is_client_alive(
         self, ip_address: Optional[str] = None, hostname: Optional[str] = None
     ) -> bool:
-        """Check if a client is currently connected"""
         if not ip_address and not hostname:
             raise ValueError("Either ip_address or hostname must be provided")
 
@@ -711,12 +916,7 @@ class Server:
         return client.is_connected if client else False
 
     async def clear_clients(self, auto_save: bool = True) -> None:
-        """
-        Remove all clients from authorized list.
-
-        Args:
-            auto_save: If True, automatically saves configuration after clearing
-        """
+        """Remove all clients from authorized list."""
         self.config.clients_manager.clear()
 
         if auto_save:
@@ -724,31 +924,17 @@ class Server:
 
         self._logger.info("Cleared all clients")
 
-    # ==================== Stream Management ====================
-
     async def enable_stream(self, stream_type: int) -> None:
-        """
-        Enable a specific stream type (applies before start or at runtime)
-
-        Raises:
-            ValueError: If the stream type is invalid
-        """
         if not StreamType.is_valid(stream_type):
             raise ValueError(f"Invalid stream type: {stream_type}")
 
         self.config.enable_stream(stream_type)
         await self.config.save()
-        self._logger.info(f"Enabled stream: {stream_type}")
+        self._logger.info("Enabled stream", stream_type=stream_type)
 
         await self._send_notification(StreamEnabledEvent(stream_type=stream_type))
 
     async def disable_stream(self, stream_type: int) -> None:
-        """
-        Disable a specific stream type (applies before start or at runtime)
-
-        Raises:
-            ValueError: If the stream type is invalid
-        """
         if not StreamType.is_valid(stream_type):
             raise ValueError(f"Invalid stream type: {stream_type}")
 
@@ -759,7 +945,7 @@ class Server:
             return
         self.config.disable_stream(stream_type)
         await self.config.save()
-        self._logger.info(f"Disabled stream: {stream_type}")
+        self._logger.info("Disabled stream", stream_type=stream_type)
 
         await self._send_notification(StreamDisabledEvent(stream_type=stream_type))
 
@@ -773,15 +959,12 @@ class Server:
             await self.enable_stream(stream_type)
             return True
 
-        # Se già abilitato, non fare nulla
         if self.is_stream_enabled(stream_type):
-            self._logger.warning(f"Stream {stream_type} already enabled")
+            self._logger.warning("Stream already enabled", stream_type=stream_type)
             return True
 
-        # Abilita nella configurazione
         await self.enable_stream(stream_type)
 
-        # Inizializza e avvia i componenti per questo stream
         try:
             if stream_type == StreamType.MOUSE:
                 await self._enable_mouse_stream()
@@ -790,17 +973,19 @@ class Server:
             elif stream_type == StreamType.CLIPBOARD:
                 await self._enable_clipboard_stream()
             else:
-                self._logger.error(f"Unknown stream type: {stream_type}")
+                self._logger.error("Unknown stream type", stream_type=stream_type)
                 return False
 
-            self._logger.info(f"Runtime enabled stream: {stream_type}")
+            self._logger.info("Runtime enabled stream", stream_type=stream_type)
             return True
         except Exception as e:
             import traceback
 
             traceback.print_exc()
             await self.disable_stream(stream_type)
-            self._logger.error(f"Failed to enable {stream_type} stream ({e})")
+            self._logger.error(
+                "Failed to enable stream", stream_type=stream_type, error=str(e)
+            )
             raise RuntimeError(f"Failed to enable {stream_type} stream ({e})")
 
     async def disable_stream_runtime(self, stream_type: int) -> bool:
@@ -809,10 +994,8 @@ class Server:
             await self.disable_stream(stream_type)
             return True
 
-        # Disabilita nella configurazione
         await self.disable_stream(stream_type)
 
-        # Ferma e rimuovi i componenti
         try:
             if stream_type == StreamType.MOUSE:
                 await self._disable_mouse_stream()
@@ -821,39 +1004,32 @@ class Server:
             elif stream_type == StreamType.CLIPBOARD:
                 await self._disable_clipboard_stream()
             else:
-                self._logger.error(f"Unknown stream type: {stream_type}")
+                self._logger.error("Unknown stream type", stream_type=stream_type)
                 return False
 
-            self._logger.info(f"Runtime disabled stream: {stream_type}")
+            self._logger.info("Runtime disabled stream", stream_type=stream_type)
             return True
         except Exception as e:
-            self._logger.error(f"Failed to disable {stream_type} stream ({e})")
+            self._logger.error(
+                "Failed to disable stream", stream_type=stream_type, error=str(e)
+            )
             raise RuntimeError(f"Failed to disable {stream_type} stream ({e})")
-
-    # ==================== Client Approval (interactive) ====================
 
     async def _request_client_approval(
         self, peer_ip: str, hostname: str, uid: str
     ) -> Optional[ClientObj]:
         """Ask the admin (via GUI) whether to accept an unknown client.
 
-        Called by the ConnectionHandler when a client not present in the
-        allowlist completes the handshake. Emits a notification with the
-        client's identifiers, then blocks on a Future that the admin resolves
-        via :meth:`approve_pending_client` or :meth:`deny_pending_client`.
-
-        Returns:
-            A populated ClientObj if approved (already added to the
-            allowlist), or None if denied / timed out.
+        Blocks on a Future resolved by approve/deny_pending_client.
+        Returns the added ClientObj on approve, None on deny / timeout.
         """
         request_id = f"{peer_ip}-{int(asyncio.get_running_loop().time() * 1000)}"
 
         async with self._pending_approvals_lock:
             existing = self._pending_approvals.get(peer_ip)
             if existing is not None and not existing.done():
-                # A second handshake attempt from the same IP while an admin
-                # decision is pending: piggy-back on the same Future instead
-                # of stacking prompts.
+                # Second handshake from same IP while admin is deciding:
+                # piggy-back on the same Future to avoid stacking prompts.
                 self._logger.info(
                     f"Reusing pending approval for {peer_ip} (hostname={hostname})"
                 )
@@ -890,10 +1066,8 @@ class Server:
             await self._resolve_pending_approval(peer_ip, None, reason="timeout")
             return None
         finally:
-            # ``_resolve_pending_approval`` already
-            # pops the entries, but if the waiter was cancelled mid-flight
-            # the resolver may never run. Unconditional pop here closes that
-            # leak path.
+            # If the waiter was cancelled mid-flight the resolver may
+            # never run; unconditional pop here closes the leak path.
             async with self._pending_approvals_lock:
                 self._pending_approvals.pop(peer_ip, None)
                 self._pending_approval_meta.pop(peer_ip, None)
@@ -905,12 +1079,7 @@ class Server:
         screen_position: str = "",
         reason: str = "",
     ) -> bool:
-        """Resolve a pending approval Future. Returns True if a Future existed.
-
-        Pops the entry from both ``_pending_approvals`` and
-        ``_pending_approval_meta`` under the lock so a cancelled waiter can't
-        leave stale state behind.
-        """
+        """Resolve a pending approval Future. Returns True if one existed."""
         async with self._pending_approvals_lock:
             fut = self._pending_approvals.pop(peer_ip, None)
             meta = self._pending_approval_meta.pop(peer_ip, None) or {}
@@ -929,12 +1098,14 @@ class Server:
         return True
 
     async def approve_pending_client(
-        self, peer_ip: str, screen_position: str = "top"
+        self, peer_ip: str, screen_position: Optional[str] = None
     ) -> bool:
-        """Approve an unknown client that's waiting for the admin's OK.
+        """Approve an unknown client awaiting admin OK.
 
-        Adds the client to the persistent allowlist with the chosen screen
-        position before unblocking the handshake.
+        Adds the client to the allowlist before unblocking the
+        handshake. ``screen_position`` is optional legacy metadata;
+        omitted clients land unplaced and the GUI opens the Layout
+        Editor.
         """
         async with self._pending_approvals_lock:
             meta = self._pending_approval_meta.get(peer_ip)
@@ -954,14 +1125,19 @@ class Server:
                 auto_save=True,
             )
         except Exception as e:
-            self._logger.error(f"Failed to add approved client {peer_ip} ({e})")
+            self._logger.error(
+                "Failed to add approved client", peer_ip=peer_ip, error=str(e)
+            )
             await self._resolve_pending_approval(
                 peer_ip, None, reason=f"add_failed: {e}"
             )
             return False
 
         await self._resolve_pending_approval(
-            peer_ip, client, screen_position=screen_position, reason="approved"
+            peer_ip,
+            client,
+            screen_position=screen_position or "",
+            reason="approved",
         )
         return True
 
@@ -981,16 +1157,11 @@ class Server:
     def _is_port_available(host: str, port: int) -> bool:
         """Synchronously probe whether ``host:port`` is free for bind.
 
-        Mirrors what ``asyncio.start_server`` would actually attempt: on POSIX
-        the event loop sets ``SO_REUSEADDR`` by default, so sockets stuck in
-        ``TIME_WAIT`` from a previous incarnation don't block a fresh bind.
-        Without ``SO_REUSEADDR`` here this probe was reporting "port busy"
-        for ~60s after every stop, even though the real start would have
-        succeeded fine.
-
-        On Windows ``SO_REUSEADDR`` has different (looser) semantics; setting
-        it would let two unrelated servers steal each other's port, so we
-        keep the probe strict there to match the OS behaviour.
+        Mirrors ``asyncio.start_server``: on POSIX the loop sets
+        SO_REUSEADDR by default, so TIME_WAIT sockets from a previous
+        run don't block a fresh bind. On Windows SO_REUSEADDR has
+        looser semantics (would let two servers steal each other's
+        port) so the probe stays strict there.
         """
         bind_host = host if host and host != "0.0.0.0" else ""
         try:
@@ -1002,8 +1173,6 @@ class Server:
         except OSError:
             return False
 
-    # ==================== Server Lifecycle ====================
-
     async def start(self) -> bool:
         """Start the server with enabled components"""
         if self._running:
@@ -1012,12 +1181,9 @@ class Server:
 
         self._logger.info("Starting Server...")
 
-        # Pre-flight check: refuse to start if the configured TCP data port
-        # is already taken. Unlike the pairing port (which auto-falls-back
-        # to adjacent ports), the data port is published over mDNS and used
-        # by client configs, so a silent fallback would confuse everything.
-        # Surface the conflict explicitly so the GUI can prompt the admin to
-        # change the port in Options.
+        # Refuse to start if the data port is taken. Unlike the pairing
+        # port, this one is published over mDNS and baked into client
+        # configs — a silent fallback would confuse everything.
         if not self._is_port_available(self.config.host, self.config.port):
             error_msg = (
                 f"Port {self.config.port} is already in use on "
@@ -1032,15 +1198,13 @@ class Server:
                 host=self.config.host,
             )
 
-        # Initialize and start enabled streams
         try:
             await self._initialize_streams()
         except Exception as e:
-            self._logger.error(f"Failed to initialize streams ({e})")
+            self._logger.error("Failed to initialize streams", error=str(e))
             await self.stop(True)
             return False
 
-        # Initialize connection handler
         self.connection_handler = ConnectionHandler(
             connected_callback=self._on_client_connected,
             disconnected_callback=self._on_client_disconnected,
@@ -1055,11 +1219,10 @@ class Server:
             server_uid=self.config.uid,
         )
 
-        # Initialize and start enabled components
         try:
             await self._initialize_components()
         except Exception as e:
-            self._logger.error(f"Failed to initialize components ({e})")
+            self._logger.error("Failed to initialize components", error=str(e))
             await self.stop(True)
             return False
 
@@ -1068,61 +1231,98 @@ class Server:
             await self.stop(True)
             return False
 
-        # Bring up the pairing/cert-sharing listener BEFORE mDNS so the
-        # service record advertises the port we actually bound (the listener
-        # may have fallen back to an adjacent port if the preferred one was
-        # busy). Failure is non-fatal - the rest of the server keeps running
-        # and the admin can still share certs manually via
-        # share_certificate().
+        # Pairing listener comes up BEFORE mDNS so the service record
+        # advertises the port we actually bound (may have fallen back
+        # to an adjacent port). Failure is non-fatal.
         if self.config.ssl_enabled:
             try:
                 await self.start_pairing_service(host=self.config.host)
             except Exception as e:
-                self._logger.warning(f"Pairing service did not start ({e})")
+                self._logger.warning("Pairing service did not start", error=str(e))
 
-        # Start mDNS service. Advertise the pairing port so clients can
-        # discover it without relying on the legacy ``port - 2`` convention.
-        # Prefer the actually-bound port over the configured one so the
-        # advertisement reflects reality after fallback.
+        # Advertise the actually-bound pairing port over mDNS so clients
+        # don't rely on the legacy ``port - 2`` convention.
         actual_pairing = self.get_pairing_actual_port()
         advertised_pairing = (
             actual_pairing if actual_pairing else self.config.get_pairing_port()
         )
         extra_props = {"pairing_port": str(advertised_pairing)}
+        service_task = None
         try:
-            service_task = asyncio.create_task(
+            service_task = self._bg_tasks.spawn(
                 self._mdns_service.register_service(
                     host=self.config.host,
                     port=self.config.port,
                     uid=self.config.uid,
                     extra_props=extra_props,
-                )
+                ),
+                name="mdns_register_service",
             )
-        except RuntimeError as re:
-            self._logger.warning(f"Failed to start mDNS service ({re})")
-            # TODO: Should we stop on fail? mDNS is not critical
-
-        try:
             await service_task
-            if (
-                self.config.uid is None
-            ):  # At this point we have a UID generated and assigned
+            if self.config.uid is None:
                 self.config.uid = self._mdns_service.get_uid()
                 await self.save_config()
-            # Backfill the handshake-ack UID now that we know it. First-run
-            # servers build the connection handler before mDNS assigns a
-            # UID, so without this clients would see ``server_uid=""``.
+            # Backfill the handshake-ack UID: first-run servers build
+            # the connection handler before mDNS assigns one.
             if self.connection_handler is not None:
                 self.connection_handler.set_server_uid(self.config.uid)
         except RuntimeError as re:
-            self._logger.warning(f"Failed to start mDNS service ({re})")
+            self._logger.warning("Failed to start mDNS service", error=str(re))
+            # TODO: Should we stop on fail? mDNS is not critical
         except Exception as e:
-            self._logger.error(f"Failed to start mDNS service ({e})")
+            self._logger.error("Failed to start mDNS service", error=str(e))
+            if service_task is not None and not service_task.done():
+                service_task.cancel()
             await self.stop(True)
             return False
 
         self._running = True
-        self._logger.info(f"Server started on {self.config.host}:{self.config.port}")
+
+        # Spawn the monitor watcher AFTER ``_running`` flips True so the
+        # loop's start guard sees the running state. Prime the signature
+        # cache with the boot-time topology so a subsequent change is
+        # what triggers the first notification.
+        try:
+            from utils.screen import Screen
+
+            startup_monitors = Screen.get_monitors()
+            self._known_monitors_signature = self._monitors_signature(startup_monitors)
+        except Exception as e:
+            self._logger.debug(
+                "Could not prime monitor signature at startup", error=str(e)
+            )
+            self._known_monitors_signature = ()
+            startup_monitors = []
+
+        # Drop stored placements that no longer abut any server monitor
+        # (saved against an older monitor layout). ``notify=False``: the
+        # watcher emits MONITOR_TOPOLOGY_CHANGED later only when the live
+        # topology *changes*; the startup pass just cleans up.
+        if startup_monitors:
+            try:
+                orphans = await self._reconcile_layouts_with_monitors(
+                    startup_monitors, notify=False
+                )
+                if orphans:
+                    self._logger.warning(
+                        f"Dropped {len(orphans)} stored placement(s) that no "
+                        f"longer abut any server monitor on startup"
+                    )
+            except Exception as e:
+                self._logger.warning(
+                    "Failed to reconcile layouts at startup", error=str(e)
+                )
+
+        try:
+            self._monitor_watch_task = self._bg_tasks.spawn(
+                self._monitor_watch_loop(), name="monitor_watch_loop"
+            )
+        except Exception as e:
+            self._logger.warning("Failed to start monitor watch task", error=str(e))
+
+        self._logger.info(
+            "Server started", host=self.config.host, port=self.config.port
+        )
         return True
 
     async def stop(self, force: bool = False):
@@ -1135,27 +1335,35 @@ class Server:
 
         tasks: list[asyncio.Task] = []
 
-        # Cancel any pending client-approval prompts so admin GUI stops
-        # showing them and the futures don't leak.
+        # Cancel pending approval prompts so the GUI clears them and
+        # the futures don't leak.
         for ip, fut in list(self._pending_approvals.items()):
             if not fut.done():
                 fut.set_result(None)
             self._pending_approvals.pop(ip, None)
             self._pending_approval_meta.pop(ip, None)
 
-        # Stop connection handler
+        # Halt the monitor watcher first - its loop body talks to
+        # ``event_bus`` and ``connection_handler`` and ``cleanup`` wipes
+        # those.
+        if self._monitor_watch_task is not None:
+            self._monitor_watch_task.cancel()
+            try:
+                await self._monitor_watch_task
+            except (asyncio.CancelledError, Exception):
+                pass
+            self._monitor_watch_task = None
+
         if self.connection_handler:
             await self.connection_handler.stop()
 
-        # Stop pairing/cert-sharing listener
         if self._cert_sharing:
             try:
                 await self._cert_sharing.stop_sharing()
             except Exception as e:
-                self._logger.warning(f"Error stopping pairing service ({e})")
+                self._logger.warning("Error stopping pairing service", error=str(e))
             self._cert_sharing = None
 
-        # Stop all components
         for component_name, component in list(self._components.items()):
             try:
                 if hasattr(component, "stop"):
@@ -1164,75 +1372,68 @@ class Server:
                     else:
                         component.stop()
             except Exception as e:
-                self._logger.error(f"Error stopping component {component_name} ({e})")
+                self._logger.error(
+                    "Error stopping component",
+                    component=component_name,
+                    error=str(e),
+                )
 
-        # Stop all stream handlers
         for stream_type, handler in list(self._stream_handlers.items()):
             try:
                 if hasattr(handler, "stop"):
                     tasks.append(asyncio.create_task(handler.stop()))
             except Exception as e:
-                self._logger.error(f"Error stopping stream handler {stream_type} ({e})")
+                self._logger.error(
+                    "Error stopping stream handler",
+                    stream_type=stream_type,
+                    error=str(e),
+                )
 
-        # Stop performance monitor
         tasks.append(asyncio.create_task(self._performance_monitor.stop()))
-
-        # mDNS service unregister
         tasks.append(asyncio.create_task(self._mdns_service.unregister_service()))
 
-        # Wait a moment for cleanup
         await asyncio.sleep(self.CLEANUP_DELAY)
 
-        # Await all stop tasks
         if len(tasks) > 0:
             try:
                 await asyncio.gather(*tasks, return_exceptions=True)
             except Exception as e:
-                self._logger.error(f"Error during shutdown tasks ({e})")
+                self._logger.error("Error during shutdown tasks", error=str(e))
 
         self.cleanup()
         self._running = False
         self._logger.info("Server stopped")
 
     def cleanup(self):
-        """Cleanup client resources"""
         self._logger.info("Cleaning up resources...")
-        # We cleanup component and stream handlers obj from memory
         self._components.clear()
         self._stream_handlers.clear()
-
-        # We also reset event bus
-        self.event_bus = AsyncEventBus()
-
+        # Keep the bus identity stable: long-lived components hold a
+        # reference to it and a replacement would leave them dispatching
+        # to a dead bus.
+        self.event_bus.clear_listeners()
         self._logger.info("Resources cleaned up.")
 
     def is_running(self) -> bool:
-        """Check if server is running"""
         return self._running
 
-    # ==================== Private Initialization Methods ====================
-
     async def _initialize_streams(self):
-        """Initialize stream handlers and start enabled streams"""
-        #! We need to create all stream handlers first to allow event listening and state sync
+        # All stream handlers must exist before any starts so event
+        # listening and state sync work coherently.
 
-        # Command stream (always required)
         self._stream_handlers[StreamType.COMMAND] = BidirectionalStreamHandler(
             stream_type=StreamType.COMMAND,
             clients=self.clients_manager,
             event_bus=self.event_bus,
             handler_id="ServerCommandStreamHandler",
             metrics_collector=self._metrics_collector,
-            do_cleanup=False,  # Command stream should not cleanup on state changes
+            do_cleanup=False,  # Command stream lives across state changes.
         )
-        # Force start command stream
         if not await self._stream_handlers[StreamType.COMMAND].start():
             raise RuntimeError("Failed to start command stream handler")
-        # Add to enabled streams if not present
         if not self.is_stream_enabled(StreamType.COMMAND):
             await self.enable_stream(StreamType.COMMAND)
 
-        # Mouse stream
         self._stream_handlers[StreamType.MOUSE] = UnidirectionalStreamHandler(
             stream_type=StreamType.MOUSE,
             clients=self.clients_manager,
@@ -1243,7 +1444,6 @@ class Server:
             buffer_size=10000,
         )
 
-        # Keyboard stream
         self._stream_handlers[StreamType.KEYBOARD] = UnidirectionalStreamHandler(
             stream_type=StreamType.KEYBOARD,
             clients=self.clients_manager,
@@ -1253,7 +1453,6 @@ class Server:
             metrics_collector=self._metrics_collector,
         )
 
-        # Clipboard stream
         self._stream_handlers[StreamType.CLIPBOARD] = MulticastStreamHandler(
             stream_type=StreamType.CLIPBOARD,
             clients=self.clients_manager,
@@ -1262,37 +1461,38 @@ class Server:
             metrics_collector=self._metrics_collector,
         )
 
-        # Start all stream handlers
         for stream_type, handler in self._stream_handlers.items():
             if self.is_stream_enabled(stream_type):
                 if not await handler.start():
                     raise RuntimeError(f"Failed to start stream handler: {stream_type}")
 
     async def _initialize_components(self):
-        """Initialize enabled components based on configuration"""
         command_stream = self._stream_handlers[StreamType.COMMAND]
 
-        # Command handler (always required)
         self._components["command_handler"] = CommandHandler(
             event_bus=self.event_bus, stream=command_stream
         )
 
-        # Initialize all stream components (they will start only if enabled)
+        # Subscribe AFTER the CommandHandler is wired so the bus has a
+        # producer for ``CLIENT_MONITORS_UPDATED``. The event bus is
+        # recreated by ``cleanup()`` so this needs to run on every
+        # start, not just construction.
+        self.event_bus.subscribe(
+            event_type=BusEventType.CLIENT_MONITORS_UPDATED,
+            callback=self._on_client_monitors_updated,
+        )
+
         await self._enable_mouse_stream()
         await self._enable_keyboard_stream()
         await self._enable_clipboard_stream()
 
-    # ==================== Runtime Enable/Disable Methods ====================
-
     async def _ensure_stream_active(self, stream_type: int, stream_handler) -> None:
-        """Helper: Ensure stream handler is started if enabled"""
         is_enabled = self.is_stream_enabled(stream_type)
         if is_enabled and not stream_handler.is_active():
             if not await stream_handler.start():
                 raise RuntimeError(f"Failed to start stream handler for {stream_type}")
 
     async def _enable_mouse_stream(self):
-        """Enable mouse stream and components at runtime"""
         # Get or create stream handler
         mouse_stream = self._stream_handlers.get(StreamType.MOUSE)
         if not mouse_stream:
@@ -1312,7 +1512,6 @@ class Server:
         is_enabled = self.is_stream_enabled(StreamType.MOUSE)
         command_stream = self._stream_handlers[StreamType.COMMAND]
 
-        # Cursor Handler - manages cursor visibility
         cursor_handler = self._components.get("cursor_handler")
         if not cursor_handler:
             cursor_handler = CursorHandlerWorker(
@@ -1326,13 +1525,11 @@ class Server:
                 await self._disable_mouse_stream()
                 raise RuntimeError("Failed to start cursor handler")
 
-        # Mouse Controller - handles incoming mouse commands
         if not self._components.get("mouse_controller"):
             self._components["mouse_controller"] = ServerMouseController(
                 event_bus=self.event_bus
             )
 
-        # Mouse Listener - captures and sends mouse events
         mouse_listener = self._components.get("mouse_listener")
         if not mouse_listener:
             mouse_listener = ServerMouseListener(
@@ -1351,20 +1548,15 @@ class Server:
                 raise RuntimeError("Failed to start mouse listener")
 
     async def _disable_mouse_stream(self):
-        """Disable mouse stream and components at runtime"""
-        # Stop mouse listener
         mouse_listener = self._components.get("mouse_listener")
         if mouse_listener:
             mouse_listener.stop()
 
-        # Stop stream handler
         mouse_stream = self._stream_handlers.get(StreamType.MOUSE)
         if mouse_stream:
             await mouse_stream.stop()
 
     async def _enable_keyboard_stream(self):
-        """Enable keyboard stream and components at runtime"""
-        # Get or create stream handler
         keyboard_stream = self._stream_handlers.get(StreamType.KEYBOARD)
         if not keyboard_stream:
             keyboard_stream = UnidirectionalStreamHandler(
@@ -1376,13 +1568,11 @@ class Server:
             )
             self._stream_handlers[StreamType.KEYBOARD] = keyboard_stream
 
-        # Start stream if enabled
         await self._ensure_stream_active(StreamType.KEYBOARD, keyboard_stream)
 
         is_enabled = self.is_stream_enabled(StreamType.KEYBOARD)
         command_stream = self._stream_handlers[StreamType.COMMAND]
 
-        # Keyboard Listener - captures and sends keyboard events
         keyboard_listener = self._components.get("keyboard_listener")
         if not keyboard_listener:
             keyboard_listener = ServerKeyboardListener(
@@ -1399,20 +1589,15 @@ class Server:
                 raise RuntimeError("Failed to start keyboard listener")
 
     async def _disable_keyboard_stream(self):
-        """Disable keyboard stream and components at runtime"""
-        # Stop keyboard listener
         keyboard_listener = self._components.get("keyboard_listener")
         if keyboard_listener:
             keyboard_listener.stop()
 
-        # Stop stream handler
         keyboard_stream = self._stream_handlers.get(StreamType.KEYBOARD)
         if keyboard_stream:
             await keyboard_stream.stop()
 
     async def _enable_clipboard_stream(self):
-        """Enable clipboard stream and components at runtime"""
-        # Get or create stream handler
         clipboard_stream = self._stream_handlers.get(StreamType.CLIPBOARD)
         if not clipboard_stream:
             clipboard_stream = MulticastStreamHandler(
@@ -1423,13 +1608,11 @@ class Server:
             )
             self._stream_handlers[StreamType.CLIPBOARD] = clipboard_stream
 
-        # Start stream if enabled
         await self._ensure_stream_active(StreamType.CLIPBOARD, clipboard_stream)
 
         is_enabled = self.is_stream_enabled(StreamType.CLIPBOARD)
         command_stream = self._stream_handlers[StreamType.COMMAND]
 
-        # Clipboard Listener - monitors clipboard changes
         clipboard_listener = self._components.get("clipboard_listener")
         if not clipboard_listener:
             clipboard_listener = ClipboardListener(
@@ -1445,7 +1628,6 @@ class Server:
                 await self._disable_clipboard_stream()
                 raise RuntimeError("Failed to start clipboard listener")
 
-        # Clipboard Controller - handles incoming clipboard updates
         if not self._components.get("clipboard_controller"):
             clipboard_controller = ClipboardController(
                 event_bus=self.event_bus,
@@ -1458,34 +1640,49 @@ class Server:
             self._components["clipboard_controller"] = clipboard_controller
 
     async def _disable_clipboard_stream(self):
-        """Disable clipboard stream and components at runtime"""
-        # Stop clipboard listener
         clipboard_listener = self._components.get("clipboard_listener")
         if clipboard_listener:
             await clipboard_listener.stop()
 
-        # Stop stream handler
         clipboard_stream = self._stream_handlers.get(StreamType.CLIPBOARD)
         if clipboard_stream:
             await clipboard_stream.stop()
 
-    # ==================== Event Callbacks ====================
-
     async def _on_client_connected(self, client: ClientObj, streams: list[int]):
-        """Handle client connection event"""
+        # Same binding list drives forward routing (server listener) and
+        # reverse routing (pushed via the CLIENT_TOPOLOGY command).
+        # Force a fresh monitor read: the watch loop only invalidates the
+        # cache at its polling cadence, so a client connecting within that
+        # window could otherwise get bindings computed against a stale
+        # server topology. Refreshing here also repopulates the shared
+        # cache for subsequent hot reads.
+        try:
+            from utils.screen import Screen
+            from utils.screen._base import invalidate_monitors_cache
+
+            invalidate_monitors_cache()
+            server_monitors = Screen.get_monitors_cached()
+        except Exception:
+            server_monitors = []
+        edge_bindings = [
+            eb.to_dict() for eb in client.get_edge_bindings(server_monitors)
+        ]
+        intra_client_bindings = client.get_intra_client_bindings(server_monitors)
+
         await self.event_bus.dispatch(
             event_type=BusEventType.CLIENT_CONNECTED,
             data=ClientConnectedEvent(
-                client_screen=client.get_screen_position(), streams=streams
+                client_uid=client.uid,
+                streams=streams,
+                edge_bindings=edge_bindings,
+                intra_client_bindings=intra_client_bindings,
             ),
         )
-        # Save config on new connection
         await self.save_config()
         self._logger.info(
             f"Client {client.get_net_id()} connected at position {client.screen_position}"
         )
 
-        # Send notification
         await self._send_notification(
             ClientConnectedNotification(
                 client=client.to_dict(),
@@ -1493,19 +1690,22 @@ class Server:
         )
 
     async def _on_client_disconnected(self, client: ClientObj, streams: list[int]):
-        """Handle client disconnection event"""
+        # Hand cursor focus back to the server BEFORE announcing the
+        # disconnect: if this client was active, the listener would
+        # otherwise keep routing input toward a peer that's gone.
+        await self.event_bus.dispatch(
+            event_type=BusEventType.ACTIVE_SCREEN_CHANGED,
+            data=ActiveScreenChangedEvent(active_screen=None),
+        )
         await self.event_bus.dispatch(
             event_type=BusEventType.CLIENT_DISCONNECTED,
-            data=ClientDisconnectedEvent(
-                client_screen=client.get_screen_position(), streams=streams
-            ),
+            data=ClientDisconnectedEvent(client_uid=client.uid, streams=streams),
         )
         await self.save_config()
         self._logger.info(
             f"Client {client.get_net_id()} disconnected from position {client.screen_position}"
         )
 
-        # Send notification
         await self._send_notification(
             ClientDisconnectedNotification(
                 client=client.to_dict(),
@@ -1515,42 +1715,182 @@ class Server:
     async def _on_client_stream_reconnected(
         self, client: ClientObj, streams: list[int]
     ):
-        """Handle client stream reconnection event"""
         await self.event_bus.dispatch(
             event_type=BusEventType.CLIENT_STREAM_RECONNECTED,
-            data=ClientStreamReconnectedEvent(
-                client_screen=client.get_screen_position(), streams=streams
-            ),
+            data=ClientStreamReconnectedEvent(client_uid=client.uid, streams=streams),
         )
 
-    # ==================== Utility Methods ====================
+    async def _on_client_monitors_updated(
+        self, data: Optional[ClientMonitorsUpdatedEvent]
+    ):
+        """React to a connected client reporting a new monitor list.
+
+        Steps:
+          1. Look up the ClientObj by UID; ignore if unknown.
+          2. Parse the wire monitor dicts into MonitorInfo (drop malformed).
+          3. Detect whether anything actually changed - reconnects send
+             the same list, no need to recompute then.
+          4. Reconcile stored placements against the new monitor ids.
+             Placements pointing to a removed monitor are dropped; the
+             rest are kept as-is.
+          5. Refresh the cached edge / intra bindings on the listener
+             via ``CLIENT_LAYOUT_UPDATED`` so the next crossing uses
+             the new topology without forcing a reconnect.
+          6. Notify the GUI so the layout editor can show which (if
+             any) placements were orphaned.
+        """
+        if data is None or not data.client_uid:
+            return
+
+        async with self._lock_for(data.client_uid):
+            # Re-fetch under the lock so a concurrent remove_client / save
+            # path can't hand us a stale reference.
+            client = self.config.get_client(uid=data.client_uid)
+            if client is None:
+                self._logger.debug(
+                    f"Ignoring monitor update for unknown client uid={data.client_uid}"
+                )
+                return
+            await self._apply_client_monitors_update(client, data)
+
+    async def _apply_client_monitors_update(
+        self, client: ClientObj, data: ClientMonitorsUpdatedEvent
+    ) -> None:
+        from model.monitor import MonitorInfo
+        from utils.screen import Screen
+
+        new_monitors: list[MonitorInfo] = []
+        for m in data.monitors or []:
+            if not isinstance(m, dict):
+                continue
+            try:
+                new_monitors.append(MonitorInfo.from_dict(m))
+            except (KeyError, TypeError, ValueError) as exc:
+                self._logger.debug(
+                    f"Dropping malformed monitor in update from "
+                    f"{client.get_net_id()}: {exc}"
+                )
+
+        prev_signature = self._monitors_signature(client.monitors or [])
+        new_signature = self._monitors_signature(new_monitors)
+        if prev_signature == new_signature:
+            return
+
+        self._logger.info(
+            f"Client {client.get_net_id()} monitor topology changed: "
+            f"{len(new_monitors)} monitor(s) now connected"
+        )
+
+        client.monitors = new_monitors
+
+        # Drop placements whose ``client_monitor_id`` is no longer
+        # advertised. Other placements survive untouched - the OS
+        # bbox may have changed but the workspace target stays the
+        # same until the admin opens the layout editor.
+        known_ids = {m.monitor_id for m in new_monitors}
+        orphans: list[dict] = []
+        kept: list[dict] = []
+        for p in list(client.placements or []):
+            try:
+                pid = int(p.get("client_monitor_id"))
+            except (TypeError, ValueError):
+                orphans.append(
+                    {
+                        "client_uid": client.uid,
+                        "client_net_id": client.get_net_id(),
+                        "placement": dict(p),
+                    }
+                )
+                continue
+            if pid in known_ids:
+                kept.append(p)
+            else:
+                orphans.append(
+                    {
+                        "client_uid": client.uid,
+                        "client_net_id": client.get_net_id(),
+                        "placement": dict(p),
+                    }
+                )
+
+        if orphans:
+            client.placements = kept
+
+        try:
+            self.clients_manager.update_client(client)
+        except Exception as e:
+            self._logger.warning(
+                f"Failed to update client {client.get_net_id()} after "
+                f"monitor change ({e})"
+            )
+
+        try:
+            await self.save_config()
+        except Exception as e:
+            self._logger.warning(
+                f"Failed to persist client {client.get_net_id()} monitor update ({e})"
+            )
+
+        # Refresh the listener's edge-binding cache so the next
+        # crossing routes against the new monitor topology.
+        try:
+            server_monitors = Screen.get_monitors_cached()
+        except Exception:
+            server_monitors = []
+        try:
+            edge_bindings = [
+                eb.to_dict() for eb in client.get_edge_bindings(server_monitors)
+            ]
+            intra_client_bindings = client.get_intra_client_bindings(server_monitors)
+            await self.event_bus.dispatch(
+                event_type=BusEventType.CLIENT_LAYOUT_UPDATED,
+                data=ClientLayoutUpdatedEvent(
+                    client_uid=client.uid,
+                    edge_bindings=edge_bindings,
+                    intra_client_bindings=intra_client_bindings,
+                ),
+            )
+        except Exception as e:
+            self._logger.warning(
+                f"Failed to refresh bindings for {client.get_net_id()} "
+                f"after monitor change ({e})"
+            )
+
+        try:
+            monitor_dicts = [m.to_dict() for m in new_monitors]
+        except Exception:
+            monitor_dicts = []
+        # Reuse the server-side monitor-topology notification: the
+        # ``source`` and ``client_uid`` fields disambiguate at the GUI.
+        await self._send_notification(
+            MonitorTopologyChangedEvent(
+                monitors=monitor_dicts,
+                orphans=orphans,
+                source_kind="client",
+                client_uid=client.uid,
+                client_net_id=client.get_net_id() or "",
+            )
+        )
 
     def get_event_bus(self) -> AsyncEventBus:
-        """Get the event bus instance"""
         return self.event_bus
 
     def get_stream_handler(self, stream_type: int) -> Optional[object]:
-        """Get a specific stream handler"""
         return self._stream_handlers.get(stream_type)
 
     def get_component(self, component_name: str) -> Optional[object]:
-        """Get a specific component by name"""
         return self._components.get(component_name)
 
     def get_enabled_streams(self, parse: bool = False) -> list[int] | dict[int, bool]:
-        """Get list of enabled stream types"""
         if parse:
             return [k for k, v in self.config.streams_enabled.items() if v]
         return self.config.streams_enabled
 
     def get_active_streams(self) -> list[int]:
-        """Get list of currently active stream types"""
         return list(self._stream_handlers.keys())
 
     async def start_metrics_collection(self):
-        """Start metrics collection"""
         await self._performance_monitor.start()
 
     async def stop_metrics_collection(self):
-        """Stop metrics collection"""
         await self._performance_monitor.stop()

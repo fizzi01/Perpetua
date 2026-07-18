@@ -54,13 +54,30 @@ class ServerMouseListener(_base.ServerMouseListener):
         super().__init__(*args, **kwargs)
 
         if self._barrier_mode:
+            # UID of the captured client; None while the server owns the cursor.
             self._active_client_barrier: Optional[str] = None
             self._barrier_screen_size: tuple[int, int] = Screen.get_size()
+            # Edge -> UID map rebuilt from _edge_bindings_by_client whenever
+            # bindings change; resolves the edge name from the backend.
+            self._edge_to_uid: dict[str, str] = {}
 
             self.event_bus.subscribe(
                 event_type=BusEventType.SCREEN_CHANGE_GUARD,
                 callback=self._on_screen_change_guard_wayland,
             )
+
+    def _refresh_edge_to_uid(self) -> dict[str, bool]:
+        """Rebuild edge -> UID map from _edge_bindings_by_client and return
+        the {edge: True} snapshot the barrier backend expects. First binding
+        wins on edge collisions; per-axis partitioning is X11-only."""
+        edge_to_uid: dict[str, str] = {}
+        for client_uid, bindings in self._edge_bindings_by_client.items():
+            for b in bindings:
+                edge = b.get("server_edge")
+                if edge and edge not in edge_to_uid:
+                    edge_to_uid[edge] = client_uid
+        self._edge_to_uid = edge_to_uid
+        return {edge: True for edge in edge_to_uid}
 
     def _create_listener(self):
         if self._barrier_mode:
@@ -94,7 +111,7 @@ class ServerMouseListener(_base.ServerMouseListener):
             self._listener = self._create_listener()
 
         self._listener.start()
-        self._listener.update_clients(dict(self._active_screens))
+        self._listener.update_clients(self._refresh_edge_to_uid())
 
         self._logger.debug("Wayland barrier mode started")
         return True
@@ -118,12 +135,15 @@ class ServerMouseListener(_base.ServerMouseListener):
     async def _on_client_connected(self, data: Optional[ClientConnectedEvent]):
         await super()._on_client_connected(data)
         if self._barrier_mode and data is not None and self._listener:
-            self._listener.update_clients(dict(self._active_screens))
+            self._listener.update_clients(self._refresh_edge_to_uid())
 
     async def _on_client_disconnected(self, data: Optional[ClientDisconnectedEvent]):
         if self._barrier_mode and data is not None:
-            client = data.client_screen
-            if self._active_client_barrier and client == self._active_client_barrier:
+            client_uid = data.client_uid
+            if (
+                self._active_client_barrier
+                and client_uid == self._active_client_barrier
+            ):
                 self._active_client_barrier = None
                 if self._listener:
                     self._listener.disable_capture()
@@ -135,7 +155,14 @@ class ServerMouseListener(_base.ServerMouseListener):
         await super()._on_client_disconnected(data)
 
         if self._barrier_mode and data is not None and self._listener:
-            self._listener.update_clients(dict(self._active_screens))
+            self._listener.update_clients(self._refresh_edge_to_uid())
+
+    async def _on_client_layout_updated(self, data):
+        # Refresh edge->UID and the barrier backend's edge set so the new
+        # topology takes effect immediately (mirrors X11 hot-reload).
+        await super()._on_client_layout_updated(data)
+        if self._barrier_mode and data is not None and self._listener:
+            self._listener.update_clients(self._refresh_edge_to_uid())
 
     async def _on_screen_change_guard_wayland(self, data):
         """Handle SCREEN_CHANGE_GUARD on Wayland.
@@ -152,7 +179,7 @@ class ServerMouseListener(_base.ServerMouseListener):
 
         if active_screen:
             # Keyboard hotkey activation
-            self._logger.debug(f"[GUARD] hotkey activation screen={active_screen}")
+            self._logger.debug("[GUARD] hotkey activation", active_screen=active_screen)
             self._active_client_barrier = active_screen
             await self.event_bus.dispatch(
                 event_type=BusEventType.ACTIVE_SCREEN_CHANGED,
@@ -171,7 +198,10 @@ class ServerMouseListener(_base.ServerMouseListener):
             if y is None:
                 y = -1
             self._logger.debug(
-                f"[GUARD] RELEASE client={self._active_client_barrier} x={x} y={y}"
+                "[GUARD] RELEASE",
+                client=self._active_client_barrier,
+                x=x,
+                y=y,
             )
             if self._listener:
                 self._listener.disable_capture(x, y)
@@ -195,7 +225,7 @@ class ServerMouseListener(_base.ServerMouseListener):
                 MouseEvent(
                     button=button,
                     action=MouseEvent.CLICK_ACTION,
-                    is_presed=pressed,
+                    is_pressed=pressed,
                 )
             ),
             self._loop,
@@ -209,23 +239,23 @@ class ServerMouseListener(_base.ServerMouseListener):
 
     def _on_barrier_hit(self, edge, cx, cy):
         if self._logger.is_enabled_for(Logger.DEBUG):
-            self._logger.debug(f"[BARRIER_HIT] edge={edge} cx={cx} cy={cy}")
+            self._logger.debug("[BARRIER_HIT]", edge=edge, cx=cx, cy=cy)
         asyncio.run_coroutine_threadsafe(
             self._on_barrier_activated(edge, cx, cy),
             self._loop,
         )
 
     async def _on_barrier_activated(self, edge: str, cursor_x: float, cursor_y: float):
-        """Dispatch cross-screen events when a barrier is hit."""
-        screen = edge
-
-        if not screen or not self._active_screens.get(screen, False):
+        """Dispatch cross-screen events when a barrier is hit. Resolves edge to
+        target UID via _edge_to_uid (Wayland-equivalent of the X11 spatial path)."""
+        target_uid = self._edge_to_uid.get(edge)
+        if not target_uid or target_uid not in self._active_clients:
             return
 
         if self._active_client_barrier is not None:
             return
 
-        self._active_client_barrier = screen
+        self._active_client_barrier = target_uid
 
         off = self._EDGE_OFFSET
         sw, sh = self._barrier_screen_size
@@ -245,19 +275,30 @@ class ServerMouseListener(_base.ServerMouseListener):
             mouse_event.y = off
 
         self._logger.debug(
-            f"[BARRIER_ACT] SENDING position x={mouse_event.x:.4f} y={mouse_event.y:.4f} "
-            f"to client={screen}"
+            "[BARRIER_ACT] SENDING position",
+            x=round(mouse_event.x, 4),
+            y=round(mouse_event.y, 4),
+            client_uid=target_uid,
+            edge=edge,
         )
 
         try:
             await self.event_bus.dispatch(
                 event_type=BusEventType.ACTIVE_SCREEN_CHANGED,
-                data=ActiveScreenChangedEvent(active_screen=screen),
+                data=ActiveScreenChangedEvent(active_screen=target_uid),
             )
-            await self.command_stream.send(CrossScreenCommandEvent(target=screen))
+            # Carry landing coords on the activation packet so POSITION_ACTION
+            # on the mouse stream can't race CLIENT_ACTIVE on the client.
+            await self.command_stream.send(
+                CrossScreenCommandEvent(
+                    target=target_uid,
+                    x=mouse_event.x,
+                    y=mouse_event.y,
+                )
+            )
             await self.stream.send(mouse_event)
         except Exception as e:
-            self._logger.error(f"Error dispatching cross-screen event: {e}")
+            self._logger.error("Error dispatching cross-screen event", error=str(e))
             self._active_client_barrier = None
 
 

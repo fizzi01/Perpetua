@@ -245,7 +245,7 @@ class MetricsCollector:
         """
         all_metrics = await self.get_all_metrics()
         for conn_id, metrics in all_metrics.items():
-            self._logger.info(f"Connection {conn_id} metrics", **metrics)
+            self._logger.info("Connection metrics", conn_id=conn_id, **metrics)
 
 
 class PerformanceMonitor:
@@ -325,4 +325,4 @@ class PerformanceMonitor:
             except asyncio.CancelledError:
                 break
             except Exception as e:
-                self._logger.error(f"Error in monitor loop ({e})")
+                self._logger.error("Error in monitor loop", error=str(e))

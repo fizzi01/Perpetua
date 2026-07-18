@@ -98,15 +98,10 @@ pub async fn stop_server(s: tauri::State<'_, AtomicAsyncWriter>) -> Result<(), S
 pub async fn add_client(
     hostname: String,
     ip_addresses: Vec<String>,
-    screen_position: String,
     s: tauri::State<'_, AtomicAsyncWriter>,
 ) -> Result<(), String> {
     if hostname.is_empty() && ip_addresses.iter().all(|ip| ip.is_empty()) {
         return Err("Either hostname or ip address must be provided".to_string());
-    }
-
-    if screen_position.is_empty() {
-        return Err("Screen position must be provided".to_string());
     }
 
     let ip_addresses_json = format!(
@@ -122,10 +117,9 @@ pub async fn add_client(
     let command = CommandEvent::build(
         CommandType::AddClient,
         &format!(
-            r#"{{ "hostname": {}, "ip_addresses": {}, "screen_position": {} }}"#,
+            r#"{{ "hostname": {}, "ip_addresses": {} }}"#,
             handle_string_param(hostname),
             ip_addresses_json,
-            handle_string_param(screen_position)
         ),
     );
 
@@ -146,7 +140,6 @@ pub async fn add_client(
 #[tauri::command]
 pub async fn approve_client(
     peer_ip: String,
-    screen_position: String,
     s: tauri::State<'_, AtomicAsyncWriter>,
 ) -> Result<(), String> {
     if peer_ip.is_empty() {
@@ -155,9 +148,8 @@ pub async fn approve_client(
     let command = CommandEvent::build(
         CommandType::ApproveClient,
         &format!(
-            r#"{{ "peer_ip": {}, "screen_position": {} }}"#,
+            r#"{{ "peer_ip": {} }}"#,
             handle_string_param(peer_ip),
-            handle_string_param(screen_position),
         ),
     );
     let command = EventParser::serialize(&command).map_err(|e| {
@@ -171,6 +163,38 @@ pub async fn approve_client(
         format!(
             "Failed to send {} command ({})",
             CommandType::ApproveClient,
+            e
+        )
+    })?;
+    Ok(())
+}
+
+#[tauri::command]
+pub async fn set_client_layout(
+    client_uid: Option<String>,
+    hostname: Option<String>,
+    ip_address: Option<String>,
+    placements: serde_json::Value,
+    s: tauri::State<'_, AtomicAsyncWriter>,
+) -> Result<(), String> {
+    let payload = serde_json::json!({
+        "client_uid": client_uid,
+        "hostname": hostname,
+        "ip_address": ip_address,
+        "placements": placements,
+    });
+    let command = CommandEvent::build(CommandType::SetClientLayout, &payload.to_string());
+    let command = EventParser::serialize(&command).map_err(|e| {
+        format!(
+            "Failed to serialize {} command: {}",
+            CommandType::SetClientLayout,
+            e
+        )
+    })?;
+    s.send(command).await.map_err(|e| {
+        format!(
+            "Failed to send {} command ({})",
+            CommandType::SetClientLayout,
             e
         )
     })?;

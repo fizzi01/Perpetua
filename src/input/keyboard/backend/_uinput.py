@@ -162,7 +162,7 @@ class KeyboardListener(threading.Thread):
         try:
             self._ui = make_uinput(self._devices) if not suppress else None
         except Exception as e:
-            self._logger.error(f"Failed to create UInput device ({e})")
+            self._logger.error("Failed to create UInput device", error=str(e))
             raise
         self._loop = None
         self._cleanup_done = threading.Event()
@@ -193,10 +193,10 @@ class KeyboardListener(threading.Thread):
             if "Event loop is closed" in str(e):
                 pass  # Expected on shutdown
         except Exception as e:
-            self._logger.error(f"Error in thread ({e})")
+            self._logger.error("Error in thread", error=str(e))
         finally:
             for dev in self._devices:
-                self._logger.debug(f"Ungrab: {dev.path}  ({dev.name})")
+                self._logger.debug("Ungrab device", path=dev.path, name=dev.name)
                 try:
                     dev.ungrab()
                 except Exception:
@@ -246,7 +246,7 @@ class KeyboardListener(threading.Thread):
                             self.stop()
                             break
                 except Exception as e:
-                    self._logger.error(f"Error in event handler ({e})")
+                    self._logger.error("Error in event handler", error=str(e))
                 if self._xorg_filter:
                     res = self._xorg_filter(event)
                     if res is False or res is None:

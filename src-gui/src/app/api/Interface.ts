@@ -100,6 +100,7 @@ export enum EventType {
     ScreenChanged,
     ScreenTransitionStarted,
     ScreenTransitionCompleted,
+    MonitorTopologyChanged,
 
     // Transfer events
     FileTransferStarted,
@@ -165,6 +166,7 @@ export enum CommandType {
     ApproveClient,
     DenyClient,
     ListPendingApprovals,
+    SetClientLayout,
 
     // SSL/Certificate management
     EnableSsl,
@@ -194,17 +196,64 @@ export enum StreamType {
     Clipboard = 12,
 }
 
+// -- Multi-monitor layout types --
+// Mirror of utils.screen._monitor on the Python side; coords are in the OS global display space.
+export interface MonitorInfo {
+    monitor_id: number;
+    min_x: number;
+    min_y: number;
+    max_x: number;
+    max_y: number;
+    is_primary?: boolean;
+    name?: string;
+    scaling_factor?: number;
+}
+
+export type Edge = "left" | "right" | "top" | "bottom";
+
+export interface LayoutSlot {
+    monitor_id: number;
+    edge: Edge;
+    // Half-open [start, end) along the edge's secondary axis (Y for LEFT/RIGHT, X for TOP/BOTTOM).
+    segment_start: number;
+    segment_end: number;
+}
+
+export interface LayoutBinding {
+    slot: LayoutSlot;
+    client_uid: string;
+    // null = client picks.
+    client_monitor_id: number | null;
+}
+
+// Workspace model: places one client monitor in the server's virtual workspace; server monitors anchor it.
+export interface MonitorPlacement {
+    client_uid: string;
+    client_monitor_id: number;
+    workspace_x: number;
+    workspace_y: number;
+    width: number;
+    height: number;
+}
+
+export interface WorkspaceLayout {
+    placements: MonitorPlacement[];
+}
+
 // -- Status Interfaces --
 export interface ClientObj {
     uid: string;
     host_name: string;
     ip_addresses: string[];
-    screen_position: string;
+    // Legacy directional hint; kept for backwards compatibility, runtime uses `placements`.
+    screen_position?: string;
     ssl: boolean;
     streams_enabled: number[];
     is_connected: boolean;
     first_connection_date: string;
     last_connection_date: string;
+    monitors?: MonitorInfo[];
+    placements?: MonitorPlacement[];
 }
 
 export interface ClientEditObj {
@@ -223,6 +272,10 @@ export interface ServerStatus {
     streams_enabled: Object;
     ssl_enabled: boolean;
     authorized_clients: ClientObj[];
+    monitors?: MonitorInfo[];
+    // Snapshot of unknown clients currently awaiting admin approval.
+    // Surfaced on STATUS so a late-launching GUI doesn't miss pending requests.
+    pending_approvals?: ClientApprovalRequest[];
 }
 
 export interface ClientConnectionInfo {
@@ -280,7 +333,8 @@ export interface ClientApprovalResolved {
     peer_ip: string;
     approved: boolean;
     request_id: string;
-    screen_position: string;
+    // Legacy — kept for backward compatibility; new approvals open the Layout Editor instead.
+    screen_position?: string;
     reason: string;
 }
 

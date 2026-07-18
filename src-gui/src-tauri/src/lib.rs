@@ -392,6 +392,7 @@ pub fn run(daemon_config: Option<DaemonConfig>) {
             commands::deny_client,
             commands::remove_client,
             commands::set_server_config,
+            commands::set_client_layout,
             // -- Client Commands --
             commands::start_client,
             commands::stop_client,
@@ -429,16 +430,25 @@ pub fn run(daemon_config: Option<DaemonConfig>) {
             tauri::WindowEvent::CloseRequested { api, .. } => {
                 let app_handle = window.app_handle();
                 let state = app_handle.state::<Mutex<AppState>>();
-                let state = state.lock().unwrap();
-                if !state.hard_close {
-                    // Prevent the window from closing
-                    api.prevent_close();
-                    window.hide().unwrap();
+                
+                let (hard_close, connected) = {
+                    let s = state.lock().unwrap();
+                    (s.hard_close, s.connected)
+                };
 
-                    #[cfg(target_os = "macos")]
-                    app_handle
-                        .set_activation_policy(tauri::ActivationPolicy::Accessory)
-                        .unwrap_or(());
+                if !hard_close {
+                    if !connected {
+                        force_close(app_handle);
+                    } else {
+                        // Prevent the window from closing
+                        api.prevent_close();
+                        window.hide().unwrap();
+
+                        #[cfg(target_os = "macos")]
+                        app_handle
+                            .set_activation_policy(tauri::ActivationPolicy::Accessory)
+                            .unwrap_or(());
+                    }
                 }
             }
             _ => {}
@@ -451,17 +461,26 @@ pub fn run(daemon_config: Option<DaemonConfig>) {
     app.run(|_app_handle, _e| match _e {
         tauri::RunEvent::ExitRequested { api, .. } => {
             let state = _app_handle.state::<Mutex<AppState>>();
-            let state = state.lock().unwrap();
-            if !state.hard_close {
-                // Prevent the app from closing
-                api.prevent_exit();
+            
+            let (hard_close, connected) = {
+                let s = state.lock().unwrap();
+                (s.hard_close, s.connected)
+            };
 
-                #[cfg(target_os = "macos")]
-                {
-                    let app_handle = _app_handle.clone();
-                    app_handle
-                        .set_activation_policy(tauri::ActivationPolicy::Accessory)
-                        .unwrap_or(());
+            if !hard_close {
+                if !connected {
+                    force_close(&_app_handle);
+                } else {
+                    // Prevent the app from closing
+                    api.prevent_exit();
+
+                    #[cfg(target_os = "macos")]
+                    {
+                        let app_handle = _app_handle.clone();
+                        app_handle
+                            .set_activation_policy(tauri::ActivationPolicy::Accessory)
+                            .unwrap_or(());
+                    }
                 }
             }
         }

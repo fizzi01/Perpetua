@@ -15,9 +15,10 @@
 #  along with this program.  If not, see <https://www.gnu.org/licenses/>.
 #
 
+
 from event.bus import EventBus
 from network.stream.handler import StreamHandler
-from model.client import ScreenPosition
+from input.utils import ScreenEdge
 
 from . import _base
 from .backend import Key, KeyCode, HotKey
@@ -31,7 +32,12 @@ class ServerKeyboardListener(_base.ServerKeyboardListener):
         command_stream: StreamHandler,
         filtering: bool = True,
     ):
-        super().__init__(event_bus, stream_handler, command_stream, filtering)
+        super().__init__(
+            event_bus,
+            stream_handler,
+            command_stream,
+            filtering,
+        )
 
     def _canonical(self, key):
         if isinstance(key, Key):
@@ -61,28 +67,39 @@ class ServerKeyboardListener(_base.ServerKeyboardListener):
         shift = Key.shift
         p = KeyCode(char="p")
         q = KeyCode(char="q")
+        one = KeyCode(char="1")
+        two = KeyCode(char="2")
         left = KeyCode.from_vk(Key.left.value.vk)
         right = KeyCode.from_vk(Key.right.value.vk)
         up = KeyCode.from_vk(Key.up.value.vk)
         down = KeyCode.from_vk(Key.down.value.vk)
+        tab = KeyCode.from_vk(Key.tab.value.vk)
         esc = KeyCode.from_vk(Key.esc.value.vk)
 
         entries = [
             (
                 frozenset({ctrl, shift, p, left}),
-                make_cb(self._hotkey_switch_screen, ScreenPosition.LEFT),
+                make_cb(self._hotkey_switch_direction, ScreenEdge.LEFT),
             ),
             (
                 frozenset({ctrl, shift, p, right}),
-                make_cb(self._hotkey_switch_screen, ScreenPosition.RIGHT),
+                make_cb(self._hotkey_switch_direction, ScreenEdge.RIGHT),
             ),
             (
                 frozenset({ctrl, shift, p, up}),
-                make_cb(self._hotkey_switch_screen, ScreenPosition.TOP),
+                make_cb(self._hotkey_switch_direction, ScreenEdge.TOP),
             ),
             (
                 frozenset({ctrl, shift, p, down}),
-                make_cb(self._hotkey_switch_screen, ScreenPosition.BOTTOM),
+                make_cb(self._hotkey_switch_direction, ScreenEdge.BOTTOM),
+            ),
+            (
+                frozenset({ctrl, shift, p, tab, one}),
+                make_cb(self._hotkey_cycle_client, 1),
+            ),
+            (
+                frozenset({ctrl, shift, p, tab, two}),
+                make_cb(self._hotkey_cycle_client, -1),
             ),
             (frozenset({ctrl, shift, p, esc}), make_cb(self._hotkey_switch_to_server)),
             (frozenset({ctrl, shift, q}), make_cb(self._hotkey_panic)),

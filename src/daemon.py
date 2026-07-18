@@ -1,11 +1,4 @@
-"""
-Daemon service for managing lifecycle.
-
-This module provides a daemon service that can run independently from a GUI,
-managing both Client and Server services through a command socket interface.
-The daemon exposes a Unix socket (Linux/macOS) or TCP socket on localhost (Windows)
-for receiving commands to control the application.
-"""
+"""Daemon service exposing a command socket to manage Client/Server lifecycle."""
 
 
 #  Perpetua - open-source and cross-platform KVM software.
@@ -64,30 +57,29 @@ from event.notification import (
 )
 
 
-# Determine platform for socket type
 IS_WINDOWS = sys.platform in ("win32", "cygwin")
 
 
 class DaemonException(Exception):
-    """Base exception for daemon errors"""
+    """Base exception for daemon errors."""
 
     pass
 
 
 class DaemonAlreadyRunningException(DaemonException):
-    """Exception raised when daemon is already running (socket/port already in use)"""
+    """Raised when daemon socket/port is already in use by a live daemon."""
 
     pass
 
 
 class DaemonPortOccupiedException(DaemonException):
-    """Exception raised when TCP port is occupied by another process"""
+    """Raised when the TCP port is occupied by another process."""
 
     pass
 
 
 class DaemonCommand(StrEnum):
-    """Available daemon commands"""
+    """Available daemon commands."""
 
     # Service control
     SERVICE_CHOICE = "service_choice"
@@ -122,6 +114,8 @@ class DaemonCommand(StrEnum):
     APPROVE_CLIENT = "approve_client"
     DENY_CLIENT = "deny_client"
     LIST_PENDING_APPROVALS = "list_pending_approvals"
+    # Multi-monitor layout (server only)
+    SET_CLIENT_LAYOUT = "set_client_layout"
 
     # SSL/Certificate management
     ENABLE_SSL = "enable_ssl"
@@ -145,7 +139,6 @@ class DaemonCommand(StrEnum):
     PING = "ping"
 
     def __init__(self, params: Optional[Dict[str, Any]] = None):
-        # super().__init__()
         self._params = params if params is not None else {}
 
     @property
@@ -166,7 +159,7 @@ class RunningState:
     def __init__(self, service: str, is_running: bool):
         self.service = service
         self.is_running = is_running
-        self.start_datetime = None  # Start timestamp
+        self.start_datetime = None
 
     def start(self):
         self.is_running = True
@@ -183,16 +176,12 @@ class RunningState:
 
 
 class CommandHandler:
-    """Decorator and registry for command handlers"""
+    """Decorator + registry for daemon command handlers."""
 
     _handlers: Dict[str, Callable] = {}
 
     @classmethod
     def register(cls, command: str):
-        """
-        Decorator to register a method as a command handler.
-        """
-
         def decorator(func: Callable) -> Callable:
             cls._handlers[command] = func
             return func
@@ -201,63 +190,28 @@ class CommandHandler:
 
     @classmethod
     def get_handlers(cls, instance: Optional[Any] = None) -> Dict[str, Callable]:
-        """
-        Get all registered handlers, optionally bound to an instance.
-
-        Args:
-            instance: If provided, bind all handlers to this instance
-
-        Returns:
-            Dictionary mapping command strings to (bound) methods
-        """
+        """Return registered handlers, optionally bound to ``instance``."""
         if instance is None:
             return cls._handlers.copy()
 
-        # Bind all handlers to the instance
         bound_handlers = {}
         for command, func in cls._handlers.items():
             bound_handlers[command] = func.__get__(instance, instance.__class__)  # ty:ignore[unresolved-attribute]
-        cls.clear()  # Clear after binding to avoid duplicate registrations
+        cls.clear()  # Avoid duplicate registrations on re-instantiation.
         return bound_handlers
 
     @classmethod
     def clear(cls):
-        """Clear all registered handlers (useful for testing)"""
         cls._handlers.clear()
 
 
 class Daemon:
-    """
-    Main daemon class for managing lifecycle.
+    """Command-socket daemon controlling the Client/Server services.
 
-    This daemon runs independently and provides a command socket interface
-    for controlling Client and Server services, as well as their configurations.
-    Supports both Unix sockets (Linux/macOS) and TCP sockets on localhost (Windows).
-
-    Example:
-        # Create and start daemon (Unix)
-        daemon = Daemon(
-            socket_path="/tmp/temp.sock",
-            app_config=ApplicationConfig()
-        )
-
-        # Create and start daemon (Windows)
-        daemon = Daemon(
-            socket_path="127.0.0.1:65654",
-            app_config=ApplicationConfig()
-        )
-
-        await daemon.start()
-
-        # Daemon will run until shutdown command is received
-        await daemon.wait_for_shutdown()
-
-        # Cleanup
-        await daemon.stop()
+    Uses a Unix socket on Linux/macOS and a localhost TCP socket on
+    Windows (named pipes don't play well with asyncio).
     """
 
-    # Platform-specific default paths
-    # On Windows, use TCP socket on localhost instead of named pipes for better asyncio compatibility
     if IS_WINDOWS:
         DEFAULT_SOCKET_PATH = f"127.0.0.1:{ApplicationConfig.DEFAULT_DAEMON_PORT}"
     else:
@@ -265,23 +219,21 @@ class Daemon:
             ApplicationConfig.get_main_path(), ApplicationConfig.DEFAULT_UNIX_SOCK_NAME
         )
 
-    MAX_CONNECTIONS = 1  # Only accept one connection at a time
-    BUFFER_SIZE = 16384  # 16KB
-    # Cap concurrent command executions: a buggy/abusive client could otherwise
-    # spam commands and accumulate fire-and-forget tasks without bound.
+    MAX_CONNECTIONS = 1
+    BUFFER_SIZE = 16384
+    # Cap concurrent commands so an abusive client can't spam the
+    # fire-and-forget task set unbounded.
     MAX_CONCURRENT_COMMANDS = 16
-    # How many adjacent ports to try if the preferred one is busy (Windows).
-    # The actual bound port is exposed via the runtime endpoint file so the
-    # GUI keeps finding us regardless of the fallback choice.
+    # On Windows, walk forward this many adjacent ports if the preferred
+    # one is busy. The actual bound port lives in the runtime endpoint
+    # file so the GUI keeps finding us.
     TCP_FALLBACK_PORT_RANGE = 10
 
-    # How long ``delayed_exit`` waits after a clean ``stop()`` before
-    # force-killing the process. Long enough to cover bg-task drain (2s) +
-    # mDNS de-announce + config save. Tests override this to a small value.
+    # Watchdog window before ``delayed_exit`` escalates after stop().
+    # Long enough for bg-task drain + mDNS de-announce + config save.
     DELAYED_EXIT_TIMEOUT = 30.0
-    # Env var that opts back into the legacy hard-exit fallback. Off by
-    # default so a hung shutdown surfaces in diagnostics instead of being
-    # silently masked by ``os._exit(0)``.
+    # Env var opt-in for the legacy hard-exit fallback. Off by default
+    # so a hung shutdown surfaces in diagnostics instead of being masked.
     FORCE_EXIT_ENV_VAR = "PERPETUA_DAEMON_FORCE_EXIT"
 
     _encoder = msgspec.json.Encoder()
@@ -293,18 +245,8 @@ class Daemon:
         app_config: Optional[ApplicationConfig] = None,
         auto_load_config: bool = True,
     ):
-        """
-        Initialize the daemon.
-
-        Args:
-            socket_path: Path to Unix socket or TCP address:port (e.g., "127.0.0.1:65655") for command interface
-            app_config: Application configuration
-            auto_load_config: Whether to auto-load existing configurations
-        """
-        # Precedence for the IPC endpoint location:
-        # 1. Explicit ``socket_path`` argument (tests / programmatic use).
-        # 2. ``PERPETUA_DAEMON_ENDPOINT`` env var (dev, containers, multi-instance).
-        # 3. Platform default computed from ApplicationConfig.
+        # IPC endpoint precedence: explicit arg -> PERPETUA_DAEMON_ENDPOINT
+        # env var -> platform default.
         env_ep = env_endpoint_override()
         if socket_path:
             self.socket_path = socket_path
@@ -314,11 +256,10 @@ class Daemon:
             self.socket_path = self.DEFAULT_SOCKET_PATH
         self.app_config = app_config or ApplicationConfig()
         self.auto_load_config = auto_load_config
-        # Records the endpoint URL we actually bound; persisted to disk so
-        # the GUI can find us even if we fell back to a different port.
+        # Endpoint URL we actually bound; persisted so the GUI can find
+        # us even after a port fallback.
         self._endpoint_url: Optional[str] = None
 
-        # Initialize logging with file output
         self._logger = get_logger(
             self.__class__.__name__,
             level=Logger.INFO,
@@ -326,7 +267,6 @@ class Daemon:
             log_file=self.app_config.get_default_log_file(),
         )
 
-        # Service instances
         self._server: Optional[Server] = None
         self._client: Optional[Client] = None
         self._state: Dict[str, RunningState] = {
@@ -334,46 +274,35 @@ class Daemon:
             "client": RunningState("client", False),
         }
 
-        # Configurations
         self._server_config: Optional[ServerConfig] = None
         self._client_config: Optional[ClientConfig] = None
 
-        # Notification manager for event broadcasting
         self._notification_manager = NotificationManager(
             callback=self._send_notification
         )
 
-        # Daemon state
         self._running = False
         self._shutdown_event = asyncio.Event()
         self._socket_server: Optional[asyncio.AbstractServer] = None
         self._permission_watchdog_task: Optional[asyncio.Task] = None
 
-        # Connected client management (only one at a time)
+        # Only one instance may connect at a time.
         self._connected_client_reader: Optional[asyncio.StreamReader] = None
         self._connected_client_writer: Optional[asyncio.StreamWriter] = None
         self._client_connection_lock = asyncio.Lock()
 
         self._command_handlers: Dict[str, Callable] = CommandHandler.get_handlers(self)
 
-        # Strong refs for fire-and-forget tasks (command exec, notifications, etc.)
         self._bg_tasks = BackgroundTasks()
-        # Limit concurrent command tasks regardless of how fast they arrive.
         self._command_semaphore = asyncio.Semaphore(self.MAX_CONCURRENT_COMMANDS)
 
-        # Signal handlers are registered in ``start()`` once an event loop is
-        # actually running. Registering in ``__init__`` would
-        # rely on ``asyncio.get_event_loop()``, which is deprecated and
-        # unsafe outside a running loop.
+        # Signal handlers register in ``start()`` once a loop is running;
+        # ``__init__`` would have to rely on the deprecated
+        # ``asyncio.get_event_loop()`` outside a running loop.
         self._shutdown_calls = 0
 
     def _setup_signal_handlers(self):
-        """Setup signal handlers for graceful shutdown.
-
-        Must be called from inside the event loop (e.g. from ``start()``).
-        The handlers spawn ``_signal_shutdown`` via the daemon's
-        ``BackgroundTasks`` set so the task is retained against GC.
-        """
+        """Install SIGTERM/SIGINT handlers. Must be called from a running loop."""
         try:
             loop = asyncio.get_running_loop()
         except RuntimeError:
@@ -391,12 +320,10 @@ class Daemon:
                 pass
 
     async def _permission_watchdog(self, interval: float = 5.0):
-        """Periodically verify that required permissions are still granted.
+        """Trigger graceful shutdown if required permissions are revoked.
 
-        If permissions are revoked at runtime, triggers a graceful shutdown to
-        prevent the system from becoming unresponsive (blocked input).
-
-        The check runs in a thread executor to avoid blocking the event loop.
+        Runs the check in a thread executor so a stuck system call can't
+        block the event loop.
         """
         checker = PermissionChecker(log=False)
         try:
@@ -406,8 +333,8 @@ class Daemon:
             return
         self._logger.info("Permission watchdog started", interval=interval)
 
-        # Cap the OS-level check so a stuck system call can't hold the
-        # watchdog (or, indirectly via the default executor, the loop) hostage.
+        # Cap each check so a stuck syscall can't hold the watchdog (or
+        # the default executor's loop slot) hostage.
         check_timeout = max(interval, 5.0)
         max_retry = 3
         try:
@@ -454,7 +381,6 @@ class Daemon:
             pass
 
     async def _signal_shutdown(self):
-        """Handle shutdown signals"""
         self._logger.info("Received shutdown signal")
         await self.stop()
         self._shutdown_calls += 1
@@ -466,11 +392,8 @@ class Daemon:
             )
             os._exit(0)
 
-    # ==================== Lifecycle Methods ====================
-
     def _pre_configure(self):
-        """Pre-configuration steps before starting services"""
-        # Check if server/client configs have missing important fields like hostname
+        """Backfill missing hostname/UID on Client/Server configs before start."""
         if self._client_config:
             if (
                 not self._client_config.get_hostname()
@@ -486,7 +409,7 @@ class Daemon:
                         )
                         self._client_config.set_hostname(key)
                 except Exception as e:
-                    self._logger.error(f"Preconfiguration error ({e})")
+                    self._logger.error("Preconfiguration error", error=str(e))
             if not self._client_config.get_uid():
                 key = self._client_config.get_hostname()
                 if key and key != "":
@@ -497,7 +420,7 @@ class Daemon:
                             "Generated new client UID", client_uid=new_uid
                         )
                     except Exception as e:
-                        self._logger.error(f"Preconfiguration error ({e})")
+                        self._logger.error("Preconfiguration error", error=str(e))
 
         if self._server_config:  # UID will be generated by service discovery
             if not self._server_config.host:
@@ -509,26 +432,16 @@ class Daemon:
                         host=hostname,
                     )
                 except Exception as e:
-                    self._logger.error(f"Preconfiguration error ({e})")
+                    self._logger.error("Preconfiguration error", error=str(e))
 
     async def start(self, service: Optional[str] = None) -> bool:
-        """
-        Start the daemon and command socket server.
-
-        Returns:
-            True if daemon started successfully, False otherwise
-
-        Raises:
-            DaemonAlreadyRunningException: If daemon is already running
-            DaemonPortOccupiedException: If TCP port is occupied (Windows only)
-        """
+        """Start the daemon and command socket server."""
         if self._running:
             self._logger.warning("Daemon already running")
             return False
 
         self._logger.info("Starting Daemon...")
 
-        # Initialize configurations
         self._server_config = ServerConfig(self.app_config)
         self._client_config = ClientConfig(self.app_config)
 
@@ -537,32 +450,28 @@ class Daemon:
                 await self._server_config.load()
                 await self._client_config.load()
             except Exception as e:
-                self._logger.warning(f"Could not load configurations ({e})")
+                self._logger.warning("Could not load configurations", error=str(e))
 
         self._pre_configure()
 
-        # Create socket server based on platform
         try:
             if IS_WINDOWS:
-                # Windows TCP socket (localhost only for security)
                 await self._start_tcp_server()
             else:
-                # Unix socket
                 await self._start_unix_server()
 
             self._running = True
-            # Register signal handlers now that we have a running loop and the
-            # daemon owns its bg_tasks set
+            # Signal handlers need a running loop + the daemon's bg_tasks.
             self._setup_signal_handlers()
-            self._logger.info(f"Daemon started, listening on {self.socket_path}")
+            self._logger.debug(
+                "Daemon started successfully", endpoint=self._endpoint_url
+            )
             self._logger.info(
                 f"Platform: {'Windows (TCP Socket)' if IS_WINDOWS else 'Unix (Socket)'}"
             )
 
-            # Publish the actual endpoint we ended up bound to so the GUI and
-            # external tooling can find us even after EADDRINUSE fallback or
-            # a user-customised port. Failure is non-fatal - the daemon still
-            # works, callers can fall back to legacy default discovery.
+            # Publish the actually-bound endpoint so GUI/tooling can
+            # find us after a port fallback. Non-fatal on failure.
             if self._endpoint_url:
                 try:
                     json_path, txt_path = write_endpoint(
@@ -571,59 +480,58 @@ class Daemon:
                         version=self.app_config.version,
                     )
                     self._logger.debug(
-                        f"Endpoint published at {json_path} (txt: {txt_path})"
+                        "Endpoint published", json_path=json_path, txt_path=txt_path
                     )
                 except Exception as e:
                     self._logger.warning(
-                        f"Could not write endpoint file ({e}); "
-                        f"falling back to legacy discovery"
+                        "Could not write endpoint file",
+                        error=str(e),
+                        fallback="falling back to legacy discovery",
                     )
 
-            # Start permission watchdog on macOS
             if sys.platform == "darwin":
-                self._permission_watchdog_task = asyncio.create_task(
-                    self._permission_watchdog()
+                self._permission_watchdog_task = self._bg_tasks.spawn(
+                    self._permission_watchdog(), name="permission_watchdog"
                 )
 
             if service is not None and service in ("server", "client"):
                 self._logger.info("Auto-starting service", service=service)
                 if service == "server":
                     await self._handle_service_choice({"service": "server"})
-                    asyncio.create_task(self._handle_start_server({}))
+                    self._bg_tasks.spawn(
+                        self._handle_start_server({}), name="auto_start_server"
+                    )
                 elif service == "client":
                     await self._handle_service_choice({"service": "client"})
-                    asyncio.create_task(self._handle_start_client({}))
+                    self._bg_tasks.spawn(
+                        self._handle_start_client({}), name="auto_start_client"
+                    )
 
             return True
 
         except (DaemonAlreadyRunningException, DaemonPortOccupiedException):
-            # Re-raise daemon-specific exceptions
             raise
 
         except Exception as e:
-            self._logger.error(f"Failed to start daemon ({e})")
+            self._logger.error("Failed to start daemon", error=str(e))
+            import traceback
+
+            traceback_str = traceback.format_exc()
+            self._logger.debug("Traceback", traceback=traceback_str)
             return False
 
     async def _start_unix_server(self):
-        """
-        Start Unix socket server (Linux/macOS)
-
-        Logic:
-        - If socket exists and is connectable -> raise DaemonAlreadyRunningException
-        - If socket exists but not connectable -> remove and create new one
-        - If socket doesn't exist -> create new one
-        """
+        """Start Unix socket server, removing any stale socket file."""
         if os.path.exists(self.socket_path):
             self._logger.debug(
                 f"Socket file {self.socket_path} already exists, checking if daemon is running..."
             )
 
-            # Try to connect to existing socket
             try:
                 reader, writer = await asyncio.wait_for(
                     asyncio.open_unix_connection(self.socket_path), timeout=2.0
                 )
-                # Connection successful -> daemon is already running
+                # Connectable: a live daemon owns it.
                 writer.close()
                 await writer.wait_closed()
 
@@ -636,37 +544,37 @@ class Daemon:
                 FileNotFoundError,
                 asyncio.TimeoutError,
             ) as e:
-                # Socket exists but daemon not running -> remove stale socket
                 self._logger.warning(
-                    f"Socket exists but daemon not running (error: {type(e).__name__}). "
-                    f"Removing stale socket file..."
+                    "Socket exists but daemon not running. Removing stale socket file...",
+                    error=str(e),
+                    socket_path=self.socket_path,
                 )
                 try:
                     os.unlink(self.socket_path)
-                    self._logger.info(f"Removed stale socket file {self.socket_path}")
+                    self._logger.info("Removed stale socket file")
                 except Exception as remove_error:
-                    self._logger.error(f"Failed to remove stale socket: {remove_error}")
+                    self._logger.error(
+                        "Failed to remove stale socket", error=str(remove_error)
+                    )
                     raise
             except OSError as e:
-                if isinstance(e, OSError):
-                    if e.errno == errno.ENOTSOCK:
-                        # Not a socket file, remove it
-                        self._logger.warning(
-                            f"File {self.socket_path} is not a socket. Removing it..."
+                if e.errno == errno.ENOTSOCK:
+                    self._logger.warning(
+                        f"File {self.socket_path} is not a socket. Removing it..."
+                    )
+                    try:
+                        os.unlink(self.socket_path)
+                        self._logger.info(
+                            "Removed non-socket file", path=self.socket_path
                         )
-                        try:
-                            os.unlink(self.socket_path)
-                            self._logger.info(
-                                f"Removed non-socket file {self.socket_path}"
-                            )
-                        except Exception as remove_error:
-                            self._logger.error(
-                                f"Failed to remove non-socket file: {remove_error}"
-                            )
-                            raise
+                    except Exception as remove_error:
+                        self._logger.error(
+                            "Failed to remove non-socket file", error=str(remove_error)
+                        )
+                        raise
 
-        # Create new Unix socket server. We tighten the process umask around
-        # the bind so the socket inode is created with mode 0o600 atomically
+        # Tighten umask around bind so the socket inode is created with
+        # mode 0o600 atomically.
         prev_umask = os.umask(0o077)
         try:
             self._socket_server = await asyncio.start_unix_server(
@@ -675,26 +583,18 @@ class Daemon:
         finally:
             os.umask(prev_umask)
 
-        # ensure the perm bits really are 0o600 even if a
-        # future asyncio implementation overrides the umask.
+        # Defensive: re-chmod in case a future asyncio override the umask.
         os.chmod(self.socket_path, 0o600)
-        self._logger.info(f"Unix socket server created at {self.socket_path}")
+        self._logger.debug("Unix socket server created", path=self.socket_path)
         self._endpoint_url = format_unix_endpoint(self.socket_path)
 
     async def _start_tcp_server(self):
-        """
-        Start TCP socket server on localhost (Windows).
+        """Start TCP socket server on localhost (Windows).
 
-        Logic:
-        1. Verify the preferred port doesn't already host a live Perpetua
-           daemon - if it does, raise DaemonAlreadyRunningException so the
-           caller knows to attach instead of starting a duplicate.
-        2. Try to bind the preferred port. If it is occupied by a different
-           process, walk forward through up to ``TCP_FALLBACK_PORT_RANGE``
-           adjacent ports. The actual bound port is written to the runtime
-           endpoint file so the GUI keeps finding us.
+        Probes the preferred port for a live daemon first; on failure
+        walks forward through ``TCP_FALLBACK_PORT_RANGE`` adjacent ports.
+        The actually-bound port is published via the endpoint file.
         """
-        # Parse host and port from socket_path
         if ":" in self.socket_path:
             host, port_str = self.socket_path.split(":", 1)
             preferred_port = int(port_str)
@@ -706,9 +606,8 @@ class Daemon:
             f"Checking if daemon is already running on {host}:{preferred_port}..."
         )
 
-        # First, try to connect to check if daemon is already running on the
-        # preferred port. Only the preferred port carries the "already
-        # running" semantics - fallback ports might host unrelated services.
+        # Only the preferred port carries "already running" semantics;
+        # fallback ports may host unrelated services.
         try:
             reader, writer = await asyncio.wait_for(
                 asyncio.open_connection(host, preferred_port), timeout=2.0
@@ -721,7 +620,9 @@ class Daemon:
             raise DaemonAlreadyRunningException(error_msg)
 
         except (ConnectionRefusedError, OSError) as e:
-            self._logger.debug(f"Port check failed as expected: {type(e).__name__}")
+            self._logger.debug(
+                "Port check failed as expected", error_type=type(e).__name__
+            )
         except asyncio.TimeoutError:
             self._logger.warning(
                 "Connection attempt timed out, proceeding with server creation"
@@ -739,9 +640,8 @@ class Daemon:
                         f"Preferred port {preferred_port} busy; "
                         f"bound fallback port {port} instead"
                     )
-                self._logger.info(f"TCP server started on {host}:{port}")
-                # Keep socket_path in sync with the port we actually bound so
-                # subsequent log lines and the endpoint file match reality.
+                self._logger.info("TCP server started", host=host, port=port)
+                # Keep socket_path in sync with the actually-bound port.
                 self.socket_path = f"{host}:{port}"
                 self._endpoint_url = format_tcp_endpoint(host, port)
                 return
@@ -752,9 +652,9 @@ class Daemon:
                     or "address already in use" in str(e).lower()
                 ):
                     last_err = e
-                    self._logger.info(f"Port {port} busy, trying next fallback...")
+                    self._logger.info("Port busy, trying next fallback", port=port)
                     continue
-                self._logger.error(f"Failed to start TCP server: {e}")
+                self._logger.error("Failed to start TCP server", error=str(e))
                 raise
 
         # Exhausted all candidates.
@@ -766,7 +666,7 @@ class Daemon:
         raise DaemonPortOccupiedException(error_msg) from last_err
 
     async def stop(self):
-        """Stop the daemon and cleanup resources"""
+        """Stop the daemon and cleanup resources."""
         if not self._running:
             self._logger.warning("Daemon not running")
             return
@@ -775,10 +675,8 @@ class Daemon:
 
         self._running = False
 
-        # Unregister signal handlers so a future ``start()`` on the same
-        # process (e.g. tests, hot-restart) can install fresh ones without
-        # double-firing. NotImplementedError covers Windows where signal
-        # handlers were never registered.
+        # Unregister signal handlers so a future ``start()`` in the same
+        # process (tests, hot-restart) installs fresh ones cleanly.
         try:
             loop = asyncio.get_running_loop()
             for sig in (signal.SIGTERM, signal.SIGINT):
@@ -789,16 +687,13 @@ class Daemon:
         except RuntimeError:
             pass
 
-        # Cancel permission watchdog
         if self._permission_watchdog_task and not self._permission_watchdog_task.done():
             self._permission_watchdog_task.cancel()
             self._permission_watchdog_task = None
 
-        # Disconnect connected client
         async with self._client_connection_lock:
             if self._connected_client_writer is not None:
                 try:
-                    # Send shutdown notification
                     shutdown_msg = InfoEvent(
                         info="Daemon is shutting down", daemon_shutdown=True
                     )
@@ -817,7 +712,6 @@ class Daemon:
                     self._connected_client_reader = None
                     self._connected_client_writer = None
 
-        # Stop services
         if self._server:
             await self._server.stop()
             self._server = None
@@ -826,26 +720,21 @@ class Daemon:
             await self._client.stop()
             self._client = None
 
-        # Close socket server
         if self._socket_server:
             try:
                 self._socket_server.close()
                 await self._socket_server.wait_closed()
             except Exception as e:
-                self._logger.error(f"Error closing socket server ({e})")
+                self._logger.error("Error closing socket server", error=str(e))
 
-        # Remove socket file (Unix only)
         if not IS_WINDOWS and os.path.exists(self.socket_path):
             os.unlink(self.socket_path)
 
-        # Clear the runtime endpoint advertisement so the GUI / tooling stop
-        # trying to reach a dead daemon.
         try:
             remove_endpoint(self.app_config.get_save_path())
         except Exception as e:
-            self._logger.debug(f"Failed to clean endpoint file ({e})")
+            self._logger.debug("Failed to clean endpoint file", error=str(e))
 
-        # Wait for any in-flight fire-and-forget tasks to finish (or cancel them).
         try:
             await asyncio.wait_for(self._bg_tasks.drain(), timeout=2.0)
         except asyncio.TimeoutError:
@@ -854,18 +743,15 @@ class Daemon:
         self._shutdown_event.set()
         self._logger.info("Daemon stopped")
 
-        # Start a watchdog thread that, after ``DELAYED_EXIT_TIMEOUT``, checks
-        # whether the loop is genuinely idle. If so it exits silently; if
-        # there are stranded tasks it logs diagnostics. ``os._exit`` is only
-        # called when the operator opts in via ``FORCE_EXIT_ENV_VAR``
-        # Masking a stuck shutdown by exit-code-0 lies about
-        # success and loses state on the way out.
+        # Watchdog: after DELAYED_EXIT_TIMEOUT log diagnostics if the
+        # loop still has tasks. ``os._exit`` only fires via
+        # FORCE_EXIT_ENV_VAR — masking a stuck shutdown as success lies
+        # about it and loses state on the way out.
         threading.Thread(target=self.delayed_exit, daemon=True).start()
 
     def delayed_exit(self):
         time.sleep(self.DELAYED_EXIT_TIMEOUT)
-        # If shutdown completed cleanly and the loop has nothing left,
-        # there is nothing to escalate. Skip silently.
+        # Clean shutdown + idle loop = nothing to escalate.
         try:
             loop = asyncio.get_event_loop()
             pending = [t for t in asyncio.all_tasks(loop) if not t.done()]
@@ -890,23 +776,12 @@ class Daemon:
             os._exit(1)
 
     async def wait_for_shutdown(self):
-        """Wait until daemon is shutdown"""
         await self._shutdown_event.wait()
-
-    # ==================== Command Socket Handler ====================
 
     async def _handle_client_connection(
         self, reader: asyncio.StreamReader, writer: asyncio.StreamWriter
     ):
-        """
-        Handle incoming client connection on command socket.
-        Only one connection is allowed at a time. The connection remains open
-        and continuously listens for commands.
-
-        Args:
-            reader: Stream reader for receiving data
-            writer: Stream writer for sending responses
-        """
+        """Handle the (single allowed) command-socket connection."""
         if IS_WINDOWS:
             addr = writer.get_extra_info("peername")
         else:
@@ -914,7 +789,6 @@ class Daemon:
 
         self._logger.info("Instance connection attempt", address=addr)
 
-        # Check if another instance is already connected
         async with self._client_connection_lock:
             if self._connected_client_writer is not None:
                 self._logger.warning(
@@ -944,20 +818,23 @@ class Daemon:
                             pass
                 return
 
-            # Accept the connection
             self._connected_client_writer = writer
             self._connected_client_reader = reader
             self._logger.debug("Instance connected", address=addr)
 
         try:
-            # Send welcome message
             welcome = InfoEvent(
                 info="Connected to daemon", version=ApplicationConfig.version
             )
             await self._send_to_client(welcome)
 
             buff = bytearray()
-            # Continuously listen for commands
+            # ``scan_from`` marks how far into ``buff`` we've already scanned
+            # for a frame trailer without success. Without it, a frame that
+            # arrives across many small reads forces a full re-scan of the
+            # buffer every cycle (O(N²)). On a successful parse it resets
+            # to 0 because ``del buff[:bytes_read]`` shifts everything.
+            scan_from = 0
             while self._running and not reader.at_eof():
                 try:
                     data = await asyncio.wait_for(
@@ -965,21 +842,23 @@ class Daemon:
                     )
 
                     if not data:
-                        # self._logger.debug("Client disconnected (no data)")
                         await asyncio.sleep(0.1)
                         continue
 
                     buff.extend(data)
 
-                    if len(buff) == 0:
-                        await asyncio.sleep(0.1)
-                        continue
+                    commands_data, bytes_read = self.parse_msg_bytes(buff, scan_from)
 
-                    commands_data, bytes_read = self.parse_msg_bytes(buff)
-
-                    # Clear read bytes in-place (no reallocation of the bytearray).
                     if bytes_read > 0:
+                        # In-place clear keeps the bytearray's allocation.
                         del buff[:bytes_read]
+                        scan_from = 0
+                    else:
+                        # No new frame parsed: next iteration only needs to
+                        # search the bytes we haven't looked at yet. Leave
+                        # 4 bytes of slack so a trailer split exactly on
+                        # the read boundary is still picked up.
+                        scan_from = max(0, len(buff) - 4)
 
                     for command_data in commands_data:
                         try:
@@ -992,14 +871,13 @@ class Daemon:
                             await self._send_to_client(response)
                             continue
 
-                        # Execute command (no response needed, commands send notifications)
+                        # Commands report via notifications; no inline response.
                         self._bg_tasks.spawn(
                             self._execute_command_throttled(command, params)
                         )
                         await asyncio.sleep(0)
 
                 except asyncio.TimeoutError:
-                    # Timeout is normal, just check running state and continue
                     await asyncio.sleep(0)
                     continue
                 except (
@@ -1007,10 +885,10 @@ class Daemon:
                     ConnectionResetError,
                     ConnectionAbortedError,
                 ) as e:
-                    self._logger.error(f"Instance disconnected ({e})")
+                    self._logger.error("Instance disconnected", error=str(e))
                     break
                 except Exception as e:
-                    self._logger.error(f"{e}")
+                    self._logger.error("Unhandled error", error=str(e))
                     response = ErrorEvent(error=f"Internal error ({e})")
                     try:
                         await self._send_to_client(response)
@@ -1019,16 +897,15 @@ class Daemon:
                     await asyncio.sleep(0.5)
 
         except Exception as e:
-            self._logger.error(f"{e}")
+            self._logger.error("Unhandled error", error=str(e))
 
         finally:
-            # Cleanup connection
             async with self._client_connection_lock:
-                if self._connected_client_writer == writer:
+                if self._connected_client_writer is writer:
                     self._connected_client_reader = None
                     self._connected_client_writer = None
 
-            self._logger.info(f"Instance disconnected ({addr})")
+            self._logger.info("Instance disconnected", address=addr)
             try:
                 writer.close()
                 await writer.wait_closed()
@@ -1037,79 +914,54 @@ class Daemon:
 
     @staticmethod
     def prepare_msg_bytes(data: NotificationEvent | dict) -> bytes:
-        """
-        Prepare message bytes for sending to client.
-
-        Args:
-            data: NotificationEvent or dict to send
-
-        Returns:
-            Encoded bytes with length prefix and newline delimiter
-        """
+        """Encode an event/dict for the framed wire protocol."""
         if isinstance(data, dict):
             message_bytes = Daemon._encoder.encode(data)
         else:
-            # Convert NotificationEvent to dict and encode
             message_bytes = Daemon._encoder.encode(data.to_dict())
         length_prefix = len(message_bytes).to_bytes(4, byteorder="big")
         return message_bytes + length_prefix + b"\n"
 
     @staticmethod
-    def parse_msg_bytes(data: "bytes | bytearray") -> tuple[list[dict], int]:
-        """
-        Parses a byte sequence containing serialized messages with length prefixes and a delimiter.
+    def parse_msg_bytes(
+        data: "bytes | bytearray", scan_from: int = 0
+    ) -> tuple[list[dict], int]:
+        """Parse a buffer of length-prefixed, newline-delimited messages.
 
-        Args:
-            data: A sequence of bytes containing the serialized messages.
-
-        Returns:
-            list[dict]: A list of Python dictionaries representing the parsed JSON messages.
-            offset: The number of bytes consumed from the input data.
-
-        Raises:
-            ValueError: If the byte sequence contains incomplete length prefixes, lacks message
-                delimiters, contains invalid JSON data, or suffers from other structural
-                inconsistencies in the sequence.
+        ``scan_from`` is a hint - bytes before it have already been
+        searched for a trailer and contain no newline. Used to avoid
+        re-scanning the whole buffer when a frame straddles several
+        reads. Returns ``(parsed_messages, bytes_consumed)``.
         """
         offset = 0
         d_len = len(data)
         try:
-            if d_len > 5:
-                lines = []
-                while offset < d_len - 5:
-                    if offset + 4 > d_len:
-                        raise ValueError("Incomplete length prefix")
-                    # Find first \n index
-                    idx = data.find(b"\n", offset)
-                    if idx == -1:
-                        # Wait for more data
-                        # print(f"No delimiter found, stopping parse at offset {offset}")
-                        # print(f"Data: {data[offset:]}")
-                        break
-                    length_bytes = data[idx - 4 : idx]
-                    msg_length = int.from_bytes(length_bytes, byteorder="big")
-                    msg_data = data[offset : offset + msg_length]
-                    lines.append(Daemon._decoder.decode(msg_data))
-                    offset += msg_length + 5  # Move past message and delimiter
-                return lines, offset
-            else:
+            if d_len <= 5:
                 return [], 0
+            lines = []
+            search_from = max(scan_from, 4)
+            while offset < d_len - 5:
+                if offset + 4 > d_len:
+                    raise ValueError("Incomplete length prefix")
+                idx = data.find(b"\n", max(search_from, offset + 4))
+                if idx == -1:
+                    # Partial trailer — wait for more bytes.
+                    break
+                length_bytes = data[idx - 4 : idx]
+                msg_length = int.from_bytes(length_bytes, byteorder="big")
+                msg_data = data[offset : offset + msg_length]
+                lines.append(Daemon._decoder.decode(msg_data))
+                offset += msg_length + 5
+                # After the first hit ``search_from`` is no longer ahead
+                # of ``offset``; reset so the next find starts there.
+                search_from = offset
+            return lines, offset
         except msgspec.DecodeError as e:
             raise ValueError(f"Invalid msgspec data ({e})")
         except ValueError:
             raise
 
     async def _send_to_client(self, event: NotificationEvent) -> bool:
-        """
-        Send notification event to the connected client.
-        This method can be called from anywhere to push events to the client.
-
-        Args:
-            event: NotificationEvent to send
-
-        Returns:
-            True if sent successfully, False otherwise
-        """
         async with self._client_connection_lock:
             if self._connected_client_writer is None:
                 self._logger.warning("No client connected, cannot send notification")
@@ -1120,52 +972,29 @@ class Daemon:
                 await self._connected_client_writer.drain()
                 return True
             except Exception as e:
-                self._logger.error(f"{e}")
-                # Connection broken, clear it
+                self._logger.error("Unhandled error", error=str(e))
+                # Broken connection — clear so the next call doesn't retry.
                 self._connected_client_reader = None
                 self._connected_client_writer = None
                 return False
 
     async def _send_notification(self, event: NotificationEvent) -> None:
-        """
-        Internal callback for notification manager to send events to connected client.
-
-        Args:
-            event: NotificationEvent to send
-        """
         if not self.is_client_connected():
             return
 
         await self._send_to_client(event)
 
     async def _service_notification_callback(self, event: NotificationEvent) -> None:
-        """
-        Callback for service (Client/Server) to send notifications.
-        This bridges service events to the notification manager.
-
-        Args:
-            event: NotificationEvent from service
-        """
-        # Services now send NotificationEvent objects directly
-        # We forward them through the notification manager
+        """Forward a service event through the notification manager."""
         self._bg_tasks.spawn(self._notification_manager.notify_event(event))
 
     def is_client_connected(self) -> bool:
-        """Check if a client is currently connected"""
         return self._connected_client_writer is not None
 
     def _get_active_service(
         self, service_type: str = "auto"
     ) -> tuple[Optional[Any], str, Optional[str]]:
-        """
-        Get the active service based on service_type parameter.
-
-        Args:
-            service_type: "auto", "server", or "client"
-
-        Returns:
-            Tuple of (service instance, service name, error message if any)
-        """
+        """Returns ``(service, name, error)`` for ``"auto"``/``"server"``/``"client"``."""
         if service_type == "auto":
             if self._server:
                 return self._server, "server", None
@@ -1187,15 +1016,7 @@ class Daemon:
     def _get_service_and_config(
         self, service_type: str = "auto"
     ) -> tuple[Optional[Any], Optional[Any], str, Optional[str]]:
-        """
-        Get the active service and its config.
-
-        Args:
-            service_type: "auto", "server", or "client"
-
-        Returns:
-            Tuple of (service instance, config, service name, error message if any)
-        """
+        """Like :meth:`_get_active_service`, also returning the config."""
         if service_type == "auto":
             if self._server:
                 return self._server, self._server_config, "server", None
@@ -1217,23 +1038,11 @@ class Daemon:
     async def _execute_command_throttled(
         self, command: str, params: Dict[str, Any]
     ) -> None:
-        """
-        Bounded variant of _execute_command: holds a semaphore slot while the
-        underlying handler runs so a flood of commands can't accumulate
-        unbounded fire-and-forget tasks.
-        """
+        """Semaphore-bounded variant: caps in-flight commands."""
         async with self._command_semaphore:
             await self._execute_command(command, params)
 
     async def _execute_command(self, command: str, params: Dict[str, Any]) -> None:
-        """
-        Execute a daemon command.
-
-        Args:
-            command: Command to execute
-            params: Command parameters
-        """
-        # Check if command exists
         handler = self._command_handlers.get(command)
         if not handler:
             await self._notification_manager.notify_error(
@@ -1241,21 +1050,20 @@ class Daemon:
             )
             return
 
-        # Execute handler
         try:
             await handler(params)
         except Exception as e:
-            self._logger.error(f"{command} ({e})")
+            self._logger.error(
+                "Command execution failed", command=command, error=str(e)
+            )
             await self._notification_manager.notify_error(
                 f"Command execution failed: {str(e)}",
                 data={"command": command, "error": str(e)},
             )
 
-    # ==================== Command Handlers: Service Control ====================
-
     @CommandHandler.register(DaemonCommand.SERVICE_CHOICE)
     async def _handle_service_choice(self, params: Dict[str, Any]) -> None:
-        """Handle service choice between client and server"""
+        """Handle service choice between client and server."""
         choice = params.get("service")
         command = DaemonCommand.SERVICE_CHOICE.value
 
@@ -1270,9 +1078,8 @@ class Daemon:
                 self._server = Server(
                     app_config=self.app_config,
                     server_config=self._server_config,
-                    auto_load_config=False,  # Already loaded
+                    auto_load_config=False,
                 )
-                # Connect notification callback
                 self._server.set_notification_callback(
                     self._service_notification_callback
                 )
@@ -1298,9 +1105,8 @@ class Daemon:
                 self._client = Client(
                     app_config=self.app_config,
                     client_config=self._client_config,
-                    auto_load_config=False,  # Already loaded
+                    auto_load_config=False,
                 )
-                # Connect notification callback
                 self._client.set_notification_callback(
                     self._service_notification_callback
                 )
@@ -1321,7 +1127,7 @@ class Daemon:
 
     @CommandHandler.register(DaemonCommand.START_SERVER)
     async def _handle_start_server(self, params: Dict[str, Any]) -> None:
-        """Start the server service"""
+        """Start the server service."""
         command = DaemonCommand.START_SERVER.value
 
         if self._server and self._server.is_running():
@@ -1330,7 +1136,6 @@ class Daemon:
             )
             return
 
-        # Check if client is running (mutual exclusion)
         if self._client and self._client.is_running():
             await self._notification_manager.notify_command_error(
                 command, "Cannot start server while client is running"
@@ -1344,17 +1149,11 @@ class Daemon:
                 )
                 return
 
-            # # Notify starting
-            # await self._notification_manager.notify_service_started(
-            #     "Server", data={"status": "starting"}
-            # )
-
             try:
                 success = await self._server.start()
             except ServerStartError as start_err:
-                # Known, user-actionable failure (e.g. port already in use).
-                # Forward the specific message so the GUI shows something
-                # actionable instead of a generic "Failed to start server".
+                # Known, user-actionable failure (e.g. port in use): forward
+                # the specific message so the GUI shows something useful.
                 self._logger.error(str(start_err))
                 await self._notification_manager.notify_command_error(
                     command, str(start_err)
@@ -1378,12 +1177,12 @@ class Daemon:
                     command, "Failed to start server"
                 )
         except Exception as e:
-            self._logger.error(f"{e}")
+            self._logger.error("Unhandled error", error=str(e))
             await self._notification_manager.notify_command_error(command, f"{str(e)}")
 
     @CommandHandler.register(DaemonCommand.STOP_SERVER)
     async def _handle_stop_server(self, params: Dict[str, Any]) -> None:
-        """Stop the server service"""
+        """Stop the server service."""
         command = DaemonCommand.STOP_SERVER.value
 
         if not self._server or not self._server.is_running():
@@ -1403,7 +1202,7 @@ class Daemon:
 
     @CommandHandler.register(DaemonCommand.START_CLIENT)
     async def _handle_start_client(self, params: Dict[str, Any]) -> None:
-        """Start the client service"""
+        """Start the client service."""
         command = DaemonCommand.START_CLIENT.value
 
         if self._client and self._client.is_running():
@@ -1412,7 +1211,6 @@ class Daemon:
             )
             return
 
-        # Check if server is running (mutual exclusion)
         if self._server and self._server.is_running():
             await self._notification_manager.notify_command_error(
                 command, "Cannot start client while server is running"
@@ -1426,9 +1224,7 @@ class Daemon:
             return
 
         try:
-            start_task = asyncio.create_task(self._client.start())
-
-            success = await start_task
+            success = await self._client.start()
             if success:
                 self._state["client"].start()
                 response_data = {
@@ -1445,12 +1241,12 @@ class Daemon:
                     command, "Failed to start client"
                 )
         except Exception as e:
-            self._logger.error(f"{e}")
+            self._logger.error("Unhandled error", error=str(e))
             await self._notification_manager.notify_command_error(command, f"{str(e)}")
 
     @CommandHandler.register(DaemonCommand.STOP_CLIENT)
     async def _handle_stop_client(self, params: Dict[str, Any]) -> None:
-        """Stop the client service"""
+        """Stop the client service."""
         command = DaemonCommand.STOP_CLIENT.value
 
         if not self._client:
@@ -1473,11 +1269,9 @@ class Daemon:
         except Exception as e:
             await self._notification_manager.notify_command_error(command, f"{str(e)}")
 
-    # ==================== Command Handlers: Status ====================
-
     @CommandHandler.register(DaemonCommand.STATUS)
     async def _handle_status(self, params: Dict[str, Any]) -> None:
-        """Get overall daemon status"""
+        """Get overall daemon status."""
         command = DaemonCommand.STATUS.value
 
         status = {
@@ -1487,11 +1281,37 @@ class Daemon:
         }
 
         if self._server_config and self._server:
+            # Server-local monitor list — the GUI needs it for the
+            # layout editor. Skipped silently when Screen can't
+            # enumerate displays.
+            try:
+                from utils.screen import Screen
+
+                server_monitors = [m.to_dict() for m in Screen.get_monitors()]
+            except Exception as e:
+                self._logger.debug(
+                    f"Could not enumerate server monitors for status: {e}"
+                )
+                server_monitors = []
+
+            # Pending approvals: GUI may launch AFTER the daemon, so a
+            # client already waiting in pending-approval state would
+            # otherwise be invisible until the next handshake attempt.
+            try:
+                pending_approvals = self._server.get_pending_approvals()
+            except Exception as e:
+                self._logger.debug(
+                    f"Could not enumerate pending approvals for status: {e}"
+                )
+                pending_approvals = []
+
             status["server_info"] = {
                 **self._server_config.to_dict(),
                 "running": self._server.is_running(),
                 "start_time": self._state["server"].get_timestamp(),
-            }
+                "monitors": server_monitors,
+                "pending_approvals": pending_approvals,
+            }  # ty:ignore[invalid-assignment]
 
         if self._client_config and self._client:
             status["client_info"] = {
@@ -1501,10 +1321,10 @@ class Daemon:
                 "start_time": self._state["client"].get_timestamp(),
                 "otp_needed": await self._client.otp_needed(),
                 "service_choice_needed": await self._client.server_choice_needed(),
-            }
+            }  # ty:ignore[invalid-assignment]
 
             if await self._client.server_choice_needed():
-                status["client_info"]["available_servers"] = [
+                status["client_info"]["available_servers"] = [  # ty:ignore[invalid-assignment]
                     s.as_dict() for s in self._client.get_found_servers()
                 ]
 
@@ -1512,11 +1332,9 @@ class Daemon:
             command, "Status retrieved", result_data=status
         )
 
-    # ==================== Command Handlers: Configuration ====================
-
     @CommandHandler.register(DaemonCommand.GET_SERVER_CONFIG)
     async def _handle_get_server_config(self, params: Dict[str, Any]) -> None:
-        """Get server configuration"""
+        """Get server configuration."""
         command = DaemonCommand.GET_SERVER_CONFIG.value
 
         if not self._server_config:
@@ -1540,7 +1358,7 @@ class Daemon:
 
     @CommandHandler.register(DaemonCommand.SET_SERVER_CONFIG)
     async def _handle_set_server_config(self, params: Dict[str, Any]) -> None:
-        """Set server configuration"""
+        """Set server configuration."""
         command = DaemonCommand.SET_SERVER_CONFIG.value
 
         if not self._server_config:
@@ -1553,7 +1371,6 @@ class Daemon:
             if "uid" in params:
                 self._server_config.uid = params.get("uid")
 
-            # Update configuration
             if "host" in params or "port" in params:
                 host = params.get("host", self._server_config.host)
                 port = params.get("port", self._server_config.port)
@@ -1571,7 +1388,6 @@ class Daemon:
             if "streams_enabled" in params:
                 self._server_config.streams_enabled = params["streams_enabled"]
 
-            # Silently try to save config
             if self._server:
                 await self._server.save_config()
 
@@ -1583,7 +1399,7 @@ class Daemon:
 
     @CommandHandler.register(DaemonCommand.GET_CLIENT_CONFIG)
     async def _handle_get_client_config(self, params: Dict[str, Any]) -> None:
-        """Get client configuration"""
+        """Get client configuration."""
         command = DaemonCommand.GET_CLIENT_CONFIG.value
 
         if not self._client_config:
@@ -1609,7 +1425,7 @@ class Daemon:
 
     @CommandHandler.register(DaemonCommand.SET_CLIENT_CONFIG)
     async def _handle_set_client_config(self, params: Dict[str, Any]) -> None:
-        """Set client configuration"""
+        """Set client configuration."""
         command = DaemonCommand.SET_CLIENT_CONFIG.value
 
         if not self._client_config:
@@ -1619,7 +1435,6 @@ class Daemon:
             return
 
         try:
-            # Update configuration
             if (
                 "server_host" in params
                 or "server_port" in params
@@ -1636,7 +1451,7 @@ class Daemon:
                     "auto_reconnect", self._client_config.do_auto_reconnect()
                 )
 
-                if host == "" and hostname == "":  # Clear server connection
+                if host == "" and hostname == "":
                     uid = ""
 
                 self._client_config.set_server_connection(
@@ -1679,7 +1494,7 @@ class Daemon:
 
     @CommandHandler.register(DaemonCommand.SAVE_CONFIG)
     async def _handle_save_config(self, params: Dict[str, Any]) -> None:
-        """Save configurations to disk"""
+        """Save configurations to disk."""
         command = DaemonCommand.SAVE_CONFIG.value
 
         try:
@@ -1703,7 +1518,7 @@ class Daemon:
 
     @CommandHandler.register(DaemonCommand.RELOAD_CONFIG)
     async def _handle_reload_config(self, params: Dict[str, Any]) -> None:
-        """Reload configurations from disk"""
+        """Reload configurations from disk."""
         command = DaemonCommand.RELOAD_CONFIG.value
 
         try:
@@ -1725,14 +1540,12 @@ class Daemon:
         except Exception as e:
             await self._notification_manager.notify_command_error(command, f"{str(e)}")
 
-    # ==================== Command Handlers: Stream Management ====================
-
     @CommandHandler.register(DaemonCommand.ENABLE_STREAM)
     async def _handle_enable_stream(self, params: Dict[str, Any]) -> None:
-        """Enable a stream on running service"""
+        """Enable a stream on the running service."""
         command = DaemonCommand.ENABLE_STREAM.value
         stream_type = params.get("stream_type")
-        service_type = params.get("service", "auto")  # "server", "client", or "auto"
+        service_type = params.get("service", "auto")
 
         if stream_type is None:
             await self._notification_manager.notify_command_error(
@@ -1741,11 +1554,9 @@ class Daemon:
             return
 
         try:
-            # Convert string to StreamType if needed
             if isinstance(stream_type, str):
                 stream_type = int(stream_type)
 
-            # Determine which service to use
             service, service_name, error = self._get_active_service(service_type)
             if error:
                 await self._notification_manager.notify_command_error(command, error)
@@ -1757,7 +1568,6 @@ class Daemon:
                 )
                 return
 
-            # Enable stream
             res: bool = await service.enable_stream_runtime(stream_type)
             if not res:
                 raise Exception("Stream could not be enabled")
@@ -1777,7 +1587,7 @@ class Daemon:
 
     @CommandHandler.register(DaemonCommand.DISABLE_STREAM)
     async def _handle_disable_stream(self, params: Dict[str, Any]) -> None:
-        """Disable a stream on running service"""
+        """Disable a stream on the running service."""
         command = DaemonCommand.DISABLE_STREAM.value
         stream_type = params.get("stream_type")
         service_type = params.get("service", "auto")
@@ -1789,11 +1599,9 @@ class Daemon:
             return
 
         try:
-            # Convert string to StreamType if needed
             if isinstance(stream_type, str):
                 stream_type = int(stream_type)
 
-            # Determine which service to use
             service, service_name, error = self._get_active_service(service_type)
             if error:
                 await self._notification_manager.notify_command_error(command, error)
@@ -1805,7 +1613,6 @@ class Daemon:
                 )
                 return
 
-            # Disable stream
             await service.disable_stream_runtime(stream_type)
 
             result_data = {
@@ -1823,11 +1630,10 @@ class Daemon:
 
     @CommandHandler.register(DaemonCommand.GET_STREAMS)
     async def _handle_get_streams(self, params: Dict[str, Any]) -> None:
-        """Get stream information"""
+        """Get stream information."""
         command = DaemonCommand.GET_STREAMS.value
         service_type = params.get("service", "auto")
 
-        # Determine which service to use
         service, service_name, error = self._get_active_service(service_type)
         if error:
             await self._notification_manager.notify_command_error(command, error)
@@ -1842,11 +1648,9 @@ class Daemon:
             command, f"Streams info for {service_name}", result_data=result_data
         )
 
-    # ==================== Command Handlers: Client Management (Server) ====================
-
     @CommandHandler.register(DaemonCommand.ADD_CLIENT)
     async def _handle_add_client(self, params: Dict[str, Any]) -> None:
-        """Add a client to server (server only)"""
+        """Add a client to the server allowlist."""
         command = DaemonCommand.ADD_CLIENT.value
 
         if not self._server:
@@ -1857,9 +1661,8 @@ class Daemon:
 
         try:
             hostname = params.get("hostname")
-            ip_addresses = params.get(
-                "ip_addresses", params.get("ip_address")
-            )  # backward compat
+            # Back-compat: legacy ``ip_address`` (str) vs ``ip_addresses`` (list).
+            ip_addresses = params.get("ip_addresses", params.get("ip_address"))
             screen_position = params.get("screen_position")
 
             if not hostname and not ip_addresses:
@@ -1868,21 +1671,23 @@ class Daemon:
                 )
                 return
 
-            if not screen_position:
-                await self._notification_manager.notify_command_error(
-                    command, "Must provide screen_position"
-                )
-                return
-
+            # No screen_position = unplaced; admin runs the Layout Editor
+            # to position monitors. Legacy callers still hit the synthesis
+            # fallback in :meth:`ClientObj.get_effective_placements`.
             await self._server.add_client(
                 hostname=hostname,
                 ip_addresses=ip_addresses,
                 screen_position=screen_position,
             )
 
+            placement_hint = (
+                f"at position {screen_position}"
+                if screen_position
+                else "(unplaced - open the Layout Editor to place its monitors)"
+            )
             await self._notification_manager.notify_command_success(
                 command,
-                f"Client added at position {screen_position}",
+                f"Client added {placement_hint}",
                 result_data={
                     "hostname": hostname,
                     "ip_addresses": ip_addresses,
@@ -1894,7 +1699,7 @@ class Daemon:
 
     @CommandHandler.register(DaemonCommand.REMOVE_CLIENT)
     async def _handle_remove_client(self, params: Dict[str, Any]) -> None:
-        """Remove a client from server (server only)"""
+        """Remove a client from the server allowlist."""
         command = DaemonCommand.REMOVE_CLIENT.value
 
         if not self._server:
@@ -1905,7 +1710,7 @@ class Daemon:
 
         try:
             hostname = params.get("hostname")
-            ip_address = params.get("ip_address")  # lookup by any known IP
+            ip_address = params.get("ip_address")
 
             if not hostname and not ip_address:
                 await self._notification_manager.notify_command_error(
@@ -1925,7 +1730,7 @@ class Daemon:
 
     @CommandHandler.register(DaemonCommand.APPROVE_CLIENT)
     async def _handle_approve_client(self, params: Dict[str, Any]) -> None:
-        """Approve a pending client (server only)."""
+        """Approve a pending client."""
         command = DaemonCommand.APPROVE_CLIENT.value
 
         if not self._server:
@@ -1936,7 +1741,8 @@ class Daemon:
 
         try:
             peer_ip = params.get("peer_ip") or params.get("ip_address")
-            screen_position = params.get("screen_position", "top")
+            # Optional: omitted means unplaced; GUI opens the Layout Editor.
+            screen_position = params.get("screen_position")
             if not peer_ip:
                 await self._notification_manager.notify_command_error(
                     command, "Must provide peer_ip"
@@ -1965,7 +1771,7 @@ class Daemon:
 
     @CommandHandler.register(DaemonCommand.DENY_CLIENT)
     async def _handle_deny_client(self, params: Dict[str, Any]) -> None:
-        """Deny a pending client (server only)."""
+        """Deny a pending client."""
         command = DaemonCommand.DENY_CLIENT.value
 
         if not self._server:
@@ -1999,7 +1805,7 @@ class Daemon:
 
     @CommandHandler.register(DaemonCommand.LIST_PENDING_APPROVALS)
     async def _handle_list_pending_approvals(self, params: Dict[str, Any]) -> None:
-        """List currently pending client-approval requests (server only)."""
+        """List currently pending client-approval requests."""
         command = DaemonCommand.LIST_PENDING_APPROVALS.value
 
         if not self._server:
@@ -2020,18 +1826,18 @@ class Daemon:
 
     @CommandHandler.register(DaemonCommand.EDIT_CLIENT)
     async def _handle_edit_client(self, params: Dict[str, Any]) -> None:
-        """Edit a client configuration (server only)"""
+        """Edit a client configuration."""
         command = DaemonCommand.EDIT_CLIENT.value
 
-        if not self._server or not self._server.is_running():
+        if not self._server:
             await self._notification_manager.notify_command_error(
-                command, "Server is not running"
+                command, "Server is not enabled"
             )
             return
 
         try:
             hostname = params.get("hostname")
-            ip_address = params.get("ip_address")  # lookup by any known IP
+            ip_address = params.get("ip_address")
             new_screen_position = params.get("new_screen_position")
             new_ip_addresses = params.get("new_ip_addresses")
 
@@ -2067,9 +1873,56 @@ class Daemon:
         except Exception as e:
             await self._notification_manager.notify_command_error(command, f"{str(e)}")
 
+    @CommandHandler.register(DaemonCommand.SET_CLIENT_LAYOUT)
+    async def _handle_set_client_layout(self, params: Dict[str, Any]) -> None:
+        """Persist the workspace placements of one client.
+
+        Params: ``client_uid`` / ``hostname`` / ``ip_address`` (lookup),
+        ``placements`` (list of
+        ``{client_monitor_id, workspace_x, workspace_y, width, height}``).
+        """
+        command = DaemonCommand.SET_CLIENT_LAYOUT.value
+
+        if not self._server:
+            await self._notification_manager.notify_command_error(
+                command, "Server is not enabled"
+            )
+            return
+
+        try:
+            placements = params.get("placements", []) or []
+            client_uid = params.get("client_uid")
+            hostname = params.get("hostname")
+            ip_address = params.get("ip_address")
+            if not (client_uid or hostname or ip_address):
+                await self._notification_manager.notify_command_error(
+                    command,
+                    "Must provide client_uid, hostname, or ip_address",
+                )
+                return
+
+            updated = await self._server.set_client_layout(
+                placements=placements,
+                uid=client_uid,
+                hostname=hostname,
+                ip_address=ip_address,
+            )
+
+            await self._notification_manager.notify_command_success(
+                command,
+                f"Layout updated for {updated.get_net_id()}",
+                result_data={
+                    "client_uid": updated.uid,
+                    "net_id": updated.get_net_id(),
+                    "placements": list(updated.placements),
+                },
+            )
+        except Exception as e:
+            await self._notification_manager.notify_command_error(command, f"{str(e)}")
+
     @CommandHandler.register(DaemonCommand.LIST_CLIENTS)
     async def _handle_list_clients(self, params: Dict[str, Any]) -> None:
-        """List registered clients (server only)"""
+        """List registered clients."""
         command = DaemonCommand.LIST_CLIENTS.value
 
         if not self._server:
@@ -2101,15 +1954,12 @@ class Daemon:
         except Exception as e:
             await self._notification_manager.notify_command_error(command, f"{str(e)}")
 
-    # ==================== Command Handlers: SSL/Certificate ====================
-
     @CommandHandler.register(DaemonCommand.ENABLE_SSL)
     async def _handle_enable_ssl(self, params: Dict[str, Any]) -> None:
-        """Enable SSL"""
+        """Enable SSL."""
         command = DaemonCommand.ENABLE_SSL.value
         service_type = params.get("service", "auto")
 
-        # Determine which service
         service, config, service_name, error = self._get_service_and_config(
             service_type
         )
@@ -2145,11 +1995,10 @@ class Daemon:
 
     @CommandHandler.register(DaemonCommand.DISABLE_SSL)
     async def _handle_disable_ssl(self, params: Dict[str, Any]) -> None:
-        """Disable SSL"""
+        """Disable SSL."""
         command = DaemonCommand.DISABLE_SSL.value
         service_type = params.get("service", "auto")
 
-        # Determine which service
         service, config, service_name, error = self._get_service_and_config(
             service_type
         )
@@ -2175,7 +2024,7 @@ class Daemon:
 
     @CommandHandler.register(DaemonCommand.SHARE_CERTIFICATE)
     async def _handle_share_certificate(self, params: Dict[str, Any]) -> None:
-        """Share certificate (server only)"""
+        """Share certificate (server only)."""
         command = DaemonCommand.SHARE_CERTIFICATE.value
 
         if not self._server or not self._server.is_running():
@@ -2188,7 +2037,6 @@ class Daemon:
             host = params.get("host", self._server.config.host)
             timeout = params.get("timeout", 30)
             res, otp = await self._server.share_certificate(host=host, timeout=timeout)
-            # Send notification
             if res and otp:
                 await self._notification_manager.send(
                     OtpGeneratedEvent(otp=otp, timeout=timeout)
@@ -2211,7 +2059,7 @@ class Daemon:
 
     @CommandHandler.register(DaemonCommand.RECEIVE_CERTIFICATE)
     async def _handle_receive_certificate(self, params: Dict[str, Any]) -> None:
-        """Receive certificate (client only)"""
+        """Receive certificate (client only)."""
         command = DaemonCommand.RECEIVE_CERTIFICATE.value
 
         if not self._client:
@@ -2246,11 +2094,9 @@ class Daemon:
         except Exception as e:
             await self._notification_manager.notify_command_error(command, f"{str(e)}")
 
-    # ==================== Command Handlers: Server Selection & OTP ====================
-
     @CommandHandler.register(DaemonCommand.CHECK_SERVER_CHOICE_NEEDED)
     async def _handle_check_server_choice_needed(self, params: Dict[str, Any]) -> None:
-        """Check if server choice is needed (client only)"""
+        """Check if server choice is needed (client only)."""
         command = DaemonCommand.CHECK_SERVER_CHOICE_NEEDED.value
 
         if not self._client:
@@ -2260,7 +2106,6 @@ class Daemon:
             return
 
         try:
-            # Check if we're currently waiting for server choice
             needed = await self._client.server_choice_needed()
 
             await self._notification_manager.notify_command_success(
@@ -2278,7 +2123,7 @@ class Daemon:
 
     @CommandHandler.register(DaemonCommand.GET_FOUND_SERVERS)
     async def _handle_get_found_servers(self, params: Dict[str, Any]) -> None:
-        """Get list of found servers (client only)"""
+        """Get list of found servers (client only)."""
         command = DaemonCommand.GET_FOUND_SERVERS.value
 
         if not self._client:
@@ -2290,10 +2135,7 @@ class Daemon:
         try:
             servers = self._client.get_found_servers()
 
-            # Convert services to dict format
-            servers_data = []
-            for s in servers:
-                servers_data.append(s.as_dict())
+            servers_data = [s.as_dict() for s in servers]
 
             await self._notification_manager.notify_command_success(
                 command,
@@ -2305,7 +2147,7 @@ class Daemon:
 
     @CommandHandler.register(DaemonCommand.CHOOSE_SERVER)
     async def _handle_choose_server(self, params: Dict[str, Any]) -> None:
-        """Choose a server from found servers (client only)"""
+        """Choose a server from found servers (client only)."""
         command = DaemonCommand.CHOOSE_SERVER.value
 
         if not self._client:
@@ -2322,7 +2164,6 @@ class Daemon:
                 )
                 return
 
-            # Choose the server
             self._client.choose_server(uid)
 
             await self._notification_manager.notify_command_success(
@@ -2338,7 +2179,7 @@ class Daemon:
 
     @CommandHandler.register(DaemonCommand.CHECK_OTP_NEEDED)
     async def _handle_check_otp_needed(self, params: Dict[str, Any]) -> None:
-        """Check if OTP is needed for certificate (client only)"""
+        """Check if OTP is needed (client only)."""
         command = DaemonCommand.CHECK_OTP_NEEDED.value
 
         if not self._client:
@@ -2348,7 +2189,6 @@ class Daemon:
             return
 
         try:
-            # Check if we're currently waiting for OTP
             needed = await self._client.otp_needed()
 
             await self._notification_manager.notify_command_success(
@@ -2366,11 +2206,10 @@ class Daemon:
 
     @CommandHandler.register(DaemonCommand.REQUEST_PAIRING)
     async def _handle_request_pairing(self, params: Dict[str, Any]) -> None:
-        """Ask the configured server to auto-generate an OTP (client only).
+        """Ask the configured server to auto-generate an OTP.
 
-        Lets the GUI offer a manual "Request OTP" button as a fallback when
-        the automatic request fired by the connection flow didn't reach the
-        server (e.g. server was not yet running at first attempt).
+        Fallback for the GUI's manual "Request OTP" button when the
+        automatic request from the connection flow didn't land.
         """
         command = DaemonCommand.REQUEST_PAIRING.value
 
@@ -2408,7 +2247,7 @@ class Daemon:
 
     @CommandHandler.register(DaemonCommand.SET_OTP)
     async def _handle_set_otp(self, params: Dict[str, Any]) -> None:
-        """Set OTP for certificate reception (client only)"""
+        """Set OTP for certificate reception (client only)."""
         command = DaemonCommand.SET_OTP.value
 
         if not self._client:
@@ -2444,30 +2283,25 @@ class Daemon:
         except Exception as e:
             await self._notification_manager.notify_command_error(command, f"{str(e)}")
 
-    # ==================== Command Handlers: Service Discovery ====================
-
     @CommandHandler.register(DaemonCommand.DISCOVER_SERVICES)
     async def _get_discovered_services(self, params: Dict[str, Any]) -> None:
-        """Get available services on network"""
+        """Get available services on the network."""
         command = DaemonCommand.DISCOVER_SERVICES.value
 
         try:
-            # Use service discovery from client if available
             if self._client:
                 services = self._client.get_found_servers()
 
-                # Convert services to dict format
-                services_data = []
-                for s in services:
-                    services_data.append(
-                        {
-                            "name": s.name,
-                            "address": s.address,
-                            "port": s.port,
-                            "hostname": s.hostname,
-                            "uid": s.uid,
-                        }
-                    )
+                services_data = [
+                    {
+                        "name": s.name,
+                        "address": s.address,
+                        "port": s.port,
+                        "hostname": s.hostname,
+                        "uid": s.uid,
+                    }
+                    for s in services
+                ]
 
                 await self._notification_manager.notify_command_success(
                     command,
@@ -2484,43 +2318,31 @@ class Daemon:
         except Exception as e:
             await self._notification_manager.notify_command_error(command, f"{str(e)}")
 
-    # ==================== Command Handlers: Daemon Control ====================
-
     @CommandHandler.register(DaemonCommand.SHUTDOWN)
     async def _handle_shutdown(self, params: Dict[str, Any]) -> None:
-        """Shutdown the daemon"""
+        """Shutdown the daemon."""
         command = DaemonCommand.SHUTDOWN.value
 
-        # Send success notification before shutdown
         await self._notification_manager.notify_command_success(
             command, "Daemon shutting down..."
         )
 
-        # Schedule shutdown after notification is sent
+        # Defer the actual stop so the response notification flushes first.
         self._bg_tasks.spawn(self._delayed_shutdown())
 
     async def _delayed_shutdown(self):
-        """Delay shutdown to allow response to be sent"""
         await asyncio.sleep(0.5)
         await self.stop()
 
     @CommandHandler.register(DaemonCommand.PING)
     async def _handle_ping(self, params: Dict[str, Any]) -> None:
-        """Simple ping command to check daemon is alive"""
         await self._notification_manager.notify_pong()
 
-    # ==================== Utility Methods ====================
-
     def is_running(self) -> bool:
-        """Check if daemon is running"""
         return self._running
 
     def get_socket_path(self) -> str:
-        """Get the daemon socket path"""
         return self.socket_path
-
-
-# ==================== Helper Functions ====================
 
 
 async def send_daemon_command(
@@ -2529,22 +2351,7 @@ async def send_daemon_command(
     socket_path: Optional[str] = None,
     timeout: float = 30.0,
 ) -> Dict[str, Any]:
-    """
-    Send a command to the daemon and get response.
-
-    Args:
-        command: Command to send
-        params: Command parameters
-        socket_path: Path to daemon socket (Unix) or host:port (TCP on Windows)
-        timeout: Command timeout in seconds
-
-    Returns:
-        Response dictionary
-
-    Raises:
-        ConnectionError: If cannot connect to daemon
-        TimeoutError: If command times out
-    """
+    """Send a command to the daemon and return the response dict."""
     socket_path = socket_path or Daemon.DEFAULT_SOCKET_PATH
 
     command_data = DaemonCommand.new(
@@ -2552,32 +2359,25 @@ async def send_daemon_command(
     )
 
     if IS_WINDOWS or ":" in socket_path:
-        # Windows TCP socket or explicit TCP address
         return await _send_tcp_command(socket_path, command_data.to_dict(), timeout)
     else:
-        # Unix socket
         return await _send_unix_command(socket_path, command_data.to_dict(), timeout)
 
 
 async def _send_unix_command(
     socket_path: str, command_data: dict, timeout: float
 ) -> dict:
-    """Send command via Unix socket"""
-    # Check if socket exists
     if not os.path.exists(socket_path):
         raise ConnectionError(f"Daemon not running (socket not found: {socket_path})")
 
-    # Connect to daemon
     reader, writer = await asyncio.wait_for(
         asyncio.open_unix_connection(socket_path), timeout=5.0
     )
 
     try:
-        # Send command
         writer.write(Daemon.prepare_msg_bytes(command_data))
         await writer.drain()
 
-        # Read response
         data = await asyncio.wait_for(reader.read(Daemon.BUFFER_SIZE), timeout=timeout)
 
         if not data:
@@ -2594,8 +2394,6 @@ async def _send_unix_command(
 async def _send_tcp_command(
     socket_path: str, command_data: dict, timeout: float
 ) -> dict:
-    """Send command via TCP socket (Windows)"""
-    # Parse host and port
     if ":" in socket_path:
         host, port_str = socket_path.split(":", 1)
         port = int(port_str)
@@ -2604,7 +2402,6 @@ async def _send_tcp_command(
             f"Invalid TCP socket path format: {socket_path}. Expected host:port"
         )
 
-    # Connect to daemon
     try:
         reader, writer = await asyncio.wait_for(
             asyncio.open_connection(host, port), timeout=5.0
@@ -2615,11 +2412,9 @@ async def _send_tcp_command(
         )
 
     try:
-        # Send command
         writer.write(Daemon.prepare_msg_bytes(command_data))
         await writer.drain()
 
-        # Read response
         data = await asyncio.wait_for(reader.read(Daemon.BUFFER_SIZE), timeout=timeout)
 
         if not data:
@@ -2633,15 +2428,10 @@ async def _send_tcp_command(
         await writer.wait_closed()
 
 
-# ==================== Main Entry Point ====================
-
-
 async def main():
-    """Main entry point for daemon"""
     parser = DaemonArguments(socket_default=Daemon.DEFAULT_SOCKET_PATH)
     args = parser.parse_args(None)  # ty:ignore[possibly-missing-attribute, unresolved-attribute]
 
-    # Setup application config
     app_config = ApplicationConfig()
     if args.config_dir:
         app_config.set_save_path(args.config_dir)
@@ -2650,25 +2440,20 @@ async def main():
     if args.log_terminal:
         app_config.set_log_file(None)
 
-    # Create and start daemon
     daemon = Daemon(
         socket_path=args.socket, app_config=app_config, auto_load_config=True
     )
 
-    # Determine service to start on daemon start
     service = "server" if args.server else "client" if args.client else None
 
     if not await daemon.start(service=service):
         return 1
 
-    # Wait for shutdown
     try:
         await daemon.wait_for_shutdown()
     except KeyboardInterrupt:
         print("\nKeyboard interrupt received")
-    # finally:  Launcher will handle cleanup
-    # await daemon.stop()
-    # os._exit(0)  # Force exit to avoid lingering tasks or event loops
+    # Launcher handles cleanup.
 
     return 0
 

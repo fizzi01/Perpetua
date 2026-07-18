@@ -107,6 +107,10 @@ class NotificationEventType(str, Enum):
     SCREEN_CHANGED = "screen_changed"
     SCREEN_TRANSITION_STARTED = "screen_transition_started"
     SCREEN_TRANSITION_COMPLETED = "screen_transition_completed"
+    # Server-side monitor topology changed at runtime (display added/removed,
+    # resolution/DPI change). Carries the new monitor list + a per-client
+    # report of placements that became orphaned by the change.
+    MONITOR_TOPOLOGY_CHANGED = "monitor_topology_changed"
 
     # Transfer events
     FILE_TRANSFER_STARTED = "file_transfer_started"
@@ -374,7 +378,7 @@ class PairingRequestEvent(NotificationEvent):
     """A client asked the server to start the pairing/cert-sharing flow.
 
     The OTP is included so the GUI can surface it to the admin without a
-    second event. The OTP still travels only inside the daemon→GUI IPC
+    second event. The OTP still travels only inside the daemon->GUI IPC
     channel - it never leaves the server host over the network.
     """
 
@@ -593,6 +597,59 @@ class ClientDisconnectedEvent(NotificationEvent):
             data=data,
             source="server",
             message=f"Client {hostname} disconnected",
+        )
+
+
+@dataclass
+class MonitorTopologyChangedEvent(NotificationEvent):
+    """Server-side monitor topology changed at runtime.
+
+    Lets the GUI re-fetch status to refresh the layout editor's monitor
+    panel and surface any client placements that became orphaned (no
+    longer touch any server monitor). The daemon prunes orphans
+    automatically so routing stays consistent; this event is purely
+    informational.
+    """
+
+    def __init__(
+        self,
+        monitors: Optional[list] = None,
+        orphans: Optional[list] = None,
+        source_kind: str = "server",
+        client_uid: str = "",
+        client_net_id: str = "",
+        **kwargs,
+    ):
+        data = {
+            "monitors": monitors or [],
+            "orphans": orphans or [],
+            # ``source_kind`` distinguishes server-local hot-plug from a
+            # connected client's runtime monitor-list change so the GUI
+            # can phrase the toast appropriately.
+            "source_kind": source_kind,
+            "client_uid": client_uid,
+            "client_net_id": client_net_id,
+        }
+        data.update(kwargs)
+        n_orphans = len(data["orphans"])
+        who = client_net_id or client_uid
+        if source_kind == "client":
+            base = (
+                f"Client {who} monitor layout changed"
+                if who
+                else ("Client monitor layout changed")
+            )
+        else:
+            base = "Monitor layout changed"
+        if n_orphans > 0:
+            msg = f"{base}; {n_orphans} placement(s) became orphaned and were dropped"
+        else:
+            msg = base
+        super().__init__(
+            event_type=NotificationEventType.MONITOR_TOPOLOGY_CHANGED,
+            data=data,
+            source="server",
+            message=msg,
         )
 
 

@@ -24,6 +24,22 @@
         "titleBarStyle": "Transparent",
         "visible": false,
         "url": "splashscreen"
+      },
+      {
+        "label": "layout-editor",
+        "title": "Layout Editor - Perpetua",
+        "width": 1100,
+        "height": 700,
+        "minWidth": 800,
+        "minHeight": 500,
+        "resizable": true,
+        "center": true,
+        "visible": false,
+        "focus": true,
+        "hiddenTitle": true,
+        "decorations": false,
+        "transparent": true,
+        "url": "layout-editor"
       }
     ],
     "macOSPrivateApi": true,
