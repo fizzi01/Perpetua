@@ -24,11 +24,21 @@ new config as a side effect and silently defeat the migration).
 """
 
 import os
+import sys
 
 import pytest
 
 import config as config_module
 from config import ApplicationConfig
+
+# The ``~/.perpetua`` -> XDG migration is a Linux-only concern: only
+# ``get_main_path`` on Linux ever calls ``_migrate_legacy_linux_layout``.
+# macOS/Windows keep their historical per-OS layout (Library/Caches,
+# %LOCALAPPDATA%) and never migrate, so this suite runs on Linux only.
+pytestmark = pytest.mark.skipif(
+    not sys.platform.startswith("linux"),
+    reason="legacy ~/.perpetua -> XDG migration is Linux-only",
+)
 
 
 @pytest.fixture
