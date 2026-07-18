@@ -5,7 +5,11 @@ set -e
 RULE_PATH="/etc/udev/rules.d/01-perpetua-keyboard.rules"
 DUMPYKEYS_RULE_PATH="/etc/udev/rules.d/12-input.rules"
 RULE_CONTENT='KERNEL=="uinput", SUBSYSTEM=="misc", OPTIONS+="static_node=uinput", TAG+="uaccess", GROUP="input", MODE="0660"'
-DUMPYKEYS_RULE_CONTENT='SUBSYSTEM=="tty", MODE="0666" TAG+="uaccess", GROUP="input", MODE="0660"'
+# tty access lets pynput's uinput backend read the kernel keymap (dumpkeys)
+# without root. Group-readable ("input", 0660) + uaccess ACL for the active
+# session; NOT world-writable. (The previous value had a malformed rule:
+# missing comma and a stray MODE="0666" — both fixed here.)
+DUMPYKEYS_RULE_CONTENT='SUBSYSTEM=="tty", TAG+="uaccess", GROUP="input", MODE="0660"'
 
 check_root() {
   if [ "$(id -u)" -ne 0 ]; then

@@ -119,7 +119,7 @@ cat > "$APPDIR/usr/share/metainfo/${APP_NAME}.metainfo.xml" <<EOF
   <name>${APP_DISPLAY_NAME}</name>
   <summary>${DESCRIPTION_SHORT}</summary>
   <metadata_license>MIT</metadata_license>
-  <project_license>MIT</project_license>
+  <project_license>GPL-3.0-or-later</project_license>
   <description><p>${DESCRIPTION_SHORT}.</p></description>
   <launchable type="desktop-id">${APP_NAME}.desktop</launchable>
   <url type="homepage">${HOMEPAGE}</url>

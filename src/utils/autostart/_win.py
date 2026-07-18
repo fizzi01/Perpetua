@@ -26,7 +26,7 @@ for a per-user GUI.
 import shlex
 from typing import List, Optional
 
-from ._base import AutostartManager, AutostartStatus
+from ._base import DEFAULT_ARGS, AutostartManager, AutostartStatus
 
 try:
     import winreg  # type: ignore[import]
@@ -36,7 +36,6 @@ except ImportError:  # pragma: no cover - non-Windows imports for typing only
 
 RUN_KEY = r"Software\Microsoft\Windows\CurrentVersion\Run"
 VALUE_NAME = "Perpetua"
-DEFAULT_ARGS: List[str] = ["--start-minimized"]
 
 
 def _format_command(exec_path: str, args: List[str]) -> str:
@@ -68,14 +67,16 @@ class _WindowsAutostartManager(AutostartManager):
         except OSError:
             return AutostartStatus(enabled=False)
 
-        # Pull just the executable out of the command line for the GUI to
-        # surface; shlex with posix=False keeps Windows-style quoting.
+        # Pull the executable + args out of the command line: the first token
+        # is the exec path (for stale-entry detection), the rest carries the
+        # launch mode. shlex with posix=False keeps Windows-style quoting.
         try:
             parts = shlex.split(value, posix=False)
         except ValueError:
             parts = [value]
         exec_path = parts[0].strip('"') if parts else None
-        return AutostartStatus(enabled=True, exec_path=exec_path)
+        args = [p.strip('"') for p in parts[1:]]
+        return AutostartStatus(enabled=True, exec_path=exec_path, args=args)
 
     def enable(self, exec_path: str, args: Optional[List[str]] = None) -> None:
         if winreg is None:

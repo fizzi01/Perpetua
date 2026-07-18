@@ -92,7 +92,7 @@ find "$DEB_ROOT${INSTALL_PREFIX}" -type f \( -name "$BINARY_NAME" -o -name "_per
 ln -sf "${INSTALL_PREFIX}/${BINARY_NAME}" "$DEB_ROOT/usr/bin/${APP_NAME}"
 
 # ── Maintainer scripts ────────────────────────────────────────────────────────
-install -m 0775 "scripts/enable_uinput.sh" "$DEB_ROOT/DEBIAN/postinst"
+install -m 0755 "scripts/enable_uinput.sh" "$DEB_ROOT/DEBIAN/postinst"
 
 # ── systemd user unit (opt-in autostart via systemctl --user) ────────────────
 if [ -f "scripts/systemd/perpetua-daemon.service" ]; then
@@ -169,7 +169,7 @@ cat > "$DEB_ROOT/usr/share/metainfo/${APP_NAME}.metainfo.xml" <<EOF
   <name>${APP_DISPLAY_NAME}</name>
   <summary>${DESCRIPTION_SHORT}</summary>
   <metadata_license>MIT</metadata_license>
-  <project_license>MIT</project_license>
+  <project_license>GPL-3.0-or-later</project_license>
   <description>
     <p>${DESCRIPTION_SHORT}.</p>
   </description>

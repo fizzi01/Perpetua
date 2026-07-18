@@ -396,6 +396,11 @@ jobs:
           fi
 
       - name: Download artifact
+        # NOTE: smoke tests run on x86_64 runners only, so we deliberately
+        # exercise the x86_64 packages. The aarch64 .deb/.rpm/.AppImage are
+        # built and released but NOT smoke-tested here (would need arm runners
+        # or qemu-user). Covered manually via scripts/verify_packages.sh
+        # --arch aarch64.
         uses: actions/download-artifact@v7
         with:
           name: Perpetua-Linux-x86_64-${{ matrix.kind }}

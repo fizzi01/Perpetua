@@ -30,7 +30,15 @@ from typing import TYPE_CHECKING
 
 from utils import backend_module
 
-from ._base import AutostartStatus
+from ._base import (
+    MODE_CLIENT,
+    MODE_OFF,
+    MODE_PLAIN,
+    MODE_SERVER,
+    AutostartStatus,
+    args_for_mode,
+    mode_from_args,
+)
 
 if TYPE_CHECKING:
     from ._base import AutostartManager
@@ -39,4 +47,13 @@ else:
     AutostartManager = _backend_module.AutostartManager
     del _backend_module
 
-__all__ = ["AutostartManager", "AutostartStatus"]
+__all__ = [
+    "AutostartManager",
+    "AutostartStatus",
+    "args_for_mode",
+    "mode_from_args",
+    "MODE_OFF",
+    "MODE_SERVER",
+    "MODE_CLIENT",
+    "MODE_PLAIN",
+]

@@ -30,11 +30,10 @@ import subprocess
 from pathlib import Path
 from typing import List, Optional
 
-from ._base import AutostartManager, AutostartStatus
+from ._base import DEFAULT_ARGS, AutostartManager, AutostartStatus
 
 
 LABEL = "com.federicoizzi.Perpetua"
-DEFAULT_ARGS: List[str] = ["--start-minimized"]
 
 
 class _MacAutostartManager(AutostartManager):
@@ -49,9 +48,11 @@ class _MacAutostartManager(AutostartManager):
         try:
             with p.open("rb") as f:
                 data = plistlib.load(f)
-            args = data.get("ProgramArguments") or []
-            exec_path = args[0] if args else data.get("Program")
-            return AutostartStatus(enabled=True, exec_path=exec_path)
+            argv = data.get("ProgramArguments") or []
+            exec_path = argv[0] if argv else data.get("Program")
+            return AutostartStatus(
+                enabled=True, exec_path=exec_path, args=list(argv[1:])
+            )
         except (plistlib.InvalidFileException, OSError):
             return AutostartStatus(enabled=False)
 
@@ -74,6 +75,11 @@ class _MacAutostartManager(AutostartManager):
         path.parent.mkdir(parents=True, exist_ok=True)
         with path.open("wb") as f:
             plistlib.dump(plist, f)
+        # ``bootstrap`` is a no-op (and leaves the *old* command loaded) if a
+        # service with this label is already registered — which is exactly the
+        # case when the user switches launch mode. Bootout first so the new
+        # ProgramArguments actually take effect without waiting for next login.
+        self._launchctl_bootout(path)
         self._launchctl_bootstrap(path)
 
     def disable(self) -> None:

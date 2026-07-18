@@ -18,7 +18,7 @@
 #                     (Apple Silicon, ARM workstation, qemu-user
 #                     installed).
 #   --distros LIST    Comma-separated subset of {ubuntu,debian,fedora,
-#                     opensuse,arch}. Default: all five.
+#                     opensuse,arch}. Default: ubuntu,debian,fedora.
 #   --artifacts DIR   Where to find the .deb/.rpm/.AppImage. Default:
 #                     scans both per-arch build dirs and the .build/ root
 #                     for renamed CI artifacts.

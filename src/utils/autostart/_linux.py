@@ -27,10 +27,7 @@ import shlex
 from pathlib import Path
 from typing import List, Optional
 
-from ._base import AutostartManager, AutostartStatus
-
-
-DEFAULT_ARGS: List[str] = ["--start-minimized"]
+from ._base import DEFAULT_ARGS, AutostartManager, AutostartStatus
 
 
 def _xdg_autostart_dir() -> Path:
@@ -38,18 +35,17 @@ def _xdg_autostart_dir() -> Path:
     return Path(config_home) / "autostart"
 
 
-def _parse_exec_line(line: str) -> Optional[str]:
-    """Extract the executable path from a desktop-entry ``Exec=`` line.
+def _parse_exec_argv(line: str) -> List[str]:
+    """Split a desktop-entry ``Exec=`` line into its argv list.
 
-    The XDG spec allows ``%`` field codes (e.g. ``%U``, ``%F``) that we don't
-    care about here — we just need the first argument so the GUI can flag a
-    stale entry pointing at a removed install.
+    The XDG spec allows ``%`` field codes (e.g. ``%U``, ``%F``); we don't emit
+    any, so a plain ``shlex.split`` recovers ``[exec_path, *args]`` — the first
+    element lets the GUI flag a stale entry, the rest carries the launch mode.
     """
     try:
-        parts = shlex.split(line)
+        return shlex.split(line)
     except ValueError:
-        return None
-    return parts[0] if parts else None
+        return []
 
 
 class _LinuxAutostartManager(AutostartManager):
@@ -62,20 +58,24 @@ class _LinuxAutostartManager(AutostartManager):
         if not p.is_file():
             return AutostartStatus(enabled=False)
         exec_path: Optional[str] = None
+        args: List[str] = []
         hidden = False
         try:
             with p.open("r", encoding="utf-8") as f:
                 for raw in f:
                     line = raw.strip()
                     if line.startswith("Exec="):
-                        exec_path = _parse_exec_line(line[len("Exec=") :])
+                        argv = _parse_exec_argv(line[len("Exec=") :])
+                        if argv:
+                            exec_path = argv[0]
+                            args = argv[1:]
                     elif line.startswith("Hidden="):
                         # XDG: ``Hidden=true`` is the documented way to mark
                         # an entry as disabled without deleting it.
                         hidden = line[len("Hidden=") :].strip().lower() == "true"
         except OSError:
             return AutostartStatus(enabled=False)
-        return AutostartStatus(enabled=not hidden, exec_path=exec_path)
+        return AutostartStatus(enabled=not hidden, exec_path=exec_path, args=args)
 
     def enable(self, exec_path: str, args: Optional[List[str]] = None) -> None:
         if not os.path.isabs(exec_path):

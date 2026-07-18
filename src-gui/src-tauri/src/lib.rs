@@ -25,7 +25,7 @@ use tauri::tray::{MouseButton, TrayIconEvent};
 use tauri::Listener;
 
 use tauri::{
-    menu::{CheckMenuItem, MenuBuilder, MenuItem},
+    menu::{CheckMenuItem, MenuBuilder, MenuItem, SubmenuBuilder},
     tray::TrayIconBuilder,
     AppHandle, Emitter, Manager, Runtime, WebviewUrl, WebviewWindowBuilder,
 };
@@ -239,16 +239,41 @@ where
 
     let show = MenuItem::with_id(app, "show_window", "Show", true, None::<&str>)?;
     let quit_i = MenuItem::with_id(app, "quit", "Quit", true, None::<&str>)?;
-    // Checked state is hydrated asynchronously once the daemon connection is
-    // ready (see ``hydrate_autostart_state``); start unchecked.
-    let autostart_i = CheckMenuItem::with_id(
+    // "Launch at login" is a submenu with three mutually-exclusive modes:
+    //   Off       -> no autostart entry
+    //   As Server -> autostart + start the server service at login
+    //   As Client -> autostart + start the client service at login
+    // Checked state is hydrated asynchronously from the daemon once connected
+    // (see ``hydrate_autostart_state``); start with "Off" selected.
+    let autostart_off = CheckMenuItem::with_id(
         app,
-        "toggle_autostart",
-        "Launch at login",
+        "autostart_off",
+        "Off",
+        true,
+        true,
+        None::<&str>,
+    )?;
+    let autostart_server = CheckMenuItem::with_id(
+        app,
+        "autostart_server",
+        "As Server",
         true,
         false,
         None::<&str>,
     )?;
+    let autostart_client = CheckMenuItem::with_id(
+        app,
+        "autostart_client",
+        "As Client",
+        true,
+        false,
+        None::<&str>,
+    )?;
+    let autostart_menu = SubmenuBuilder::new(app, "Launch at login")
+        .item(&autostart_off)
+        .item(&autostart_server)
+        .item(&autostart_client)
+        .build()?;
     let mut menu = MenuBuilder::new(app);
 
     menu = menu.item(&show);
@@ -262,20 +287,30 @@ where
     )?);
     let menu = menu
         .separator()
-        .item(&autostart_i)
+        .item(&autostart_menu)
         .separator()
         .item(&quit_i)
         .build()?;
 
-    let autostart_for_event = autostart_i.clone();
+    // Clones for the menu-event handler (user clicks) and the notification
+    // listener (daemon echoes the authoritative state).
+    let autostart_items_event = [
+        autostart_off.clone(),
+        autostart_server.clone(),
+        autostart_client.clone(),
+    ];
+    let autostart_items_listener = [
+        autostart_off.clone(),
+        autostart_server.clone(),
+        autostart_client.clone(),
+    ];
     // Hydrate the check state from ``command_success`` notifications for
     // ``get_autostart`` / ``set_autostart``. The event handler in
     // [`handler::EventHandler`] forwards every notification as a JS-level
     // ``app.emit`` call, so we listen to the same channel from Rust.
-    let autostart_for_listener = autostart_i.clone();
     app.listen("command_success", move |evt| {
         // Each emitted event payload is the full ``NotificationEvent`` JSON.
-        // Pull the originating command + result.enabled out of ``data``.
+        // Pull the originating command + result.mode out of ``data``.
         let payload: serde_json::Value = match serde_json::from_str(evt.payload()) {
             Ok(v) => v,
             Err(_) => return,
@@ -288,12 +323,17 @@ where
         if cmd != "get_autostart" && cmd != "set_autostart" {
             return;
         }
-        if let Some(enabled) = data
+        // ``mode`` is off/server/client/plain. Map it onto the three radio
+        // items; "off" and the legacy "plain" leave server/client unchecked.
+        let mode = data
             .get("result")
-            .and_then(|r| r.get("enabled"))
-            .and_then(|b| b.as_bool())
-        {
-            if let Err(e) = autostart_for_listener.set_checked(enabled) {
+            .and_then(|r| r.get("mode"))
+            .and_then(|m| m.as_str())
+            .unwrap_or("off");
+        // [off, server, client]
+        let checks = [mode == "off", mode == "server", mode == "client"];
+        for (item, checked) in autostart_items_listener.iter().zip(checks) {
+            if let Err(e) = item.set_checked(checked) {
                 eprintln!("Failed to update autostart tray check state: {}", e);
             }
         }
@@ -328,15 +368,25 @@ where
                     force_close(&app);
                 }
             }
-            "toggle_autostart" => {
-                // ``event`` doesn't expose the new checked state directly;
-                // read it back from the menu item we built above.
+            id @ ("autostart_off" | "autostart_server" | "autostart_client") => {
+                // Three mutually-exclusive radio items. Optimistically reflect
+                // the click (the daemon echoes the authoritative state back via
+                // the ``command_success`` listener, which re-syncs all three).
+                let mode = match id {
+                    "autostart_server" => "server",
+                    "autostart_client" => "client",
+                    _ => "off",
+                };
+                let checks = [mode == "off", mode == "server", mode == "client"];
+                for (item, checked) in autostart_items_event.iter().zip(checks) {
+                    let _ = item.set_checked(checked);
+                }
                 let handle = app.clone();
-                let new_state = autostart_for_event.is_checked().unwrap_or(false);
+                let mode = mode.to_string();
                 tauri::async_runtime::spawn(async move {
                     let writer = handle.state::<AtomicAsyncWriter>();
-                    if let Err(e) = commands::set_autostart(new_state, writer).await {
-                        eprintln!("Failed to toggle autostart: {}", e);
+                    if let Err(e) = commands::set_autostart(mode, writer).await {
+                        eprintln!("Failed to set autostart mode: {}", e);
                     }
                 });
             }

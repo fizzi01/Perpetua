@@ -223,9 +223,13 @@ class ApplicationConfig:
         # If the new config dir already exists with a config file, assume
         # migration already happened (or the user intentionally created the
         # new layout) and leave the legacy tree untouched.
-        if os.path.exists(
-            path.join(new_config_dir, cls().config_path, cls.config_file)
-        ):
+        #
+        # NB: use the *class* attributes here, never ``cls()``. Instantiating
+        # ApplicationConfig runs ``__post_init__`` -> ``init_config_file()``,
+        # which would create ``new_config_dir/config/config.json`` as a side
+        # effect and make this guard (and the moves below) always no-op,
+        # silently defeating the migration on upgrade.
+        if os.path.exists(path.join(new_config_dir, cls.config_path, cls.config_file)):
             return
 
         try:

@@ -1566,6 +1566,9 @@ class Daemon:
                 result_data={
                     "enabled": status.enabled,
                     "exec_path": status.exec_path,
+                    # ``mode`` is one of off/server/client/plain and is what the
+                    # GUI uses to reflect the selected launch mode in the tray.
+                    "mode": status.mode,
                 },
             )
         except Exception as e:
@@ -1573,23 +1576,38 @@ class Daemon:
 
     @CommandHandler.register(DaemonCommand.SET_AUTOSTART)
     async def _handle_set_autostart(self, params: Dict[str, Any]) -> None:
-        """Enable or disable launch-at-login for the GUI.
+        """Enable or disable launch-at-login for the GUI, selecting the mode.
 
         Params:
-          - ``enabled`` (bool, required)
-          - ``exec_path`` (str, required when enabling): absolute path to the
-            Tauri GUI executable. The GUI knows its own path so we don't try
-            to guess it here.
-          - ``args`` (list[str], optional): defaults to ``["--start-minimized"]``
-            in each backend.
+          - ``mode`` (str, optional): one of ``off`` / ``server`` / ``client``
+            / ``plain``. ``off`` removes the entry; ``server`` / ``client``
+            make the app auto-start that service at login; ``plain`` just
+            launches the app minimized. When present, ``mode`` drives the
+            behaviour and derives the launch args (ignoring ``enabled`` /
+            ``args``).
+          - ``enabled`` (bool, legacy): used only when ``mode`` is absent.
+          - ``exec_path`` (str, required unless disabling): absolute path to
+            the Tauri GUI executable. The GUI knows its own path so we don't
+            try to guess it here.
+          - ``args`` (list[str], legacy): explicit launch args; only honoured
+            when ``mode`` is absent. Defaults to ``["--start-minimized"]``.
         """
         command = DaemonCommand.SET_AUTOSTART.value
         try:
-            from utils.autostart import AutostartManager
+            from utils.autostart import MODE_OFF, AutostartManager, args_for_mode
 
-            enabled = bool(params.get("enabled"))
+            mode = params.get("mode")
             exec_path = params.get("exec_path")
-            args = params.get("args")
+
+            if mode is not None:
+                # Mode-driven path (current GUI): translate the mode into the
+                # concrete launch args.
+                enabled = mode != MODE_OFF
+                args = args_for_mode(mode) if enabled else None
+            else:
+                # Legacy path: explicit enabled/args.
+                enabled = bool(params.get("enabled"))
+                args = params.get("args")
 
             mgr = AutostartManager()
             if enabled:
@@ -1602,10 +1620,11 @@ class Daemon:
             status = mgr.is_enabled()
             await self._notification_manager.notify_command_success(
                 command,
-                f"Autostart {'enabled' if status.enabled else 'disabled'}",
+                f"Autostart set to {status.mode}",
                 result_data={
                     "enabled": status.enabled,
                     "exec_path": status.exec_path,
+                    "mode": status.mode,
                 },
             )
         except Exception as e:

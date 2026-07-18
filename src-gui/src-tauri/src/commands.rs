@@ -605,9 +605,16 @@ pub async fn get_autostart(s: tauri::State<'_, AtomicAsyncWriter>) -> Result<(),
 
 #[tauri::command]
 pub async fn set_autostart(
-    enabled: bool,
+    mode: String,
     s: tauri::State<'_, AtomicAsyncWriter>,
 ) -> Result<(), String> {
+    // Launch mode: "off" removes the entry; "server"/"client" make the app
+    // auto-start that service at login; "plain" just launches minimized.
+    let mode = match mode.as_str() {
+        "off" | "server" | "client" | "plain" => mode,
+        other => return Err(format!("invalid autostart mode: {}", other)),
+    };
+
     // The daemon needs to know which executable to register. We resolve it
     // here in the GUI process because the daemon runs detached and can't
     // necessarily introspect us (think systemd user service).
@@ -617,8 +624,8 @@ pub async fn set_autostart(
         .to_string();
 
     let params = format!(
-        r#"{{ "enabled": {}, "exec_path": "{}" }}"#,
-        enabled,
+        r#"{{ "mode": "{}", "exec_path": "{}" }}"#,
+        mode,
         exec_path.replace('\\', r"\\").replace('"', r#"\""#)
     );
     let command = CommandEvent::build(CommandType::SetAutostart, &params);
