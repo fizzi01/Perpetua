@@ -242,6 +242,27 @@ class _INPUT(ctypes.Structure):
     ]
 
 
+# Read-only cursor-visibility probe (GetCursorInfo). A foreground game hides
+# the cursor when it takes a pointer lock; CURSOR_SHOWING is cleared then.
+_CURSOR_SHOWING = 0x0001
+
+
+class _POINT(ctypes.Structure):
+    _fields_ = [
+        ("x", wintypes.LONG),
+        ("y", wintypes.LONG),
+    ]
+
+
+class _CURSORINFO(ctypes.Structure):
+    _fields_ = [
+        ("cbSize", wintypes.DWORD),
+        ("flags", wintypes.DWORD),
+        ("hCursor", wintypes.HANDLE),
+        ("ptScreenPos", _POINT),
+    ]
+
+
 def _configure_win32_signatures() -> None:
     """Pin argtypes/restype on user32 entry points used by the capture path.
 
@@ -259,6 +280,9 @@ def _configure_win32_signatures() -> None:
         ctypes.c_int,
     ]
     user32.SendInput.restype = wintypes.UINT
+
+    user32.GetCursorInfo.argtypes = [ctypes.POINTER(_CURSORINFO)]
+    user32.GetCursorInfo.restype = wintypes.BOOL
 
     user32.RegisterClassW.argtypes = [ctypes.POINTER(_WNDCLASSW)]
     user32.RegisterClassW.restype = wintypes.ATOM
@@ -818,6 +842,21 @@ class ClientMouseController(_base.ClientMouseController):
     def __init__(self, *args, **kwargs):
         super().__init__(*args, **kwargs)
         self._user32 = ctypes.windll.user32
+
+    def _cursor_is_hidden(self) -> bool:
+        """True when the system cursor is hidden (game pointer lock).
+
+        Read-only: a foreground game hides the cursor when it grabs the
+        pointer. We never change cursor visibility ourselves. The relative
+        SendInput injection stays unchanged under lock (the game confines the
+        cursor with ClipCursor); the base class just skips edge/clamp
+        repositioning while this returns True.
+        """
+        ci = _CURSORINFO()
+        ci.cbSize = ctypes.sizeof(_CURSORINFO)
+        if not self._user32.GetCursorInfo(ctypes.byref(ci)):
+            return False
+        return not (ci.flags & _CURSOR_SHOWING)
 
     def _inject_relative(self, dx: int, dy: int) -> None:
         """Send a relative mouse motion via ``SendInput``.

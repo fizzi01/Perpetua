@@ -21,6 +21,7 @@ Provides mouse input support for macOS (Darwin) systems.
 #
 
 from Quartz import (
+    CGCursorIsVisible,  # ty:ignore[unresolved-import]
     CGEventCreateMouseEvent,  # ty:ignore[unresolved-import]
     CGEventPost,  # ty:ignore[unresolved-import]
     CGEventSetIntegerValueField,  # ty:ignore[unresolved-import]
@@ -121,21 +122,36 @@ class ClientMouseController(_base.ClientMouseController):
     Its main purpose is to move the cursor and simulate mouse clicks.
     """
 
+    def _cursor_is_hidden(self) -> bool:
+        """True when the system cursor is hidden (game pointer lock).
+
+        Read-only: a foreground game hides the cursor when it grabs the
+        pointer. We never hide/show it ourselves.
+        """
+        return not CGCursorIsVisible()
+
     def _inject_relative(self, dx: int, dy: int) -> None:
         """Post a genuine relative-motion CGEvent so games read the delta.
 
         pynput's ``Controller.move`` warps the cursor to an absolute
         position; first-person games reading ``kCGMouseEventDeltaX/Y`` see
-        nothing that way. We move the system cursor to ``current + delta`` (so
-        the visible pointer stays consistent for the desktop) *and* stamp the
-        event's delta fields, which is what the game's camera consumes. During
-        a drag the motion must be delivered as a ``…MouseDragged`` event, not
+        nothing that way. Normally we move the system cursor to
+        ``current + delta`` (so the visible pointer tracks on the desktop)
+        *and* stamp the event's delta fields, which is what the game's camera
+        consumes. Under a game pointer lock (``_pointer_locked``) the game
+        pins/centers the cursor itself, so we keep the event at the *current*
+        position — only the delta fields carry movement — otherwise our
+        absolute point would drag the pinned cursor around. During a drag the
+        motion must be delivered as a ``…MouseDragged`` event, not
         ``MouseMoved``, or the drag breaks.
         """
         try:
             cur_x, cur_y = self._controller.position
-            new_x = cur_x + dx
-            new_y = cur_y + dy
+            if self._pointer_locked:
+                new_x, new_y = cur_x, cur_y
+            else:
+                new_x = cur_x + dx
+                new_y = cur_y + dy
 
             if self._pressed and self._is_dragging:
                 if self._previous_button == ButtonMapping.right.value:

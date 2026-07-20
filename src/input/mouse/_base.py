@@ -828,6 +828,10 @@ class ClientMouseController(object):
     # tagged as a multi-click sequence (double, triple, ...).
     DOUBLE_CLICK_THRESHOLD = 0.4
     MAX_CLICK_COUNT = 10
+    # How often (seconds) the client re-reads the OS cursor-visibility
+    # state to detect a game pointer lock. The result is cached so the
+    # per-move hot path stays a single boolean check.
+    POINTER_LOCK_POLL_INTERVAL = 0.1
 
     def __init__(
         self,
@@ -896,6 +900,13 @@ class ClientMouseController(object):
         self._last_press_time: float = -99
         self._click_count: int = 0
         self._is_dragging = False
+
+        # Set when a foreground game has taken a pointer lock (cursor
+        # hidden by the game). While locked we inject deltas only and
+        # skip cursor repositioning so we don't fight the game's own
+        # centered lock. Detected read-only via ``_cursor_is_hidden``.
+        self._pointer_locked = False
+        self._pointer_lock_ts: float = 0.0
 
         self._logger = get_logger(self.__class__.__name__)
 
@@ -983,8 +994,13 @@ class ClientMouseController(object):
                     continue
 
                 if event.action == MouseEvent.MOVE_ACTION:
+                    self._refresh_pointer_lock()
                     self._move_cursor(event.x, event.y, event.dx, event.dy)
-                    await self._check_edge()
+                    # While a game holds the pointer lock the cursor is
+                    # pinned/centered by the game; running edge detection
+                    # would read that as drift and clamp/warp against it.
+                    if not self._pointer_locked:
+                        await self._check_edge()
                 elif event.action == MouseEvent.POSITION_ACTION:
                     # Position multiple times so absolute placement
                     # converges across platforms. A read-back check can't
@@ -1024,6 +1040,8 @@ class ClientMouseController(object):
             self._last_known_monitor_id = self._active_monitor_id
         self._movement_history.clear()
         self._last_move_delta = (0, 0)
+        self._pointer_locked = False
+        self._pointer_lock_ts = 0.0
 
         self._is_active = True
         self._cross_screen_event.clear()
@@ -1050,6 +1068,8 @@ class ClientMouseController(object):
         self._active_target_bbox = self._screen_bbox
         self._last_known_monitor_id = None
         self._last_move_delta = (0, 0)
+        self._pointer_locked = False
+        self._pointer_lock_ts = 0.0
 
     async def _on_client_topology_updated(
         self, data: Optional[ClientTopologyUpdatedEvent]
@@ -1700,6 +1720,32 @@ class ClientMouseController(object):
                 self._controller.position = (x, y)
             except Exception as e:
                 self._logger.error("failed to position cursor", error=str(e))
+
+    def _cursor_is_hidden(self) -> bool:
+        """Return True if the OS cursor is currently hidden.
+
+        Read-only probe used to detect a game pointer lock (games hide
+        the cursor when they grab it). The default is ``False`` so
+        platforms without a detection backend (Linux/X11, dummy) keep
+        the normal absolute-follow behaviour. macOS/Windows override it.
+        """
+        return False
+
+    def _refresh_pointer_lock(self) -> None:
+        """Throttled refresh of ``self._pointer_locked``.
+
+        Called on every forwarded move but re-reads the OS cursor state
+        at most once per ``POINTER_LOCK_POLL_INTERVAL`` so the hot path
+        stays cheap.
+        """
+        now = time()
+        if now - self._pointer_lock_ts < self.POINTER_LOCK_POLL_INTERVAL:
+            return
+        self._pointer_lock_ts = now
+        try:
+            self._pointer_locked = self._cursor_is_hidden()
+        except Exception:
+            self._pointer_locked = False
 
     def _inject_relative(self, dx: int, dy: int) -> None:
         """Inject a relative pointer motion of ``(dx, dy)``.
