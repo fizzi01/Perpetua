@@ -118,8 +118,12 @@ def mac_manager(tmp_path, monkeypatch):
         "_plist_path",
         property(lambda self: tmp_path / "com.federicoizzi.Perpetua.plist"),
     )
-    monkeypatch.setattr(_MacAutostartManager, "_launchctl_bootstrap", staticmethod(lambda p: None))
-    monkeypatch.setattr(_MacAutostartManager, "_launchctl_bootout", staticmethod(lambda p: None))
+    monkeypatch.setattr(
+        _MacAutostartManager, "_launchctl_bootstrap", staticmethod(lambda p: None)
+    )
+    monkeypatch.setattr(
+        _MacAutostartManager, "_launchctl_bootout", staticmethod(lambda p: None)
+    )
     return _MacAutostartManager()
 
 
@@ -175,7 +179,13 @@ def test_mac_backend_requires_absolute_path(mac_manager):
     "argv,expected_exec,expected_args",
     [
         (
-            ["/usr/bin/open", "/Applications/Perpetua.app", "--args", "--start-minimized", "--server"],
+            [
+                "/usr/bin/open",
+                "/Applications/Perpetua.app",
+                "--args",
+                "--start-minimized",
+                "--server",
+            ],
             "/Applications/Perpetua.app",
             ["--start-minimized", "--server"],
         ),

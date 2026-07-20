@@ -848,6 +848,14 @@ class Server:
                     f"Server monitor topology changed: "
                     f"{len(monitors)} monitor(s) now connected"
                 )
+                # Refresh the mouse layer's cached local geometry BEFORE
+                # reconciling: the listener/controller re-read Screen, so
+                # the CLIENT_LAYOUT_UPDATED that reconciliation dispatches
+                # (and any server_bbox re-push) sees fresh monitor bounds.
+                await self.event_bus.dispatch(
+                    event_type=BusEventType.LOCAL_MONITORS_UPDATED,
+                    data=None,
+                )
                 orphans = await self._reconcile_layouts_with_monitors(monitors)
                 try:
                     monitor_dicts = [m.to_dict() for m in monitors]

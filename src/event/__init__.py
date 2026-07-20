@@ -59,6 +59,13 @@ class BusEventType(IntEnum):
     # against the new monitor ids.
     CLIENT_MONITORS_UPDATED = 12
 
+    # Dispatched by whichever local watch loop is running (server or
+    # client) when the LOCAL OS monitor signature changes. Lets the mouse
+    # layer re-read ``Screen.get_monitor_layout()`` / ``get_virtual_bbox()``
+    # so cached geometry doesn't go stale after a hotplug. No payload:
+    # handlers re-read ``Screen`` directly (``data=None``).
+    LOCAL_MONITORS_UPDATED = 13
+
 
 class BusEvent(ABC):
     """Base class for events dispatched on the EventBus."""

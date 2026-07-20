@@ -72,6 +72,7 @@ from utils.crypto.sharing import (
 from utils import BackgroundTasks
 from utils.metrics import MetricsCollector, PerformanceMonitor
 from utils.screen import Screen
+from utils.screen._base import invalidate_monitors_cache
 from utils.logging import get_logger, Logger
 
 
@@ -963,6 +964,13 @@ class Client:
                     f"pushing update to server"
                 )
 
+                # Invalidate the process-wide monitor cache so the mouse
+                # layer's LOCAL_MONITORS_UPDATED handler re-reads the fresh
+                # layout via Screen.get_monitor_layout() - the server watch
+                # loop already does this, but the client did not, leaving
+                # the cache (and thus the refresh) stale on hotplug.
+                invalidate_monitors_cache()
+
                 # Update the local ClientObj cache so subsequent
                 # introspection paths (and a possible reconnect) see
                 # the fresh list.
@@ -972,6 +980,14 @@ class Client:
                         self.main_client.screen_resolution = Screen.get_size_str()
                     except Exception:
                         pass
+
+                # Refresh the client mouse controller's cached geometry
+                # (and trigger stranded-active recovery if the currently
+                # active monitor just vanished).
+                await self.event_bus.dispatch(
+                    event_type=BusEventType.LOCAL_MONITORS_UPDATED,
+                    data=None,
+                )
 
                 await self._push_monitor_update(monitors)
             except asyncio.CancelledError:
