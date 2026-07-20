@@ -16,7 +16,7 @@ You should have received a copy of the GNU General Public License
 along with this program. If not, see <https://www.gnu.org/licenses/>.
 */
 
-use crate::connection::DEFAULT_APP_DIR;
+use crate::paths;
 use serde::{Deserialize, Serialize};
 use std::fs;
 use std::io::{self, BufRead};
@@ -29,27 +29,28 @@ pub struct LogResponse {
     pub log_file: String,
 }
 
-/// Get the daemon log file path
+/// Get the daemon log file path.
+///
+/// Walks the candidate state directories from :mod:`paths` and returns the
+/// first one that actually contains a log file.
 pub fn get_log_file_path() -> Result<PathBuf, String> {
-    // Get the application data directory
-    let home = dirs::home_dir().ok_or("Could not determine home directory")?;
-
-    #[cfg(target_os = "macos")]
-    let app_dir = home.join("Library").join("Caches").join(DEFAULT_APP_DIR);
-
-    #[cfg(target_os = "windows")]
-    let app_dir = home.join("AppData").join("Local").join(DEFAULT_APP_DIR);
-
-    #[cfg(target_os = "linux")]
-    let app_dir = home.join(DEFAULT_APP_DIR);
-
-    let log_file = app_dir.join("daemon.log");
-
-    if !log_file.exists() {
-        return Err(format!("Log file not found: {}", log_file.display()));
+    let candidates = paths::log_file_paths();
+    if candidates.is_empty() {
+        return Err("Could not determine home directory".to_string());
     }
-
-    Ok(log_file)
+    for path in &candidates {
+        if path.exists() {
+            return Ok(path.clone());
+        }
+    }
+    Err(format!(
+        "Log file not found (looked in: {})",
+        candidates
+            .iter()
+            .map(|p| p.display().to_string())
+            .collect::<Vec<_>>()
+            .join(", ")
+    ))
 }
 
 /// Read last N lines from a file efficiently

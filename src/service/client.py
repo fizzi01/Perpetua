@@ -33,6 +33,7 @@ from event.bus import AsyncEventBus
 from event.notification import (
     NotificationEvent,
     CertificateStaleEvent,
+    ConnectingEvent,
     ConnectedEvent,
     DisconnectedEvent,
     OtpNeededEvent,
@@ -771,6 +772,11 @@ class Client:
         self._logger.error("Server not found among discovered services", uid=uid)
 
     DISCOVERY_REFRESH_INTERVAL = 60.0
+    # While disconnected (initial connect or reconnect in progress) poll mDNS
+    # far more aggressively so a server that (re)appears on a new IP is
+    # re-resolved quickly and the connection loop retargeted. Backs off to
+    # ``DISCOVERY_REFRESH_INTERVAL`` once connected to avoid steady-state spam.
+    DISCOVERY_RETRY_INTERVAL = 5.0
 
     async def discover_servers(self) -> None:
         """
@@ -819,6 +825,11 @@ class Client:
                             self.config.save(),
                             name="config_save_discovery_refresh",
                         )
+                        # Retarget the live connection loop so the ongoing
+                        # retry/reconnect aims at the new address immediately,
+                        # not just after the next full restart.
+                        if self.connection_handler is not None and svc.port:
+                            self.connection_handler.update_target(svc.address, svc.port)
                     break
 
             # Surface the list to the GUI when any (uid, address, port) tuple
@@ -976,21 +987,34 @@ class Client:
         needing to plumb platform-specific listeners: the periodic poll picks
         up new server addresses transparently. Events are throttled by UID
         set so steady-state networks don't spam notifications.
+
+        Cadence is adaptive: while disconnected (initial connect / reconnect in
+        flight) it discovers immediately and polls every
+        ``DISCOVERY_RETRY_INTERVAL`` so a (re)appearing server is re-resolved
+        fast; once connected it relaxes to ``DISCOVERY_REFRESH_INTERVAL``.
         """
         try:
+            # Discover-then-sleep: when the loop starts during an initial
+            # connect with a stale/offline target, resolve the current address
+            # right away instead of waiting a full interval.
             while self._running:
-                try:
-                    await asyncio.sleep(self.DISCOVERY_REFRESH_INTERVAL)
-                except asyncio.CancelledError:
-                    return
-                if not self._running:
-                    return
                 try:
                     await self.discover_servers()
                 except Exception as e:
                     self._logger.debug(
                         "Periodic discovery refresh failed", error=str(e)
                     )
+                interval = (
+                    self.DISCOVERY_REFRESH_INTERVAL
+                    if self._connected
+                    else self.DISCOVERY_RETRY_INTERVAL
+                )
+                try:
+                    await asyncio.sleep(interval)
+                except asyncio.CancelledError:
+                    return
+                if not self._running:
+                    return
         except asyncio.CancelledError:
             return
 
@@ -1057,15 +1081,21 @@ class Client:
                 async with self._state_lock:
                     self._otp_needed = asyncio.Future()  # Reset for future use
 
+    def _has_server_configured(self) -> bool:
+        """True when a server target (host or hostname + port) is persisted.
+
+        Doesn't probe reachability - just whether we have coordinates to aim
+        a connection at. Used to decide whether the initial connect can be
+        left to the ConnectionHandler's retry loop instead of aborting.
+        """
+        has_host = self.config.get_server_host() != ""
+        hostname = self.config.get_server_hostname()
+        has_hostname = hostname is not None and hostname != ""
+        return (has_host or has_hostname) and self.config.get_server_port() != 0
+
     async def _is_server_available(self) -> bool:
         """Check if server is configured in client config"""
-        if (
-            self.config.get_server_host() != ""
-            or (
-                self.config.get_server_hostname() is not None
-                and self.config.get_server_hostname() != ""
-            )
-        ) and self.config.get_server_port() != 0:
+        if self._has_server_configured():
             # Try to establish a TCP connection to verify server is reachable
             host = (
                 self.config.get_server_host()
@@ -1115,7 +1145,23 @@ class Client:
 
                 if not self._found_services or len(self._found_services) == 0:
                     self._logger.warning("No servers found on the network.")
-                    # Check anyway if config has server set
+                    # Server known but not reachable yet (e.g. autostart at
+                    # login before the server is up, or the network isn't
+                    # ready). Don't abort: hand off to the ConnectionHandler's
+                    # backoff loop so the *initial* connect retries just like a
+                    # reconnect. Gated on auto_reconnect so disabling reconnect
+                    # keeps the old fast-fail behaviour.
+                    if (
+                        self._has_server_configured()
+                        and self.config.do_auto_reconnect()
+                    ):
+                        self._logger.info(
+                            "Configured server not reachable yet; proceeding "
+                            "with connection retry loop."
+                        )
+                        return True
+                    # No auto-reconnect (or nothing configured): keep the
+                    # one-shot reachability probe / fast-fail.
                     return await self._is_server_available()
 
                 # If we have a saved server, check if it's available
@@ -1210,6 +1256,7 @@ class Client:
                         connected_callback=self._on_connected,
                         disconnected_callback=self._on_disconnected,
                         reconnected_callback=self._on_streams_reconnected,
+                        connecting_callback=self._on_connecting,
                         stale_cert_callback=self._on_stale_certificate,
                         server_uid_callback=self._on_server_uid_received,
                         host=self.config.get_server_host(),
@@ -1615,6 +1662,22 @@ class Client:
             await clipboard_stream.stop()
 
     # ==================== Event Callbacks ====================
+
+    async def _on_connecting(self, client: Optional[ClientObj] = None):
+        """Handle a connecting/retrying phase (initial connect or reconnect).
+
+        Fired once per connecting phase by the ConnectionHandler's core loop,
+        before ``ConnectedEvent``. Surfaces an explicit "connecting" status to
+        the GUI instead of leaving it to derive one from ``running && !connected``.
+        """
+        try:
+            await self._send_notification(
+                ConnectingEvent(
+                    connection_data=self.config.server_info.to_dict(),
+                )
+            )
+        except Exception as e:
+            self._logger.debug("Failed to emit connecting notification", error=str(e))
 
     async def _on_connected(self, client: ClientObj):
         """Handle connection to server event"""

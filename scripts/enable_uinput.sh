@@ -5,7 +5,11 @@ set -e
 RULE_PATH="/etc/udev/rules.d/01-perpetua-keyboard.rules"
 DUMPYKEYS_RULE_PATH="/etc/udev/rules.d/12-input.rules"
 RULE_CONTENT='KERNEL=="uinput", SUBSYSTEM=="misc", OPTIONS+="static_node=uinput", TAG+="uaccess", GROUP="input", MODE="0660"'
-DUMPYKEYS_RULE_CONTENT='SUBSYSTEM=="tty", MODE="0666" TAG+="uaccess", GROUP="input", MODE="0660"'
+# tty access lets pynput's uinput backend read the kernel keymap (dumpkeys)
+# without root. Group-readable ("input", 0660) + uaccess ACL for the active
+# session; NOT world-writable. (The previous value had a malformed rule:
+# missing comma and a stray MODE="0666" — both fixed here.)
+DUMPYKEYS_RULE_CONTENT='SUBSYSTEM=="tty", TAG+="uaccess", GROUP="input", MODE="0660"'
 
 check_root() {
   if [ "$(id -u)" -ne 0 ]; then
@@ -17,6 +21,11 @@ check_root() {
 write_rule() {
   path="$1"
   content="$2"
+
+  # Minimal containers (used by CI smoke-tests) don't ship the udev rules
+  # directory; create it lazily so the same script works on both bare
+  # containers and real desktop installs.
+  mkdir -p -- "$(dirname "$path")"
 
   if [ -f "$path" ] && [ "$(cat "$path")" = "$content" ]; then
     echo "perpetua: $path already up to date - skipping."
@@ -43,8 +52,11 @@ reload_udev() {
   fi
 }
 
-case "$1" in
-  configure)
+case "${1:-configure}" in
+  # Debian: "configure" on install/upgrade.
+  # RPM (%post): numeric - "1" on first install, "2"+ on upgrade.
+  # No argument (manual ``sudo bash enable_uinput.sh``): treat as install.
+  configure|1|2)
     write_rule "$RULE_PATH" "$RULE_CONTENT"
     write_rule "$DUMPYKEYS_RULE_PATH" "$DUMPYKEYS_RULE_CONTENT"
 

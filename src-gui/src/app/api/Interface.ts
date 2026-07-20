@@ -40,6 +40,7 @@ export enum EventType {
     ServiceError,
 
     // Connection events
+    Connecting,
     Connected,
     Disconnected,
     ConnectionError,

@@ -43,6 +43,7 @@ pub enum EventType {
     ServiceError,
 
     // Connection events
+    Connecting,
     Connected,
     Disconnected,
     ConnectionError,
@@ -209,6 +210,10 @@ pub enum CommandType {
     // Daemon control
     Shutdown,
     Ping,
+
+    // Autostart-at-login
+    GetAutostart,
+    SetAutostart,
 }
 
 impl Type for CommandType {}

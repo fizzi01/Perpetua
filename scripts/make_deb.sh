@@ -19,7 +19,17 @@ DESCRIPTION_LONG=" Perpetua is an open-source, cross-platform KVM software that 
 # ── Build metadata ────────────────────────────────────────────────────────────
 VERSION="$(grep -m1 '^version\s*=\s*"' pyproject.toml | sed -E 's/^version\s*=\s*"([^"]+)"/\1/')"
 ARCH="$(dpkg --print-architecture)"
-BUILD_DIR=".build/x86_64-unknown-linux-gnu/release"
+# Map the Debian arch to the Rust target triple used by Nuitka's output dir.
+# Keeps the script working on both x86_64 and aarch64 runners.
+case "$ARCH" in
+  amd64)  RUST_TARGET="x86_64-unknown-linux-gnu" ;;
+  arm64)  RUST_TARGET="aarch64-unknown-linux-gnu" ;;
+  *)
+    echo "error: unsupported Debian architecture '$ARCH'" >&2
+    exit 1
+    ;;
+esac
+BUILD_DIR=".build/${RUST_TARGET}/release"
 DIST_DIR="$BUILD_DIR/${APP_DISPLAY_NAME}.dist"
 DEB_ROOT=".build/${APP_NAME}_${VERSION}_${ARCH}"
 DEB_OUT="${DEB_ROOT}.deb"
@@ -67,7 +77,8 @@ mkdir -p \
   "$DEB_ROOT/usr/share/icons/hicolor/256x256/apps" \
   "$DEB_ROOT/usr/share/doc/${APP_NAME}" \
   "$DEB_ROOT/usr/share/metainfo" \
-  "$DEB_ROOT/usr/share/lintian/overrides"
+  "$DEB_ROOT/usr/share/lintian/overrides" \
+  "$DEB_ROOT/usr/lib/systemd/user"
 
 # ── Application binary & data ─────────────────────────────────────────────────
 cp -a "$DIST_DIR/." "$DEB_ROOT${INSTALL_PREFIX}/"
@@ -81,7 +92,13 @@ find "$DEB_ROOT${INSTALL_PREFIX}" -type f \( -name "$BINARY_NAME" -o -name "_per
 ln -sf "${INSTALL_PREFIX}/${BINARY_NAME}" "$DEB_ROOT/usr/bin/${APP_NAME}"
 
 # ── Maintainer scripts ────────────────────────────────────────────────────────
-install -m 0775 "scripts/enable_uinput.sh" "$DEB_ROOT/DEBIAN/postinst"
+install -m 0755 "scripts/enable_uinput.sh" "$DEB_ROOT/DEBIAN/postinst"
+
+# ── systemd user unit (opt-in autostart via systemctl --user) ────────────────
+if [ -f "scripts/systemd/perpetua-daemon.service" ]; then
+  install -m 0644 "scripts/systemd/perpetua-daemon.service" \
+    "$DEB_ROOT/usr/lib/systemd/user/perpetua-daemon.service"
+fi
 
 # ── Icona ─────────────────────────────────────────────────────────────────────
 if [ -f "$ICON_SRC" ]; then
@@ -152,7 +169,7 @@ cat > "$DEB_ROOT/usr/share/metainfo/${APP_NAME}.metainfo.xml" <<EOF
   <name>${APP_DISPLAY_NAME}</name>
   <summary>${DESCRIPTION_SHORT}</summary>
   <metadata_license>MIT</metadata_license>
-  <project_license>MIT</project_license>
+  <project_license>GPL-3.0-or-later</project_license>
   <description>
     <p>${DESCRIPTION_SHORT}.</p>
   </description>
@@ -200,8 +217,20 @@ Architecture: ${ARCH}
 Installed-Size: ${INSTALLED_SIZE}
 Maintainer: ${MAINTAINER}
 Homepage: ${HOMEPAGE}
-Depends: libc6
-Recommends: liboeffis1
+Depends: libc6,
+ libei1,
+ libgtk-3-0 | libgtk-3-0t64,
+ libwebkit2gtk-4.1-0,
+ libjavascriptcoregtk-4.1-0,
+ libsoup-3.0-0,
+ libcairo2,
+ libcairo-gobject2,
+ libpango-1.0-0,
+ libglib2.0-0 | libglib2.0-0t64,
+ libgdk-pixbuf-2.0-0,
+ libayatana-appindicator3-1,
+ libssl3 | libssl3t64
+Recommends: liboeffis1, xclip, wl-clipboard
 Description: ${DESCRIPTION_SHORT}
 ${DESCRIPTION_LONG}
 EOF

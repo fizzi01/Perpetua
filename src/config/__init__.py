@@ -24,10 +24,11 @@ Handles server and client configurations with persistent storage support.
 import time
 import asyncio
 import json
+import shutil
 import sys
 from collections import OrderedDict
 from dataclasses import dataclass, field
-from typing import Optional, Dict, Any, List
+from typing import Optional, Dict, Any, List, Tuple
 import msgspec.json
 import os
 from os import path
@@ -36,6 +37,12 @@ import aiofiles
 
 from model.client import ClientObj, ClientsManager, ScreenPosition
 from utils.logging import Logger
+
+# Track whether the one-shot Linux ``~/.perpetua`` -> XDG migration has been
+# attempted in this process. It is idempotent (no-op when source is absent or
+# destination already exists), but skipping the disk check after the first call
+# avoids repeated stat() in hot paths like ``get_main_path``.
+_legacy_linux_migration_done = False
 
 _encoder = msgspec.json.Encoder()
 _decoder = msgspec.json.Decoder()
@@ -175,8 +182,94 @@ class ApplicationConfig:
         return os.path.join(self.get_config_dir(), self.ssl_path)
 
     @classmethod
+    def _linux_xdg_dirs(cls) -> Tuple[str, str, Optional[str]]:
+        """Return the XDG ``(config, state, runtime)`` directories for the app.
+
+        The runtime entry is ``None`` when ``$XDG_RUNTIME_DIR`` is unset, which
+        happens on non-systemd systems and when running outside a logind
+        session; callers must fall back to the state dir in that case.
+        """
+        home = path.expanduser("~")
+        app = cls.app_name.lower()
+
+        config_home = os.environ.get("XDG_CONFIG_HOME") or path.join(home, ".config")
+        state_home = os.environ.get("XDG_STATE_HOME") or path.join(
+            home, ".local", "state"
+        )
+        runtime_dir = os.environ.get("XDG_RUNTIME_DIR") or None
+
+        return (
+            path.join(config_home, app),
+            path.join(state_home, app),
+            path.join(runtime_dir, app) if runtime_dir else None,
+        )
+
+    @classmethod
+    def _migrate_legacy_linux_layout(cls, new_config_dir: str, state_dir: str) -> None:
+        """Move ``~/.perpetua/`` contents into the XDG dirs once.
+
+        Idempotent and best-effort: any failure is logged via ``print`` (the
+        structured logger is not initialised yet at this point) and leaves the
+        legacy directory in place so the user can recover manually.
+        """
+        global _legacy_linux_migration_done
+        if _legacy_linux_migration_done:
+            return
+        _legacy_linux_migration_done = True
+
+        legacy = path.join(path.expanduser("~"), f".{cls.app_name.lower()}")
+        if not os.path.isdir(legacy):
+            return
+        # If the new config dir already exists with a config file, assume
+        # migration already happened (or the user intentionally created the
+        # new layout) and leave the legacy tree untouched.
+        #
+        # NB: use the *class* attributes here, never ``cls()``. Instantiating
+        # ApplicationConfig runs ``__post_init__`` -> ``init_config_file()``,
+        # which would create ``new_config_dir/config/config.json`` as a side
+        # effect and make this guard (and the moves below) always no-op,
+        # silently defeating the migration on upgrade.
+        if os.path.exists(path.join(new_config_dir, cls.config_path, cls.config_file)):
+            return
+
+        try:
+            legacy_config = path.join(legacy, "config")
+            if os.path.isdir(legacy_config):
+                os.makedirs(new_config_dir, exist_ok=True)
+                dest = path.join(new_config_dir, "config")
+                if not os.path.exists(dest):
+                    shutil.move(legacy_config, dest)
+
+            legacy_log = path.join(legacy, cls.DEFAULT_LOG_FILE or "daemon.log")
+            if os.path.isfile(legacy_log):
+                os.makedirs(state_dir, exist_ok=True)
+                dest_log = path.join(state_dir, path.basename(legacy_log))
+                if not os.path.exists(dest_log):
+                    shutil.move(legacy_log, dest_log)
+
+            # Drop the legacy directory if nothing of value remains. Stale
+            # ``runtime/`` files are recreated on the next bind so we can
+            # discard them.
+            stale_runtime = path.join(legacy, "runtime")
+            if os.path.isdir(stale_runtime):
+                shutil.rmtree(stale_runtime, ignore_errors=True)
+            try:
+                os.rmdir(legacy)
+            except OSError:
+                # Non-empty (user-added files) — leave it.
+                pass
+        except Exception as e:  # pragma: no cover - best-effort migration
+            print(
+                f"Warning: failed to migrate legacy Perpetua config from {legacy}: {e}"
+            )
+
+    @classmethod
     def get_main_path(cls) -> str:
-        # Define main path based on OS
+        """Return the directory holding ``config.json`` and SSL certs.
+
+        On Linux this is the XDG config dir (``$XDG_CONFIG_HOME/perpetua``);
+        on macOS and Windows it remains the historical per-OS app cache dir.
+        """
         p = sys.platform
         if p == "win32":
             base_path = path.join(
@@ -187,13 +280,50 @@ class ApplicationConfig:
             if not home:
                 raise EnvironmentError("HOME environment variable not set on macOS")
             base_path = path.join(home, "Library", "Caches", cls.app_name)
-        else:  # Linux and other OS
-            base_path = path.join(path.expanduser("~"), f".{cls.app_name.lower()}")
+        else:  # Linux and other XDG-following systems
+            config_dir, state_dir, _ = cls._linux_xdg_dirs()
+            cls._migrate_legacy_linux_layout(config_dir, state_dir)
+            base_path = config_dir
 
         if not os.path.exists(base_path):
             os.makedirs(base_path, exist_ok=True)
 
         return base_path
+
+    @classmethod
+    def get_state_path(cls) -> str:
+        """Return the directory for log files and the daemon endpoint file.
+
+        On Linux this is ``$XDG_STATE_HOME/perpetua`` (default
+        ``~/.local/state/perpetua``); on macOS/Windows it folds back to
+        :py:meth:`get_main_path` so existing layouts are unchanged.
+        """
+        if sys.platform.startswith("linux"):
+            _, state_dir, _ = cls._linux_xdg_dirs()
+            if not os.path.exists(state_dir):
+                os.makedirs(state_dir, exist_ok=True)
+            return state_dir
+        return cls.get_main_path()
+
+    @classmethod
+    def get_runtime_path(cls) -> str:
+        """Return the directory for ephemeral runtime files (unix socket).
+
+        Prefers ``$XDG_RUNTIME_DIR/perpetua`` on Linux (tmpfs, cleaned at
+        logout). Falls back to :py:meth:`get_state_path` when the env var is
+        absent or the dir cannot be created — common on non-systemd installs
+        and inside sandboxes.
+        """
+        if sys.platform.startswith("linux"):
+            _, _, runtime_dir = cls._linux_xdg_dirs()
+            if runtime_dir is not None:
+                try:
+                    os.makedirs(runtime_dir, exist_ok=True)
+                    return runtime_dir
+                except OSError:
+                    pass
+            return cls.get_state_path()
+        return cls.get_main_path()
 
     @classmethod
     def set_log_file(cls, log_file: str | None) -> None:
@@ -203,7 +333,7 @@ class ApplicationConfig:
     def get_default_log_file(cls) -> str | None:
         if cls.DEFAULT_LOG_FILE is None:
             return None
-        return path.join(cls.get_main_path(), cls.DEFAULT_LOG_FILE)
+        return path.join(cls.get_state_path(), cls.DEFAULT_LOG_FILE)
 
     def init_config_file(self) -> bool:
         """

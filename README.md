@@ -39,9 +39,15 @@ Built with Python using uvloop (macOS/Linux) and winloop (Windows) as event loop
 
 [![GitHub Downloads (all assets, latest release)](https://img.shields.io/github/downloads/fizzi01/Perpetua/latest/total?style=for-the-badge&logo=github&label=DOWNLOAD%20LATEST&color=%234f47e4)](https://github.com/fizzi01/Perpetua/releases/latest)
 
-- **macOS**: Extract the `.zip`, run `xattr -c Perpetua.app` and launch `Perpetua.app`.
+- **macOS**: Extract the `.zip`, then launch `Perpetua.app`. Clear the quarantine with `xattr -c Perpetua.app` before launching.
 - **Windows**: Extract the archive and run `Perpetua.exe` inside the `Perpetua` folder.
-- **Linux**: Install the .deb package.
+- **Linux** (x86_64 / aarch64), pick one:
+  - **Debian / Ubuntu**: `sudo dpkg -i perpetua_*.deb` (or `sudo apt install ./perpetua_*.deb`).
+  - **Fedora / RHEL / openSUSE**: `sudo dnf install perpetua-*.rpm` (or `sudo rpm -i`).
+  - **Arch Linux**: install `perpetua-bin` from the AUR (see [`scripts/aur/PKGBUILD`](scripts/aur/PKGBUILD)).
+  - **Any distro**: download the `Perpetua-*.AppImage`, `chmod +x`, and run it. The AppImage doesn't install udev rules, run [`scripts/enable_uinput.sh`](scripts/enable_uinput.sh) once with `sudo` for keyboard input to work.
+
+  Baseline: `glibc >= 2.39` (Ubuntu 24.04, Fedora 40, Debian 13, Arch). The `libei` and `liboeffis` runtime libs are required for Wayland InputCapture on GNOME/KDE; the `.deb` declares them as `Depends:` / `Recommends:`, the `.rpm` mirrors this.
 
 The GUI will guide you through choosing server or client mode and the initial configuration.
 
@@ -216,7 +222,7 @@ The OTP is just for the initial certificate exchange. After that, connections to
 The configuration file lives at:
 - macOS: `$HOME/Library/Caches/Perpetua`
 - Windows: `%LOCALAPPDATA%\Perpetua`
-- Linux: `$HOME/.perpetua`
+- Linux: `$XDG_CONFIG_HOME/perpetua` (default `$HOME/.config/perpetua`); the daemon also writes log and runtime files under `$XDG_STATE_HOME/perpetua` and `$XDG_RUNTIME_DIR/perpetua`. A legacy `~/.perpetua` directory is migrated on first launch.
 
 The configuration [json file](#file-structure) is split into three sections: `server`, `client`, and `general`.
 

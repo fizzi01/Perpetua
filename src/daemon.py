@@ -138,6 +138,10 @@ class DaemonCommand(StrEnum):
     SHUTDOWN = "shutdown"
     PING = "ping"
 
+    # Autostart-at-login (cross-platform)
+    GET_AUTOSTART = "get_autostart"
+    SET_AUTOSTART = "set_autostart"
+
     def __init__(self, params: Optional[Dict[str, Any]] = None):
         self._params = params if params is not None else {}
 
@@ -215,8 +219,12 @@ class Daemon:
     if IS_WINDOWS:
         DEFAULT_SOCKET_PATH = f"127.0.0.1:{ApplicationConfig.DEFAULT_DAEMON_PORT}"
     else:
+        # Unix socket lives under $XDG_RUNTIME_DIR on Linux (tmpfs, per-session)
+        # and falls back to the state dir if that's not available; macOS keeps
+        # the historical location under ~/Library/Caches/Perpetua.
         DEFAULT_SOCKET_PATH: str = path.join(
-            ApplicationConfig.get_main_path(), ApplicationConfig.DEFAULT_UNIX_SOCK_NAME
+            ApplicationConfig.get_runtime_path(),
+            ApplicationConfig.DEFAULT_UNIX_SOCK_NAME,
         )
 
     MAX_CONNECTIONS = 1
@@ -475,7 +483,7 @@ class Daemon:
             if self._endpoint_url:
                 try:
                     json_path, txt_path = write_endpoint(
-                        self.app_config.get_save_path(),
+                        ApplicationConfig.get_state_path(),
                         self._endpoint_url,
                         version=self.app_config.version,
                     )
@@ -731,7 +739,7 @@ class Daemon:
             os.unlink(self.socket_path)
 
         try:
-            remove_endpoint(self.app_config.get_save_path())
+            remove_endpoint(ApplicationConfig.get_state_path())
         except Exception as e:
             self._logger.debug("Failed to clean endpoint file", error=str(e))
 
@@ -1536,6 +1544,88 @@ class Daemon:
 
             await self._notification_manager.notify_command_success(
                 command, f"Configuration reloaded ({config_type})"
+            )
+        except Exception as e:
+            await self._notification_manager.notify_command_error(command, f"{str(e)}")
+
+    @CommandHandler.register(DaemonCommand.GET_AUTOSTART)
+    async def _handle_get_autostart(self, params: Dict[str, Any]) -> None:
+        """Return whether the GUI is registered to start at login.
+
+        The result payload also includes the executable currently registered
+        so the GUI can detect a stale pointer after an install path change.
+        """
+        command = DaemonCommand.GET_AUTOSTART.value
+        try:
+            from utils.autostart import AutostartManager
+
+            status = AutostartManager().is_enabled()
+            await self._notification_manager.notify_command_success(
+                command,
+                "Autostart status retrieved",
+                result_data={
+                    "enabled": status.enabled,
+                    "exec_path": status.exec_path,
+                    # ``mode`` is one of off/server/client/plain and is what the
+                    # GUI uses to reflect the selected launch mode in the tray.
+                    "mode": status.mode,
+                },
+            )
+        except Exception as e:
+            await self._notification_manager.notify_command_error(command, f"{str(e)}")
+
+    @CommandHandler.register(DaemonCommand.SET_AUTOSTART)
+    async def _handle_set_autostart(self, params: Dict[str, Any]) -> None:
+        """Enable or disable launch-at-login for the GUI, selecting the mode.
+
+        Params:
+          - ``mode`` (str, optional): one of ``off`` / ``server`` / ``client``
+            / ``plain``. ``off`` removes the entry; ``server`` / ``client``
+            make the app auto-start that service at login; ``plain`` just
+            launches the app minimized. When present, ``mode`` drives the
+            behaviour and derives the launch args (ignoring ``enabled`` /
+            ``args``).
+          - ``enabled`` (bool, legacy): used only when ``mode`` is absent.
+          - ``exec_path`` (str, required unless disabling): absolute path to
+            the Tauri GUI executable. The GUI knows its own path so we don't
+            try to guess it here.
+          - ``args`` (list[str], legacy): explicit launch args; only honoured
+            when ``mode`` is absent. Defaults to ``["--start-minimized"]``.
+        """
+        command = DaemonCommand.SET_AUTOSTART.value
+        try:
+            from utils.autostart import MODE_OFF, AutostartManager, args_for_mode
+
+            mode = params.get("mode")
+            exec_path = params.get("exec_path")
+
+            if mode is not None:
+                # Mode-driven path (current GUI): translate the mode into the
+                # concrete launch args.
+                enabled = mode != MODE_OFF
+                args = args_for_mode(mode) if enabled else None
+            else:
+                # Legacy path: explicit enabled/args.
+                enabled = bool(params.get("enabled"))
+                args = params.get("args")
+
+            mgr = AutostartManager()
+            if enabled:
+                if not exec_path:
+                    raise ValueError("'exec_path' is required when enabling autostart")
+                mgr.enable(exec_path, args=args)
+            else:
+                mgr.disable()
+
+            status = mgr.is_enabled()
+            await self._notification_manager.notify_command_success(
+                command,
+                f"Autostart set to {status.mode}",
+                result_data={
+                    "enabled": status.enabled,
+                    "exec_path": status.exec_path,
+                    "mode": status.mode,
+                },
             )
         except Exception as e:
             await self._notification_manager.notify_command_error(command, f"{str(e)}")

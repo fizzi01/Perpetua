@@ -16,6 +16,7 @@
 #
 
 import argparse
+import os
 import shutil
 import subprocess
 import sys
@@ -371,20 +372,126 @@ class Builder:
         return 0
 
     def _sign_bundle(self):
-        if self.is_macos:
-            self.log.info("Signing MacOS app bundle")
-            app_bundle = self.build_dir / f"{APP_NAME}.app"
-            sign_cmd = [
-                "codesign",
-                "--deep",
-                "--force",
-                "--verify",
-                "--verbose",
-                "--sign",
-                APP_NAME,
-                str(app_bundle),
-            ]
-            self._run(sign_cmd)
+        if not self.is_macos:
+            return
+
+        # Signing identity resolution: the ``PERPETUA_MACOS_SIGN_IDENTITY`` env
+        # var carries the certificate common-name (a self-signed keychain cert
+        # locally / in CI). When unset we fall back to a proper ad-hoc signature
+        # (``-``) so local builds without a cert stay reproducible. We must NOT
+        # pass ``APP_NAME`` here: codesign would treat it as a keychain identity
+        # lookup and silently sign with whatever (or nothing) matches.
+        identity = os.environ.get("PERPETUA_MACOS_SIGN_IDENTITY") or "-"
+        ad_hoc = identity == "-"
+        self.log.info(
+            "Signing macOS app bundle",
+            identity="ad-hoc" if ad_hoc else identity,
+        )
+
+        app_bundle = self.build_dir / f"{APP_NAME}.app"
+        if not app_bundle.is_dir():
+            self.log.error(f"App bundle not found, cannot sign: {app_bundle}")
+            return
+
+        # Nuitka ad-hoc-signs the bundle during build, but ``_swap_executables``
+        # renames binaries afterwards (invalidating those seals) and, crucially,
+        # signing only the two executables would leave the ~100 nested Mach-O
+        # libraries (all the ``.so``/``.dylib`` and ``Contents/MacOS/Python``)
+        # unsigned. So we re-sign *every* nested Mach-O (and any embedded
+        # ``.app``/``.framework``) explicitly, then the outer bundle last.
+        # ``--deep`` is deprecated for distribution signing, so we drive the
+        # coverage and order ourselves.
+        signables = self._iter_signables(app_bundle)
+
+        # The two top-level executables (``_perpetua`` daemon + ``Perpetua`` GUI
+        # main executable) load all the nested ``.so`` libraries, so they must
+        # be signed *after* those libraries — sign them last, right before the
+        # outer bundle. Pull them out of the depth-sorted set so the tiebreak
+        # can't reorder them ahead of the libraries.
+        macos_dir = app_bundle / "Contents" / "MacOS"
+        main_execs = [
+            p
+            for p in (macos_dir / DAEMON_EXECUTABLE, macos_dir / APP_NAME)
+            if p.exists()
+        ]
+        signables = [p for p in signables if p not in main_execs]
+
+        # Sign deepest-first: a file must be signed before the subfolders in the
+        # same folder, and embedded code containers (``.framework``/``.app``)
+        # before the library that encloses them — otherwise codesign fails with
+        # "In subcomponent: .../Helpers/....app". Sorting by path depth
+        # (descending), reverse-lexical as tiebreak, guarantees this. A plain
+        # reverse-lexical sort does not (see beeware/briefcase#1891).
+        signables.sort(key=lambda p: (len(p.parts), str(p)), reverse=True)
+
+        # Libraries first, then the two executables that depend on them.
+        for target in [*signables, *main_execs]:
+            self._run(["codesign", "--force", "--sign", identity, str(target)])
+
+        # Bundle last: seals the (now-signed) contents into CodeResources.
+        self._run(["codesign", "--force", "--sign", identity, str(app_bundle)])
+
+        self._verify_signature(app_bundle)
+
+    def _iter_signables(self, app_bundle: Path) -> list[Path]:
+        """Collect every Mach-O binary and embedded code container to sign.
+
+        Mach-O files are detected with ``file`` (matches the ``Mach-O`` marker
+        in its output) rather than by extension, so extension-less binaries
+        (``Contents/MacOS/Python``) and any future ``.so`` Nuitka adds are
+        covered. ``.app``/``.framework`` directories are included as embedded
+        code containers (none in the current Nuitka layout, but kept as
+        insurance should wx/Qt ship frameworks).
+        """
+        signables: list[Path] = []
+        contents = app_bundle / "Contents"
+        for path in contents.rglob("*"):
+            if path.is_symlink():
+                continue
+            if path.is_dir():
+                if path.suffix in (".app", ".framework"):
+                    signables.append(path)
+                continue
+            if self._is_macho(path):
+                signables.append(path)
+        return signables
+
+    def _is_macho(self, path: Path) -> bool:
+        try:
+            result = subprocess.run(
+                ["file", "--brief", str(path)],
+                check=True,
+                capture_output=True,
+                text=True,
+            )
+        except (subprocess.CalledProcessError, OSError):
+            return False
+        return "Mach-O" in result.stdout
+
+    def _verify_signature(self, app_bundle: Path):
+        # Hard verification: fail the build if the signature is broken.
+        self._run(
+            ["codesign", "--verify", "--deep", "--strict", "--verbose=2", str(app_bundle)]
+        )
+        # Informational: log the effective identity/authority chain.
+        self._run(["codesign", "-dvvv", str(app_bundle)])
+        # Gatekeeper assessment. With a self-signed (non-notarized) cert this is
+        # EXPECTED to be rejected, so it must not fail the build — just surface
+        # it. See the Gatekeeper note in the release docs.
+        result = subprocess.run(
+            ["spctl", "-a", "-vv", str(app_bundle)],
+            cwd=self.project_root,
+            check=False,
+            capture_output=False,
+            text=True,
+        )
+        if result.returncode != 0:
+            self.log.warning(
+                "Gatekeeper assessment rejected the bundle (expected without "
+                "Apple notarization); users must right-click > Open or clear the "
+                "quarantine attribute",
+                returncode=result.returncode,
+            )
 
     def _summary(self):
         build_type = "Release" if self.release else "Debug"

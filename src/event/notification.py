@@ -47,6 +47,7 @@ class NotificationEventType(str, Enum):
     SERVICE_ERROR = "service_error"
 
     # Connection events
+    CONNECTING = "connecting"
     CONNECTED = "connected"
     DISCONNECTED = "disconnected"
     CONNECTION_ERROR = "connection_error"
@@ -293,6 +294,18 @@ class ConnectionEvent(NotificationEvent):
         data = connection_data or {}
         data.update(kwargs)
         super().__init__(event_type=event_type, data=data, message=message)
+
+
+@dataclass
+class ConnectingEvent(ConnectionEvent):
+    """Attempting to connect to peer (initial connect or reconnect in progress)"""
+
+    def __init__(self, connection_data: Optional[Dict[str, Any]] = None):
+        super().__init__(
+            event_type=NotificationEventType.CONNECTING,
+            connection_data=connection_data,
+            message="Connecting to server",
+        )
 
 
 @dataclass

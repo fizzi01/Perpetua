@@ -582,3 +582,80 @@ pub async fn get_local_ip() -> Result<String, String> {
         .map(|ip| ip.to_string())
         .map_err(|e| format!("Failed to get local IP address: {}", e))
 }
+
+#[tauri::command]
+pub async fn get_autostart(s: tauri::State<'_, AtomicAsyncWriter>) -> Result<(), String> {
+    let command = CommandEvent::build(CommandType::GetAutostart, "{}");
+    let command = EventParser::serialize(&command).map_err(|e| {
+        format!(
+            "Failed to serialize {} command: {}",
+            CommandType::GetAutostart,
+            e
+        )
+    })?;
+    s.send(command).await.map_err(|e| {
+        format!(
+            "Failed to send {} command ({})",
+            CommandType::GetAutostart,
+            e
+        )
+    })?;
+    Ok(())
+}
+
+#[tauri::command]
+pub async fn set_autostart(
+    mode: String,
+    s: tauri::State<'_, AtomicAsyncWriter>,
+) -> Result<(), String> {
+    // Launch mode: "off" removes the entry; "server"/"client" make the app
+    // auto-start that service at login; "plain" just launches minimized.
+    let mode = match mode.as_str() {
+        "off" | "server" | "client" | "plain" => mode,
+        other => return Err(format!("invalid autostart mode: {}", other)),
+    };
+
+    // The daemon needs to know which executable to register. We resolve it
+    // here in the GUI process because the daemon runs detached and can't
+    // necessarily introspect us (think systemd user service).
+    let current_exe = std::env::current_exe()
+        .map_err(|e| format!("Failed to determine GUI executable path: {}", e))?;
+
+    // On macOS, current_exe() points at the Mach-O *inside* the bundle
+    // (Perpetua.app/Contents/MacOS/Perpetua). Registering that inner binary
+    // makes launchd bypass LaunchServices and spawn a second, bundle-less dock
+    // icon. Walk up to the enclosing `.app` bundle and register that instead so
+    // LaunchServices reuses the single dock icon and dedupes instances.
+    #[cfg(target_os = "macos")]
+    let exec_path = current_exe
+        .ancestors()
+        .find(|p| p.extension().is_some_and(|ext| ext == "app"))
+        .unwrap_or(current_exe.as_path())
+        .to_string_lossy()
+        .to_string();
+
+    #[cfg(not(target_os = "macos"))]
+    let exec_path = current_exe.to_string_lossy().to_string();
+
+    let params = format!(
+        r#"{{ "mode": "{}", "exec_path": "{}" }}"#,
+        mode,
+        exec_path.replace('\\', r"\\").replace('"', r#"\""#)
+    );
+    let command = CommandEvent::build(CommandType::SetAutostart, &params);
+    let command = EventParser::serialize(&command).map_err(|e| {
+        format!(
+            "Failed to serialize {} command: {}",
+            CommandType::SetAutostart,
+            e
+        )
+    })?;
+    s.send(command).await.map_err(|e| {
+        format!(
+            "Failed to send {} command ({})",
+            CommandType::SetAutostart,
+            e
+        )
+    })?;
+    Ok(())
+}

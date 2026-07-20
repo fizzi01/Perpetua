@@ -18,7 +18,7 @@ env:
   NODE_VERSION: "24"
 
 jobs:
-  build:
+  build-desktop:
     name: Build (${{ matrix.platform }})
     runs-on: ${{ matrix.os }}
     strategy:
@@ -53,13 +53,6 @@ jobs:
             build-output: .build/x86_64-pc-windows-msvc/release
             archive-name: Perpetua-Windows-x86_64
             archive-ext: zip
-          - os: ubuntu-latest
-            platform: Linux-x86_64
-            rust-target: x86_64-unknown-linux-gnu
-            gui-exe-name: perpetua
-            build-output: .build/x86_64-unknown-linux-gnu/release
-            archive-name: Perpetua-Linux-x86_64
-            archive-ext: deb
 
     steps:
       - name: Checkout
@@ -89,26 +82,6 @@ jobs:
         env:
           HOMEBREW_NO_AUTO_UPDATE: 1
         run: brew install automake autoconf libtool ccache
-
-      - name: Install Linux build dependencies
-        if: runner.os == 'Linux'
-        run: |
-          sudo apt-get update
-          sudo apt-get install -y \
-            libtiff-dev \
-            libgtk-3-dev \
-            automake \
-            libtool \
-            libwebkit2gtk-4.1-dev \
-            build-essential \
-            curl \
-            wget \
-            file \
-            libxdo-dev \
-            libssl-dev \
-            libayatana-appindicator3-dev \
-            librsvg2-dev \
-            fakeroot
 
       - name: Install Python dependencies
         run: poetry install --only main,build --no-interaction -v
@@ -156,6 +129,11 @@ jobs:
           security set-key-partition-list -S apple-tool:,apple:,codesign: -s -k "$KEYCHAIN_PASSWORD" build.keychain
           security find-identity -v -p codesigning build.keychain
           rm certificate.p12
+          # Extract the imported certificate's common-name and hand it to
+          # build.py's codesign step (see _sign_bundle). Without this the build
+          # would fall back to an ad-hoc signature and ignore the imported cert.
+          IDENTITY=$(security find-identity -v -p codesigning build.keychain | sed -n 's/.*"\(.*\)".*/\1/p' | head -n1)
+          echo "PERPETUA_MACOS_SIGN_IDENTITY=$IDENTITY" >> "$GITHUB_ENV"
 
       - name: Build daemon
         run: poetry run python build.py --skip-gui --nuitka-args --assume-yes-for-downloads
@@ -181,14 +159,6 @@ jobs:
           }
           Compress-Archive -Path "${{ matrix.build-output }}/Perpetua" -DestinationPath "${{ matrix.build-output }}/${{ matrix.archive-name }}.zip"
 
-      - name: Package (Linux)
-        if: runner.os == 'Linux'
-        run: |
-          chmod +x ${{ matrix.build-output }}/Perpetua.dist/Perpetua
-          chmod +x ${{ matrix.build-output }}/Perpetua.dist/_perpetua
-          bash scripts/make_deb.sh
-          cp .build/perpetua_*.deb ${{ matrix.build-output }}/${{ matrix.archive-name }}.deb
-
       - name: Upload build artifact
         uses: actions/upload-artifact@v6
         with:
@@ -196,10 +166,299 @@ jobs:
           path: ${{ matrix.build-output }}/${{ matrix.archive-name }}.${{ matrix.archive-ext }}
           if-no-files-found: error
 
+  # ---------------------------------------------------------------------------
+  # Linux build inside ubuntu:24.04 container.
+  # ---------------------------------------------------------------------------
+  build-linux:
+    name: Build (Linux-${{ matrix.arch }})
+    runs-on: ${{ matrix.runner }}
+    container:
+      image: ubuntu:24.04
+      # /tmp is shared by default; nothing else is needed.
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - arch: x86_64
+            runner: ubuntu-latest
+            rust-target: x86_64-unknown-linux-gnu
+            build-output: .build/x86_64-unknown-linux-gnu/release
+            archive-name: Perpetua-Linux-x86_64
+          - arch: aarch64
+            runner: ubuntu-24.04-arm
+            rust-target: aarch64-unknown-linux-gnu
+            build-output: .build/aarch64-unknown-linux-gnu/release
+            archive-name: Perpetua-Linux-aarch64
+
+    env:
+      DEBIAN_FRONTEND: noninteractive
+      CARGO_HOME: /root/.cargo
+      RUSTUP_HOME: /root/.rustup
+
+    steps:
+      - name: Prepare container (toolchain + build deps)
+        run: |
+          set -eux
+          apt-get update
+          apt-get install -y --no-install-recommends \
+            ca-certificates curl wget gnupg git file sudo \
+            build-essential pkg-config \
+            libssl-dev libtiff-dev libgtk-3-dev libxdo-dev \
+            libwebkit2gtk-4.1-dev libayatana-appindicator3-dev librsvg2-dev \
+            automake libtool fakeroot patchelf \
+            python3.12 python3.12-venv python3.12-dev python3-pip pipx
+          # Node ${{ env.NODE_VERSION }} from NodeSource (the apt default is
+          # too old for the Tauri JS toolchain we use).
+          curl -fsSL https://deb.nodesource.com/setup_${{ env.NODE_VERSION }}.x | bash -
+          apt-get install -y --no-install-recommends nodejs
+          # actions/checkout drops the workspace owned by the host runner UID;
+          # tell git not to complain when we touch it as root in the container.
+          git config --global --add safe.directory '*'
+
+      - name: Checkout
+        uses: actions/checkout@v6
+
+      - name: Install Poetry
+        run: |
+          pipx install poetry
+          echo "$HOME/.local/bin" >> "$GITHUB_PATH"
+
+      - name: Install Rust toolchain
+        run: |
+          curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs \
+            | sh -s -- -y --default-toolchain stable --profile minimal \
+                       --target ${{ matrix.rust-target }}
+          echo "$CARGO_HOME/bin" >> "$GITHUB_PATH"
+
+      - name: Cache Rust dependencies
+        uses: Swatinem/rust-cache@v2
+        with:
+          workspaces: src-gui/src-tauri -> target
+          shared-key: build-Linux-${{ matrix.arch }}
+
+      - name: Cache Tauri CLI
+        id: cache-tauri-cli
+        uses: actions/cache@v5
+        with:
+          path: ${{ env.CARGO_HOME }}/bin/cargo-tauri
+          key: tauri-cli-Linux-${{ matrix.arch }}-v2
+
+      - name: Install Tauri CLI
+        if: steps.cache-tauri-cli.outputs.cache-hit != 'true'
+        run: cargo install tauri-cli --version "^2.0.0" --locked
+
+      - name: Install Python dependencies
+        run: poetry install --only main,build --no-interaction -v
+
+      - name: Install npm dependencies
+        working-directory: src-gui
+        run: npm install
+
+      - name: Build GUI
+        working-directory: src-gui
+        run: cargo tauri build --target ${{ matrix.rust-target }}
+
+      - name: Build daemon
+        run: poetry run python build.py --skip-gui --nuitka-args --assume-yes-for-downloads
+
+      - name: Clean Nuitka build cache
+        run: find ${{ matrix.build-output }} -maxdepth 1 -name '*.build' -type d -exec rm -rf {} +
+
+      - name: Package (.deb + AppImage)
+        run: |
+          set -eux
+          chmod +x ${{ matrix.build-output }}/Perpetua.dist/Perpetua
+          chmod +x ${{ matrix.build-output }}/Perpetua.dist/_perpetua
+          bash scripts/make_deb.sh
+          bash scripts/make_appimage.sh
+          cp .build/perpetua_*.deb       "${{ matrix.build-output }}/${{ matrix.archive-name }}.deb"
+          cp .build/Perpetua-*.AppImage  "${{ matrix.build-output }}/${{ matrix.archive-name }}.AppImage"
+
+      - name: Upload .deb
+        uses: actions/upload-artifact@v6
+        with:
+          name: ${{ matrix.archive-name }}-deb
+          path: ${{ matrix.build-output }}/${{ matrix.archive-name }}.deb
+          if-no-files-found: error
+
+      - name: Upload .AppImage
+        uses: actions/upload-artifact@v6
+        with:
+          name: ${{ matrix.archive-name }}-appimage
+          path: ${{ matrix.build-output }}/${{ matrix.archive-name }}.AppImage
+          if-no-files-found: error
+
+      - name: Upload Nuitka dist (input for RPM packaging)
+        uses: actions/upload-artifact@v6
+        with:
+          name: ${{ matrix.archive-name }}-dist
+          path: ${{ matrix.build-output }}/Perpetua.dist
+          if-no-files-found: error
+          # The dist is large (>200 MB) and only feeds the RPM job; nothing
+          # external should depend on it.
+          retention-days: 3
+  build-linux-rpm:
+    name: Package RPM (Linux-${{ matrix.arch }})
+    needs: build-linux
+    runs-on: ${{ matrix.runner }}
+    container:
+      image: fedora:latest
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - arch: x86_64
+            runner: ubuntu-latest
+            build-output: .build/x86_64-unknown-linux-gnu/release
+            archive-name: Perpetua-Linux-x86_64
+          - arch: aarch64
+            runner: ubuntu-24.04-arm
+            build-output: .build/aarch64-unknown-linux-gnu/release
+            archive-name: Perpetua-Linux-aarch64
+
+    steps:
+      - name: Prepare container
+        run: |
+          set -eux
+          dnf install -y --setopt=install_weak_deps=False \
+            git rpm-build tar gzip findutils which
+          git config --global --add safe.directory '*'
+
+      - name: Checkout (for scripts/ and pyproject.toml)
+        uses: actions/checkout@v6
+
+      - name: Download Nuitka dist from build-linux
+        uses: actions/download-artifact@v7
+        with:
+          name: ${{ matrix.archive-name }}-dist
+          path: ${{ matrix.build-output }}/Perpetua.dist
+
+      - name: Build RPM
+        run: |
+          set -eux
+          chmod +x ${{ matrix.build-output }}/Perpetua.dist/Perpetua
+          chmod +x ${{ matrix.build-output }}/Perpetua.dist/_perpetua
+          bash scripts/make_rpm.sh
+          mkdir -p artifacts
+          cp .build/perpetua-*.rpm "artifacts/${{ matrix.archive-name }}.rpm"
+
+      - name: Upload .rpm
+        uses: actions/upload-artifact@v6
+        with:
+          name: ${{ matrix.archive-name }}-rpm
+          path: artifacts/${{ matrix.archive-name }}.rpm
+          if-no-files-found: error
+  smoke-test-linux:
+    name: Smoke (${{ matrix.label }})
+    needs: [build-linux, build-linux-rpm]
+    runs-on: ubuntu-latest
+    container:
+      image: ${{ matrix.container }}
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - label: ubuntu-24.04
+            container: ubuntu:24.04
+            kind: deb
+            install: apt-get update && apt-get install -y --no-install-recommends ./pkg.deb
+          - label: debian-trixie
+            container: debian:trixie-slim
+            kind: deb
+            install: apt-get update && apt-get install -y --no-install-recommends ./pkg.deb
+          - label: fedora-latest
+            container: fedora:latest
+            kind: rpm
+            install: dnf install -y ./pkg.rpm
+          - label: archlinux
+            container: archlinux:latest
+            kind: appimage
+            install: ":"  # AppImage is portable; no install step
+
+    env:
+      DEBIAN_FRONTEND: noninteractive
+
+    steps:
+      - name: Prepare container (needs tools to download + inspect)
+        # For deb/rpm we install only the inspection tools — the package
+        # manager pulls the runtime libs (gtk3 / webkit2gtk-4.1 / glib /
+        # cairo / libsoup / libei / appindicator) via the package's
+        # Depends/Requires when we install ``pkg.deb`` / ``pkg.rpm``.
+        # For the AppImage case there's no package metadata, so we install
+        # the same runtime libs by hand
+        run: |
+          set -eux
+          if command -v apt-get >/dev/null; then
+            apt-get update
+            apt-get install -y --no-install-recommends ca-certificates file libc-bin
+          elif command -v dnf >/dev/null; then
+            dnf install -y file glibc
+          elif command -v pacman >/dev/null; then
+            pacman -Syu --noconfirm \
+              file fuse2 libei \
+              webkit2gtk-4.1 libsoup3 gtk3 cairo pango glib2 gdk-pixbuf2 \
+              libayatana-appindicator openssl
+          fi
+
+      - name: Download artifact
+        # NOTE: smoke tests run on x86_64 runners only, so we deliberately
+        # exercise the x86_64 packages. The aarch64 .deb/.rpm/.AppImage are
+        # built and released but NOT smoke-tested here (would need arm runners
+        # or qemu-user). Covered manually via scripts/verify_packages.sh
+        # --arch aarch64.
+        uses: actions/download-artifact@v7
+        with:
+          name: Perpetua-Linux-x86_64-${{ matrix.kind }}
+          path: artifacts
+
+      - name: Stage package as ./pkg.${{ matrix.kind }}
+        run: |
+          set -eux
+          case "${{ matrix.kind }}" in
+            deb)      cp artifacts/*.deb      pkg.deb ;;
+            rpm)      cp artifacts/*.rpm      pkg.rpm ;;
+            appimage) cp artifacts/*.AppImage pkg.AppImage ;;
+          esac
+          ls -la pkg.*
+
+      - name: Install package
+        if: matrix.kind != 'appimage'
+        run: ${{ matrix.install }}
+
+      - name: Verify binaries resolve all shared libs
+        run: |
+          set -eux
+          if [ "${{ matrix.kind }}" = "appimage" ]; then
+            chmod +x pkg.AppImage
+            # FUSE may be unavailable in the container; --appimage-extract
+            # works without it.
+            ./pkg.AppImage --appimage-extract >/dev/null
+            ROOT=squashfs-root/usr/lib/Perpetua
+          else
+            ROOT=/opt/Perpetua
+          fi
+
+          # We check both binaries. Nuitka
+          # ``--standalone`` bundles Python's pure-Python files and most
+          # ``.so`` extensions link against at load time, so we have to verify both.
+          fail=0
+          for bin in "$ROOT/Perpetua" "$ROOT/_perpetua"; do
+            [ -f "$bin" ] || { echo "missing: $bin"; fail=1; continue; }
+            file "$bin"
+            # ldd's exit code is unreliable (it returns 0 even with "not
+            # found"), so grep for the marker explicitly.
+            if ldd "$bin" 2>&1 | grep -E 'not found'; then
+              echo "::error::Unresolved shared library in $bin on ${{ matrix.label }}"
+              ldd "$bin" || true
+              fail=1
+            fi
+          done
+          if [ "$fail" -ne 0 ]; then exit 1; fi
+          echo "OK: all libs resolved on ${{ matrix.label }}"
   update-release:
     name: Update Release
     if: github.event_name == 'release' || inputs.update-release
-    needs: build
+    needs: [build-desktop, build-linux, build-linux-rpm, smoke-test-linux]
     runs-on: ubuntu-latest
     steps:
       - name: Download all build artifacts
@@ -223,3 +482,5 @@ jobs:
           files: |
             artifacts/*.zip
             artifacts/*.deb
+            artifacts/*.rpm
+            artifacts/*.AppImage

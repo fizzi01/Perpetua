@@ -76,6 +76,7 @@ class ConnectionHandler(BaseConnectionHandler):
         connected_callback: Optional[Callable[["ClientObj"], Any]] = None,
         disconnected_callback: Optional[Callable[["ClientObj"], Any]] = None,
         reconnected_callback: Optional[Callable[["ClientObj", list[int]], Any]] = None,
+        connecting_callback: Optional[Callable[["ClientObj"], Any]] = None,
         stale_cert_callback: Optional[Callable[[], Any]] = None,
         server_uid_callback: Optional[Callable[[str], Any]] = None,
         host: str = "127.0.0.1",
@@ -109,6 +110,11 @@ class ConnectionHandler(BaseConnectionHandler):
         self.connected_callback = connected_callback
         self.disconnected_callback = disconnected_callback
         self.reconnected_callback = reconnected_callback
+        # Invoked when the loop enters a connecting phase (initial attempt or
+        # the start of a reconnect streak), at most once per phase - the Client
+        # service turns this into a "connecting" status notification for the
+        # GUI. Not fired on terminal paths (stale cert) since the loop breaks.
+        self.connecting_callback = connecting_callback
         # Invoked at most once per ConnectionHandler instance when TLS
         # verification fails against the server (stale local CA). The Client
         # service uses this to delete the cached cert and re-trigger the
@@ -236,9 +242,32 @@ class ConnectionHandler(BaseConnectionHandler):
         self._logger.log("Stopped", Logger.INFO)
         return True
 
+    def update_target(self, host: str, port: int) -> None:
+        """Retarget the connection to a new host/port.
+
+        ``host``/``port`` are read fresh at every ``_connect()`` attempt, so
+        updating them here makes the next retry (initial connect or reconnect)
+        aim at the new address. The Client service calls this when mDNS
+        re-resolves the saved server to a different IP (DHCP renewal, interface
+        switch), so the retry loop follows the server without a re-pairing.
+        """
+        if (host and host != self.host) or (port and port != self.port):
+            self._logger.log(
+                f"Connection target updated {self.host}:{self.port} -> {host}:{port}",
+                Logger.INFO,
+            )
+            if host:
+                self.host = host
+            if port:
+                self.port = port
+
     async def _core_loop(self):
         """Main connection loop with automatic reconnection"""
         error_count = 0
+        # Fire ``connecting_callback`` once per connecting phase (not on every
+        # loop tick / backoff sleep). Reset on a successful handshake so the
+        # next disconnect->reconnect streak announces again.
+        announced_connecting = False
 
         while self._running:
             try:
@@ -247,6 +276,20 @@ class ConnectionHandler(BaseConnectionHandler):
                         f"Attempting to connect to {self.host}:{self.port}...",
                         Logger.INFO,
                     )
+
+                    if not announced_connecting:
+                        announced_connecting = True
+                        if self.connecting_callback:
+                            try:
+                                await self._invoke_callback(
+                                    callback=self.connecting_callback,
+                                    client=self._client_obj,
+                                )
+                            except CallbackError as e:
+                                self._logger.log(
+                                    f"Error in connecting callback ({e})",
+                                    Logger.ERROR,
+                                )
 
                     # Attempt connection
                     if await self._connect():
@@ -271,6 +314,8 @@ class ConnectionHandler(BaseConnectionHandler):
                             self._connected = True
                             error_count = 0
                             self._backoff.reset()
+                            # A new disconnect streak should re-announce.
+                            announced_connecting = False
 
                             self._logger.log(
                                 "Handshake successful, client connected", Logger.INFO

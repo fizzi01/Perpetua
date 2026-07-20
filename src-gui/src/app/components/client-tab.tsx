@@ -55,6 +55,7 @@ export function ClientTab({onStatusChange, state}: ClientTabProps) {
     const [runningPending, setRunningPending] = useState(false);
     const [isRunning, setIsRunning] = useState(state.running);
     const [isConnected, setIsConnected] = useState(state.connected);
+    const [isConnecting, setIsConnecting] = useState(false);
     const [showSecurity, setShowSecurity] = useState(false);
     const [showOptions, setShowOptions] = useState(false);
     const [showOtpInput, setShowOtpInput] = useState(state.otp_needed);
@@ -199,12 +200,22 @@ export function ClientTab({onStatusChange, state}: ClientTabProps) {
     function handleConnectionListeners() {
 
         const setup = () => {
+            // Emitted while the client is attempting/retrying the connection
+            // (initial connect or reconnect) before Connected fires. Surfaces
+            // an explicit "connecting" status instead of deriving it.
+            listenGeneralEvent(EventType.Connecting, false, () => {
+                setIsConnecting(true);
+            }).then((unlisten) => {
+                listeners.addListenerOnce('client-connecting', unlisten);
+            });
+
             listenGeneralEvent(EventType.Connected, false, (event) => {
                 let res = event.data as ClientConnectionInfo;
                 setCurrentConnection(res);
                 setHost(res.host);
                 setPort(res.port.toString());
                 setIsConnected(true);
+                setIsConnecting(false);
                 switchTrayIcon(true);
                 setShowOtpInput(false);
                 addNotification('success', 'Connected', `${res.host}:${res.port}`);
@@ -214,6 +225,7 @@ export function ClientTab({onStatusChange, state}: ClientTabProps) {
 
             listenGeneralEvent(EventType.Disconnected, false, () => {
                 setIsConnected(false);
+                setIsConnecting(false);
                 switchTrayIcon(false);
                 setConnectionTime(0);
                 // setDataUsage(0);
@@ -268,6 +280,7 @@ export function ClientTab({onStatusChange, state}: ClientTabProps) {
         }
 
         const cleanup = () => {
+            listeners.forceRemoveListener('client-connecting');
             listeners.forceRemoveListener('client-connected');
             listeners.forceRemoveListener('client-disconnected');
             listeners.forceRemoveListener('server-choice-needed');
@@ -290,6 +303,7 @@ export function ClientTab({onStatusChange, state}: ClientTabProps) {
         listenCommand(EventType.CommandSuccess, CommandType.StopClient, (event) => {
             console.log(`Client stopped successfully`, event);
             setIsRunning(false);
+            setIsConnecting(false);
             switchTrayIcon(false);
             setIsConnected(false);
             setConnectionTime(0);
@@ -359,6 +373,7 @@ export function ClientTab({onStatusChange, state}: ClientTabProps) {
                 addNotification('error', 'Connection Failed', event.data?.error || 'Unknown error');
                 setRunningPending(false);
                 setIsRunning(false);
+                setIsConnecting(false);
                 switchTrayIcon(false);
                 setIsConnected(false);
                 onStatusChange(false);
@@ -522,8 +537,8 @@ export function ClientTab({onStatusChange, state}: ClientTabProps) {
             <PowerButton
                 status={
                     runningPending ? 'pending' :
-                        isRunning && !isConnected ? 'connecting' :
-                            isConnected ? 'running' :
+                        isConnected ? 'running' :
+                            (isConnecting || isRunning) ? 'connecting' :
                                 'stopped'
                 }
                 onClick={handleToggleClient}
