@@ -703,9 +703,11 @@ class ServerMouseListener(_base.ServerMouseListener):
     async def _on_screen_change_guard(
         self, data: Optional[ActiveScreenChangedEvent]
     ) -> None:
-        # Going to client: dispatch ACTIVE_SCREEN_CHANGED first, then start
-        # the capture. Returning: stop capture first so the next
-        # position_cursor warp lands on a visible cursor.
+        # Going to client: hide+centre first, then dispatch, then start
+        # capture. Returning: stop capture (release ClipCursor) but keep the
+        # cursor blank, let the controller warp it to the exact return point
+        # during the dispatch, and only then reveal it - so it never flashes
+        # at the centre before jumping to the return position.
         if data is None:
             return
 
@@ -722,11 +724,15 @@ class ServerMouseListener(_base.ServerMouseListener):
             await asyncio.sleep(0)
             await self._start_capture()
         else:
-            await self._disable_capture()
+            # Release the capture (and ClipCursor) but leave the cursor blank,
+            # let the controller warp it to the exact return position while
+            # still hidden, and only then restore visibility.
+            await self._stop_capture()
             await self.event_bus.dispatch(
                 event_type=BusEventType.ACTIVE_SCREEN_CHANGED,
                 data=data,
             )
+            self._restore_cursor()
 
     async def _on_client_disconnected_show_cursor(
         self, data: Optional[ClientDisconnectedEvent]
@@ -797,21 +803,39 @@ class ServerMouseListener(_base.ServerMouseListener):
             return
         self._capturing = True
 
-    async def _disable_capture(self) -> None:
-        if not self._cursor_hidden and not self._capturing:
+    async def _stop_capture(self) -> None:
+        """Stop Raw Input capture and release the ClipCursor pin.
+
+        Leaves the cursor blank (``_cursor_hidden`` untouched) so the caller can
+        warp it to the return position before revealing it with
+        ``_restore_cursor``.
+        """
+        if not self._capturing and self._raw_capture is None:
             return
-        self._cursor_hidden = False
         self._capturing = False
         capture = self._raw_capture
         self._raw_capture = None
         if capture is not None:
-            # stop() does a blocking join on the pump thread; run it in the
-            # executor so the asyncio loop isn't blocked by it.
+            # stop() does a blocking join on the pump thread (and ClipCursor(None));
+            # run it in the executor so the asyncio loop isn't blocked by it.
             try:
                 await asyncio.get_running_loop().run_in_executor(None, capture.stop)
             except Exception as e:
                 self._logger.error("Raw input stop failed", error=str(e))
+
+    def _restore_cursor(self) -> None:
+        """Reveal the system cursors again. Idempotent."""
+        if not self._cursor_hidden:
+            return
+        self._cursor_hidden = False
         _restore_system_cursors()
+
+    async def _disable_capture(self) -> None:
+        # Full teardown for callers without a known return position (e.g. an
+        # unclean client disconnect): stop capture then restore at the current
+        # (centre) position.
+        await self._stop_capture()
+        self._restore_cursor()
 
     def _on_raw_delta(self, dx: int, dy: int) -> None:
         if not self._cursor_hidden:
