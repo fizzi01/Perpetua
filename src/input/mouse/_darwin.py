@@ -468,7 +468,16 @@ class ServerMouseListener(_base.ServerMouseListener):
         # path; skip the base edge-detection work entirely.
         if self._listening:
             return True
-        return super().on_move(x, y)
+        result = super().on_move(x, y)
+        # If super() committed a screen crossing on THIS event it set
+        # ``_handling_cross_screen`` synchronously (before scheduling the async
+        # handler). Hide right here, on the pynput thread, instead of waiting for
+        # the loop round-trip -> event-bus -> _on_screen_change_guard chain: that
+        # chain's scheduling jitter is what left an intermittent hide lag. The
+        # guard still runs _hide_and_pin() (idempotent) + starts the re-assert.
+        if self._handling_cross_screen and not self._cursor_hidden:
+            self._hide_and_pin()
+        return result
 
     def _darwin_mouse_suppress_filter(self, event_type, event):
         """pynput ``darwin_intercept``: called after on_move/on_click/on_scroll.
