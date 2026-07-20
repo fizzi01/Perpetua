@@ -100,7 +100,8 @@ class Screen(_base.Screen):
 
     @classmethod
     def hide_icon(cls):
-        # Modify the bundle info dict directly; wx.App reads it.
+        # Set LSUIElement on the bundle info dict so the process runs as an
+        # agent (no Dock icon); NSApplication reads it at startup.
         info = NSBundle.mainBundle().infoDictionary()
         if not info.get("LSUIElement", False):
             info["LSUIElement"] = "1"

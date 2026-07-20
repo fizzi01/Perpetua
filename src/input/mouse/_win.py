@@ -207,6 +207,62 @@ class _WNDCLASSW(ctypes.Structure):
     ]
 
 
+# Relative-motion injection (SendInput). MOUSEEVENTF_MOVE without
+# MOUSEEVENTF_ABSOLUTE makes dx/dy relative deltas, which is what games
+# reading DirectInput/relative movement consume — unlike pynput's absolute
+# cursor warp.
+_INPUT_MOUSE = 0
+_MOUSEEVENTF_MOVE = 0x0001
+
+_ULONG_PTR = (
+    ctypes.c_ulonglong if ctypes.sizeof(ctypes.c_void_p) == 8 else wintypes.DWORD
+)
+
+
+class _MOUSEINPUT(ctypes.Structure):
+    _fields_ = [
+        ("dx", wintypes.LONG),
+        ("dy", wintypes.LONG),
+        ("mouseData", wintypes.DWORD),
+        ("dwFlags", wintypes.DWORD),
+        ("time", wintypes.DWORD),
+        ("dwExtraInfo", _ULONG_PTR),
+    ]
+
+
+class _INPUT_UNION(ctypes.Union):
+    _fields_ = [("mi", _MOUSEINPUT)]
+
+
+class _INPUT(ctypes.Structure):
+    _anonymous_ = ("u",)
+    _fields_ = [
+        ("type", wintypes.DWORD),
+        ("u", _INPUT_UNION),
+    ]
+
+
+# Read-only cursor-visibility probe (GetCursorInfo). A foreground game hides
+# the cursor when it takes a pointer lock; CURSOR_SHOWING is cleared then.
+_CURSOR_SHOWING = 0x0001
+
+
+class _POINT(ctypes.Structure):
+    _fields_ = [
+        ("x", wintypes.LONG),
+        ("y", wintypes.LONG),
+    ]
+
+
+class _CURSORINFO(ctypes.Structure):
+    _fields_ = [
+        ("cbSize", wintypes.DWORD),
+        ("flags", wintypes.DWORD),
+        ("hCursor", wintypes.HANDLE),
+        ("ptScreenPos", _POINT),
+    ]
+
+
 def _configure_win32_signatures() -> None:
     """Pin argtypes/restype on user32 entry points used by the capture path.
 
@@ -217,6 +273,13 @@ def _configure_win32_signatures() -> None:
         return
     user32 = ctypes.windll.user32
     kernel32 = ctypes.windll.kernel32
+
+    # NOTE: SendInput / GetCursorInfo argtypes are deliberately NOT pinned on
+    # this shared ``ctypes.windll.user32`` instance. pynput injects clicks and
+    # keystrokes through the very same cached ``SendInput`` function object;
+    # pinning our _INPUT struct here makes pynput's calls raise
+    # "expected LP__INPUT instead of pointer to INPUT". ClientMouseController
+    # uses a private WinDLL instance for those two calls instead.
 
     user32.RegisterClassW.argtypes = [ctypes.POINTER(_WNDCLASSW)]
     user32.RegisterClassW.restype = wintypes.ATOM
@@ -619,6 +682,7 @@ class ServerMouseListener(_base.ServerMouseListener):
         super().__init__(*args, **kwargs)
 
         self._cursor_hidden: bool = False
+        self._capturing: bool = False
         self._listening_center: tuple[int, int] = (0, 0)
         self._raw_capture: Optional[_RawMouseCapture] = None
         self._user32 = ctypes.windll.user32
@@ -639,25 +703,36 @@ class ServerMouseListener(_base.ServerMouseListener):
     async def _on_screen_change_guard(
         self, data: Optional[ActiveScreenChangedEvent]
     ) -> None:
-        # Going to client: dispatch ACTIVE_SCREEN_CHANGED first, then start
-        # the capture. Returning: stop capture first so the next
-        # position_cursor warp lands on a visible cursor.
+        # Going to client: hide+centre first, then dispatch, then start
+        # capture. Returning: stop capture (release ClipCursor) but keep the
+        # cursor blank, let the controller warp it to the exact return point
+        # during the dispatch, and only then reveal it - so it never flashes
+        # at the centre before jumping to the return position.
         if data is None:
             return
 
         if data.active_screen:
+            # Hide + centre synchronously FIRST so the cursor disappears
+            # immediately, not behind the dispatch/sleep/blocking-thread-start
+            # latency below. Delta capture (ClipCursor + WM_INPUT) can start a
+            # few ms later without any visible difference.
+            self._hide_and_center()
             await self.event_bus.dispatch(
                 event_type=BusEventType.ACTIVE_SCREEN_CHANGED,
                 data=data,
             )
             await asyncio.sleep(0)
-            await self._enable_capture()
+            await self._start_capture()
         else:
-            await self._disable_capture()
+            # Release the capture (and ClipCursor) but leave the cursor blank,
+            # let the controller warp it to the exact return position while
+            # still hidden, and only then restore visibility.
+            await self._stop_capture()
             await self.event_bus.dispatch(
                 event_type=BusEventType.ACTIVE_SCREEN_CHANGED,
                 data=data,
             )
+            self._restore_cursor()
 
     async def _on_client_disconnected_show_cursor(
         self, data: Optional[ClientDisconnectedEvent]
@@ -665,7 +740,13 @@ class ServerMouseListener(_base.ServerMouseListener):
         if self._cursor_hidden:
             await self._disable_capture()
 
-    async def _enable_capture(self) -> None:
+    def _hide_and_center(self) -> None:
+        """Blank the system cursors and warp to the primary-monitor centre.
+
+        Synchronous and idempotent: this is the visible half of taking control
+        and must run with no intervening ``await`` so the cursor disappears at
+        once. ``_start_capture`` does the rest (ClipCursor pin + WM_INPUT).
+        """
         if self._cursor_hidden:
             return
         # Hide before the warp so the blank doesn't track the warp animation.
@@ -673,15 +754,40 @@ class ServerMouseListener(_base.ServerMouseListener):
         self._listening_center = self._compute_listening_center()
         cx, cy = self._listening_center
         try:
+            # SetSystemCursor doesn't repaint the *displayed* cursor until the
+            # pointer next moves, so a single SetCursorPos to a spot the cursor
+            # already occupies is a no-op that leaves the stale arrow on screen.
+            # Nudge by 1px then settle: the real position delta forces the OS to
+            # redraw the (now blank) cursor immediately. Absolute SetCursorPos is
+            # used (not SendInput) so the cursor lands on the exact pixel and no
+            # synthetic movement can leak to the foreground app.
+            self._user32.SetCursorPos(cx + 1, cy)
             self._user32.SetCursorPos(cx, cy)
         except Exception as e:
             self._logger.error("SetCursorPos centre failed", error=str(e))
+        self._cursor_hidden = True
+
+    async def _start_capture(self) -> None:
+        """Start Raw Input delta capture and pin the cursor with ClipCursor.
+
+        Assumes ``_hide_and_center`` already ran. On failure it rolls the visual
+        hide back so the operator isn't stuck with an invisible, uncaptured
+        cursor.
+        """
+        if not self._cursor_hidden:
+            # Hide step never ran or was rolled back - nothing to capture.
+            return
+        if self._capturing or self._raw_capture is not None:
+            # Guard fired twice; capture already live.
+            return
 
         loop = self._loop
         if loop is None or loop.is_closed():
             try:
                 loop = asyncio.get_running_loop()
             except RuntimeError:
+                # Leave the cursor hidden: the return-to-server _disable_capture
+                # still restores it via the _cursor_hidden flag.
                 self._logger.error("No event loop available - capture aborted")
                 return
 
@@ -690,26 +796,46 @@ class ServerMouseListener(_base.ServerMouseListener):
             on_delta=self._on_raw_delta,
             logger=self._logger,
         )
-        if not self._raw_capture.start(center=(cx, cy)):
+        if not self._raw_capture.start(center=self._listening_center):
             self._raw_capture = None
             _restore_system_cursors()
+            self._cursor_hidden = False
             return
-        self._cursor_hidden = True
+        self._capturing = True
 
-    async def _disable_capture(self) -> None:
-        if not self._cursor_hidden:
+    async def _stop_capture(self) -> None:
+        """Stop Raw Input capture and release the ClipCursor pin.
+
+        Leaves the cursor blank (``_cursor_hidden`` untouched) so the caller can
+        warp it to the return position before revealing it with
+        ``_restore_cursor``.
+        """
+        if not self._capturing and self._raw_capture is None:
             return
-        self._cursor_hidden = False
+        self._capturing = False
         capture = self._raw_capture
         self._raw_capture = None
         if capture is not None:
-            # stop() does a blocking join on the pump thread; run it in the
-            # executor so the asyncio loop isn't blocked by it.
+            # stop() does a blocking join on the pump thread (and ClipCursor(None));
+            # run it in the executor so the asyncio loop isn't blocked by it.
             try:
                 await asyncio.get_running_loop().run_in_executor(None, capture.stop)
             except Exception as e:
                 self._logger.error("Raw input stop failed", error=str(e))
+
+    def _restore_cursor(self) -> None:
+        """Reveal the system cursors again. Idempotent."""
+        if not self._cursor_hidden:
+            return
+        self._cursor_hidden = False
         _restore_system_cursors()
+
+    async def _disable_capture(self) -> None:
+        # Full teardown for callers without a known return position (e.g. an
+        # unclean client disconnect): stop capture then restore at the current
+        # (centre) position.
+        await self._stop_capture()
+        self._restore_cursor()
 
     def _on_raw_delta(self, dx: int, dy: int) -> None:
         if not self._cursor_hidden:
@@ -773,4 +899,57 @@ class ClientMouseController(_base.ClientMouseController):
     MOVEMENT_HISTORY_N_THRESHOLD = 4
     MOVEMENT_HISTORY_LEN = 5
 
-    pass
+    def __init__(self, *args, **kwargs):
+        super().__init__(*args, **kwargs)
+        # Private user32 handle so our SendInput/GetCursorInfo argtypes don't
+        # clobber the process-wide ``ctypes.windll.user32.SendInput`` that
+        # pynput uses for clicks and keystrokes (argtypes are per function
+        # object, and a fresh WinDLL builds its own).
+        self._user32 = ctypes.WinDLL("user32")
+        self._user32.SendInput.argtypes = [
+            wintypes.UINT,
+            ctypes.POINTER(_INPUT),
+            ctypes.c_int,
+        ]
+        self._user32.SendInput.restype = wintypes.UINT
+        self._user32.GetCursorInfo.argtypes = [ctypes.POINTER(_CURSORINFO)]
+        self._user32.GetCursorInfo.restype = wintypes.BOOL
+
+    def _cursor_is_hidden(self) -> bool:
+        """True when the system cursor is hidden (game pointer lock).
+
+        Read-only: a foreground game hides the cursor when it grabs the
+        pointer. We never change cursor visibility ourselves. The relative
+        SendInput injection stays unchanged under lock (the game confines the
+        cursor with ClipCursor); the base class just skips edge/clamp
+        repositioning while this returns True.
+        """
+        ci = _CURSORINFO()
+        ci.cbSize = ctypes.sizeof(_CURSORINFO)
+        if not self._user32.GetCursorInfo(ctypes.byref(ci)):
+            return False
+        return not (ci.flags & _CURSOR_SHOWING)
+
+    def _inject_relative(self, dx: int, dy: int) -> None:
+        """Send a relative mouse motion via ``SendInput``.
+
+        pynput's ``Controller.move`` sets an absolute cursor position, which
+        first-person games reading relative movement ignore. A
+        ``MOUSEEVENTF_MOVE`` event (without ``MOUSEEVENTF_ABSOLUTE``) delivers
+        genuine dx/dy deltas that DirectInput and the standard input pipeline
+        consume.
+        """
+        try:
+            inp = _INPUT(type=_INPUT_MOUSE)
+            inp.mi = _MOUSEINPUT(
+                dx=int(dx),
+                dy=int(dy),
+                mouseData=0,
+                dwFlags=_MOUSEEVENTF_MOVE,
+                time=0,
+                dwExtraInfo=0,
+            )
+            self._user32.SendInput(1, ctypes.byref(inp), ctypes.sizeof(_INPUT))
+        except Exception as e:
+            self._logger.error("relative SendInput injection failed", error=str(e))
+            super()._inject_relative(dx, dy)

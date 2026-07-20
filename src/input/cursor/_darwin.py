@@ -1,6 +1,5 @@
-"""
-Logic to handle cursor visibility on macOS systems.
-"""
+"""macOS cursor handler. The mouse listener owns cursor
+visibility and delta capture natively on this platform."""
 
 
 #  Perpetua - open-source and cross-platform KVM software.
@@ -20,196 +19,68 @@ Logic to handle cursor visibility on macOS systems.
 #  along with this program.  If not, see <https://www.gnu.org/licenses/>.
 #
 
+import asyncio
 from typing import Optional
 
-import wx
-from wx import Size
-
-from multiprocessing.connection import Connection
-
-import objc
-import Quartz
-
-from Quartz import kCGMaximumWindowLevel  # ty:ignore[unresolved-import]
-
-from AppKit import (
-    NSApplication,  # ty:ignore[unresolved-import]
-    NSWindowCollectionBehaviorCanJoinAllSpaces,  # ty:ignore[unresolved-import]
-    NSScreenSaverWindowLevel,  # ty:ignore[unresolved-import]
-    NSWorkspace,  # ty:ignore[unresolved-import]
-    NSApplicationActivateIgnoringOtherApps,  # ty:ignore[unresolved-import]
-    NSApplicationPresentationAutoHideDock,  # ty:ignore[unresolved-import]
-    NSApplicationPresentationAutoHideMenuBar,  # ty:ignore[unresolved-import]
-    NSWindowCollectionBehaviorStationary,  # ty:ignore[unresolved-import]
-    NSWindowCollectionBehaviorFullScreenAuxiliary,  # ty:ignore[unresolved-import]
-)
-
 from event.bus import EventBus
-from input.cursor import _base
-from input.cursor._worker import CursorHandlerWorker as _WorkerBase
 from network.stream.handler import StreamHandler
+from utils.logging import get_logger
 
 
-class CursorHandlerWindow(_base.CursorHandlerWindow):
-    BORDER_OFFSET = 1
-    WINDOW_SIZE = Size(400, 400)
+class CursorHandlerWorker:
+    """No-op replacement for the wx-based worker on macOS.
 
-    def __init__(
-        self,
-        command_conn: Connection,
-        result_conn: Connection,
-        mouse_conn: Connection,
-        debug: bool = False,
-        log_level: int = _base.Logger.DEBUG,
-    ):
-        super().__init__(
-            command_conn,
-            result_conn,
-            mouse_conn,
-            debug,
-            log_level=log_level,
-            size=self.WINDOW_SIZE,
-        )
-        # Panel principale
-        self.panel = wx.Panel(self)
-
-        self.previous_app = None
-        self.previous_app_pid = None
-
-        self._create()
-
-    def RestoreFocus(self, event):
-        """
-        Restore current window focus when mouse leaves the overlay.
-        """
-        self.ForceOverlay()
-
-    def ForceOverlay(self):
-        try:
-            p = self._get_centered_coords()
-            super().ForceOverlay()
-            self.Move(pt=p)
-
-            if not self.previous_app and not self.previous_app_pid:
-                self.previous_app = NSWorkspace.sharedWorkspace().frontmostApplication()
-                self.previous_app_pid = self.previous_app.processIdentifier()
-
-            NSApp = NSApplication.sharedApplication()
-            NSApp.setPresentationOptions_(
-                NSApplicationPresentationAutoHideDock
-                | NSApplicationPresentationAutoHideMenuBar
-            )
-            NSApp.activateIgnoringOtherApps_(True)
-
-            window_ptr = self.GetHandle()
-
-            ns_view = objc.objc_object(c_void_p=window_ptr)  # type: ignore
-            ns_window = ns_view.window()
-            ns_window.setLevel_(kCGMaximumWindowLevel + 1)
-            ns_window.setCollectionBehavior_(
-                NSWindowCollectionBehaviorCanJoinAllSpaces
-                | NSWindowCollectionBehaviorFullScreenAuxiliary
-                | NSWindowCollectionBehaviorStationary
-            )
-            ns_window.setIgnoresMouseEvents_(False)
-            ns_window.makeKeyAndOrderFront_(None)
-        except Exception as e:
-            self._logger.error("Error forcing overlay", error=str(e))
-
-    def HideOverlay(self, startup: bool = False):
-        try:
-            if not startup:
-                NSApp = NSApplication.sharedApplication()
-                NSApp.setPresentationOptions_(0)
-                NSApp.activateIgnoringOtherApps_(False)
-
-                window_ptr = self.GetHandle()
-                ns_view = objc.objc_object(c_void_p=window_ptr)  # type: ignore
-                ns_window = ns_view.window()
-                ns_window.setLevel_(NSScreenSaverWindowLevel - 1)
-                ns_window.setIgnoresMouseEvents_(False)
-                ns_window.setCollectionBehavior_(0)
-
-            super().HideOverlay(startup)
-        except Exception as e:
-            self._logger.error("Error hiding overlay", error=str(e))
-
-    def RestorePreviousApp(self):
-        try:
-            if self.previous_app:
-                self.previous_app.activateWithOptions_(
-                    NSApplicationActivateIgnoringOtherApps
-                )
-            self.previous_app = None
-            self.previous_app_pid = None
-        except Exception as e:
-            self._logger.error("Error restoring previous app", error=str(e))
-
-    def _force_recapture(self):
-        if not self.mouse_captured_flag.is_set():
-            return
-
-        try:
-            # Timer
-            retry_count = 4
-            retry_interval = 1  # ms
-
-            self._recapture_timer = wx.Timer(self)
-            self._recapture_attempts = 0
-            self._recapture_max_attempts = retry_count
-
-            def on_timer(event):
-                try:
-                    if self._recapture_attempts < self._recapture_max_attempts:
-                        self._recapture_attempts += 1
-                        self.ForceOverlay()
-                    else:
-                        self._recapture_timer.Stop()
-                except Exception as er:
-                    self._logger.error("Error during recapture attempt", error=str(er))
-
-            self.Bind(wx.EVT_TIMER, on_timer, self._recapture_timer)
-            self._recapture_timer.Start(retry_interval)
-
-        except Exception as e:
-            self._logger.error("Error during recapture attempt", error=str(e))
-
-    def handle_cursor_visibility(self, visible: bool):
-        """
-        Handle cursor visibility.
-        If visible is False, hide the cursor. If True, show the cursor.
-        Implement platform-specific cursor hiding/showing here.
-        """
-        if not visible:
-            cursor = wx.Cursor(wx.CURSOR_BLANK)
-            self.SetCursor(cursor)
-            Quartz.CGDisplayHideCursor(Quartz.CGMainDisplayID())  # ty:ignore[unresolved-attribute]
-        else:
-            self.SetCursor(wx.NullCursor)
-            Quartz.CGDisplayShowCursor(Quartz.CGMainDisplayID())  # ty:ignore[unresolved-attribute]
-
-
-class CursorHandlerWorker(_WorkerBase):
-    RESULT_POLL_TIMEOUT = 1  # sec
+    Cursor hiding and relative-delta capture are owned natively by the
+    ``ServerMouseListener`` in ``input/mouse/_darwin.py`` (Quartz/CoreGraphics),
+    so there is no overlay window or dedicated process here anymore. This stub
+    keeps the ``CursorHandlerWorker`` surface the daemon expects.
+    """
 
     def __init__(
         self,
         event_bus: EventBus,
         stream: Optional[StreamHandler] = None,
         debug: bool = False,
-        window_class=CursorHandlerWindow,
+        window_class=None,
     ):
-        super().__init__(event_bus, stream, debug, window_class)
+        self.event_bus = event_bus
+        self.stream = stream
+        self._debug = debug
+        self.window_class = window_class
 
-    def _get_process_target(self):
-        return _base._CursorHandlerProcess.run
+        self._is_running = False
+        self.process = None
+        self._mouse_data_task = None
+        self._logger = get_logger(self.__class__.__name__)
 
-    def _get_process_args(self):
-        return (
-            self.command_conn_rec,
-            self.result_conn_send,
-            self.mouse_conn_send,
-            self._debug,
-            self.window_class,
-            self._logger.level,
-        )
+    async def start(self, wait_ready: bool = True, timeout: float = 1) -> bool:
+        self._is_running = True
+        await asyncio.sleep(0)
+        return True
+
+    async def stop(self, timeout: float = 2) -> None:
+        self._is_running = False
+        await asyncio.sleep(0)
+
+    def is_alive(self) -> bool:
+        return self._is_running
+
+    async def enable_capture(self) -> None:
+        await asyncio.sleep(0)
+
+    async def disable_capture(self, x: int = -1, y: int = -1) -> None:
+        await asyncio.sleep(0)
+
+    async def send_command(self, command) -> None:
+        await asyncio.sleep(0)
+
+    async def get_result(self, timeout: float = 0.1):
+        await asyncio.sleep(0)
+        return None
+
+    async def get_all_results(self, timeout: float = 0.1):
+        await asyncio.sleep(0)
+        return []
+
+    async def close_handler(self) -> None:
+        await asyncio.sleep(0)
