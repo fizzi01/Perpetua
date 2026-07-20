@@ -1683,7 +1683,7 @@ class ClientMouseController(object):
             # Cached so ``_check_edge`` can detect a push toward an edge
             # when OS clamping has stalled the position history.
             self._last_move_delta = (dx, dy)
-            self._controller.move(dx=dx, dy=dy)
+            self._inject_relative(dx, dy)
         else:
             try:
                 min_x, min_y, max_x, max_y = self._active_target_bbox
@@ -1700,6 +1700,20 @@ class ClientMouseController(object):
                 self._controller.position = (x, y)
             except Exception as e:
                 self._logger.error("failed to position cursor", error=str(e))
+
+    def _inject_relative(self, dx: int, dy: int) -> None:
+        """Inject a relative pointer motion of ``(dx, dy)``.
+
+        The default implementation delegates to pynput's ``Controller.move``.
+        On macOS and Windows pynput implements this as an *absolute* warp
+        (read current position, set ``position = pos + delta``), which
+        first-person games reading raw/relative HID movement do not see —
+        only the visible cursor moves. Those backends override this hook to
+        post a genuine relative-motion event (CGEvent deltas / SendInput
+        ``MOUSEEVENTF_MOVE``). Linux/Wayland (libei) already moves relatively
+        and uses this default.
+        """
+        self._controller.move(dx=dx, dy=dy)
 
     def _click(self, button: int | None, is_pressed: bool):
         """Forward press/release to the OS, tagging multi-click sequences.

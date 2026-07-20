@@ -21,13 +21,22 @@ Provides mouse input support for macOS (Darwin) systems.
 #
 
 from Quartz import (
+    CGEventCreateMouseEvent,  # ty:ignore[unresolved-import]
+    CGEventPost,  # ty:ignore[unresolved-import]
+    CGEventSetIntegerValueField,  # ty:ignore[unresolved-import]
     kCGEventLeftMouseDown,  # ty:ignore[unresolved-import]
     kCGEventRightMouseDown,  # ty:ignore[unresolved-import]
     kCGEventOtherMouseDown,  # ty:ignore[unresolved-import]
     kCGEventLeftMouseDragged,  # ty:ignore[unresolved-import]
     kCGEventRightMouseDragged,  # ty:ignore[unresolved-import]
     kCGEventOtherMouseDragged,  # ty:ignore[unresolved-import]
+    kCGEventMouseMoved,  # ty:ignore[unresolved-import]
     kCGEventScrollWheel,  # ty:ignore[unresolved-import]
+    kCGHIDEventTap,  # ty:ignore[unresolved-import]
+    kCGMouseButtonLeft,  # ty:ignore[unresolved-import]
+    kCGMouseButtonRight,  # ty:ignore[unresolved-import]
+    kCGMouseEventDeltaX,  # ty:ignore[unresolved-import]
+    kCGMouseEventDeltaY,  # ty:ignore[unresolved-import]
 )
 from AppKit import (
     NSEventTypeGesture,  # ty:ignore[unresolved-import]
@@ -37,6 +46,8 @@ from AppKit import (
     NSEventTypeMagnify,  # ty:ignore[unresolved-import]
 )
 
+
+from input.utils import ButtonMapping
 
 from . import _base
 
@@ -110,4 +121,37 @@ class ClientMouseController(_base.ClientMouseController):
     Its main purpose is to move the cursor and simulate mouse clicks.
     """
 
-    pass
+    def _inject_relative(self, dx: int, dy: int) -> None:
+        """Post a genuine relative-motion CGEvent so games read the delta.
+
+        pynput's ``Controller.move`` warps the cursor to an absolute
+        position; first-person games reading ``kCGMouseEventDeltaX/Y`` see
+        nothing that way. We move the system cursor to ``current + delta`` (so
+        the visible pointer stays consistent for the desktop) *and* stamp the
+        event's delta fields, which is what the game's camera consumes. During
+        a drag the motion must be delivered as a ``…MouseDragged`` event, not
+        ``MouseMoved``, or the drag breaks.
+        """
+        try:
+            cur_x, cur_y = self._controller.position
+            new_x = cur_x + dx
+            new_y = cur_y + dy
+
+            if self._pressed and self._is_dragging:
+                if self._previous_button == ButtonMapping.right.value:
+                    event_type = kCGEventRightMouseDragged
+                    button = kCGMouseButtonRight
+                else:
+                    event_type = kCGEventLeftMouseDragged
+                    button = kCGMouseButtonLeft
+            else:
+                event_type = kCGEventMouseMoved
+                button = kCGMouseButtonLeft
+
+            event = CGEventCreateMouseEvent(None, event_type, (new_x, new_y), button)
+            CGEventSetIntegerValueField(event, kCGMouseEventDeltaX, int(dx))
+            CGEventSetIntegerValueField(event, kCGMouseEventDeltaY, int(dy))
+            CGEventPost(kCGHIDEventTap, event)
+        except Exception as e:
+            self._logger.error("relative CGEvent injection failed", error=str(e))
+            super()._inject_relative(dx, dy)

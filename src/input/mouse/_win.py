@@ -207,6 +207,41 @@ class _WNDCLASSW(ctypes.Structure):
     ]
 
 
+# Relative-motion injection (SendInput). MOUSEEVENTF_MOVE without
+# MOUSEEVENTF_ABSOLUTE makes dx/dy relative deltas, which is what games
+# reading DirectInput/relative movement consume — unlike pynput's absolute
+# cursor warp.
+_INPUT_MOUSE = 0
+_MOUSEEVENTF_MOVE = 0x0001
+
+_ULONG_PTR = (
+    ctypes.c_ulonglong if ctypes.sizeof(ctypes.c_void_p) == 8 else wintypes.DWORD
+)
+
+
+class _MOUSEINPUT(ctypes.Structure):
+    _fields_ = [
+        ("dx", wintypes.LONG),
+        ("dy", wintypes.LONG),
+        ("mouseData", wintypes.DWORD),
+        ("dwFlags", wintypes.DWORD),
+        ("time", wintypes.DWORD),
+        ("dwExtraInfo", _ULONG_PTR),
+    ]
+
+
+class _INPUT_UNION(ctypes.Union):
+    _fields_ = [("mi", _MOUSEINPUT)]
+
+
+class _INPUT(ctypes.Structure):
+    _anonymous_ = ("u",)
+    _fields_ = [
+        ("type", wintypes.DWORD),
+        ("u", _INPUT_UNION),
+    ]
+
+
 def _configure_win32_signatures() -> None:
     """Pin argtypes/restype on user32 entry points used by the capture path.
 
@@ -217,6 +252,13 @@ def _configure_win32_signatures() -> None:
         return
     user32 = ctypes.windll.user32
     kernel32 = ctypes.windll.kernel32
+
+    user32.SendInput.argtypes = [
+        wintypes.UINT,
+        ctypes.POINTER(_INPUT),
+        ctypes.c_int,
+    ]
+    user32.SendInput.restype = wintypes.UINT
 
     user32.RegisterClassW.argtypes = [ctypes.POINTER(_WNDCLASSW)]
     user32.RegisterClassW.restype = wintypes.ATOM
@@ -773,4 +815,30 @@ class ClientMouseController(_base.ClientMouseController):
     MOVEMENT_HISTORY_N_THRESHOLD = 4
     MOVEMENT_HISTORY_LEN = 5
 
-    pass
+    def __init__(self, *args, **kwargs):
+        super().__init__(*args, **kwargs)
+        self._user32 = ctypes.windll.user32
+
+    def _inject_relative(self, dx: int, dy: int) -> None:
+        """Send a relative mouse motion via ``SendInput``.
+
+        pynput's ``Controller.move`` sets an absolute cursor position, which
+        first-person games reading relative movement ignore. A
+        ``MOUSEEVENTF_MOVE`` event (without ``MOUSEEVENTF_ABSOLUTE``) delivers
+        genuine dx/dy deltas that DirectInput and the standard input pipeline
+        consume.
+        """
+        try:
+            inp = _INPUT(type=_INPUT_MOUSE)
+            inp.mi = _MOUSEINPUT(
+                dx=int(dx),
+                dy=int(dy),
+                mouseData=0,
+                dwFlags=_MOUSEEVENTF_MOVE,
+                time=0,
+                dwExtraInfo=0,
+            )
+            self._user32.SendInput(1, ctypes.byref(inp), ctypes.sizeof(_INPUT))
+        except Exception as e:
+            self._logger.error("relative SendInput injection failed", error=str(e))
+            super()._inject_relative(dx, dy)
