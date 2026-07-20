@@ -172,6 +172,11 @@ class _ServiceListener(ServiceListener):
         self._pending_task.add(task)
         task.add_done_callback(self._pending_task.discard)
 
+    def remove_service(self, zc: Zeroconf, type_: str, name: str) -> None:
+        """Remove a service that has left the network."""
+        uid = name.split(".")[0]
+        self._services = [s for s in self._services if s.uid != uid]
+
     def clear(self):
         """Clear discovered services"""
         # Close pending tasks
