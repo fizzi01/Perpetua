@@ -682,6 +682,7 @@ class ServerMouseListener(_base.ServerMouseListener):
         super().__init__(*args, **kwargs)
 
         self._cursor_hidden: bool = False
+        self._capturing: bool = False
         self._listening_center: tuple[int, int] = (0, 0)
         self._raw_capture: Optional[_RawMouseCapture] = None
         self._user32 = ctypes.windll.user32
@@ -709,12 +710,17 @@ class ServerMouseListener(_base.ServerMouseListener):
             return
 
         if data.active_screen:
+            # Hide + centre synchronously FIRST so the cursor disappears
+            # immediately, not behind the dispatch/sleep/blocking-thread-start
+            # latency below. Delta capture (ClipCursor + WM_INPUT) can start a
+            # few ms later without any visible difference.
+            self._hide_and_center()
             await self.event_bus.dispatch(
                 event_type=BusEventType.ACTIVE_SCREEN_CHANGED,
                 data=data,
             )
             await asyncio.sleep(0)
-            await self._enable_capture()
+            await self._start_capture()
         else:
             await self._disable_capture()
             await self.event_bus.dispatch(
@@ -728,7 +734,13 @@ class ServerMouseListener(_base.ServerMouseListener):
         if self._cursor_hidden:
             await self._disable_capture()
 
-    async def _enable_capture(self) -> None:
+    def _hide_and_center(self) -> None:
+        """Blank the system cursors and warp to the primary-monitor centre.
+
+        Synchronous and idempotent: this is the visible half of taking control
+        and must run with no intervening ``await`` so the cursor disappears at
+        once. ``_start_capture`` does the rest (ClipCursor pin + WM_INPUT).
+        """
         if self._cursor_hidden:
             return
         # Hide before the warp so the blank doesn't track the warp animation.
@@ -736,15 +748,40 @@ class ServerMouseListener(_base.ServerMouseListener):
         self._listening_center = self._compute_listening_center()
         cx, cy = self._listening_center
         try:
+            # SetSystemCursor doesn't repaint the *displayed* cursor until the
+            # pointer next moves, so a single SetCursorPos to a spot the cursor
+            # already occupies is a no-op that leaves the stale arrow on screen.
+            # Nudge by 1px then settle: the real position delta forces the OS to
+            # redraw the (now blank) cursor immediately. Absolute SetCursorPos is
+            # used (not SendInput) so the cursor lands on the exact pixel and no
+            # synthetic movement can leak to the foreground app.
+            self._user32.SetCursorPos(cx + 1, cy)
             self._user32.SetCursorPos(cx, cy)
         except Exception as e:
             self._logger.error("SetCursorPos centre failed", error=str(e))
+        self._cursor_hidden = True
+
+    async def _start_capture(self) -> None:
+        """Start Raw Input delta capture and pin the cursor with ClipCursor.
+
+        Assumes ``_hide_and_center`` already ran. On failure it rolls the visual
+        hide back so the operator isn't stuck with an invisible, uncaptured
+        cursor.
+        """
+        if not self._cursor_hidden:
+            # Hide step never ran or was rolled back - nothing to capture.
+            return
+        if self._capturing or self._raw_capture is not None:
+            # Guard fired twice; capture already live.
+            return
 
         loop = self._loop
         if loop is None or loop.is_closed():
             try:
                 loop = asyncio.get_running_loop()
             except RuntimeError:
+                # Leave the cursor hidden: the return-to-server _disable_capture
+                # still restores it via the _cursor_hidden flag.
                 self._logger.error("No event loop available - capture aborted")
                 return
 
@@ -753,16 +790,18 @@ class ServerMouseListener(_base.ServerMouseListener):
             on_delta=self._on_raw_delta,
             logger=self._logger,
         )
-        if not self._raw_capture.start(center=(cx, cy)):
+        if not self._raw_capture.start(center=self._listening_center):
             self._raw_capture = None
             _restore_system_cursors()
+            self._cursor_hidden = False
             return
-        self._cursor_hidden = True
+        self._capturing = True
 
     async def _disable_capture(self) -> None:
-        if not self._cursor_hidden:
+        if not self._cursor_hidden and not self._capturing:
             return
         self._cursor_hidden = False
+        self._capturing = False
         capture = self._raw_capture
         self._raw_capture = None
         if capture is not None:
