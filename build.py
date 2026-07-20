@@ -378,11 +378,21 @@ class Builder:
         # Signing identity resolution: the ``PERPETUA_MACOS_SIGN_IDENTITY`` env
         # var carries the certificate common-name (a self-signed keychain cert
         # locally / in CI). When unset we fall back to a proper ad-hoc signature
-        # (``-``) so local builds without a cert stay reproducible. We must NOT
-        # pass ``APP_NAME`` here: codesign would treat it as a keychain identity
-        # lookup and silently sign with whatever (or nothing) matches.
+        # (``-``) so local/debug builds without a cert stay reproducible. We must
+        # NOT pass ``APP_NAME`` here: codesign would treat it as a keychain
+        # identity lookup and silently sign with whatever (or nothing) matches.
+        #
+        # Ad-hoc is forbidden for *release* builds: an ad-hoc signature has no
+        # certificate, so macOS TCC binds Accessibility grants to the binary's
+        # cdhash (which changes every build) and users must re-grant permissions
+        # on every new version. Fail loudly rather than ship a broken release.
         identity = os.environ.get("PERPETUA_MACOS_SIGN_IDENTITY") or "-"
         ad_hoc = identity == "-"
+        if ad_hoc and self.release:
+            raise RuntimeError(
+                "No signing identity for release build "
+                "(PERPETUA_MACOS_SIGN_IDENTITY unset); refusing to sign ad-hoc"
+            )
         self.log.info(
             "Signing macOS app bundle",
             identity="ad-hoc" if ad_hoc else identity,
