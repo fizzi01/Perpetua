@@ -20,6 +20,7 @@ Provides mouse input support for macOS (Darwin) systems.
 #  along with this program.  If not, see <https://www.gnu.org/licenses/>.
 #
 
+import asyncio
 import atexit
 import ctypes
 import ctypes.util
@@ -71,69 +72,71 @@ from . import _base
 # --------------------------------------------------------------------------- #
 
 # CGDisplayHideCursor only affects the visible cursor when the calling process
-# owns the active window UNLESS the connection has SetsCursorInBackground set.
-# That property is a private CoreGraphics SPI reached via ctypes (PyObjC doesn't
-# expose the CGS* symbols). Resolved lazily so importing this module never
-# touches the private framework symbols.
-_CGS_STATE: dict = {}
+# owns the active window UNLESS the connection has the private
+# ``SetsCursorInBackground`` property set - the same trick Barrier/InputLeap use
+# to hide the cursor from a background KVM daemon. The CGS* symbols aren't
+# exposed by PyObjC, so they're reached via ctypes. Barrier sets this ONCE at
+# startup using ``_CGSDefaultConnection()`` and checks the return code; doing it
+# lazily-per-hide and swallowing errors is what made the hide silently fail in
+# the daemon on macOS 26.
 _kCFStringEncodingUTF8 = 0x08000100
+_kCGErrorSuccess = 0
 
 
-def _enable_cursor_hide_in_background() -> None:
-    """Best-effort: let CGDisplayHideCursor work from a background process.
+def _enable_cursor_hide_in_background() -> bool:
+    """Set the private ``SetsCursorInBackground`` property (Barrier recipe).
 
-    Sets the private ``SetsCursorInBackground`` connection property once. Any
-    failure (SPI missing/renamed on a given macOS release) is swallowed - the
-    caller falls back to warping the (decoupled) cursor off-screen.
+    Must be called once at startup. Returns True on success. Raises on failure
+    so the caller can log a precise reason instead of a silent degrade to a
+    background-ineffective ``CGDisplayHideCursor``.
     """
     if sys.platform != "darwin":
-        return
-    if _CGS_STATE.get("applied"):
-        return
-    try:
-        cg = _CGS_STATE.get("cg")
-        cf = _CGS_STATE.get("cf")
-        if cg is None:
-            cg = ctypes.CDLL(ctypes.util.find_library("CoreGraphics"))
-            cg.CGSMainConnectionID.restype = ctypes.c_int
-            cg.CGSMainConnectionID.argtypes = []
-            cg.CGSSetConnectionProperty.restype = ctypes.c_int
-            cg.CGSSetConnectionProperty.argtypes = [
-                ctypes.c_int,
-                ctypes.c_int,
-                ctypes.c_void_p,
-                ctypes.c_void_p,
-            ]
-            _CGS_STATE["cg"] = cg
-        if cf is None:
-            cf = ctypes.CDLL(ctypes.util.find_library("CoreFoundation"))
-            cf.CFStringCreateWithCString.restype = ctypes.c_void_p
-            cf.CFStringCreateWithCString.argtypes = [
-                ctypes.c_void_p,
-                ctypes.c_char_p,
-                ctypes.c_uint32,
-            ]
-            cf.CFRelease.argtypes = [ctypes.c_void_p]
-            _CGS_STATE["cf"] = cf
-            _CGS_STATE["true"] = ctypes.c_void_p.in_dll(cf, "kCFBooleanTrue")
+        return False
 
-        cid = cg.CGSMainConnectionID()
-        key = cf.CFStringCreateWithCString(
-            None, b"SetsCursorInBackground", _kCFStringEncodingUTF8
-        )
-        try:
-            cg.CGSSetConnectionProperty(cid, cid, key, _CGS_STATE["true"])
-        finally:
-            if key:
-                cf.CFRelease(key)
-        _CGS_STATE["applied"] = True
-    except Exception:
-        # Leave "applied" unset so a later attempt can retry.
-        pass
+    cg = ctypes.CDLL(ctypes.util.find_library("CoreGraphics"))
+    cf = ctypes.CDLL(ctypes.util.find_library("CoreFoundation"))
+
+    # _CGSDefaultConnection is the per-thread default connection Barrier uses;
+    # fall back to CGSMainConnectionID if it's ever unavailable.
+    if hasattr(cg, "_CGSDefaultConnection"):
+        conn_fn = cg._CGSDefaultConnection
+    else:
+        conn_fn = cg.CGSMainConnectionID
+    conn_fn.restype = ctypes.c_int
+    conn_fn.argtypes = []
+
+    cg.CGSSetConnectionProperty.restype = ctypes.c_int
+    cg.CGSSetConnectionProperty.argtypes = [
+        ctypes.c_int,
+        ctypes.c_int,
+        ctypes.c_void_p,
+        ctypes.c_void_p,
+    ]
+    cf.CFStringCreateWithCString.restype = ctypes.c_void_p
+    cf.CFStringCreateWithCString.argtypes = [
+        ctypes.c_void_p,
+        ctypes.c_char_p,
+        ctypes.c_uint32,
+    ]
+    cf.CFRelease.argtypes = [ctypes.c_void_p]
+    true_val = ctypes.c_void_p.in_dll(cf, "kCFBooleanTrue")
+
+    cid = conn_fn()
+    key = cf.CFStringCreateWithCString(
+        None, b"SetsCursorInBackground", _kCFStringEncodingUTF8
+    )
+    if not key:
+        raise OSError("CFStringCreateWithCString(SetsCursorInBackground) failed")
+    try:
+        rc = cg.CGSSetConnectionProperty(cid, cid, key, true_val)
+    finally:
+        cf.CFRelease(key)
+    if rc != _kCGErrorSuccess:
+        raise OSError(f"CGSSetConnectionProperty failed (rc={rc})")
+    return True
 
 
 def _hide_cursor() -> None:
-    _enable_cursor_hide_in_background()
     CGDisplayHideCursor(CGMainDisplayID())
 
 
@@ -194,6 +197,13 @@ class ServerMouseListener(_base.ServerMouseListener):
     ``on_scroll`` handlers, which pynput dispatches before the suppress filter.
     """
 
+    # How often to re-assert the hidden cursor while a client is active. The
+    # WindowServer re-shows the cursor on Mission Control / Spaces / unlock; a
+    # short poll re-hides it (the old wx overlay used a 500ms lock monitor).
+    _REASSERT_INTERVAL = 0.1
+    # Safety cap for the balanced restore loop (see _restore_cursor).
+    _RESTORE_SHOW_CAP = 32
+
     def __init__(self, *args, **kwargs):
         # Force filtering on: the daemon passes filtering=False by default,
         # which would let a hidden cursor click through to the local desktop.
@@ -209,6 +219,28 @@ class ServerMouseListener(_base.ServerMouseListener):
         self._pending_dx = 0
         self._pending_dy = 0
         self._pending_scheduled = False
+
+        # Re-assert task: re-hides the cursor after the WindowServer re-shows it
+        # (Mission Control / Spaces / unlock), lives only while a client active.
+        self._reassert_task: Optional[asyncio.Task] = None
+
+        # Enable background cursor hiding ONCE at startup (Barrier recipe). If
+        # this fails, CGDisplayHideCursor is a no-op from a background daemon, so
+        # log the outcome explicitly rather than silently degrading.
+        self._bg_hide_enabled: bool = False
+        if sys.platform == "darwin":
+            try:
+                self._bg_hide_enabled = _enable_cursor_hide_in_background()
+                self._logger.info(
+                    "SetsCursorInBackground applied",
+                    enabled=self._bg_hide_enabled,
+                )
+            except Exception as e:
+                self._logger.error(
+                    "SetsCursorInBackground failed - cursor hide will not work "
+                    "while the daemon is in the background",
+                    error=str(e),
+                )
 
         self.event_bus.subscribe(
             event_type=BusEventType.SCREEN_CHANGE_GUARD,
@@ -239,6 +271,7 @@ class ServerMouseListener(_base.ServerMouseListener):
 
         if data.active_screen:
             self._hide_and_pin()
+            self._start_reassert()
             await self.event_bus.dispatch(
                 event_type=BusEventType.ACTIVE_SCREEN_CHANGED,
                 data=data,
@@ -246,6 +279,7 @@ class ServerMouseListener(_base.ServerMouseListener):
         else:
             # Re-couple BEFORE the dispatch so the controller's absolute warp to
             # the return point isn't fought by a decoupled cursor.
+            self._stop_reassert()
             self._unpin()
             await self.event_bus.dispatch(
                 event_type=BusEventType.ACTIVE_SCREEN_CHANGED,
@@ -257,8 +291,21 @@ class ServerMouseListener(_base.ServerMouseListener):
         self, data: Optional[ClientDisconnectedEvent]
     ) -> None:
         if self._cursor_hidden:
+            self._stop_reassert()
             self._unpin()
             self._restore_cursor()
+
+    def stop(self) -> bool:
+        # Defensive teardown on a clean listener stop: never leave the cursor
+        # hidden or the mouse decoupled if we're torn down mid-control.
+        try:
+            self._stop_reassert()
+            if self._cursor_hidden:
+                self._unpin()
+                self._restore_cursor()
+        except Exception as e:
+            self._logger.error("error during mouse listener teardown", error=str(e))
+        return super().stop()
 
     def _hide_and_pin(self) -> None:
         """Hide the cursor and decouple the mouse. Synchronous and idempotent."""
@@ -268,6 +315,13 @@ class ServerMouseListener(_base.ServerMouseListener):
         try:
             _decouple_mouse()
             _hide_cursor()
+            # Diagnostic: if this logs visible=True the SetsCursorInBackground
+            # SPI isn't taking effect in the daemon context on this macOS.
+            self._logger.debug(
+                "cursor hidden",
+                visible=bool(CGCursorIsVisible()),
+                bg_hide=self._bg_hide_enabled,
+            )
         except Exception as e:
             self._logger.error("failed to hide/pin cursor", error=str(e))
 
@@ -279,14 +333,59 @@ class ServerMouseListener(_base.ServerMouseListener):
             self._logger.error("failed to re-couple mouse", error=str(e))
 
     def _restore_cursor(self) -> None:
-        """Reveal the cursor again. Idempotent."""
+        """Reveal the cursor again, balancing the hide/show counter.
+
+        ``CGDisplayHideCursor`` is a per-connection counter: every re-assert
+        that re-hid the cursor (after the WindowServer re-showed it) bumped it,
+        so a single ``CGDisplayShowCursor`` could leave the cursor stuck
+        invisible. Show in a loop until the cursor is actually visible;
+        ``CGDisplayShowCursor`` at count 0 is a no-op, so this is safe.
+        """
         if not self._cursor_hidden:
             return
         self._cursor_hidden = False
         try:
-            _show_cursor()
+            for _ in range(self._RESTORE_SHOW_CAP):
+                if CGCursorIsVisible():
+                    break
+                _show_cursor()
         except Exception as e:
             self._logger.error("failed to show cursor", error=str(e))
+
+    def _start_reassert(self) -> None:
+        """Start the periodic re-assert loop while a client is active."""
+        if self._reassert_task is not None and not self._reassert_task.done():
+            return
+        loop = self._loop
+        if loop is None or loop.is_closed():
+            return
+        try:
+            self._reassert_task = loop.create_task(self._reassert_loop())
+        except RuntimeError:
+            self._reassert_task = None
+
+    def _stop_reassert(self) -> None:
+        task = self._reassert_task
+        self._reassert_task = None
+        if task is not None and not task.done():
+            task.cancel()
+
+    async def _reassert_loop(self) -> None:
+        try:
+            while self._cursor_hidden:
+                await asyncio.sleep(self._REASSERT_INTERVAL)
+                if not self._cursor_hidden:
+                    break
+                try:
+                    # Re-hide only when the WindowServer has re-shown the cursor,
+                    # so the hide counter doesn't grow every tick.
+                    if CGCursorIsVisible():
+                        _hide_cursor()
+                        _decouple_mouse()
+                except Exception as e:
+                    self._logger.error("cursor re-assert failed", error=str(e))
+        except asyncio.CancelledError:
+            pass
 
     def _enqueue_delta(self, dx: int, dy: int) -> None:
         with self._pending_lock:
