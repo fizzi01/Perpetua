@@ -119,6 +119,7 @@ jobs:
           MAC_CERTIFICATE: ${{ secrets.CERTIFICATE }}
           MAC_CERTIFICATE_PASSWORD: ${{ secrets.CERTIFICATE_PASSWORD }}
           KEYCHAIN_PASSWORD: ${{ secrets.KEYCHAIN_PASSWORD }}
+          MACOS_SIGN_IDENTITY: ${{ secrets.MACOS_SIGN_IDENTITY }}
         run: |
           echo "$MAC_CERTIFICATE" | base64 --decode > certificate.p12
           security create-keychain -p $KEYCHAIN_PASSWORD build.keychain
@@ -129,11 +130,20 @@ jobs:
           security set-key-partition-list -S apple-tool:,apple:,codesign: -s -k "$KEYCHAIN_PASSWORD" build.keychain
           security find-identity -v -p codesigning build.keychain
           rm certificate.p12
-          # Extract the imported certificate's common-name and hand it to
-          # build.py's codesign step (see _sign_bundle). Without this the build
-          # would fall back to an ad-hoc signature and ignore the imported cert.
-          IDENTITY=$(security find-identity -v -p codesigning build.keychain | sed -n 's/.*"\(.*\)".*/\1/p' | head -n1)
-          echo "PERPETUA_MACOS_SIGN_IDENTITY=$IDENTITY" >> "$GITHUB_ENV"
+          # The signing identity (certificate common-name) is provided explicitly
+          # via the MACOS_SIGN_IDENTITY secret and handed to build.py's codesign
+          # step (see _sign_bundle). We do NOT derive it from `find-identity -v`:
+          # a self-signed cert is untrusted in the ephemeral CI keychain, so `-v`
+          # lists 0 valid identities, the derived value is empty, and build.py
+          # silently falls back to an ad-hoc signature. Ad-hoc bundles bind macOS
+          # TCC (Accessibility) grants to the cdhash, which changes every build,
+          # so users must re-grant permissions on every release. `codesign --sign
+          # <name>` finds the identity by name even when untrusted.
+          if [ -z "$MACOS_SIGN_IDENTITY" ]; then
+            echo "::error::MACOS_SIGN_IDENTITY secret is empty; refusing to build a release that would sign ad-hoc"
+            exit 1
+          fi
+          echo "PERPETUA_MACOS_SIGN_IDENTITY=$MACOS_SIGN_IDENTITY" >> "$GITHUB_ENV"
 
       - name: Build daemon
         run: poetry run python build.py --skip-gui --nuitka-args --assume-yes-for-downloads
