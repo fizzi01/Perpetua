@@ -35,6 +35,15 @@ from ._base import DEFAULT_ARGS, AutostartManager, AutostartStatus
 
 LABEL = "com.federicoizzi.Perpetua"
 
+# LaunchServices launcher. When ``exec_path`` is a ``.app`` bundle we register
+# ``open <bundle>`` rather than the bundle's inner Mach-O: launching the inner
+# binary directly bypasses LaunchServices and makes launchd render a second,
+# bundle-less dock icon (and defeats single-instance dedup). Going through
+# ``open`` reuses the one dock icon and folds into any running instance.
+_OPEN_PATH = "/usr/bin/open"
+# Marker after which ``open`` forwards the remaining tokens to the launched app.
+_OPEN_ARGS_MARKER = "--args"
+
 
 class _MacAutostartManager(AutostartManager):
     @property
@@ -49,22 +58,49 @@ class _MacAutostartManager(AutostartManager):
             with p.open("rb") as f:
                 data = plistlib.load(f)
             argv = data.get("ProgramArguments") or []
-            exec_path = argv[0] if argv else data.get("Program")
-            return AutostartStatus(
-                enabled=True, exec_path=exec_path, args=list(argv[1:])
-            )
+            exec_path, args = self._parse_program_arguments(argv, data)
+            return AutostartStatus(enabled=True, exec_path=exec_path, args=args)
         except (plistlib.InvalidFileException, OSError):
             return AutostartStatus(enabled=False)
+
+    @staticmethod
+    def _parse_program_arguments(argv, data):
+        """Recover ``(exec_path, args)`` from a plist's ProgramArguments.
+
+        Handles both the LaunchServices form
+        ``["/usr/bin/open", "<bundle>.app", "--args", *args]`` (report the
+        bundle as exec_path so the stale-path warning stays meaningful) and the
+        legacy direct form ``["<exec>", *args]``.
+        """
+        if not argv:
+            return data.get("Program"), []
+        if argv[0] == _OPEN_PATH:
+            exec_path = argv[1] if len(argv) > 1 else None
+            try:
+                marker = argv.index(_OPEN_ARGS_MARKER)
+                args = list(argv[marker + 1 :])
+            except ValueError:
+                args = []
+            return exec_path, args
+        return argv[0], list(argv[1:])
 
     def enable(self, exec_path: str, args: Optional[List[str]] = None) -> None:
         if not os.path.isabs(exec_path):
             raise ValueError(f"exec_path must be absolute, got: {exec_path}")
+        launch_args = list(args) if args is not None else list(DEFAULT_ARGS)
+        if exec_path.endswith(".app"):
+            program_arguments = [
+                _OPEN_PATH,
+                exec_path,
+                _OPEN_ARGS_MARKER,
+                *launch_args,
+            ]
+        else:
+            # Legacy / non-bundle path (e.g. a plain binary): launch directly.
+            program_arguments = [exec_path, *launch_args]
         plist = {
             "Label": LABEL,
-            "ProgramArguments": [
-                exec_path,
-                *(args if args is not None else DEFAULT_ARGS),
-            ],
+            "ProgramArguments": program_arguments,
             "RunAtLoad": True,
             "KeepAlive": False,
             # Restrict the LaunchAgent to graphical sessions so it doesn't

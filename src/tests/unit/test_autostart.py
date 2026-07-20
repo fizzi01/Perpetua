@@ -32,6 +32,7 @@ from utils.autostart import (
     mode_from_args,
 )
 from utils.autostart._base import AutostartStatus
+from utils.autostart._darwin import _OPEN_PATH, _MacAutostartManager
 from utils.autostart._linux import _LinuxAutostartManager
 
 
@@ -101,3 +102,96 @@ def test_linux_backend_requires_absolute_path(tmp_path, monkeypatch):
     mgr = _LinuxAutostartManager()
     with pytest.raises(ValueError):
         mgr.enable("Perpetua", args=args_for_mode(MODE_SERVER))
+
+
+# --- macOS backend --------------------------------------------------------
+#
+# The plist round-trip is platform-agnostic (plistlib). We only stub out the
+# ``launchctl`` bootstrap/bootout calls so the tests never touch the real
+# per-user launchd domain, and redirect the plist to a tmp dir.
+
+
+@pytest.fixture
+def mac_manager(tmp_path, monkeypatch):
+    monkeypatch.setattr(
+        _MacAutostartManager,
+        "_plist_path",
+        property(lambda self: tmp_path / "com.federicoizzi.Perpetua.plist"),
+    )
+    monkeypatch.setattr(_MacAutostartManager, "_launchctl_bootstrap", staticmethod(lambda p: None))
+    monkeypatch.setattr(_MacAutostartManager, "_launchctl_bootout", staticmethod(lambda p: None))
+    return _MacAutostartManager()
+
+
+@pytest.mark.parametrize("mode", [MODE_SERVER, MODE_CLIENT, MODE_PLAIN])
+def test_mac_backend_bundle_roundtrip(mac_manager, mode):
+    """A ``.app`` bundle must register via /usr/bin/open and round-trip."""
+    import plistlib
+
+    assert mac_manager.is_enabled().enabled is False
+
+    bundle = "/Applications/Perpetua.app"
+    mac_manager.enable(bundle, args=args_for_mode(mode))
+
+    # The on-disk plist launches the bundle through LaunchServices, not the
+    # inner Mach-O — this is what prevents the duplicate dock icon.
+    with mac_manager._plist_path.open("rb") as f:
+        argv = plistlib.load(f)["ProgramArguments"]
+    assert argv[0] == _OPEN_PATH
+    assert argv[1] == bundle
+    assert "--args" in argv
+
+    status = mac_manager.is_enabled()
+    assert status.enabled is True
+    assert status.exec_path == bundle  # bundle, not /usr/bin/open
+    assert status.mode == mode
+
+    mac_manager.disable()
+    assert mac_manager.is_enabled().enabled is False
+
+
+def test_mac_backend_direct_binary_legacy_form(mac_manager):
+    """A non-.app path keeps the direct-launch form for back-compat."""
+    import plistlib
+
+    exec_path = "/opt/Perpetua/Perpetua"
+    mac_manager.enable(exec_path, args=args_for_mode(MODE_SERVER))
+
+    with mac_manager._plist_path.open("rb") as f:
+        argv = plistlib.load(f)["ProgramArguments"]
+    assert argv[0] == exec_path
+
+    status = mac_manager.is_enabled()
+    assert status.exec_path == exec_path
+    assert status.mode == MODE_SERVER
+
+
+def test_mac_backend_requires_absolute_path(mac_manager):
+    with pytest.raises(ValueError):
+        mac_manager.enable("Perpetua.app", args=args_for_mode(MODE_SERVER))
+
+
+@pytest.mark.parametrize(
+    "argv,expected_exec,expected_args",
+    [
+        (
+            ["/usr/bin/open", "/Applications/Perpetua.app", "--args", "--start-minimized", "--server"],
+            "/Applications/Perpetua.app",
+            ["--start-minimized", "--server"],
+        ),
+        (
+            ["/usr/bin/open", "/Applications/Perpetua.app", "--args"],
+            "/Applications/Perpetua.app",
+            [],
+        ),
+        (
+            ["/opt/Perpetua/Perpetua", "--start-minimized", "--client"],
+            "/opt/Perpetua/Perpetua",
+            ["--start-minimized", "--client"],
+        ),
+    ],
+)
+def test_mac_parse_program_arguments(argv, expected_exec, expected_args):
+    exec_path, args = _MacAutostartManager._parse_program_arguments(argv, {})
+    assert exec_path == expected_exec
+    assert args == expected_args

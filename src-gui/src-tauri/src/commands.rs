@@ -618,10 +618,24 @@ pub async fn set_autostart(
     // The daemon needs to know which executable to register. We resolve it
     // here in the GUI process because the daemon runs detached and can't
     // necessarily introspect us (think systemd user service).
-    let exec_path = std::env::current_exe()
-        .map_err(|e| format!("Failed to determine GUI executable path: {}", e))?
+    let current_exe = std::env::current_exe()
+        .map_err(|e| format!("Failed to determine GUI executable path: {}", e))?;
+
+    // On macOS, current_exe() points at the Mach-O *inside* the bundle
+    // (Perpetua.app/Contents/MacOS/Perpetua). Registering that inner binary
+    // makes launchd bypass LaunchServices and spawn a second, bundle-less dock
+    // icon. Walk up to the enclosing `.app` bundle and register that instead so
+    // LaunchServices reuses the single dock icon and dedupes instances.
+    #[cfg(target_os = "macos")]
+    let exec_path = current_exe
+        .ancestors()
+        .find(|p| p.extension().is_some_and(|ext| ext == "app"))
+        .unwrap_or(current_exe.as_path())
         .to_string_lossy()
         .to_string();
+
+    #[cfg(not(target_os = "macos"))]
+    let exec_path = current_exe.to_string_lossy().to_string();
 
     let params = format!(
         r#"{{ "mode": "{}", "exec_path": "{}" }}"#,

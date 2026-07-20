@@ -129,6 +129,11 @@ jobs:
           security set-key-partition-list -S apple-tool:,apple:,codesign: -s -k "$KEYCHAIN_PASSWORD" build.keychain
           security find-identity -v -p codesigning build.keychain
           rm certificate.p12
+          # Extract the imported certificate's common-name and hand it to
+          # build.py's codesign step (see _sign_bundle). Without this the build
+          # would fall back to an ad-hoc signature and ignore the imported cert.
+          IDENTITY=$(security find-identity -v -p codesigning build.keychain | sed -n 's/.*"\(.*\)".*/\1/p' | head -n1)
+          echo "PERPETUA_MACOS_SIGN_IDENTITY=$IDENTITY" >> "$GITHUB_ENV"
 
       - name: Build daemon
         run: poetry run python build.py --skip-gui --nuitka-args --assume-yes-for-downloads

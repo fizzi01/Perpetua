@@ -39,7 +39,7 @@ Built with Python using uvloop (macOS/Linux) and winloop (Windows) as event loop
 
 [![GitHub Downloads (all assets, latest release)](https://img.shields.io/github/downloads/fizzi01/Perpetua/latest/total?style=for-the-badge&logo=github&label=DOWNLOAD%20LATEST&color=%234f47e4)](https://github.com/fizzi01/Perpetua/releases/latest)
 
-- **macOS**: Extract the `.zip`, run `xattr -c Perpetua.app` and launch `Perpetua.app`.
+- **macOS**: Extract the `.zip`, then launch `Perpetua.app`. Clear the quarantine with `xattr -c Perpetua.app` before launching.
 - **Windows**: Extract the archive and run `Perpetua.exe` inside the `Perpetua` folder.
 - **Linux** (x86_64 / aarch64), pick one:
   - **Debian / Ubuntu**: `sudo dpkg -i perpetua_*.deb` (or `sudo apt install ./perpetua_*.deb`).
