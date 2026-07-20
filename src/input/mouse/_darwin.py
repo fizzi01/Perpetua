@@ -37,11 +37,14 @@ from Quartz import (
     CGEventGetIntegerValueField,  # ty:ignore[unresolved-import]
     CGEventPost,  # ty:ignore[unresolved-import]
     CGEventSetIntegerValueField,  # ty:ignore[unresolved-import]
+    CGEventTapEnable,  # ty:ignore[unresolved-import]
     CGMainDisplayID,  # ty:ignore[unresolved-import]
     kCGEventLeftMouseDragged,  # ty:ignore[unresolved-import]
     kCGEventRightMouseDragged,  # ty:ignore[unresolved-import]
     kCGEventOtherMouseDragged,  # ty:ignore[unresolved-import]
     kCGEventMouseMoved,  # ty:ignore[unresolved-import]
+    kCGEventTapDisabledByTimeout,  # ty:ignore[unresolved-import]
+    kCGEventTapDisabledByUserInput,  # ty:ignore[unresolved-import]
     kCGHIDEventTap,  # ty:ignore[unresolved-import]
     kCGMouseButtonLeft,  # ty:ignore[unresolved-import]
     kCGMouseButtonRight,  # ty:ignore[unresolved-import]
@@ -58,6 +61,7 @@ from event import (
 from input.utils import ButtonMapping
 
 from . import _base
+from .backend import MouseListener
 
 
 # --------------------------------------------------------------------------- #
@@ -183,6 +187,21 @@ _DARWIN_DELTA_EVENT_TYPES = (
     kCGEventRightMouseDragged,
     kCGEventOtherMouseDragged,
 )
+
+
+class _DarwinMouseListener(MouseListener):
+    """pynput mouse Listener that stashes its CGEventTap mach port.
+
+    pynput enables the tap once and never re-enables it, and keeps the port only
+    as a local in ``_run``. We need the port to re-enable the tap after the
+    kernel disables it (``kCGEventTapDisabledByTimeout``), so capture survives
+    load spikes / App Nap instead of silently dying.
+    """
+
+    def _create_event_tap(self):
+        tap = super()._create_event_tap()
+        self._perpetua_tap = tap
+        return tap
 
 
 class ServerMouseListener(_base.ServerMouseListener):
@@ -313,15 +332,12 @@ class ServerMouseListener(_base.ServerMouseListener):
             return
         self._cursor_hidden = True
         try:
-            _decouple_mouse()
+            # Hide BEFORE decoupling: decoupling freezes the cursor, and a frozen
+            # cursor won't composite the blank frame until the next motion, which
+            # adds a visible delay. Hiding while the pointer is still moving into
+            # the edge lets the next motion frame render the blank immediately.
             _hide_cursor()
-            # Diagnostic: if this logs visible=True the SetsCursorInBackground
-            # SPI isn't taking effect in the daemon context on this macOS.
-            self._logger.debug(
-                "cursor hidden",
-                visible=bool(CGCursorIsVisible()),
-                bg_hide=self._bg_hide_enabled,
-            )
+            _decouple_mouse()
         except Exception as e:
             self._logger.error("failed to hide/pin cursor", error=str(e))
 
@@ -426,6 +442,27 @@ class ServerMouseListener(_base.ServerMouseListener):
         ):
             self._logger.warning("Mouse stream queue full, dropped delta")
 
+    def _create_listener(self):
+        # Use our subclass so we can grab the CGEventTap port and re-enable it
+        # after a kernel-initiated disable (timeout). Same args as the base.
+        return _DarwinMouseListener(
+            on_move=self.on_move,
+            on_scroll=self.on_scroll,
+            on_click=self.on_click,
+            **self._filter_args,
+        )
+
+    def _on_tap_disabled_by_user_input(self) -> None:
+        # Runs on the event loop: the tap was deliberately killed (secure input
+        # on a password field, or Accessibility revoked mid-session). We can't
+        # recover the tap here, so make sure the user isn't stranded with a
+        # hidden cursor / frozen mouse. The permission watchdog handles an actual
+        # TCC revocation from here on.
+        self._stop_reassert()
+        if self._cursor_hidden:
+            self._unpin()
+            self._restore_cursor()
+
     def on_move(self, x, y):
         # While a client is active the suppress filter owns the delta-capture
         # path; skip the base edge-detection work entirely.
@@ -441,6 +478,44 @@ class ServerMouseListener(_base.ServerMouseListener):
         it to the client, and swallow EVERY mouse event so the local machine
         never sees the movement or the (client-bound) clicks/scroll.
         """
+        # Tap lifecycle events (delivered even when not listening). pynput never
+        # re-enables the tap itself, and the permission watchdog can't see these
+        # (they aren't permission changes), so we handle them here.
+        if event_type == kCGEventTapDisabledByTimeout:
+            # Kernel disabled the tap because a callback ran too long (load /
+            # App Nap / suspension). Re-enable in place and keep capture state.
+            tap = getattr(self._listener, "_perpetua_tap", None)
+            if tap is not None:
+                try:
+                    CGEventTapEnable(tap, True)
+                    self._logger.warning("event tap disabled by timeout - re-enabled")
+                except Exception as e:
+                    self._logger.error("failed to re-enable event tap", error=str(e))
+            else:
+                self._logger.error("event tap disabled by timeout but port unavailable")
+            return event
+        if event_type == kCGEventTapDisabledByUserInput:
+            # Deliberate kill: secure-input (password field) or TCC revoked
+            # mid-session. Not recoverable here - show the cursor + re-couple so
+            # the user isn't stuck, then tear down capture on the loop.
+            self._logger.error("event tap disabled by user input - releasing capture")
+            # Clear the flag first so the re-assert loop stops re-hiding, then
+            # recouple and show (balanced loop - the counter may be >1 from
+            # re-asserts) so the cursor can't stay stuck invisible.
+            self._cursor_hidden = False
+            try:
+                _recouple_mouse()
+                for _ in range(self._RESTORE_SHOW_CAP):
+                    if CGCursorIsVisible():
+                        break
+                    _show_cursor()
+            except Exception as e:
+                self._logger.error("failed to release cursor on tap kill", error=str(e))
+            loop = self._loop
+            if loop is not None and not loop.is_closed():
+                loop.call_soon_threadsafe(self._on_tap_disabled_by_user_input)
+            return event
+
         if not self._listening:
             return event
 
