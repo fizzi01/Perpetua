@@ -102,8 +102,6 @@ Other Wayland compositors (wlroots-based, Hyprland, Sway, etc.) are not yet supp
 
 > [!Important]
 > - **Windows**: You can't control a Windows client if there is no real mouse connected to the machine.
->
-> - **Input Capture Conflicts**: Perpetua cannot control the mouse when other applications have exclusive input capture (e.g., video games). This is an architectural limitation.
 
 
 ## Multi-monitor & layout
