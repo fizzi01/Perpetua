@@ -335,6 +335,21 @@ class Daemon:
                 # Windows asyncio does not support add_signal_handler.
                 pass
 
+    def _start_permission_watchdog(self) -> None:
+        """Start the macOS runtime permission watchdog, once.
+
+        Called only after required permissions are confirmed granted — the
+        watchdog shuts the daemon down on revocation, so it must not run while
+        the permission gate is still waiting for the initial grant.
+        """
+        if sys.platform != "darwin":
+            return
+        if self._permission_watchdog_task and not self._permission_watchdog_task.done():
+            return
+        self._permission_watchdog_task = self._bg_tasks.spawn(
+            self._permission_watchdog(), name="permission_watchdog"
+        )
+
     async def _permission_watchdog(self, interval: float = 5.0):
         """Trigger graceful shutdown if required permissions are revoked.
 
@@ -454,6 +469,7 @@ class Daemon:
             missing = []
 
         if not missing:
+            self._start_permission_watchdog()
             await self._do_auto_start_service(service)
             return
 
@@ -509,6 +525,7 @@ class Daemon:
                     await self._notification_manager.notify_permissions_granted(
                         pending_service=service
                     )
+                    self._start_permission_watchdog()
                     await self._do_auto_start_service(service)
                     return
         except asyncio.CancelledError:
@@ -639,10 +656,15 @@ class Daemon:
                         fallback="falling back to legacy discovery",
                     )
 
-            if sys.platform == "darwin":
-                self._permission_watchdog_task = self._bg_tasks.spawn(
-                    self._permission_watchdog(), name="permission_watchdog"
-                )
+            # NOTE: the macOS permission watchdog is NOT started here. It shuts
+            # the daemon down when Accessibility is denied, which is exactly the
+            # gate scenario — starting it now would kill the daemon (and the GUI
+            # with it) while the user is granting the permission. It is started
+            # only once permissions are confirmed present (see _permission_gate).
+            # if sys.platform == "darwin":
+            #     self._permission_watchdog_task = self._bg_tasks.spawn(
+            #         self._permission_watchdog(), name="permission_watchdog"
+            #     )
 
             # Gate the requested service on required OS permissions. The socket
             # is already bound above, so the GUI connects regardless; if a
