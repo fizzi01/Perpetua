@@ -250,12 +250,12 @@ class ServerMouseListener(_base.ServerMouseListener):
         if sys.platform == "darwin":
             try:
                 self._bg_hide_enabled = _enable_cursor_hide_in_background()
-                self._logger.info(
+                self._logger.debug(
                     "SetsCursorInBackground applied",
                     enabled=self._bg_hide_enabled,
                 )
             except Exception as e:
-                self._logger.error(
+                self._logger.debug(
                     "SetsCursorInBackground failed - cursor hide will not work "
                     "while the daemon is in the background",
                     error=str(e),
