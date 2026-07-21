@@ -27,6 +27,7 @@ import pytest
 
 from event import (
     BusEventType,
+    ClientLayoutUpdatedEvent,
     ForceScreenChangeCommandEvent,
     ScreenSwitchCycleRequestEvent,
     ScreenSwitchDirectionalRequestEvent,
@@ -153,6 +154,50 @@ async def test_switch_to_server_force_deactivates_client():
         await h.server.kbd_listener.command_stream.send(ForceScreenChangeCommandEvent())
         await h.wait_until(lambda: not h.client.mouse._is_active)
 
+        assert h.client.mouse._is_active is False
+    finally:
+        await h.stop()
+
+
+@pytest.mark.anyio
+async def test_active_client_losing_bindings_returns_to_server():
+    """Stranded-active recovery: when the active client loses every
+    server-abutting edge binding at runtime (a placed monitor was removed),
+    the return-to-server MUST route through SCREEN_CHANGE_GUARD - the guard
+    is what runs the per-OS teardown (on macOS: re-couple mouse + reveal the
+    hidden cursor). A bare ACTIVE_SCREEN_CHANGED skips it and strands the
+    user with an invisible, decoupled pointer. It must also deactivate the
+    client, matching the manual switch-to-server path."""
+    h = await build_bridge()
+    try:
+        server = _server_monitors([_1080P])
+        await _connect(h, h.client_uid, _bindings_for(_edge_placement("right"), server))
+        listener = h.server.listener
+
+        # Activate the client via a directional hotkey.
+        await h.server_bus.dispatch(
+            event_type=BusEventType.SCREEN_SWITCH_DIRECTIONAL_REQUEST,
+            data=ScreenSwitchDirectionalRequestEvent(edge=ScreenEdge.RIGHT),
+        )
+        await h.wait_until(lambda: h.client.mouse._is_active)
+        assert listener._active_client_uid == h.client_uid
+
+        guard_events = h.track(h.server_bus, BusEventType.SCREEN_CHANGE_GUARD)
+
+        # The active client's placed monitor is removed -> its recomputed
+        # edge bindings are now empty.
+        await h.server_bus.dispatch(
+            event_type=BusEventType.CLIENT_LAYOUT_UPDATED,
+            data=ClientLayoutUpdatedEvent(client_uid=h.client_uid, edge_bindings=[]),
+        )
+        await h.wait_until(lambda: not h.client.mouse._is_active)
+
+        # The return-to-server went through the guard (cursor-restore path)...
+        assert any(
+            data is not None and data.active_screen is None
+            for _et, data in guard_events
+        ), "stranded return must dispatch SCREEN_CHANGE_GUARD(active_screen=None)"
+        # ...and the client was deactivated.
         assert h.client.mouse._is_active is False
     finally:
         await h.stop()

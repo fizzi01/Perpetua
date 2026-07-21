@@ -1497,7 +1497,7 @@ class TestMonitorHotplug:
             c.kwargs.get("event_type")
             for c in listener.event_bus.dispatch.call_args_list
         ]
-        assert BusEventType.ACTIVE_SCREEN_CHANGED in dispatched
+        assert BusEventType.SCREEN_CHANGE_GUARD in dispatched
 
     @pytest.mark.anyio
     async def test_server_repushes_topology_when_active_client_keeps_bindings(
@@ -1526,7 +1526,7 @@ class TestMonitorHotplug:
             c.kwargs.get("event_type")
             for c in listener.event_bus.dispatch.call_args_list
         ]
-        assert BusEventType.ACTIVE_SCREEN_CHANGED not in dispatched
+        assert BusEventType.SCREEN_CHANGE_GUARD not in dispatched
         mock_stream_handler.send.assert_called()
 
     @pytest.mark.anyio

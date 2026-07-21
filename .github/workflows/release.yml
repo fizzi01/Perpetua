@@ -78,12 +78,16 @@ jobs:
 
           TAURI_CONF="src-gui/src-tauri/tauri.conf.json"
           ALPHA_VERSION="${VERSION}-alpha"
-          ALPHA_TAG="v${ALPHA_VERSION}"
+          # Fixed tag so the latest alpha always lives at the same URL;
+          # the version is carried only in the release title.
+          ALPHA_TAG="alpha"
           ALPHA_BRANCH="pre-release/v${ALPHA_VERSION}"
 
-          # Clean up all previous alpha releases and branches
+          # Clean up the previous alpha release and any stale alpha branches
+          gh release delete "$ALPHA_TAG" --yes --cleanup-tag 2>/dev/null || true
+          # Remove legacy versioned alpha releases (v*-alpha) from before the fixed tag
           gh release list --json tagName -q '.[].tagName' | { grep '\-alpha$' || true; } | while read -r tag; do
-            echo "Deleting alpha release: $tag"
+            echo "Deleting legacy alpha release: $tag"
             gh release delete "$tag" --yes --cleanup-tag 2>/dev/null || true
           done
           git ls-remote --heads origin 'refs/heads/pre-release/v*-alpha' | awk '{print $2}' | sed 's|refs/heads/||' | while read -r branch; do
@@ -113,9 +117,11 @@ jobs:
         env:
           GH_TOKEN: ${{ secrets.PERPETUA_TOKEN }}
         run: |
-          # Delete all alpha releases and tags
+          # Delete the fixed alpha release and tag
+          gh release delete alpha --yes --cleanup-tag 2>/dev/null || true
+          # Delete any legacy versioned alpha releases (v*-alpha)
           gh release list --json tagName -q '.[].tagName' | { grep '\-alpha$' || true; } | while read -r tag; do
-            echo "Deleting alpha release: $tag"
+            echo "Deleting legacy alpha release: $tag"
             gh release delete "$tag" --yes --cleanup-tag 2>/dev/null || true
           done
 
