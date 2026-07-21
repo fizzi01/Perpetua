@@ -40,6 +40,7 @@ from utils import UIDGenerator, BackgroundTasks
 from utils.logging import Logger, get_logger
 from utils.cli import DaemonArguments
 from utils.permissions import PermissionChecker
+from utils.permissions._base import PermissionResult, PermissionStatus, PermissionType
 from utils.runtime import (
     env_endpoint_override,
     endpoint_to_socket_path,
@@ -141,6 +142,10 @@ class DaemonCommand(StrEnum):
     # Autostart-at-login (cross-platform)
     GET_AUTOSTART = "get_autostart"
     SET_AUTOSTART = "set_autostart"
+
+    # OS-level permissions (macOS Accessibility / Input Monitoring)
+    GET_PERMISSIONS = "get_permissions"
+    REQUEST_PERMISSIONS = "request_permissions"
 
     def __init__(self, params: Optional[Dict[str, Any]] = None):
         self._params = params if params is not None else {}
@@ -293,6 +298,9 @@ class Daemon:
         self._shutdown_event = asyncio.Event()
         self._socket_server: Optional[asyncio.AbstractServer] = None
         self._permission_watchdog_task: Optional[asyncio.Task] = None
+        # Service deferred at startup because required OS permissions were
+        # missing. The permission gate poller starts it once granted.
+        self._pending_service: Optional[str] = None
 
         # Only one instance may connect at a time.
         self._connected_client_reader: Optional[asyncio.StreamReader] = None
@@ -327,6 +335,21 @@ class Daemon:
                 # Windows asyncio does not support add_signal_handler.
                 pass
 
+    def _start_permission_watchdog(self) -> None:
+        """Start the macOS runtime permission watchdog, once.
+
+        Called only after required permissions are confirmed granted — the
+        watchdog shuts the daemon down on revocation, so it must not run while
+        the permission gate is still waiting for the initial grant.
+        """
+        if sys.platform != "darwin":
+            return
+        if self._permission_watchdog_task and not self._permission_watchdog_task.done():
+            return
+        self._permission_watchdog_task = self._bg_tasks.spawn(
+            self._permission_watchdog(), name="permission_watchdog"
+        )
+
     async def _permission_watchdog(self, interval: float = 5.0):
         """Trigger graceful shutdown if required permissions are revoked.
 
@@ -354,15 +377,14 @@ class Daemon:
                         timeout=check_timeout,
                     )
                     if result.is_denied:
-                        self._logger.error(
-                            "Accessibility permission revoked at runtime, shutting down"
+                        self._logger.warning(
+                            "Accessibility permission revoked at runtime"
                         )
-                        await self._notification_manager.notify_error(
-                            error="Accessibility permission was revoked. "
-                            "Shutting down to prevent input lock.",
-                            context="permission_watchdog",
-                        )
-                        await self.stop()
+                        # Stop the service to prevent input lock but keep the
+                        # daemon (and GUI connection) alive, then re-show the
+                        # permission gate with a clear, specific message instead
+                        # of a generic "Service Disconnected".
+                        await self._on_permission_lost([result], reason="revoked")
                         return
                 except asyncio.TimeoutError:
                     self._logger.warning(
@@ -371,15 +393,19 @@ class Daemon:
                     )
                     max_retry -= 1
                     if max_retry <= 0:
-                        self._logger.error(
-                            "Permission watchdog check failed repeatedly, shutting down"
+                        self._logger.warning(
+                            "Permission watchdog check failed repeatedly; "
+                            "stopping service and re-showing the permission gate"
                         )
-                        await self._notification_manager.notify_error(
-                            error="Permission watchdog check failed repeatedly. "
-                            "Shutting down to prevent potential input lock.",
-                            context="permission_watchdog",
+                        unknown = PermissionResult(
+                            permission_type=PermissionType.ACCESSIBILITY,
+                            status=PermissionStatus.UNKNOWN,
+                            message="Could not verify the Accessibility permission",
+                            can_request=True,
                         )
-                        await self.stop()
+                        await self._on_permission_lost(
+                            [unknown], reason="check_failed"
+                        )
                         return
                 except Exception as e:
                     self._logger.warning(
@@ -387,6 +413,191 @@ class Daemon:
                     )
         except asyncio.CancelledError:
             pass
+
+    async def _on_permission_lost(self, missing: list, reason: str) -> None:
+        """Handle a runtime loss of a required permission gracefully.
+
+        Stops the running service (to prevent input lock) but keeps the daemon
+        and its command socket alive, so the GUI stays connected and receives a
+        clear ``permissions_required`` message instead of a generic
+        "Service Disconnected". Re-arms the gate poller so the service restarts
+        automatically once the permission is granted again.
+        """
+        service: Optional[str] = None
+        try:
+            if self._server and self._server.is_running():
+                service = "server"
+                await self._server.stop()
+                self._state["server"].stop()
+            elif self._client and self._client.is_running():
+                service = "client"
+                await self._client.stop()
+                self._state["client"].stop()
+        except Exception as e:
+            self._logger.warning(
+                "Failed to stop service after permission loss", error=str(e)
+            )
+
+        self._pending_service = service
+        serialized = [self._serialize_permission(r) for r in missing]
+        await self._notification_manager.notify_permissions_required(
+            permissions=serialized,
+            pending_service=service,
+            revoked=True,
+            reason=reason,
+        )
+        # Re-arm the gate poller: it restarts the deferred service and the
+        # watchdog once the permission is granted again.
+        self._bg_tasks.spawn(
+            self._permission_gate_poller(), name="permission_gate_poller"
+        )
+
+    @staticmethod
+    def _serialize_permission(result) -> Dict[str, Any]:
+        """Flatten a ``PermissionResult`` into a JSON-friendly dict for the GUI."""
+        return {
+            "type": result.permission_type.value,
+            "status": result.status.value,
+            "message": result.message,
+            "can_request": result.can_request,
+        }
+
+    @staticmethod
+    def _live_permission_result(checker, permission_type):
+        """Live (non-cached) check for a single permission.
+
+        macOS ``AXIsProcessTrusted()`` caches its result for the process
+        lifetime, so the accessibility check must go through the IOKit live
+        path to observe a grant that happened after the daemon started. Input
+        Monitoring already uses the live IOKit path.
+        """
+        if permission_type == PermissionType.ACCESSIBILITY:
+            return checker.check_accessibility_live()
+        return checker.check_permission(permission_type)
+
+    def _current_missing_permissions(self, checker) -> list:
+        """Return the still-missing *required* permissions using live checks.
+
+        Reuses the base ``get_missing_permissions`` selection (denied/unknown)
+        but re-evaluates each entry with a non-cached check so a runtime grant
+        is detected.
+
+        On macOS only Accessibility is required to inject input; Input
+        Monitoring (reported as KEYBOARD_INPUT/MOUSE_INPUT) is not needed and
+        must not gate startup. On other platforms those same types represent
+        the real required access (e.g. Linux uinput), so they still gate.
+        """
+        excluded: set = set()
+        if sys.platform == "darwin":
+            excluded = {PermissionType.KEYBOARD_INPUT, PermissionType.MOUSE_INPUT}
+
+        missing = checker.get_missing_permissions()
+        still_missing = []
+        for result in missing:
+            if result.permission_type in excluded:
+                continue
+            live = self._live_permission_result(checker, result.permission_type)
+            if live.is_denied or live.status == PermissionStatus.UNKNOWN:
+                still_missing.append(live)
+        return still_missing
+
+    async def _permission_gate(self, service: Optional[str]) -> None:
+        """Gate service auto-start on required OS permissions.
+
+        The command socket is already bound by the time this runs, so the GUI
+        stays connected regardless. When permissions are missing we defer the
+        requested service, tell the GUI to show the permission screen, and let
+        a background poller start the service once the grant lands.
+        """
+        checker = PermissionChecker(log=False)
+        try:
+            missing = await asyncio.get_running_loop().run_in_executor(
+                None, self._current_missing_permissions, checker
+            )
+        except Exception as e:
+            # Never let a permission-check failure block startup; fall back to
+            # the previous behaviour (attempt the service directly).
+            self._logger.warning("Permission check failed at startup", error=str(e))
+            missing = []
+
+        if not missing:
+            self._start_permission_watchdog()
+            await self._do_auto_start_service(service)
+            return
+
+        self._pending_service = service
+        serialized = [self._serialize_permission(r) for r in missing]
+        self._logger.info(
+            "Deferring startup: required permissions missing",
+            permissions=[r.permission_type.value for r in missing],
+            pending_service=service,
+        )
+        await self._notification_manager.notify_permissions_required(
+            permissions=serialized, pending_service=service
+        )
+        self._bg_tasks.spawn(
+            self._permission_gate_poller(), name="permission_gate_poller"
+        )
+
+    async def _permission_gate_poller(self, interval: float = 2.0) -> None:
+        """Wait for missing permissions to be granted, then start the service.
+
+        Uses live (non-cached) checks so a grant made in System Settings while
+        the daemon is running is observed without a restart.
+        """
+        checker = PermissionChecker(log=False)
+        try:
+            loop = asyncio.get_running_loop()
+        except Exception:
+            self._logger.error("Permission gate poller failed to get event loop")
+            return
+        try:
+            while self._running:
+                await asyncio.sleep(interval)
+                try:
+                    missing = await asyncio.wait_for(
+                        loop.run_in_executor(
+                            None, self._current_missing_permissions, checker
+                        ),
+                        timeout=max(interval, 5.0),
+                    )
+                except asyncio.TimeoutError:
+                    self._logger.warning("Permission gate check timed out")
+                    continue
+                except Exception as e:
+                    self._logger.warning("Permission gate check failed", error=str(e))
+                    continue
+
+                if not missing:
+                    service = self._pending_service
+                    self._pending_service = None
+                    self._logger.info(
+                        "Required permissions granted", pending_service=service
+                    )
+                    await self._notification_manager.notify_permissions_granted(
+                        pending_service=service
+                    )
+                    self._start_permission_watchdog()
+                    await self._do_auto_start_service(service)
+                    return
+        except asyncio.CancelledError:
+            pass
+
+    async def _do_auto_start_service(self, service: Optional[str]) -> None:
+        """Auto-start the requested service (server/client) at startup."""
+        if service is None or service not in ("server", "client"):
+            return
+        self._logger.info("Auto-starting service", service=service)
+        if service == "server":
+            await self._handle_service_choice({"service": "server"})
+            self._bg_tasks.spawn(
+                self._handle_start_server({}), name="auto_start_server"
+            )
+        elif service == "client":
+            await self._handle_service_choice({"service": "client"})
+            self._bg_tasks.spawn(
+                self._handle_start_client({}), name="auto_start_client"
+            )
 
     async def _signal_shutdown(self):
         self._logger.info("Received shutdown signal")
@@ -497,23 +708,20 @@ class Daemon:
                         fallback="falling back to legacy discovery",
                     )
 
-            if sys.platform == "darwin":
-                self._permission_watchdog_task = self._bg_tasks.spawn(
-                    self._permission_watchdog(), name="permission_watchdog"
-                )
+            # NOTE: the macOS permission watchdog is NOT started here. It shuts
+            # the daemon down when Accessibility is denied, which is exactly the
+            # gate scenario — starting it now would kill the daemon (and the GUI
+            # with it) while the user is granting the permission. It is started
+            # only once permissions are confirmed present (see _permission_gate).
+            # if sys.platform == "darwin":
+            #     self._permission_watchdog_task = self._bg_tasks.spawn(
+            #         self._permission_watchdog(), name="permission_watchdog"
+            #     )
 
-            if service is not None and service in ("server", "client"):
-                self._logger.info("Auto-starting service", service=service)
-                if service == "server":
-                    await self._handle_service_choice({"service": "server"})
-                    self._bg_tasks.spawn(
-                        self._handle_start_server({}), name="auto_start_server"
-                    )
-                elif service == "client":
-                    await self._handle_service_choice({"service": "client"})
-                    self._bg_tasks.spawn(
-                        self._handle_start_client({}), name="auto_start_client"
-                    )
+            # Gate the requested service on required OS permissions. The socket
+            # is already bound above, so the GUI connects regardless; if a
+            # permission is missing the service is deferred until it's granted.
+            await self._permission_gate(service)
 
             return True
 
@@ -1625,6 +1833,79 @@ class Daemon:
                     "enabled": status.enabled,
                     "exec_path": status.exec_path,
                     "mode": status.mode,
+                },
+            )
+        except Exception as e:
+            await self._notification_manager.notify_command_error(command, f"{str(e)}")
+
+    @CommandHandler.register(DaemonCommand.GET_PERMISSIONS)
+    async def _handle_get_permissions(self, params: Dict[str, Any]) -> None:
+        """Report the current OS-level permission state to the GUI.
+
+        Returns every required permission with its live status so the GUI can
+        decide whether to show the permission gate. On Windows/Linux the
+        checker reports granted/not-required, so ``missing`` is empty and no
+        gate is shown.
+        """
+        command = DaemonCommand.GET_PERMISSIONS.value
+        try:
+            checker = PermissionChecker(log=False)
+            loop = asyncio.get_running_loop()
+            all_results = await loop.run_in_executor(
+                None, checker.check_all_permissions
+            )
+            missing = await loop.run_in_executor(
+                None, self._current_missing_permissions, checker
+            )
+            await self._notification_manager.notify_command_success(
+                command,
+                "Permission status retrieved",
+                result_data={
+                    "permissions": [
+                        self._serialize_permission(r) for r in all_results.values()
+                    ],
+                    "missing": [self._serialize_permission(r) for r in missing],
+                    "pending_service": self._pending_service,
+                },
+            )
+        except Exception as e:
+            await self._notification_manager.notify_command_error(command, f"{str(e)}")
+
+    @CommandHandler.register(DaemonCommand.REQUEST_PERMISSIONS)
+    async def _handle_request_permissions(self, params: Dict[str, Any]) -> None:
+        """Trigger the OS permission prompt / open Settings, then report state.
+
+        Params:
+          - ``type`` (str, optional): a specific ``PermissionType`` value to
+            request (e.g. ``accessibility``). When absent, every currently
+            missing permission is requested.
+        """
+        command = DaemonCommand.REQUEST_PERMISSIONS.value
+        try:
+            checker = PermissionChecker(log=False)
+            loop = asyncio.get_running_loop()
+
+            requested = params.get("type")
+            if requested:
+                targets = [PermissionType(requested)]
+            else:
+                missing = await loop.run_in_executor(
+                    None, self._current_missing_permissions, checker
+                )
+                targets = [r.permission_type for r in missing]
+
+            def _request_all():
+                results = []
+                for perm in targets:
+                    results.append(checker.request_permission(perm))
+                return results
+
+            results = await loop.run_in_executor(None, _request_all)
+            await self._notification_manager.notify_command_success(
+                command,
+                "Permission request issued",
+                result_data={
+                    "permissions": [self._serialize_permission(r) for r in results],
                 },
             )
         except Exception as e:

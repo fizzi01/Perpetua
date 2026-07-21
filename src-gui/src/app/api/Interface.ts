@@ -115,6 +115,10 @@ export enum EventType {
     NetworkQualityDegraded,
     NetworkQualityRestored,
 
+    // Permission events (macOS Accessibility / Input Monitoring gate)
+    PermissionsRequired,
+    PermissionsGranted,
+
     // General events
     StatusUpdate,
     Info,
@@ -189,6 +193,39 @@ export enum CommandType {
     // Daemon control
     Shutdown,
     Ping,
+
+    // Autostart-at-login
+    GetAutostart,
+    SetAutostart,
+
+    // OS-level permissions (macOS Accessibility / Input Monitoring)
+    GetPermissions,
+    RequestPermissions,
+}
+
+// -- Permission gate types (macOS) --
+export type PermissionStatus = "granted" | "denied" | "unknown" | "not_required";
+
+export interface PermissionInfo {
+    type: string;
+    status: PermissionStatus;
+    message?: string | null;
+    can_request: boolean;
+}
+
+export interface PermissionsRequiredData {
+    permissions: PermissionInfo[];
+    pending_service?: string | null;
+    // True when the permission was revoked while the app was already running
+    // (as opposed to missing at startup). Drives a clearer gate message.
+    revoked?: boolean;
+    reason?: string;
+}
+
+export interface PermissionsResult {
+    permissions: PermissionInfo[];
+    missing: PermissionInfo[];
+    pending_service?: string | null;
 }
 
 export enum StreamType {

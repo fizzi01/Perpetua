@@ -28,6 +28,7 @@ from event import (
     ClientTopologyCommandEvent,
     ClientTopologyUpdatedEvent,
     CrossScreenCommandEvent,
+    ForceScreenChangeCommandEvent,
     ActiveScreenChangedEvent,
     ClientConnectedEvent,
     ClientDisconnectedEvent,
@@ -362,10 +363,17 @@ class ServerMouseListener(object):
                 "active client lost all edge bindings; returning to server",
                 client_uid=data.client_uid,
             )
+            # Route through SCREEN_CHANGE_GUARD (not a bare ACTIVE_SCREEN_CHANGED)
+            # so the per-OS listeners run their return-to-server teardown - on
+            # macOS the guard handler is what re-couples the mouse and reveals
+            # the cursor (_unpin + _restore_cursor); a direct ACTIVE_SCREEN_CHANGED
+            # skips it and strands the user with a hidden, decoupled pointer.
+            # Mirror the manual return-to-server hotkey exactly.
             await self.event_bus.dispatch(
-                event_type=BusEventType.ACTIVE_SCREEN_CHANGED,
+                event_type=BusEventType.SCREEN_CHANGE_GUARD,
                 data=ActiveScreenChangedEvent(active_screen=None),
             )
+            await self.command_stream.send(ForceScreenChangeCommandEvent())
         elif data.client_uid == self._active_client_uid:
             # The active client keeps a valid return path, but a server
             # hotplug may have moved the edges / virtual bbox. Re-push the

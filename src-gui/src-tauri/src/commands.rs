@@ -659,3 +659,55 @@ pub async fn set_autostart(
     })?;
     Ok(())
 }
+
+#[tauri::command]
+pub async fn get_permissions(s: tauri::State<'_, AtomicAsyncWriter>) -> Result<(), String> {
+    let command = CommandEvent::build(CommandType::GetPermissions, "{}");
+    let command = EventParser::serialize(&command).map_err(|e| {
+        format!(
+            "Failed to serialize {} command: {}",
+            CommandType::GetPermissions,
+            e
+        )
+    })?;
+    s.send(command).await.map_err(|e| {
+        format!(
+            "Failed to send {} command ({})",
+            CommandType::GetPermissions,
+            e
+        )
+    })?;
+    Ok(())
+}
+
+#[tauri::command]
+pub async fn request_permissions(
+    permission_type: Option<String>,
+    s: tauri::State<'_, AtomicAsyncWriter>,
+) -> Result<(), String> {
+    // ``permission_type`` is an optional specific permission (e.g.
+    // "accessibility"); when absent the daemon requests every missing one.
+    let params = match permission_type {
+        Some(t) => format!(
+            r#"{{ "type": "{}" }}"#,
+            t.replace('\\', r"\\").replace('"', r#"\""#)
+        ),
+        None => "{}".to_string(),
+    };
+    let command = CommandEvent::build(CommandType::RequestPermissions, &params);
+    let command = EventParser::serialize(&command).map_err(|e| {
+        format!(
+            "Failed to serialize {} command: {}",
+            CommandType::RequestPermissions,
+            e
+        )
+    })?;
+    s.send(command).await.map_err(|e| {
+        format!(
+            "Failed to send {} command ({})",
+            CommandType::RequestPermissions,
+            e
+        )
+    })?;
+    Ok(())
+}

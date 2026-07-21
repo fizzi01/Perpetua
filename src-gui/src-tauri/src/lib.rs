@@ -97,7 +97,13 @@ where
         show_window(&manager, "splashscreen");
     }
 
-    let (r, w) = match connect(Duration::from_millis(100), Duration::from_secs(5)).await {
+    let (r, w) = match connect(
+        Duration::from_millis(100),
+        Duration::from_secs(1),
+        Duration::from_secs(45),
+    )
+    .await
+    {
         Ok(conn) => {
             {
                 let state = manager.state::<Mutex<AppState>>();
@@ -169,6 +175,13 @@ where
     let writer = manager_clone.state::<AtomicAsyncWriter>();
     if let Err(e) = commands::get_autostart(writer).await {
         eprintln!("Failed to query autostart state: {}", e);
+    }
+
+    // Query the OS permission state so the GUI can show the permission gate
+    // immediately (e.g. macOS Accessibility) even on a manual launch.
+    let writer = manager_clone.state::<AtomicAsyncWriter>();
+    if let Err(e) = commands::get_permissions(writer).await {
+        eprintln!("Failed to query permission state: {}", e);
     }
 
     Ok(())
@@ -547,6 +560,9 @@ pub fn run(daemon_config: Option<DaemonConfig>, start_minimized: bool) {
             // -- Autostart-at-login --
             commands::get_autostart,
             commands::set_autostart,
+            // -- OS-level permissions (macOS gate) --
+            commands::get_permissions,
+            commands::request_permissions,
         ])
         .setup(move |app| {
             // Spawn daemon (release) or create empty handle (debug)

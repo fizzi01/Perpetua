@@ -118,6 +118,10 @@ pub enum EventType {
     NetworkQualityDegraded,
     NetworkQualityRestored,
 
+    // Permission events (macOS Accessibility / Input Monitoring gate)
+    PermissionsRequired,
+    PermissionsGranted,
+
     // General events
     StatusUpdate,
     Info,
@@ -214,6 +218,10 @@ pub enum CommandType {
     // Autostart-at-login
     GetAutostart,
     SetAutostart,
+
+    // OS-level permissions (macOS Accessibility / Input Monitoring)
+    GetPermissions,
+    RequestPermissions,
 }
 
 impl Type for CommandType {}
