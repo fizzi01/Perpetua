@@ -703,3 +703,97 @@ async def test_two_edge_client_plus_second_client():
         assert set(listener._active_clients_snapshot) == {h.client_uid, "client_above"}
     finally:
         await h.stop()
+
+
+# ---------------------------------------------------------------------------
+# Workspace topology overrides the client's physical monitor adjacency
+# ---------------------------------------------------------------------------
+
+
+@pytest.mark.anyio
+async def test_client_follows_workspace_topology_not_physical_adjacency():
+    """The client honours the server-set topology, not OS monitor adjacency.
+
+    The client's two monitors are PHYSICALLY stacked (monitor 0 on top,
+    monitor 1 directly below, sharing the y=1080 edge). The workspace
+    topology set with the server instead binds them LEFT<->RIGHT and leaves
+    the physically-shared top/bottom edge unbound.
+
+    * Pushing to monitor 1's TOP edge (its physical path to monitor 0) must
+      NOT cross - there is no binding there, so the cursor is clamped.
+    * Pushing to monitor 1's LEFT edge (the workspace binding) warps to
+      monitor 0, following the server topology.
+    """
+    client_bboxes = ((0, 0, 1920, 1080), (0, 1080, 1920, 2160))  # stacked
+    h = await build_bridge(client_bboxes=client_bboxes)
+    try:
+        # Workspace binding: monitor 1 LEFT -> monitor 0 (a different edge
+        # than the physical top/bottom adjacency). No top/bottom binding.
+        intra = [
+            {
+                "src_monitor_id": 1,
+                "src_edge": "left",
+                "src_axis_start": 0.0,
+                "src_axis_end": 1.0,
+                "dst_monitor_id": 0,
+                "dst_edge": "right",
+                "dst_axis_start": 0.0,
+                "dst_axis_end": 1.0,
+                "dst_monitor_min_x": 0,
+                "dst_monitor_min_y": 0,
+                "dst_monitor_max_x": 1920,
+                "dst_monitor_max_y": 1080,
+            }
+        ]
+        await h.server.command_handler.stream.send(
+            ClientTopologyCommandEvent(
+                target=h.client_uid,
+                edge_bindings=[],
+                server_bbox=(0, 0, 1920, 1080),
+                intra_client_bindings=intra,
+            )
+        )
+        await h.settle()
+        assert h.client.mouse._intra_pairs == {(1, 0)}
+
+        await h.client_bus.dispatch(
+            event_type=BusEventType.CLIENT_ACTIVE,
+            data=ClientActiveEvent(client_uid=h.client_uid, client_monitor_id=1),
+        )
+        await h.settle()
+        ctrl = h.client.mouse
+        server_events = h.track(h.server_bus, BusEventType.ACTIVE_SCREEN_CHANGED)
+
+        # --- negative: push monitor 1's TOP edge (physical path to m0) ----
+        for y in range(1092, 1080, -2):
+            ctrl._movement_history.append((960, y))
+        h.client.mouse_mock.position = (960, 1080)
+        await ctrl._check_edge()
+        await h.settle(10)
+
+        # Not crossed to monitor 0: clamped back inside monitor 1 (y >= 1080).
+        assert ctrl._active_monitor_id == 1
+        assert h.client.mouse_mock.position[1] >= 1080
+        assert ctrl._is_active is True
+
+        # --- positive: push monitor 1's LEFT edge (workspace binding) -----
+        ctrl._movement_history.clear()
+        for x in range(12, 0, -2):
+            ctrl._movement_history.append((x, 1600))
+        h.client.mouse_mock.position = (0, 1600)
+        await ctrl._check_edge()
+        await h.settle(10)
+
+        # Warped onto monitor 0 per the workspace topology.
+        assert ctrl._active_monitor_id == 0
+        assert h.client.mouse_mock.position[1] < 1080
+
+        # Never returned control to the server during either move.
+        assert not [
+            d
+            for et, d in server_events
+            if et == BusEventType.ACTIVE_SCREEN_CHANGED and d.active_screen is None
+        ]
+        assert ctrl._is_active is True
+    finally:
+        await h.stop()
