@@ -24,3 +24,23 @@ def _MOCK_PYNPUT():
     sys.modules["pynput.keyboard._xorg"] = MagicMock()
     sys.modules["pynput.mouse._xorg"] = MagicMock()
     sys.modules["pynput.keyboard._uinput"] = MagicMock()
+
+    # On platforms whose real pynput backend is unavailable (headless Linux),
+    # the mocked submodules above make ``pynput.keyboard.Key`` / ``KeyCode``
+    # resolve to ``MagicMock`` attributes. Those are not real types, so
+    # ``isinstance(key, Key)`` deep in the input layer raises ``TypeError``.
+    # Substitute pynput's own import-safe dummy backend (real ``Key``/
+    # ``KeyCode`` types) whenever the resolved symbols aren't real types.
+    # macOS/Windows keep their real backend untouched.
+    from pynput.keyboard._dummy import Key as _DummyKey, KeyCode as _DummyKeyCode
+    import pynput.keyboard as _kb
+
+    if not isinstance(getattr(_kb, "Key", None), type):
+        _kb.Key = _DummyKey
+        _kb.KeyCode = _DummyKeyCode
+
+    # ``input.keyboard.backend._uinput`` imports these names directly.
+    _uinput = sys.modules["pynput.keyboard._uinput"]
+    _uinput.Key = _DummyKey
+    _uinput.KeyCode = _DummyKeyCode
+    _uinput.LAYOUT = {}

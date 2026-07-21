@@ -27,11 +27,14 @@ from unittest.mock import AsyncMock, MagicMock, patch
 import pytest
 
 from event import (
+    BusEventType,
     MouseEvent,
     ActiveScreenChangedEvent,
     ClientConnectedEvent,
     ClientDisconnectedEvent,
     ClientActiveEvent,
+    ClientLayoutUpdatedEvent,
+    CrossScreenCommandEvent,
 )
 
 from model.client import ScreenPosition
@@ -1357,3 +1360,258 @@ class TestClientMouseController:
             assert len(controller._movement_history) == 8
             # Should keep most recent
             assert controller._movement_history[-1] == (19, 19)
+
+
+# ============================================================================
+# Runtime monitor-change handling (hotplug)
+# ============================================================================
+
+
+def _two_monitor_geometry():
+    """Patches for a 2-monitor layout (primary on top, secondary below)."""
+    layout = MonitorLayout.from_bboxes([(0, 0, 1920, 1080), (0, 1080, 1920, 2160)])
+    return [
+        patch("input.mouse._base.Screen.get_size", return_value=(1920, 2160)),
+        patch(
+            "input.mouse._base.Screen.get_virtual_bbox",
+            return_value=(0, 0, 1920, 2160),
+        ),
+        patch("input.mouse._base.Screen.get_monitor_layout", return_value=layout),
+    ]
+
+
+class TestMonitorHotplug:
+    """LOCAL_MONITORS_UPDATED refresh + stranded-active recovery."""
+
+    def test_local_monitors_updated_enum_value_is_13(self):
+        """Wire-stability guard: the new event keeps value 13."""
+        assert BusEventType.LOCAL_MONITORS_UPDATED == 13
+        # Existing values must not have been renumbered.
+        assert BusEventType.CLIENT_MONITORS_UPDATED == 12
+
+    @pytest.mark.anyio
+    async def test_server_listener_refreshes_geometry(
+        self,
+        event_bus,
+        mock_stream_handler,
+    ):
+        """Server listener re-reads Screen on LOCAL_MONITORS_UPDATED."""
+        with _ScreenGeometry(1920, 1080):
+            listener = ServerMouseListener(
+                event_bus,
+                mock_stream_handler,
+                mock_stream_handler,
+                filtering=False,
+            )
+        # Sanity: constructed against the single-monitor geometry.
+        assert listener._screen_bbox == (0, 0, 1920, 1080)
+
+        with ExitStack() as stack:
+            for p in _two_monitor_geometry():
+                stack.enter_context(p)
+            await listener._on_local_monitors_updated(None)
+
+        assert listener._screen_size == (1920, 2160)
+        assert listener._screen_bbox == (0, 0, 1920, 2160)
+        assert len(listener._monitor_layout.monitors) == 2
+
+    @pytest.mark.anyio
+    async def test_server_controller_refreshes_geometry(
+        self,
+        event_bus,
+        mock_mouse_controller,
+    ):
+        """Server controller re-reads the virtual bbox on hotplug."""
+        with patch(
+            "input.mouse._base.MouseController", return_value=mock_mouse_controller
+        ):
+            with _ScreenGeometry(1920, 1080):
+                controller = ServerMouseController(event_bus)
+            assert controller._screen_bbox == (0, 0, 1920, 1080)
+
+            with ExitStack() as stack:
+                for p in _two_monitor_geometry():
+                    stack.enter_context(p)
+                await controller._on_local_monitors_updated(None)
+
+        assert controller._screen_bbox == (0, 0, 1920, 2160)
+        assert controller._screen_size == (1920, 2160)
+
+    @pytest.mark.anyio
+    async def test_client_controller_refreshes_geometry_and_active_target(
+        self,
+        event_bus,
+        mock_stream_handler,
+        mock_mouse_controller,
+    ):
+        """Client controller re-resolves _active_target_bbox to a surviving monitor."""
+        with patch(
+            "input.mouse._base.MouseController", return_value=mock_mouse_controller
+        ):
+            with _ScreenGeometry(1920, 1080):
+                controller = ClientMouseController(
+                    event_bus,
+                    mock_stream_handler,
+                    mock_stream_handler,
+                )
+            # Active on monitor 1, which still exists in the new layout.
+            controller._is_active = True
+            controller._active_monitor_id = 1
+            controller._cached_monitor = object()
+
+            with ExitStack() as stack:
+                for p in _two_monitor_geometry():
+                    stack.enter_context(p)
+                await controller._on_local_monitors_updated(None)
+
+        assert controller._cached_monitor is None
+        assert len(controller._monitor_layout.monitors) == 2
+        # Re-resolved to monitor 1's OS bbox.
+        assert controller._active_target_bbox == (0, 1080, 1920, 2160)
+        # Monitor survived -> no forced return.
+        assert controller._is_active is True
+
+    @pytest.mark.anyio
+    async def test_server_forces_return_when_active_client_bindings_empty(
+        self,
+        event_bus,
+        mock_stream_handler,
+    ):
+        """Empty bindings for the active client -> ACTIVE_SCREEN_CHANGED(None)."""
+        with _ScreenGeometry(1920, 1080):
+            listener = ServerMouseListener(
+                event_bus,
+                mock_stream_handler,
+                mock_stream_handler,
+                filtering=False,
+            )
+        listener._active_clients = {"c1": True}
+        listener._active_client_uid = "c1"
+        listener.event_bus.dispatch = AsyncMock()
+
+        await listener._on_client_layout_updated(
+            ClientLayoutUpdatedEvent(client_uid="c1", edge_bindings=[])
+        )
+
+        dispatched = [
+            c.kwargs.get("event_type")
+            for c in listener.event_bus.dispatch.call_args_list
+        ]
+        assert BusEventType.ACTIVE_SCREEN_CHANGED in dispatched
+
+    @pytest.mark.anyio
+    async def test_server_repushes_topology_when_active_client_keeps_bindings(
+        self,
+        event_bus,
+        mock_stream_handler,
+    ):
+        """Non-empty bindings for the active client -> topology re-push, no return."""
+        with _ScreenGeometry(1920, 1080):
+            listener = ServerMouseListener(
+                event_bus,
+                mock_stream_handler,
+                mock_stream_handler,
+                filtering=False,
+            )
+        listener._active_clients = {"c1": True}
+        listener._active_client_uid = "c1"
+        listener.event_bus.dispatch = AsyncMock()
+
+        bindings = [{"server_monitor_id": 0, "client_monitor_id": 0}]
+        await listener._on_client_layout_updated(
+            ClientLayoutUpdatedEvent(client_uid="c1", edge_bindings=bindings)
+        )
+
+        dispatched = [
+            c.kwargs.get("event_type")
+            for c in listener.event_bus.dispatch.call_args_list
+        ]
+        assert BusEventType.ACTIVE_SCREEN_CHANGED not in dispatched
+        mock_stream_handler.send.assert_called()
+
+    @pytest.mark.anyio
+    async def test_server_no_return_for_inactive_client(
+        self,
+        event_bus,
+        mock_stream_handler,
+    ):
+        """Empty bindings for a NON-active client -> no forced return."""
+        with _ScreenGeometry(1920, 1080):
+            listener = ServerMouseListener(
+                event_bus,
+                mock_stream_handler,
+                mock_stream_handler,
+                filtering=False,
+            )
+        listener._active_clients = {"c1": True}
+        listener._active_client_uid = "c1"
+        listener.event_bus.dispatch = AsyncMock()
+
+        await listener._on_client_layout_updated(
+            ClientLayoutUpdatedEvent(client_uid="other", edge_bindings=[])
+        )
+
+        dispatched = [
+            c.kwargs.get("event_type")
+            for c in listener.event_bus.dispatch.call_args_list
+        ]
+        assert BusEventType.ACTIVE_SCREEN_CHANGED not in dispatched
+
+    @pytest.mark.anyio
+    async def test_client_forces_return_when_active_monitor_vanishes(
+        self,
+        event_bus,
+        mock_stream_handler,
+        mock_mouse_controller,
+    ):
+        """Active monitor removed on the client -> forced return-to-server."""
+        with patch(
+            "input.mouse._base.MouseController", return_value=mock_mouse_controller
+        ):
+            # Start on a 2-monitor layout, active on monitor 1.
+            with ExitStack() as stack:
+                for p in _two_monitor_geometry():
+                    stack.enter_context(p)
+                controller = ClientMouseController(
+                    event_bus,
+                    mock_stream_handler,
+                    mock_stream_handler,
+                )
+            controller._is_active = True
+            controller._active_monitor_id = 1
+
+            # Monitor 1 disappears (single-monitor layout, only id 0).
+            with _ScreenGeometry(1920, 1080):
+                await controller._on_local_monitors_updated(None)
+
+        # Return-to-server command sent + client marked inactive.
+        assert mock_stream_handler.send.await_count >= 1
+        sent = mock_stream_handler.send.await_args.args[0]
+        assert isinstance(sent, CrossScreenCommandEvent)
+        assert controller._is_active is False
+
+    @pytest.mark.anyio
+    async def test_client_no_return_when_active_monitor_survives(
+        self,
+        event_bus,
+        mock_stream_handler,
+        mock_mouse_controller,
+    ):
+        """Active monitor still present -> no forced return."""
+        with patch(
+            "input.mouse._base.MouseController", return_value=mock_mouse_controller
+        ):
+            with ExitStack() as stack:
+                for p in _two_monitor_geometry():
+                    stack.enter_context(p)
+                controller = ClientMouseController(
+                    event_bus,
+                    mock_stream_handler,
+                    mock_stream_handler,
+                )
+                controller._is_active = True
+                controller._active_monitor_id = 0
+                await controller._on_local_monitors_updated(None)
+
+        mock_stream_handler.send.assert_not_called()
+        assert controller._is_active is True

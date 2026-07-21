@@ -91,13 +91,11 @@ class ServerMouseListener(object):
         # of EACH monitor count - asymmetric layouts where the primary's
         # edges are interior to the union bbox would otherwise miss
         # crossings.
-        self._screen_size: tuple[int, int] = Screen.get_size()
-        self._monitor_layout = Screen.get_monitor_layout()
-        self._screen_bbox: tuple[int, int, int, int] = (
-            self._monitor_layout.virtual_bbox
-            if self._monitor_layout.monitors
-            else Screen.get_virtual_bbox()
-        )
+        (
+            self._screen_size,
+            self._monitor_layout,
+            self._screen_bbox,
+        ) = self._load_local_geometry()
         self._cross_screen_lock = asyncio.Lock()
         # Set synchronously on the pynput thread the instant a crossing is
         # scheduled, and reset by ``_handle_cross_screen`` when it finishes
@@ -185,6 +183,50 @@ class ServerMouseListener(object):
             callback=self._on_hotkey_cycle,
             priority=True,
         )
+        self.event_bus.subscribe(
+            event_type=BusEventType.LOCAL_MONITORS_UPDATED,
+            callback=self._on_local_monitors_updated,
+            priority=True,
+        )
+
+    @staticmethod
+    def _load_local_geometry():
+        """Read the server's current OS monitor geometry from ``Screen``.
+
+        Returns ``(screen_size, monitor_layout, screen_bbox)``. Shared by
+        ``__init__`` and the hotplug refresh handler so both build the
+        cached geometry the same way.
+        """
+        screen_size = Screen.get_size()
+        monitor_layout = Screen.get_monitor_layout()
+        screen_bbox = (
+            monitor_layout.virtual_bbox
+            if monitor_layout.monitors
+            else Screen.get_virtual_bbox()
+        )
+        return screen_size, monitor_layout, screen_bbox
+
+    async def _on_local_monitors_updated(self, data):
+        """Re-read the server's monitor geometry after a local hotplug.
+
+        The pynput hot path reads ``_monitor_layout`` / ``_screen_bbox``
+        lock-free, so we build the fresh values first and publish them as
+        single atomic reference swaps (GIL-guaranteed). ``MonitorLayout``
+        is replaced wholesale, never mutated in place, so an iteration
+        started before the swap keeps operating on the old immutable
+        object. The write lock only serialises against other writers.
+        """
+        screen_size, monitor_layout, screen_bbox = self._load_local_geometry()
+        with self._bindings_write_lock:
+            self._screen_size = screen_size
+            self._monitor_layout = monitor_layout
+            self._screen_bbox = screen_bbox
+        self._logger.info(
+            "server monitor geometry refreshed",
+            monitors=len(monitor_layout.monitors),
+            bbox=screen_bbox,
+        )
+        await asyncio.sleep(0)
 
     def _create_listener(self) -> MouseListener:
         return MouseListener(
@@ -305,6 +347,49 @@ class ServerMouseListener(object):
                     getattr(data, "intra_client_bindings", []) or []
                 )
                 self._rebuild_snapshots()
+
+        # Stranded-active recovery: if the client the cursor is CURRENTLY
+        # on just lost every server-abutting edge binding (a placed
+        # monitor was removed, or a layout edit emptied its placements),
+        # there is no longer a return-to-server path - the cursor would
+        # stay pinned on a screen that no longer routes back. Force
+        # control back to the server, reusing the same primitive as the
+        # disconnect path. Done outside the write lock (dispatch awaits).
+        if data.client_uid == self._active_client_uid and not (
+            data.edge_bindings or []
+        ):
+            self._logger.info(
+                "active client lost all edge bindings; returning to server",
+                client_uid=data.client_uid,
+            )
+            await self.event_bus.dispatch(
+                event_type=BusEventType.ACTIVE_SCREEN_CHANGED,
+                data=ActiveScreenChangedEvent(active_screen=None),
+            )
+        elif data.client_uid == self._active_client_uid:
+            # The active client keeps a valid return path, but a server
+            # hotplug may have moved the edges / virtual bbox. Re-push the
+            # fresh topology (including the updated ``server_bbox`` read by
+            # _on_local_monitors_updated) so the client's cached
+            # return-to-server landing coords stay correct without waiting
+            # for the next crossing.
+            try:
+                await self.command_stream.send(
+                    ClientTopologyCommandEvent(
+                        target=data.client_uid,
+                        edge_bindings=list(data.edge_bindings or []),
+                        server_bbox=self._screen_bbox,
+                        intra_client_bindings=list(
+                            getattr(data, "intra_client_bindings", []) or []
+                        ),
+                    )
+                )
+            except Exception as e:
+                self._logger.warning(
+                    "failed to re-push topology to active client",
+                    client_uid=data.client_uid,
+                    error=str(e),
+                )
         await asyncio.sleep(0)
 
     async def _on_hotkey_directional(
@@ -777,6 +862,24 @@ class ServerMouseController(object):
             event_type=BusEventType.ACTIVE_SCREEN_CHANGED,
             callback=self._on_active_screen_changed,
         )
+        self.event_bus.subscribe(
+            event_type=BusEventType.LOCAL_MONITORS_UPDATED,
+            callback=self._on_local_monitors_updated,
+        )
+
+    async def _on_local_monitors_updated(self, data):
+        """Refresh the virtual-desktop bbox after a local monitor hotplug.
+
+        ``_screen_bbox`` is read only on the event loop by
+        ``position_cursor`` (return-to-server placement), so a plain
+        assignment is safe (single writer, GIL-atomic ref swap).
+        """
+        self._screen_size = Screen.get_size()
+        self._screen_bbox = Screen.get_virtual_bbox()
+        self._logger.info(
+            "server controller geometry refreshed", bbox=self._screen_bbox
+        )
+        await asyncio.sleep(0)
 
     async def _on_active_screen_changed(self, data: Optional[ActiveScreenChangedEvent]):
         """Reposition the server cursor when control returns (active screen None)."""
@@ -936,6 +1039,81 @@ class ClientMouseController(object):
             event_type=BusEventType.CLIENT_TOPOLOGY_UPDATED,
             callback=self._on_client_topology_updated,
         )
+        self.event_bus.subscribe(
+            event_type=BusEventType.LOCAL_MONITORS_UPDATED,
+            callback=self._on_local_monitors_updated,
+        )
+
+    async def _force_return_to_server(self, x: float = -1, y: float = -1) -> None:
+        """Hand control back to the server unconditionally.
+
+        Reused by the return-to-server paths (edge binding resolved, OS
+        drift) and by the stranded-active recovery when no landing point
+        can be computed. ``x=y=-1`` means "return control, leave the
+        server cursor where it is" - ``ServerMouseController`` only
+        repositions when both coords are > -1.
+        """
+        self._cross_screen_event.set()
+        self._movement_history.clear()
+        try:
+            await self.command_stream.send(CrossScreenCommandEvent(x=x, y=y))
+        except Exception as e:
+            self._logger.error("failed to send return-to-server", error=str(e))
+        await self.event_bus.dispatch(
+            event_type=BusEventType.CLIENT_INACTIVE, data=None
+        )
+
+    async def _on_local_monitors_updated(self, data):
+        """Re-read this client's monitor geometry after a local hotplug.
+
+        Runs on the same event loop as the edge-check worker, so the
+        attribute swaps below are safe as long as no ``await`` is
+        interleaved between them. If the monitor the cursor is currently
+        active on just vanished, its return-to-server binding is gone too,
+        so force control back to the server (after the swaps).
+        """
+        screen_size = Screen.get_size()
+        monitor_layout = Screen.get_monitor_layout()
+        screen_bbox = (
+            monitor_layout.virtual_bbox
+            if monitor_layout.monitors
+            else Screen.get_virtual_bbox()
+        )
+        known_ids = {m.monitor_id for m in monitor_layout.monitors}
+        stranded = (
+            self._is_active
+            and self._active_monitor_id is not None
+            and self._active_monitor_id not in known_ids
+        )
+
+        # Atomic swaps, no await interleaved.
+        self._screen_size = screen_size
+        self._monitor_layout = monitor_layout
+        self._screen_bbox = screen_bbox
+        self._cached_monitor = None
+        if self._active_monitor_id is not None and self._active_monitor_id in known_ids:
+            for m in monitor_layout.monitors:
+                if m.monitor_id == self._active_monitor_id:
+                    self._active_target_bbox = (m.min_x, m.min_y, m.max_x, m.max_y)
+                    break
+        else:
+            self._active_target_bbox = screen_bbox
+
+        self._logger.info(
+            "client monitor geometry refreshed",
+            monitors=len(monitor_layout.monitors),
+            bbox=screen_bbox,
+            stranded=stranded,
+        )
+
+        if stranded:
+            self._logger.info(
+                "active monitor removed; returning control to server",
+                active_monitor_id=self._active_monitor_id,
+            )
+            await self._force_return_to_server()
+        else:
+            await asyncio.sleep(0)
 
     def check_cursor_validity(self) -> bool:
         """Ensure a cursor is available - may fail on Windows when no cursor is present."""
@@ -1581,8 +1759,6 @@ class ClientMouseController(object):
             )
             if resolved is not None:
                 target_x, target_y = resolved
-                self._cross_screen_event.set()
-                self._movement_history.clear()
                 # Pull the local cursor back inside ``previous`` so it
                 # doesn't visually remain stranded on the unplaced
                 # OS-neighbour after handing control back to the server.
@@ -1594,12 +1770,7 @@ class ClientMouseController(object):
                     target_x=target_x,
                     target_y=target_y,
                 )
-                await self.command_stream.send(
-                    CrossScreenCommandEvent(x=target_x, y=target_y)
-                )
-                await self.event_bus.dispatch(
-                    event_type=BusEventType.CLIENT_INACTIVE, data=None
-                )
+                await self._force_return_to_server(target_x, target_y)
                 return True
 
             self._logger.debug(
@@ -1631,12 +1802,7 @@ class ClientMouseController(object):
         if resolved is None:
             return False
         target_x, target_y = resolved
-        self._cross_screen_event.set()
-        self._movement_history.clear()
-        await self.command_stream.send(CrossScreenCommandEvent(x=target_x, y=target_y))
-        await self.event_bus.dispatch(
-            event_type=BusEventType.CLIENT_INACTIVE, data=None
-        )
+        await self._force_return_to_server(target_x, target_y)
         return True
 
     def _try_intra_client_warp_sync(

@@ -145,7 +145,13 @@ class ServerKeyboardListener(object):
         return True
 
     def _build_hotkeys(self) -> list[HotKey]:
-        """Build HotKey instances. Uses Ctrl+Shift+P+<action> to avoid Option/Alt issues on macOS."""
+        """Build HotKey instances. Uses Ctrl+Shift+P+<action> to avoid Option/Alt issues on macOS.
+
+        Key sets are built manually rather than via ``HotKey.parse`` on a
+        combo string: parse trips its duplicate-parts check when pynput's
+        backend is mocked (tests), and the manual frozensets are identical
+        to parse's output on real pynput.
+        """
 
         def make_cb(coro_fn, *args):
             def cb():
@@ -154,32 +160,51 @@ class ServerKeyboardListener(object):
 
             return cb
 
+        ctrl = Key.ctrl
+        shift = Key.shift
+        p = KeyCode.from_char("p")
+        q = KeyCode.from_char("q")
+        one = KeyCode.from_char("1")
+        two = KeyCode.from_char("2")
+        left = KeyCode.from_vk(Key.left.value.vk)
+        right = KeyCode.from_vk(Key.right.value.vk)
+        up = KeyCode.from_vk(Key.up.value.vk)
+        down = KeyCode.from_vk(Key.down.value.vk)
+        tab = KeyCode.from_vk(Key.tab.value.vk)
+        esc = KeyCode.from_vk(Key.esc.value.vk)
+
         entries = [
             (
-                "<ctrl>+<shift>+p+<left>",
+                frozenset({ctrl, shift, p, left}),
                 make_cb(self._hotkey_switch_direction, ScreenEdge.LEFT),
             ),
             (
-                "<ctrl>+<shift>+p+<right>",
+                frozenset({ctrl, shift, p, right}),
                 make_cb(self._hotkey_switch_direction, ScreenEdge.RIGHT),
             ),
             (
-                "<ctrl>+<shift>+p+<up>",
+                frozenset({ctrl, shift, p, up}),
                 make_cb(self._hotkey_switch_direction, ScreenEdge.TOP),
             ),
             (
-                "<ctrl>+<shift>+p+<down>",
+                frozenset({ctrl, shift, p, down}),
                 make_cb(self._hotkey_switch_direction, ScreenEdge.BOTTOM),
             ),
             # Cycle through every active client regardless of layout -
             # useful when clients sit in disjoint locations the
             # directional hotkeys can't reach from the current cursor.
-            ("<ctrl>+<shift>+p+<tab>+1", make_cb(self._hotkey_cycle_client, 1)),
-            ("<ctrl>+<shift>+p+<tab>+2", make_cb(self._hotkey_cycle_client, -1)),
-            ("<ctrl>+<shift>+p+<esc>", make_cb(self._hotkey_switch_to_server)),
-            ("<ctrl>+<shift>+q", make_cb(self._hotkey_panic)),
+            (
+                frozenset({ctrl, shift, p, tab, one}),
+                make_cb(self._hotkey_cycle_client, 1),
+            ),
+            (
+                frozenset({ctrl, shift, p, tab, two}),
+                make_cb(self._hotkey_cycle_client, -1),
+            ),
+            (frozenset({ctrl, shift, p, esc}), make_cb(self._hotkey_switch_to_server)),
+            (frozenset({ctrl, shift, q}), make_cb(self._hotkey_panic)),
         ]
-        return [HotKey(HotKey.parse(combo), cb) for combo, cb in entries]
+        return [HotKey(keys, cb) for keys, cb in entries]
 
     # Modifier normalization map
     _MOD_MAP: dict = {
@@ -492,7 +517,7 @@ class ClientKeyboardController(object):
 
         self._logger.info(
             "keyboard controller backend selected",
-            extra={"backend": BACKEND.get("keyboard_controller", "unknown")},
+            backend=BACKEND.get("keyboard_controller", "unknown"),
         )
 
         self._queue: asyncio.Queue = asyncio.Queue(maxsize=1000)
