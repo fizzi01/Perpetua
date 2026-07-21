@@ -462,44 +462,30 @@ class Daemon:
             "can_request": result.can_request,
         }
 
-    @staticmethod
-    def _live_permission_result(checker, permission_type):
-        """Live (non-cached) check for a single permission.
-
-        macOS ``AXIsProcessTrusted()`` caches its result for the process
-        lifetime, so the accessibility check must go through the IOKit live
-        path to observe a grant that happened after the daemon started. Input
-        Monitoring already uses the live IOKit path.
-        """
-        if permission_type == PermissionType.ACCESSIBILITY:
-            return checker.check_accessibility_live()
-        return checker.check_permission(permission_type)
-
     def _current_missing_permissions(self, checker) -> list:
         """Return the still-missing *required* permissions using live checks.
 
-        Reuses the base ``get_missing_permissions`` selection (denied/unknown)
-        but re-evaluates each entry with a non-cached check so a runtime grant
-        is detected.
-
         On macOS only Accessibility is required to inject input; Input
-        Monitoring (reported as KEYBOARD_INPUT/MOUSE_INPUT) is not needed and
-        must not gate startup. On other platforms those same types represent
-        the real required access (e.g. Linux uinput), so they still gate.
-        """
-        excluded: set = set()
-        if sys.platform == "darwin":
-            excluded = {PermissionType.KEYBOARD_INPUT, PermissionType.MOUSE_INPUT}
+        Monitoring is not needed and must not gate startup. Crucially, the
+        Accessibility state is read via the **live** IOKit check
+        (``check_accessibility_live``) rather than ``get_missing_permissions``,
+        which relies on ``AXIsProcessTrusted()`` — that call caches its result
+        for the process lifetime and would keep reporting "granted" after a
+        runtime revocation. Using the cached value here caused a stop/restart
+        loop: the watchdog (live) stopped the service on revoke, then the gate
+        poller (cached) saw "granted" and restarted it, and so on.
 
-        missing = checker.get_missing_permissions()
-        still_missing = []
-        for result in missing:
-            if result.permission_type in excluded:
-                continue
-            live = self._live_permission_result(checker, result.permission_type)
+        On other platforms KEYBOARD_INPUT/MOUSE_INPUT represent the real
+        required access (e.g. Linux uinput) and their checks are already live,
+        so ``get_missing_permissions`` is used unchanged.
+        """
+        if sys.platform == "darwin":
+            live = checker.check_accessibility_live()
             if live.is_denied or live.status == PermissionStatus.UNKNOWN:
-                still_missing.append(live)
-        return still_missing
+                return [live]
+            return []
+
+        return checker.get_missing_permissions()
 
     async def _permission_gate(self, service: Optional[str]) -> None:
         """Gate service auto-start on required OS permissions.
