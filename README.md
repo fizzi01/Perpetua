@@ -4,8 +4,8 @@
 
 [![License: GPL v3](https://img.shields.io/badge/License-GPLv3-blue.svg?style=flat-square)](https://www.gnu.org/licenses/gpl-3.0)
 [![GitHub release](https://img.shields.io/github/v/release/fizzi01/Perpetua?style=flat-square&color=%234f47e4)](https://github.com/fizzi01/Perpetua/releases/latest)
-[![GitHub Downloads (all assets, latest release)](https://img.shields.io/github/downloads/fizzi01/Perpetua/latest/total?style=flat-square&logo=github&label=Downloads&color=%234f47e4)](https://github.com/fizzi01/Perpetua/releases/latest)
-
+[![GitHub Downloads (latest release)](https://img.shields.io/github/downloads/fizzi01/Perpetua/latest/total?style=flat-square&logo=github&label=Latest&color=%234f47e4)](https://github.com/fizzi01/Perpetua/releases/latest)
+[![GitHub Downloads (preview release)](https://img.shields.io/github/downloads/fizzi01/Perpetua/alpha/total?style=flat-square&logo=github&label=Preview&color=%239a6700)](https://github.com/fizzi01/Perpetua/releases/tag/alpha)
 </div>
 
 Perpetua is an open-source, cross-platform KVM software that lets you share a single keyboard and mouse across multiple devices. Inspired by Apple's Universal Control, it provides seamless cursor movement between devices, keyboard sharing, and automatic clipboard synchronization. All secured with TLS encryption.
@@ -37,7 +37,7 @@ Built with Python using uvloop (macOS/Linux) and winloop (Windows) as event loop
 
 ## Getting Started
 
-[![GitHub Downloads (all assets, latest release)](https://img.shields.io/github/downloads/fizzi01/Perpetua/latest/total?style=for-the-badge&logo=github&label=DOWNLOAD%20LATEST&color=%234f47e4)](https://github.com/fizzi01/Perpetua/releases/latest)
+[![GitHub Downloads (latest release)](https://img.shields.io/github/downloads/fizzi01/Perpetua/latest/total?style=for-the-badge&logo=github&label=DOWNLOAD%20LATEST&color=%234f47e4)](https://github.com/fizzi01/Perpetua/releases/latest)&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;[![GitHub Downloads (preview release)](https://img.shields.io/github/downloads/fizzi01/Perpetua/alpha/total?style=for-the-badge&logo=github&label=DOWNLOAD%20PREVIEW&color=%239a6700)](https://github.com/fizzi01/Perpetua/releases/tag/alpha)
 
 - **macOS**: Extract the `.zip`, then launch `Perpetua.app`. Clear the quarantine with `xattr -c Perpetua.app` before launching.
 - **Windows**: Extract the archive and run `Perpetua.exe` inside the `Perpetua` folder.
