@@ -1047,3 +1047,119 @@ class TestPlatformSpecific:
         else:
             assert Daemon.DEFAULT_SOCKET_PATH.startswith("/")
             assert ".sock" in Daemon.DEFAULT_SOCKET_PATH
+
+
+# ============================================================================
+# Test OS Permission Commands
+# ============================================================================
+
+
+from utils.permissions._base import (  # noqa: E402
+    PermissionResult,
+    PermissionStatus,
+    PermissionType,
+)
+
+
+class _FakePermissionChecker:
+    """Minimal stand-in for the per-OS PermissionChecker used in tests.
+
+    ``granted`` toggles whether Accessibility reports GRANTED or DENIED; every
+    request is recorded so tests can assert the prompt was triggered.
+    """
+
+    granted = True
+    requested: list = []
+
+    def __init__(self, *args, **kwargs):
+        pass
+
+    def _accessibility(self) -> PermissionResult:
+        status = (
+            PermissionStatus.GRANTED
+            if _FakePermissionChecker.granted
+            else PermissionStatus.DENIED
+        )
+        return PermissionResult(
+            permission_type=PermissionType.ACCESSIBILITY,
+            status=status,
+            message="accessibility",
+            can_request=not _FakePermissionChecker.granted,
+        )
+
+    def check_all_permissions(self):
+        return {PermissionType.ACCESSIBILITY: self._accessibility()}
+
+    def get_missing_permissions(self):
+        result = self._accessibility()
+        return [] if result.is_granted else [result]
+
+    def check_accessibility_live(self):
+        return self._accessibility()
+
+    def check_permission(self, permission_type):
+        return self._accessibility()
+
+    def request_permission(self, permission_type):
+        _FakePermissionChecker.requested.append(permission_type)
+        # Simulate the user granting the permission on request.
+        _FakePermissionChecker.granted = True
+        return self._accessibility()
+
+
+@pytest.mark.anyio
+class TestPermissionCommands:
+    """Test GET_PERMISSIONS / REQUEST_PERMISSIONS command handlers."""
+
+    @pytest.mark.anyio
+    async def test_get_permissions_all_granted(
+        self, daemon_client_connection, monkeypatch
+    ):
+        """When nothing is missing, ``missing`` is empty."""
+        _FakePermissionChecker.granted = True
+        _FakePermissionChecker.requested = []
+        monkeypatch.setattr("daemon.PermissionChecker", _FakePermissionChecker)
+
+        reader, writer, _ = daemon_client_connection
+        responses = await send_command(reader, writer, DaemonCommand.GET_PERMISSIONS)
+
+        assert responses is not None
+        assert responses[-1]["event_type"] == NotificationEventType.COMMAND_SUCCESS
+        result = responses[-1]["data"]["result"]
+        assert result["missing"] == []
+        assert len(result["permissions"]) == 1
+
+    @pytest.mark.anyio
+    async def test_get_permissions_missing(self, daemon_client_connection, monkeypatch):
+        """A denied permission surfaces in ``missing`` with its metadata."""
+        _FakePermissionChecker.granted = False
+        _FakePermissionChecker.requested = []
+        monkeypatch.setattr("daemon.PermissionChecker", _FakePermissionChecker)
+
+        reader, writer, _ = daemon_client_connection
+        responses = await send_command(reader, writer, DaemonCommand.GET_PERMISSIONS)
+
+        assert responses is not None
+        assert responses[-1]["event_type"] == NotificationEventType.COMMAND_SUCCESS
+        result = responses[-1]["data"]["result"]
+        assert len(result["missing"]) == 1
+        assert result["missing"][0]["type"] == PermissionType.ACCESSIBILITY.value
+        assert result["missing"][0]["status"] == PermissionStatus.DENIED.value
+
+    @pytest.mark.anyio
+    async def test_request_permissions_triggers_prompt(
+        self, daemon_client_connection, monkeypatch
+    ):
+        """REQUEST_PERMISSIONS calls request_permission for missing perms."""
+        _FakePermissionChecker.granted = False
+        _FakePermissionChecker.requested = []
+        monkeypatch.setattr("daemon.PermissionChecker", _FakePermissionChecker)
+
+        reader, writer, _ = daemon_client_connection
+        responses = await send_command(
+            reader, writer, DaemonCommand.REQUEST_PERMISSIONS
+        )
+
+        assert responses is not None
+        assert responses[-1]["event_type"] == NotificationEventType.COMMAND_SUCCESS
+        assert PermissionType.ACCESSIBILITY in _FakePermissionChecker.requested

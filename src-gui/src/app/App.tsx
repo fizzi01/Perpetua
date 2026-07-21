@@ -24,10 +24,20 @@ import {ServerTab} from './components/server-tab';
 import {Titlebar} from './components/titlebar';
 import {motion} from 'motion/react';
 
-import {ClientStatus, CommandType, EventType, ServerStatus, ServiceStatus} from './api/Interface';
+import {
+    ClientStatus,
+    CommandType,
+    EventType,
+    PermissionInfo,
+    PermissionsRequiredData,
+    PermissionsResult,
+    ServerStatus,
+    ServiceStatus,
+} from './api/Interface';
 
-import {chooseService, getStatus} from './api/Sender';
+import {chooseService, getPermissions, getStatus} from './api/Sender';
 import {listenCommand, listenGeneralEvent} from './api/Listener';
+import {PermissionGate} from './components/ui/permission-gate';
 import {useEventListeners} from './hooks/useEventListeners';
 import {useAppDispatch, useAppSelector} from './hooks/redux';
 import {ActionType} from './store/actions';
@@ -42,6 +52,10 @@ export function Main() {
     const [disableModeSwitch, setDisableModeSwitch] = useState<boolean>(false);
     const [stateListenersAdded, setListenersAdded] = useState<boolean>(false);
     const [showLogs, setShowLogs] = useState<boolean>(false);
+    // OS-level permission gate (macOS Accessibility / Input Monitoring). Null
+    // when nothing is missing; a non-empty list drives the blocking overlay.
+    const [missingPerms, setMissingPerms] = useState<PermissionInfo[] | null>(null);
+    const [pendingService, setPendingService] = useState<string | null>(null);
 
     const listeners = useEventListeners();
 
@@ -64,6 +78,34 @@ export function Main() {
 
             getStatus().catch((err) => {
                 console.error('[App] Error fetching status:', err);
+            });
+
+            // OS permission gate: the daemon pushes ``permissions_required`` when
+            // it defers startup on a missing macOS permission, and
+            // ``permissions_granted`` once it observes the grant.
+            listenGeneralEvent(EventType.PermissionsRequired, false, (event: any) => {
+                console.log('[App] PermissionsRequired event received', event);
+                const data = event.data as PermissionsRequiredData | undefined;
+                const perms = data?.permissions ?? [];
+                setPendingService(data?.pending_service ?? null);
+                setMissingPerms(perms.length > 0 ? perms : null);
+            }).then((unlisten) => {
+                listeners.addListenerOnce('permissions-required', unlisten);
+            });
+
+            listenGeneralEvent(EventType.PermissionsGranted, true, (event: any) => {
+                console.log('[App] PermissionsGranted event received', event);
+                setMissingPerms(null);
+                setPendingService(null);
+            }).then((unlisten) => {
+                listeners.addListenerOnce('permissions-granted', unlisten);
+            });
+
+            // Ask for the current permission state on startup so the gate shows
+            // immediately on a manual launch too (not only on autostart).
+            setupPermissionCheckListener();
+            getPermissions().catch((err) => {
+                console.error('[App] Error fetching permissions:', err);
             });
 
             listenGeneralEvent(EventType.ShowLog, true, (event: any) => {
@@ -125,6 +167,20 @@ export function Main() {
         });
     }
 
+    // One-shot listener for the ``get_permissions`` query result. Re-registered
+    // on every poll (mirrors setupStatusListener).
+    function setupPermissionCheckListener() {
+        listenCommand(EventType.CommandSuccess, CommandType.GetPermissions, (event) => {
+            const result = event.data?.result as PermissionsResult | undefined;
+            const missing = result?.missing ?? [];
+            setPendingService(result?.pending_service ?? null);
+            setMissingPerms(missing.length > 0 ? missing : null);
+            listeners.removeListener('get-permissions');
+        }).then((unlisten) => {
+            listeners.addListenerOnce('get-permissions', unlisten);
+        });
+    }
+
     useEffect(() => {
         firstStartup();
     }, []);
@@ -142,6 +198,19 @@ export function Main() {
         }
 
     }, [mode]);
+
+    // While the permission gate is up, re-query the daemon so the overlay
+    // reflects a grant even if the ``permissions_granted`` push is missed.
+    useEffect(() => {
+        if (missingPerms === null) return;
+        const interval = setInterval(() => {
+            setupPermissionCheckListener();
+            getPermissions().catch((err) => {
+                console.error('[App] Error polling permissions:', err);
+            });
+        }, 2500);
+        return () => clearInterval(interval);
+    }, [missingPerms]);
 
     // Periodically fetch status to avoid desync
     useEffect(() => {
@@ -207,6 +276,9 @@ export function Main() {
                     <DaemonLogDialog isOpen={showLogs} onClose={() => setShowLogs(false)}/>
                 </ScrollArea>
             </div>
+            {missingPerms && missingPerms.length > 0 ? (
+                <PermissionGate missing={missingPerms} pendingService={pendingService}/>
+            ) : null}
         </div>
     );
 }

@@ -143,3 +143,18 @@ export function switchTrayIcon(active: boolean): void {
 export function getLocalIpAddress(): Promise<string> {
     return invoke("get_local_ip");
 }
+
+// -- OS-LEVEL PERMISSIONS (macOS gate) --
+
+export function getPermissions(): Promise<void> {
+    return invoke(getType(CommandType, CommandType.GetPermissions));
+}
+
+/**
+ * Trigger the OS permission prompt / open System Settings.
+ * @param permissionType Optional specific permission (e.g. "accessibility");
+ *                        when omitted the daemon requests every missing one.
+ */
+export function requestPermissions(permissionType?: string): Promise<void> {
+    return invoke(getType(CommandType, CommandType.RequestPermissions), {permissionType});
+}

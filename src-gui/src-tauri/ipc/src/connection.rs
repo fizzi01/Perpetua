@@ -18,7 +18,13 @@ along with this program. If not, see <https://www.gnu.org/licenses/>.
 
 use crate::paths;
 use crate::{AsyncReader, AsyncWriter};
-use std::{env, env::VarError, fs, io, path::PathBuf, time::Duration};
+use std::{
+    env,
+    env::VarError,
+    fs, io,
+    path::PathBuf,
+    time::{Duration, Instant},
+};
 use thiserror::Error;
 
 #[cfg(unix)]
@@ -162,50 +168,69 @@ fn default_path() -> Result<DefaultPath, SocketPathError> {
 }
 
 async fn wait_connection(
-    t: Duration,
-    max_t: Duration,
+    initial: Duration,
+    max_interval: Duration,
+    deadline: Duration,
 ) -> Result<(AsyncReader, AsyncWriter), ConnectionError> {
-    let path = default_path()?;
-    let mut timeout = t;
+    // Resolve once up-front so a fatal, stable error (e.g. no ``$HOME``)
+    // surfaces immediately instead of being retried for the whole deadline.
+    default_path()?;
+
+    let start = Instant::now();
+    let mut interval = initial;
 
     loop {
-        match &path {
-            DefaultPath::Unix(_socket_path) => {
-                #[cfg(unix)]
-                {
-                    if let Ok(stream) = UnixStream::connect(_socket_path).await {
-                        let (r, w) = stream.into_split();
-                        let reader = AsyncReader::new(r);
-                        let writer = AsyncWriter::new(w);
-                        return Ok((reader, writer));
+        // Re-resolve every attempt: the daemon writes its endpoint file only
+        // after binding, so on a cold boot the first attempts happen before
+        // the file exists. Re-reading it here lets us pick up the real port
+        // (including a Windows fallback port) as soon as it appears instead
+        // of being stuck on the platform default.
+        if let Ok(path) = default_path() {
+            match &path {
+                DefaultPath::Unix(_socket_path) => {
+                    #[cfg(unix)]
+                    {
+                        if let Ok(stream) = UnixStream::connect(_socket_path).await {
+                            let (r, w) = stream.into_split();
+                            let reader = AsyncReader::new(r);
+                            let writer = AsyncWriter::new(w);
+                            return Ok((reader, writer));
+                        }
                     }
                 }
-            }
-            DefaultPath::Tcp(_addr, _port) => {
-                #[cfg(windows)]
-                {
-                    if let Ok(stream) = TcpStream::connect((_addr.as_str(), *_port)).await {
-                        let (r, w) = stream.into_split();
-                        let reader = AsyncReader::new(r);
-                        let writer = AsyncWriter::new(w);
-                        return Ok((reader, writer));
+                DefaultPath::Tcp(_addr, _port) => {
+                    #[cfg(windows)]
+                    {
+                        if let Ok(stream) = TcpStream::connect((_addr.as_str(), *_port)).await {
+                            let (r, w) = stream.into_split();
+                            let reader = AsyncReader::new(r);
+                            let writer = AsyncWriter::new(w);
+                            return Ok((reader, writer));
+                        }
                     }
                 }
             }
         }
-        if timeout == max_t {
+
+        let elapsed = start.elapsed();
+        if elapsed >= deadline {
             return Err(ConnectionError::Timeout);
         }
-        tokio::time::sleep(timeout).await;
-        timeout = std::cmp::min(timeout * 2, max_t);
+        // Never sleep past the deadline, and cap the interval so that after the
+        // initial exponential ramp-up the GUI keeps polling roughly every
+        // ``max_interval`` and latches onto the daemon promptly once it binds.
+        let remaining = deadline - elapsed;
+        tokio::time::sleep(std::cmp::min(interval, remaining)).await;
+        interval = std::cmp::min(interval * 2, max_interval);
     }
 }
 
 pub async fn connect(
-    t: Duration,
-    max_t: Duration,
+    initial: Duration,
+    max_interval: Duration,
+    deadline: Duration,
 ) -> Result<(AsyncReader, AsyncWriter), ConnectionError> {
-    let Ok((reader, writer)) = wait_connection(t, max_t).await else {
+    let Ok((reader, writer)) = wait_connection(initial, max_interval, deadline).await else {
         return Err(ConnectionError::Timeout);
     };
     Ok((reader, writer))

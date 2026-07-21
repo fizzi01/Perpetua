@@ -125,6 +125,10 @@ class NotificationEventType(str, Enum):
     NETWORK_QUALITY_DEGRADED = "network_quality_degraded"
     NETWORK_QUALITY_RESTORED = "network_quality_restored"
 
+    # Permission events (macOS Accessibility / Input Monitoring gate)
+    PERMISSIONS_REQUIRED = "permissions_required"
+    PERMISSIONS_GRANTED = "permissions_granted"
+
     # General events
     STATUS_UPDATE = "status_update"
     INFO = "info"
@@ -869,6 +873,59 @@ class InfoEvent(NotificationEvent):
 
 
 @dataclass
+class PermissionsRequiredEvent(NotificationEvent):
+    """One or more OS-level permissions are missing (macOS Accessibility /
+    Input Monitoring).
+
+    The daemon has already bound its command socket, so the GUI is connected;
+    this tells it to surface the permission gate instead of the main UI. The
+    ``pending_service`` field, when set, is the service that will auto-start as
+    soon as the permission is granted.
+    """
+
+    def __init__(
+        self,
+        permissions: Optional[list] = None,
+        pending_service: Optional[str] = None,
+        **kwargs,
+    ):
+        data = {
+            "permissions": permissions or [],
+            "pending_service": pending_service,
+        }
+        data.update(kwargs)
+        super().__init__(
+            event_type=NotificationEventType.PERMISSIONS_REQUIRED,
+            data=data,
+            source="daemon",
+            message="Required system permissions are missing",
+        )
+
+
+@dataclass
+class PermissionsGrantedEvent(NotificationEvent):
+    """All required OS-level permissions are now granted.
+
+    Emitted after the daemon's permission poller observes a live grant; the
+    GUI should dismiss the permission gate and continue to the main UI.
+    """
+
+    def __init__(
+        self,
+        pending_service: Optional[str] = None,
+        **kwargs,
+    ):
+        data = {"pending_service": pending_service}
+        data.update(kwargs)
+        super().__init__(
+            event_type=NotificationEventType.PERMISSIONS_GRANTED,
+            data=data,
+            source="daemon",
+            message="Required system permissions granted",
+        )
+
+
+@dataclass
 class CommandSuccessEvent(NotificationEvent):
     """Command executed successfully"""
 
@@ -1116,6 +1173,29 @@ class NotificationManager:
     async def notify_info(self, info: str, **kwargs) -> None:
         """Notify general information"""
         await self.send(InfoEvent(info=info, **kwargs))
+
+    async def notify_permissions_required(
+        self,
+        permissions: Optional[list] = None,
+        pending_service: Optional[str] = None,
+        **kwargs,
+    ) -> None:
+        """Notify that required OS-level permissions are missing"""
+        await self.send(
+            PermissionsRequiredEvent(
+                permissions=permissions, pending_service=pending_service, **kwargs
+            )
+        )
+
+    async def notify_permissions_granted(
+        self,
+        pending_service: Optional[str] = None,
+        **kwargs,
+    ) -> None:
+        """Notify that required OS-level permissions are now granted"""
+        await self.send(
+            PermissionsGrantedEvent(pending_service=pending_service, **kwargs)
+        )
 
     async def notify_command_success(
         self,
