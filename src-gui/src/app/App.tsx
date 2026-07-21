@@ -56,6 +56,8 @@ export function Main() {
     // when nothing is missing; a non-empty list drives the blocking overlay.
     const [missingPerms, setMissingPerms] = useState<PermissionInfo[] | null>(null);
     const [pendingService, setPendingService] = useState<string | null>(null);
+    // True when the gate is up because a permission was revoked at runtime.
+    const [permsRevoked, setPermsRevoked] = useState<boolean>(false);
 
     const listeners = useEventListeners();
 
@@ -88,6 +90,7 @@ export function Main() {
                 const data = event.data as PermissionsRequiredData | undefined;
                 const perms = data?.permissions ?? [];
                 setPendingService(data?.pending_service ?? null);
+                setPermsRevoked(data?.revoked === true);
                 setMissingPerms(perms.length > 0 ? perms : null);
             }).then((unlisten) => {
                 listeners.addListenerOnce('permissions-required', unlisten);
@@ -97,6 +100,7 @@ export function Main() {
                 console.log('[App] PermissionsGranted event received', event);
                 setMissingPerms(null);
                 setPendingService(null);
+                setPermsRevoked(false);
             }).then((unlisten) => {
                 listeners.addListenerOnce('permissions-granted', unlisten);
             });
@@ -277,7 +281,7 @@ export function Main() {
                 </ScrollArea>
             </div>
             {missingPerms && missingPerms.length > 0 ? (
-                <PermissionGate missing={missingPerms} pendingService={pendingService}/>
+                <PermissionGate missing={missingPerms} pendingService={pendingService} revoked={permsRevoked}/>
             ) : null}
         </div>
     );

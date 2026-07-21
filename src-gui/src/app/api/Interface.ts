@@ -216,6 +216,10 @@ export interface PermissionInfo {
 export interface PermissionsRequiredData {
     permissions: PermissionInfo[];
     pending_service?: string | null;
+    // True when the permission was revoked while the app was already running
+    // (as opposed to missing at startup). Drives a clearer gate message.
+    revoked?: boolean;
+    reason?: string;
 }
 
 export interface PermissionsResult {

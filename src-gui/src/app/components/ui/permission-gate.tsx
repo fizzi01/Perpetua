@@ -27,6 +27,8 @@ interface PermissionGateProps {
     missing: PermissionInfo[];
     /** Service that will auto-start once the permission is granted, if any. */
     pendingService?: string | null;
+    /** True when a permission was revoked while the app was already running. */
+    revoked?: boolean;
 }
 
 /** Turn a snake_case permission type into a human-readable label. */
@@ -44,7 +46,7 @@ function prettyName(type: string): string {
  * user through granting the permission and dismisses itself automatically when
  * the daemon reports the grant (``permissions_granted``).
  */
-export function PermissionGate({missing, pendingService}: PermissionGateProps) {
+export function PermissionGate({missing, pendingService, revoked}: PermissionGateProps) {
     const handleGrant = () => {
         // No argument -> the daemon requests every missing permission and opens
         // the relevant System Settings pane(s).
@@ -73,14 +75,14 @@ export function PermissionGate({missing, pendingService}: PermissionGateProps) {
                 <div className="flex items-center gap-3 mb-3">
                     <ShieldAlert size={28} style={{color: 'var(--app-danger)'}}/>
                     <h2 className="text-lg font-semibold" style={{color: 'var(--app-text-primary)'}}>
-                        Permission required
+                        {revoked ? 'Permission revoked' : 'Permission required'}
                     </h2>
                 </div>
 
                 <p className="text-sm mb-4" style={{color: 'var(--app-text-secondary)'}}>
-                    Perpetua needs the following system permission(s) to control your
-                    keyboard and mouse. Grant them in System Settings, then this screen
-                    will continue automatically.
+                    {revoked
+                        ? 'A required system permission was turned off while Perpetua was running, so the service was stopped to avoid locking your input. Re-enable it in System Settings and the service will resume automatically.'
+                        : 'Perpetua needs the following system permission(s) to control your keyboard and mouse. Grant them in System Settings, then this screen will continue automatically.'}
                 </p>
 
                 <ul className="flex flex-col gap-2 mb-5">
@@ -116,7 +118,7 @@ export function PermissionGate({missing, pendingService}: PermissionGateProps) {
                     }}
                 >
                     <ExternalLink size={16}/>
-                    Grant permission / Open Settings
+                    Open Settings
                 </motion.button>
 
                 <p className="text-xs mt-4 text-center" style={{color: 'var(--app-text-secondary)'}}>

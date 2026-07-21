@@ -40,7 +40,7 @@ from utils import UIDGenerator, BackgroundTasks
 from utils.logging import Logger, get_logger
 from utils.cli import DaemonArguments
 from utils.permissions import PermissionChecker
-from utils.permissions._base import PermissionStatus, PermissionType
+from utils.permissions._base import PermissionResult, PermissionStatus, PermissionType
 from utils.runtime import (
     env_endpoint_override,
     endpoint_to_socket_path,
@@ -377,15 +377,14 @@ class Daemon:
                         timeout=check_timeout,
                     )
                     if result.is_denied:
-                        self._logger.error(
-                            "Accessibility permission revoked at runtime, shutting down"
+                        self._logger.warning(
+                            "Accessibility permission revoked at runtime"
                         )
-                        await self._notification_manager.notify_error(
-                            error="Accessibility permission was revoked. "
-                            "Shutting down to prevent input lock.",
-                            context="permission_watchdog",
-                        )
-                        await self.stop()
+                        # Stop the service to prevent input lock but keep the
+                        # daemon (and GUI connection) alive, then re-show the
+                        # permission gate with a clear, specific message instead
+                        # of a generic "Service Disconnected".
+                        await self._on_permission_lost([result], reason="revoked")
                         return
                 except asyncio.TimeoutError:
                     self._logger.warning(
@@ -394,15 +393,19 @@ class Daemon:
                     )
                     max_retry -= 1
                     if max_retry <= 0:
-                        self._logger.error(
-                            "Permission watchdog check failed repeatedly, shutting down"
+                        self._logger.warning(
+                            "Permission watchdog check failed repeatedly; "
+                            "stopping service and re-showing the permission gate"
                         )
-                        await self._notification_manager.notify_error(
-                            error="Permission watchdog check failed repeatedly. "
-                            "Shutting down to prevent potential input lock.",
-                            context="permission_watchdog",
+                        unknown = PermissionResult(
+                            permission_type=PermissionType.ACCESSIBILITY,
+                            status=PermissionStatus.UNKNOWN,
+                            message="Could not verify the Accessibility permission",
+                            can_request=True,
                         )
-                        await self.stop()
+                        await self._on_permission_lost(
+                            [unknown], reason="check_failed"
+                        )
                         return
                 except Exception as e:
                     self._logger.warning(
@@ -410,6 +413,44 @@ class Daemon:
                     )
         except asyncio.CancelledError:
             pass
+
+    async def _on_permission_lost(self, missing: list, reason: str) -> None:
+        """Handle a runtime loss of a required permission gracefully.
+
+        Stops the running service (to prevent input lock) but keeps the daemon
+        and its command socket alive, so the GUI stays connected and receives a
+        clear ``permissions_required`` message instead of a generic
+        "Service Disconnected". Re-arms the gate poller so the service restarts
+        automatically once the permission is granted again.
+        """
+        service: Optional[str] = None
+        try:
+            if self._server and self._server.is_running():
+                service = "server"
+                await self._server.stop()
+                self._state["server"].stop()
+            elif self._client and self._client.is_running():
+                service = "client"
+                await self._client.stop()
+                self._state["client"].stop()
+        except Exception as e:
+            self._logger.warning(
+                "Failed to stop service after permission loss", error=str(e)
+            )
+
+        self._pending_service = service
+        serialized = [self._serialize_permission(r) for r in missing]
+        await self._notification_manager.notify_permissions_required(
+            permissions=serialized,
+            pending_service=service,
+            revoked=True,
+            reason=reason,
+        )
+        # Re-arm the gate poller: it restarts the deferred service and the
+        # watchdog once the permission is granted again.
+        self._bg_tasks.spawn(
+            self._permission_gate_poller(), name="permission_gate_poller"
+        )
 
     @staticmethod
     def _serialize_permission(result) -> Dict[str, Any]:

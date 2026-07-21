@@ -18,17 +18,11 @@
  */
 
 import {motion} from 'motion/react';
-import {Clipboard, Keyboard, MousePointer, ShieldCheck} from 'lucide-react';
-import {platform} from '@tauri-apps/plugin-os';
+import {Clipboard, Keyboard, MousePointer} from 'lucide-react';
 import {CommandType, EventType, StreamType} from '../../api/Interface';
-import {disableStream, enableStream, requestPermissions} from '../../api/Sender';
+import {disableStream, enableStream} from '../../api/Sender';
 import {listenCommand} from '../../api/Listener';
 import {useEventListeners} from '../../hooks/useEventListeners';
-
-// System-level permissions (Accessibility / Input Monitoring) only need a
-// manual "open settings" affordance on macOS. Evaluated once at module load;
-// platform() is synchronous under Tauri.
-const IS_MACOS = platform() === 'macos';
 
 interface PermissionsPanelProps {
     /** Mouse permission enabled state */
@@ -131,37 +125,9 @@ export function PermissionsPanel({
                 borderColor: 'var(--app-card-border)',
             }}
         >
-            <div className="flex items-center justify-between mb-2 gap-2">
-                <h4 className="text-sm font-semibold" style={{color: 'var(--app-text-primary)'}}>
-                    Active Permissions
-                </h4>
-                {IS_MACOS ? (
-                    <motion.button
-                        whileHover={{scale: 1.05}}
-                        whileTap={{scale: 0.95}}
-                        onClick={() => {
-                            // Only Accessibility is required on macOS — request it
-                            // explicitly so Input Monitoring settings are never opened.
-                            requestPermissions('accessibility').catch((err) => {
-                                console.error('[PermissionsPanel] Failed to request permissions:', err);
-                                addNotification('error', 'Failed to open system permission settings');
-                            });
-                        }}
-                        title="Open macOS System Settings to grant Accessibility"
-                        className="flex items-center gap-1.5 px-2.5 py-1 rounded-lg text-xs font-semibold transition-all"
-                        style={{
-                            backgroundColor: 'var(--app-card-bg)',
-                            color: 'var(--app-text-secondary)',
-                            borderWidth: 1,
-                            borderStyle: 'solid',
-                            borderColor: 'var(--app-card-border)',
-                        }}
-                    >
-                        <ShieldCheck size={14}/>
-                        System permissions
-                    </motion.button>
-                ) : null}
-            </div>
+            <h4 className="text-sm font-semibold mb-2" style={{color: 'var(--app-text-primary)'}}>
+                Active Permissions
+            </h4>
             <div className="flex gap-3">
                 <motion.button
                     disabled={disableAllStreams}
