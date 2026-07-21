@@ -52,3 +52,48 @@ async def test_client_clipboard_to_server():
         assert h.server.clipboard.get_last_content() == "world"
     finally:
         await h.stop()
+
+
+@pytest.mark.anyio
+async def test_clipboard_not_broadcast_when_not_listening():
+    """No clipboard change is forwarded while the listener isn't listening."""
+    h = await build_bridge()
+    try:
+        # Default state: no connected/active client -> _listening is False.
+        assert h.server.clip_listener._listening is False
+
+        await h.server.clip_listener._on_clipboard_change("secret", ClipboardType.TEXT)
+        await h.settle(30)
+
+        assert h.client.clipboard.get_last_content() is None
+    finally:
+        await h.stop()
+
+
+@pytest.mark.anyio
+async def test_clipboard_content_type_roundtrip():
+    """URL and FILE clipboard payloads round-trip in both directions."""
+    h = await build_bridge()
+    try:
+        h.server.clip_listener._listening = True
+        h.client.clip_listener._listening = True
+
+        # Server -> client, URL payload.
+        await h.server.clip_listener._on_clipboard_change(
+            "https://example.com", ClipboardType.URL
+        )
+        await h.wait_until(
+            lambda: h.client.clipboard.get_last_content() == "https://example.com"
+        )
+        assert h.client.clipboard.get_last_content() == "https://example.com"
+
+        # Client -> server, FILE payload (newline-joined path list).
+        await h.client.clip_listener._on_clipboard_change(
+            "/tmp/a.txt\n/tmp/b.txt", ClipboardType.FILE
+        )
+        await h.wait_until(
+            lambda: h.server.clipboard.get_last_content() == "/tmp/a.txt\n/tmp/b.txt"
+        )
+        assert h.server.clipboard.get_last_content() == "/tmp/a.txt\n/tmp/b.txt"
+    finally:
+        await h.stop()

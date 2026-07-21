@@ -797,3 +797,80 @@ async def test_client_follows_workspace_topology_not_physical_adjacency():
         assert ctrl._is_active is True
     finally:
         await h.stop()
+
+
+# ---------------------------------------------------------------------------
+# Axis-mapping fidelity
+# ---------------------------------------------------------------------------
+
+
+@pytest.mark.anyio
+async def test_asymmetric_axis_band_landing():
+    """Server-edge axis remaps + clamps onto a smaller, offset client monitor.
+
+    The client's monitor is half the server's height and offset, so it only
+    covers the middle band of the server's RIGHT edge. A crossing at the
+    band's centre must land at the client monitor's centre after the
+    server->client axis remap.
+    """
+    # Client monitor is 1920x540 (half height).
+    h = await build_bridge(client_bboxes=((0, 0, 1920, 540),))
+    try:
+        server = _server_monitors([_1080P])
+        # Placed off the server RIGHT edge, vertically centred (covers server
+        # y in [270, 810] -> server axis [0.25, 0.75]).
+        placement = {
+            "client_monitor_id": 0,
+            "workspace_x": 1920,
+            "workspace_y": 270,
+            "width": 1920,
+            "height": 540,
+        }
+        bindings = _bindings_for(placement, server)
+        assert bindings[0]["server_axis_start"] == pytest.approx(0.25)
+        assert bindings[0]["server_axis_end"] == pytest.approx(0.75)
+        assert bindings[0]["client_axis_start"] == pytest.approx(0.0)
+        assert bindings[0]["client_axis_end"] == pytest.approx(1.0)
+        await _connect(h, h.client_uid, bindings)
+
+        # Cross at the band centre (server y=540 -> axis 0.5, local 0.5).
+        await _cross(h, "right", _1080P, 540, h.client_uid)
+        # Landing remaps to the client monitor's centre: y ~ 270 over its
+        # 540-tall bbox; RIGHT crossing lands at the monitor's left column.
+        await h.wait_until(lambda: 260 <= h.client.mouse_mock.position[1] <= 280)
+        lx, ly = h.client.mouse_mock.position
+        assert lx == 0
+        assert 260 <= ly <= 280
+        assert h.client.mouse._active_target_bbox == (0, 0, 1920, 540)
+    finally:
+        await h.stop()
+
+
+@pytest.mark.anyio
+async def test_overlapping_bindings_first_match_wins():
+    """Two clients bound to the same edge/band -> deterministic first match."""
+    h = await build_bridge()
+    try:
+        server = _server_monitors([_1080P])
+        full_right = {
+            "client_monitor_id": 0,
+            "workspace_x": 1920,
+            "workspace_y": 0,
+            "width": 1920,
+            "height": 1080,
+        }
+        # Both clients claim the entire RIGHT edge (ambiguous layout).
+        await _connect(h, "client_first", _bindings_for(full_right, server))
+        await _connect(h, "client_second", _bindings_for(full_right, server))
+
+        listener = h.server.listener
+        await _cross(h, "right", _1080P, 540, "client_first")
+
+        # First-registered client wins; no crash on the ambiguous match.
+        assert listener._active_client_uid == "client_first"
+        assert set(listener._active_clients_snapshot) == {
+            "client_first",
+            "client_second",
+        }
+    finally:
+        await h.stop()

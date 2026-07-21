@@ -172,6 +172,59 @@ async def test_client_return_to_server():
         await h.stop()
 
 
+@pytest.mark.anyio
+async def test_server_does_not_cross_while_dragging():
+    """A held mouse button suppresses the server-side edge crossing."""
+    h = await build_bridge()
+    try:
+        await _connect_client(h, [_RIGHT_BINDING])
+
+        # Press-and-hold on the server (not listening yet) -> dragging.
+        h.server.listener.on_click(400, 500, _Button("left"), True)
+        assert h.server.listener._is_dragging is True
+
+        # Pushing to the edge while dragging must not cross.
+        _drive_to_right_edge(h.server.listener)
+        await h.settle(20)
+
+        assert h.server.listener._active_client_uid is None
+        assert h.client.mouse._is_active is False
+    finally:
+        await h.stop()
+
+
+@pytest.mark.anyio
+async def test_client_does_not_return_while_dragging():
+    """A held button on the client suppresses the return-to-server crossing."""
+    h = await build_bridge()
+    try:
+        await _connect_client(h, [_RIGHT_BINDING])
+        _drive_to_right_edge(h.server.listener)
+        await h.wait_until(lambda: h.client.mouse._is_active)
+        await h.settle(20)
+
+        ctrl = h.client.mouse
+        server_events = h.track(h.server_bus, BusEventType.ACTIVE_SCREEN_CHANGED)
+
+        # Drag in progress on the client.
+        ctrl._is_dragging = True
+        for x in range(10, 0, -2):
+            ctrl._movement_history.append((x, 500))
+        h.client.mouse_mock.position = (0, 500)
+        await ctrl._check_edge()
+        await h.settle(20)
+
+        # No return while dragging.
+        assert ctrl._is_active is True
+        assert not [
+            d
+            for et, d in server_events
+            if et == BusEventType.ACTIVE_SCREEN_CHANGED and d.active_screen is None
+        ]
+    finally:
+        await h.stop()
+
+
 class _Button:
     """Minimal pynput-Button stand-in exposing ``.name`` (e.g. 'left')."""
 
