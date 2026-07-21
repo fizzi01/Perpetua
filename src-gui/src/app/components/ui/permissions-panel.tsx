@@ -140,12 +140,14 @@ export function PermissionsPanel({
                         whileHover={{scale: 1.05}}
                         whileTap={{scale: 0.95}}
                         onClick={() => {
-                            requestPermissions().catch((err) => {
+                            // Only Accessibility is required on macOS — request it
+                            // explicitly so Input Monitoring settings are never opened.
+                            requestPermissions('accessibility').catch((err) => {
                                 console.error('[PermissionsPanel] Failed to request permissions:', err);
                                 addNotification('error', 'Failed to open system permission settings');
                             });
                         }}
-                        title="Open System Settings"
+                        title="Open macOS System Settings to grant Accessibility"
                         className="flex items-center gap-1.5 px-2.5 py-1 rounded-lg text-xs font-semibold transition-all"
                         style={{
                             backgroundColor: 'var(--app-card-bg)',

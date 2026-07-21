@@ -435,15 +435,26 @@ class Daemon:
         return checker.check_permission(permission_type)
 
     def _current_missing_permissions(self, checker) -> list:
-        """Return the still-missing permissions using live checks.
+        """Return the still-missing *required* permissions using live checks.
 
         Reuses the base ``get_missing_permissions`` selection (denied/unknown)
         but re-evaluates each entry with a non-cached check so a runtime grant
         is detected.
+
+        On macOS only Accessibility is required to inject input; Input
+        Monitoring (reported as KEYBOARD_INPUT/MOUSE_INPUT) is not needed and
+        must not gate startup. On other platforms those same types represent
+        the real required access (e.g. Linux uinput), so they still gate.
         """
+        excluded: set = set()
+        if sys.platform == "darwin":
+            excluded = {PermissionType.KEYBOARD_INPUT, PermissionType.MOUSE_INPUT}
+
         missing = checker.get_missing_permissions()
         still_missing = []
         for result in missing:
+            if result.permission_type in excluded:
+                continue
             live = self._live_permission_result(checker, result.permission_type)
             if live.is_denied or live.status == PermissionStatus.UNKNOWN:
                 still_missing.append(live)
