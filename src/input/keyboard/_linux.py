@@ -18,10 +18,9 @@
 
 from event.bus import EventBus
 from network.stream.handler import StreamHandler
-from input.utils import ScreenEdge
 
 from . import _base
-from .backend import Key, KeyCode, HotKey
+from .backend import Key, KeyCode
 
 
 class ServerKeyboardListener(_base.ServerKeyboardListener):
@@ -53,58 +52,6 @@ class ServerKeyboardListener(_base.ServerKeyboardListener):
             if lower != key.char:
                 return KeyCode(char=lower)
         return key
-
-    def _build_hotkeys(self) -> list[HotKey]:
-        # Build key sets manually using the canonical forms.
-        def make_cb(coro_fn, *args):
-            def cb():
-                self._hotkey_consumed = True
-                self._schedule_async(coro_fn(*args))
-
-            return cb
-
-        ctrl = Key.ctrl
-        shift = Key.shift
-        p = KeyCode(char="p")
-        q = KeyCode(char="q")
-        one = KeyCode(char="1")
-        two = KeyCode(char="2")
-        left = KeyCode.from_vk(Key.left.value.vk)
-        right = KeyCode.from_vk(Key.right.value.vk)
-        up = KeyCode.from_vk(Key.up.value.vk)
-        down = KeyCode.from_vk(Key.down.value.vk)
-        tab = KeyCode.from_vk(Key.tab.value.vk)
-        esc = KeyCode.from_vk(Key.esc.value.vk)
-
-        entries = [
-            (
-                frozenset({ctrl, shift, p, left}),
-                make_cb(self._hotkey_switch_direction, ScreenEdge.LEFT),
-            ),
-            (
-                frozenset({ctrl, shift, p, right}),
-                make_cb(self._hotkey_switch_direction, ScreenEdge.RIGHT),
-            ),
-            (
-                frozenset({ctrl, shift, p, up}),
-                make_cb(self._hotkey_switch_direction, ScreenEdge.TOP),
-            ),
-            (
-                frozenset({ctrl, shift, p, down}),
-                make_cb(self._hotkey_switch_direction, ScreenEdge.BOTTOM),
-            ),
-            (
-                frozenset({ctrl, shift, p, tab, one}),
-                make_cb(self._hotkey_cycle_client, 1),
-            ),
-            (
-                frozenset({ctrl, shift, p, tab, two}),
-                make_cb(self._hotkey_cycle_client, -1),
-            ),
-            (frozenset({ctrl, shift, p, esc}), make_cb(self._hotkey_switch_to_server)),
-            (frozenset({ctrl, shift, q}), make_cb(self._hotkey_panic)),
-        ]
-        return [HotKey(keys, cb) for keys, cb in entries]
 
     def _xorg_suppress_filter(self, event):
         if self._listening:
