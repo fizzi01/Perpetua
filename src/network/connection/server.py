@@ -371,6 +371,23 @@ class ConnectionHandler(BaseConnectionHandler):
         """
         return client_obj.has_ip(address)
 
+    @staticmethod
+    def _is_identity_confirmed(
+        client_obj: ClientObj,
+        uid: Optional[str],
+        hostname: Optional[str],
+    ) -> bool:
+        """
+        A client's identity is confirmed when the received UID or hostname
+        matches the stored one. Genuine mismatches are rejected earlier in the
+        handshake, so a match here is trusted: a connecting IP that is not yet
+        known belongs to the same client (DHCP lease change / roaming) and can
+        be learned rather than rejected.
+        """
+        return (uid is not None and client_obj.uid == uid) or (
+            hostname is not None and client_obj.host_name == hostname
+        )
+
     async def _wait_for_handshake_response(
         self,
         msg_exchange: MessageExchange,
@@ -595,10 +612,18 @@ class ConnectionHandler(BaseConnectionHandler):
                     return False
 
                 # --- IP presence check ---
-                # Verify that the connecting IP is among the client's known addresses
+                # Verify that the connecting IP is among the client's known
+                # addresses. A client that already matched by UID or hostname
+                # (both consistency checks above have rejected genuine
+                # mismatches) is a confirmed identity: a new IP just means a
+                # DHCP lease change or a move to another network, so we learn
+                # the address instead of rejecting it (DHCP-safe design).
+                identity_confirmed = self._is_identity_confirmed(
+                    client, tmp_uid, tmp_host_name
+                )
                 if not self._check_client(client, client_addr):
-                    if client.ip_addresses:
-                        # Client has known IPs but the connecting one is not among them
+                    if client.ip_addresses and not identity_confirmed:
+                        # Unknown IP and no UID/hostname corroboration - reject
                         self._logger.log(
                             f"IP {client_addr} not in known addresses for client "
                             f"{client.get_net_id()} (known: {client.ip_addresses}). "
@@ -609,7 +634,9 @@ class ConnectionHandler(BaseConnectionHandler):
                         await cur_stream.close()
                         return False
                     else:
-                        # Client has no known IPs yet (hostname-only config) - register this IP
+                        # New IP for a known/confirmed client (DHCP change /
+                        # roaming) or a hostname-only client with no known IPs
+                        # yet - register this IP.
                         self._logger.log(
                             f"Registering new IP {client_addr} for client {client.get_net_id()}",
                             Logger.INFO,
