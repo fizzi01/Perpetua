@@ -16,9 +16,64 @@
 #
 
 import asyncio
+import ssl
+import time
 from typing import Optional, Callable
 
 from model.client import ClientObj
+
+# OpenSSL X509_V_FLAG_NO_CHECK_TIME. Not exposed by Python's ``ssl.VerifyFlags``
+# enum, but ``SSLContext.verify_flags`` accepts the raw bit and forwards it to
+# ``X509_VERIFY_PARAM_set_flags``. Setting it disables the certificate
+# notBefore/notAfter validity-window check during the handshake while leaving
+# chain, signature, hostname and CERT_REQUIRED verification fully intact.
+#
+# We need this because peers on a LAN frequently run without NTP: a client whose
+# clock trails the server rejects a perfectly good server certificate with
+# "certificate is not yet valid". Trust in this deployment comes from the pinned
+# private CA + OTP pairing + private-key possession, not from validity windows.
+# Expiry is re-enforced separately (see :func:`peer_cert_is_expired`) so that
+# genuinely expired certificates are still rejected.
+SSL_NO_CHECK_TIME = 0x200000
+
+
+def apply_skew_tolerant_time_policy(context: ssl.SSLContext) -> None:
+    """Disable OpenSSL's built-in cert validity-window check on ``context``.
+
+    Drops both the not-yet-valid and expired checks at the OpenSSL layer so a
+    clock-skewed peer can still complete the handshake. Callers that want to
+    keep rejecting expired certificates must re-check expiry after the handshake
+    with :func:`peer_cert_is_expired`.
+    """
+    context.verify_flags |= SSL_NO_CHECK_TIME
+
+
+def peer_cert_is_expired(ssl_object: Optional[ssl.SSLObject]) -> bool:
+    """Return True if the verified peer certificate is past its ``notAfter``.
+
+    Re-enforces expiry only — ``notBefore`` is deliberately ignored, which is
+    what lets a behind-the-clock peer connect. The comparison uses the local
+    (possibly skewed) clock; that is acceptable, since a behind peer merely
+    tolerates the certificate slightly longer while a genuinely expired one is
+    still rejected. Returns False when there is no TLS layer or no peer cert
+    (nothing to enforce).
+    """
+    if ssl_object is None:
+        return False
+    try:
+        peer_cert = ssl_object.getpeercert()
+    except Exception:
+        return False
+    if not peer_cert:
+        return False
+    not_after = peer_cert.get("notAfter")
+    if not not_after:
+        return False
+    try:
+        expires_at = ssl.cert_time_to_seconds(not_after)
+    except ValueError:
+        return False
+    return time.time() > expires_at
 
 
 class CallbackError(Exception):

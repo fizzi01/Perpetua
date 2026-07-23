@@ -36,7 +36,12 @@ from network.stream import StreamType
 from utils.logging import Logger, get_logger
 from utils.net import set_socket_nodelay
 
-from .handler import CallbackError, BaseConnectionHandler
+from .handler import (
+    CallbackError,
+    BaseConnectionHandler,
+    apply_skew_tolerant_time_policy,
+    peer_cert_is_expired,
+)
 
 
 class ConnectionHandler(BaseConnectionHandler):
@@ -624,6 +629,19 @@ class ConnectionHandler(BaseConnectionHandler):
                 # handshake. This is what makes the UID unforgeable — a stolen
                 # UID string is useless without the matching private key.
                 if self.ssl_enabled:
+                    # Clock-skew tolerance disables the built-in validity-window
+                    # check, so re-enforce expiry here: an expired client cert
+                    # must still be refused (notBefore stays intentionally
+                    # ignored so a behind-the-clock client can connect).
+                    if peer_cert_is_expired(writer.get_extra_info("ssl_object")):
+                        self._logger.log(
+                            f"Client certificate from {client_addr} has expired. "
+                            f"Rejecting handshake.",
+                            Logger.WARNING,
+                        )
+                        await client_msg_exchange.stop()
+                        await cur_stream.close()
+                        return False
                     cert_cn = self._peer_cert_cn(writer)
                     if cert_cn is None or cert_cn != tmp_uid:
                         self._logger.log(
@@ -1151,6 +1169,10 @@ class ConnectionHandler(BaseConnectionHandler):
         if self.ca_certfile:
             context.load_verify_locations(cafile=self.ca_certfile)
             context.verify_mode = ssl.CERT_REQUIRED
+            # Tolerate clock skew: don't reject a client whose clock differs
+            # from ours as "not yet valid". Chain/signature/CERT_REQUIRED checks
+            # stay intact; expiry is re-enforced at handshake CN-binding time.
+            apply_skew_tolerant_time_policy(context)
         self._ssl_context_cache = (cache_key, context)
         return context
 

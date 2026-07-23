@@ -36,7 +36,12 @@ from utils.logging import Logger, get_logger
 from utils import ExponentialBackoff
 from utils.net import set_socket_nodelay
 
-from .handler import CallbackError, BaseConnectionHandler
+from .handler import (
+    CallbackError,
+    BaseConnectionHandler,
+    apply_skew_tolerant_time_policy,
+    peer_cert_is_expired,
+)
 
 
 class StaleCertificateError(Exception):
@@ -460,6 +465,23 @@ class ConnectionHandler(BaseConnectionHandler):
                 timeout=self.CONNECTION_ATTEMPT_TIMEOUT,
             )
             set_socket_nodelay(_command_writer)
+
+            # The handshake tolerates clock skew (no notBefore check), but a
+            # genuinely expired server cert must still be refused. All streams
+            # reuse this server cert, so one check on the command connection
+            # covers them. Surface it as a stale-cert error so the service
+            # purges and re-pairs rather than looping.
+            if ssl_context is not None and peer_cert_is_expired(
+                _command_writer.get_extra_info("ssl_object")
+            ):
+                self._logger.log(
+                    f"Server certificate from {self.host}:{self.port} has "
+                    f"expired; re-pairing required.",
+                    Logger.ERROR,
+                )
+                _command_writer.close()
+                raise StaleCertificateError("server certificate expired")
+
             self._command_stream = StreamWrapper(
                 reader=_command_reader, writer=_command_writer
             )
@@ -492,6 +514,11 @@ class ConnectionHandler(BaseConnectionHandler):
                 Logger.ERROR,
             )
             raise StaleCertificateError(str(e)) from e
+        except StaleCertificateError:
+            # Expired-server-cert path above: propagate to the service's
+            # purge/re-pair handler instead of being swallowed as a generic
+            # connection error.
+            raise
         except Exception as e:
             self._logger.error("Connection error", error=str(e))
             return False
@@ -657,6 +684,10 @@ class ConnectionHandler(BaseConnectionHandler):
             return self._ssl_context_cache[1]
         context = ssl.create_default_context(ssl.Purpose.SERVER_AUTH)
         context.load_verify_locations(self.certfile)
+        # Tolerate clock skew: a client whose clock trails the server must not
+        # reject a valid server cert as "not yet valid". CA/chain/hostname
+        # verification stays intact; expiry is re-checked post-handshake.
+        apply_skew_tolerant_time_policy(context)
         # Present our client identity for mutual TLS. Absent it, a TLS-mode
         # server (verify_mode=CERT_REQUIRED) refuses the connection — which is
         # the signal to (re-)pair and obtain a client certificate.
