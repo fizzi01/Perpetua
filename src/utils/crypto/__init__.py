@@ -34,6 +34,32 @@ from utils.logging import Logger, get_logger
 _encoder = msgspec.json.Encoder()
 _decoder = msgspec.json.Decoder()
 
+# Backdate every certificate's ``notBefore`` by this margin. Peers on a LAN
+# often run without NTP and can have clocks skewed by minutes (occasionally
+# more). Without this margin a peer whose clock trails the issuer rejects the
+# freshly-minted chain with "certificate is not yet valid". Backdating costs
+# nothing security-wise (the certs live for 365+ days) and is exactly what
+# public CAs do. Kept generous to tolerate manually mis-set clocks.
+CLOCK_SKEW_TOLERANCE = datetime.timedelta(hours=3)
+
+
+def _validity_window(
+    lifetime: datetime.timedelta,
+) -> Tuple[datetime.datetime, datetime.datetime]:
+    """Return ``(not_before, not_after)`` for a certificate.
+
+    ``not_before`` is backdated by :data:`CLOCK_SKEW_TOLERANCE` so a validating
+    peer whose clock trails the issuer still sees the certificate as valid.
+
+    ``not_after`` is computed relative to ``not_before`` (not to ``now``), so
+    the total validity span stays exactly ``lifetime`` — the window is shifted
+    earlier to absorb skew, not widened by it. The forward-looking validity is
+    therefore ``lifetime - CLOCK_SKEW_TOLERANCE``, which is negligible against a
+    365+ day lifetime.
+    """
+    not_before = datetime.datetime.now(datetime.UTC) - CLOCK_SKEW_TOLERANCE
+    return not_before, not_before + lifetime
+
 
 class CertificateManager:
     """Manages the generation and distribution of TLS certificates for LAN"""
@@ -77,16 +103,17 @@ class CertificateManager:
                 ]
             )
 
+            ca_not_before, ca_not_after = _validity_window(
+                datetime.timedelta(days=3650)
+            )
             ca_cert = (
                 x509.CertificateBuilder()
                 .subject_name(subject)
                 .issuer_name(issuer)
                 .public_key(ca_key.public_key())
                 .serial_number(x509.random_serial_number())
-                .not_valid_before(datetime.datetime.now(datetime.UTC))
-                .not_valid_after(
-                    datetime.datetime.now(datetime.UTC) + datetime.timedelta(days=3650)
-                )
+                .not_valid_before(ca_not_before)
+                .not_valid_after(ca_not_after)
                 .add_extension(
                     x509.BasicConstraints(ca=True, path_length=None),
                     critical=True,
@@ -158,16 +185,17 @@ class CertificateManager:
                 ]
             )
 
+            server_not_before, server_not_after = _validity_window(
+                datetime.timedelta(days=365)
+            )
             server_cert = (
                 x509.CertificateBuilder()
                 .subject_name(subject)
                 .issuer_name(ca_cert.subject)
                 .public_key(server_key.public_key())
                 .serial_number(x509.random_serial_number())
-                .not_valid_before(datetime.datetime.now(datetime.UTC))
-                .not_valid_after(
-                    datetime.datetime.now(datetime.UTC) + datetime.timedelta(days=365)
-                )
+                .not_valid_before(server_not_before)
+                .not_valid_after(server_not_after)
                 .add_extension(
                     x509.SubjectAlternativeName(san_list),
                     critical=False,
@@ -299,16 +327,17 @@ class CertificateManager:
                 ]
             )
 
+            client_not_before, client_not_after = _validity_window(
+                datetime.timedelta(days=365)
+            )
             client_cert = (
                 x509.CertificateBuilder()
                 .subject_name(subject)
                 .issuer_name(ca_cert.subject)
                 .public_key(csr.public_key())
                 .serial_number(x509.random_serial_number())
-                .not_valid_before(datetime.datetime.now(datetime.UTC))
-                .not_valid_after(
-                    datetime.datetime.now(datetime.UTC) + datetime.timedelta(days=365)
-                )
+                .not_valid_before(client_not_before)
+                .not_valid_after(client_not_after)
                 .add_extension(
                     x509.BasicConstraints(ca=False, path_length=None),
                     critical=True,
