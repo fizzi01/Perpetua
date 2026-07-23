@@ -293,7 +293,6 @@ class Builder:
             "--include-package=utils",
             "--include-package=input",
             "--python-flag=no_docstrings",
-            "--prefer-source-code",
             f"--include-data-files={output_exe}=_{self.gui_exe.name}",
         ]
 
