@@ -8,16 +8,16 @@ authors = [
 readme = "README.md"
 requires-python = ">=3.11,<3.13"
 dependencies = [
-    "packaging (>=24.2,<=26.0.0)",
+    "packaging (>=24.2,<=27.0.0)",
     "pynput (>=1.7.7,<2.0.0)",
     "pyobjc (>=10.2,<13.0) ; sys_platform == 'darwin'",
     "pywin32 (>=308,<400.0.0) ; sys_platform == 'win32'",
     "comtypes (>=1.4.8,<2.0.0) ; sys_platform == 'win32'",
     "colorama (<=0.5.0) ; sys_platform == 'win32'",
     "zeroconf (>=0.136.2,<1.0.0)",
-    "attrs (>=25.4.0,<26.0.0)",
+    "attrs (>=25.4.0,<27.0.0)",
     "copykitten @ git+https://github.com/fizzi01/copykitten.git@add_file_list",
-    "cryptography (>=46.0.3,<47.0.0)",
+    "cryptography (>=46.0.3,<=49.0.0)",
     "aiofiles (>=25.1.0,<26.0.0)",
     "uvloop @ git+https://github.com/fizzi01/uvloop.git@perpetua ; sys_platform == 'darwin' or sys_platform == 'linux'",
     "python-xlib @ git+https://github.com/fizzi01/python-xlib.git ; sys_platform == 'linux'",
@@ -25,8 +25,8 @@ dependencies = [
     "snegg @ git+http://gitlab.freedesktop.org/whot/snegg ; sys_platform == 'linux'",
     "pyinputcapture (==0.2.0) ; sys_platform == 'linux'",
     "winloop (==0.5.0) ; sys_platform == 'win32'",
-    "structlog (>=25.5.0,<26.0.0)",
-    "msgspec (>=0.20.0,<=0.21.0)"
+    "structlog (>=25.5.0,<27.0.0)",
+    "msgspec (>=0.20.0,<=1.0.0)"
 ]
 
 [tool.poetry]
