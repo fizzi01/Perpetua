@@ -88,6 +88,10 @@ export function ClientTab({onStatusChange, state}: ClientTabProps) {
     const [controlStatus, setControlStatus] = useState<'none' | 'controlled' | 'idle'>('none');
     const [notifications, setNotifications] = useState<Notification[]>([]);
     const [pendingForceStop, setPendingForceStop] = useState(false);
+    // UID of a server the user picked that would replace a *different* saved
+    // server. Non-null while the switch-confirmation panel is shown; the
+    // actual ``chooseServer`` call is deferred until the user confirms.
+    const [pendingSwitchUid, setPendingSwitchUid] = useState<string | null>(null);
 
     const listeners = useEventListeners('client-tab');
     const connectionListeners = handleConnectionListeners();
@@ -441,6 +445,18 @@ export function ClientTab({onStatusChange, state}: ClientTabProps) {
     };
 
     const handleServerSelect = (serverUid: string) => {
+        // Gate: if a *different* server is already saved, confirm the switch
+        // first — switching forgets the previous server's trust material and
+        // forces a fresh OTP re-pairing. First connect or re-selecting the
+        // same server proceeds directly (unchanged behaviour).
+        if (currentConnection?.uid && serverUid !== currentConnection.uid) {
+            setPendingSwitchUid(serverUid);
+            return;
+        }
+        confirmServerSelect(serverUid);
+    };
+
+    const confirmServerSelect = (serverUid: string) => {
         // Set up listeners for the command response
         listenCommand(EventType.CommandSuccess, CommandType.ChooseServer, () => {
             addNotification('success', 'Server Selected');
@@ -595,6 +611,59 @@ export function ClientTab({onStatusChange, state}: ClientTabProps) {
                 isVisible={showServerChoice}
                 onCancel={handleCancelServerSelection}
             />
+
+            {/* Switch-server confirmation */}
+            {pendingSwitchUid !== null && (
+                <motion.div
+                    initial={{opacity: 0, y: -8}}
+                    animate={{opacity: 1, y: 0}}
+                    exit={{opacity: 0, y: -8}}
+                    className="p-4 rounded-lg border backdrop-blur-sm space-y-3"
+                    style={{
+                        backgroundColor: 'var(--app-surface)',
+                        borderColor: 'var(--app-border)',
+                    }}
+                >
+                    <div className="text-sm" style={{color: 'var(--app-text)'}}>
+                        Switching to a new server — you'll need to re-pair with a
+                        new one-time code (OTP); the previous server
+                        {currentConnection?.hostname || currentConnection?.host
+                            ? ` (${currentConnection.hostname || currentConnection.host})`
+                            : ''}{' '}
+                        will be forgotten.
+                    </div>
+                    <div className="flex items-center gap-2">
+                        <motion.button
+                            whileHover={{scale: 1.02}}
+                            whileTap={{scale: 0.98}}
+                            className="px-3 py-2 rounded-md text-sm font-medium"
+                            style={{
+                                backgroundColor: 'var(--app-accent)',
+                                color: 'var(--app-accent-contrast)',
+                            }}
+                            onClick={() => {
+                                const uid = pendingSwitchUid;
+                                setPendingSwitchUid(null);
+                                confirmServerSelect(uid);
+                            }}
+                        >
+                            Switch server
+                        </motion.button>
+                        <motion.button
+                            whileHover={{scale: 1.02}}
+                            whileTap={{scale: 0.98}}
+                            className="px-3 py-2 rounded-md text-sm font-medium border"
+                            style={{
+                                borderColor: 'var(--app-border)',
+                                color: 'var(--app-text)',
+                            }}
+                            onClick={() => setPendingSwitchUid(null)}
+                        >
+                            Cancel
+                        </motion.button>
+                    </div>
+                </motion.div>
+            )}
 
             {/* Disconnected Status Info */}
             {/* {!isConnected && !showOtpInput && host && port && ( */}

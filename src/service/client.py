@@ -809,6 +809,15 @@ class Client:
         """
         for service in self._found_services:
             if service.uid == uid:
+                # Capture the previously-saved server identifiers *before*
+                # overwriting them, so we can forget its trust material on a
+                # real switch (first connect / reconnect to the same server
+                # leave it untouched).
+                old_uid = self.config.get_server_uid()
+                old_host = self.config.get_server_host()
+                old_hostname = self.config.get_server_hostname()
+                is_switch = bool(old_uid) and old_uid != service.uid
+
                 self.config.set_server_connection(
                     uid=service.uid,
                     host=service.address,
@@ -822,6 +831,11 @@ class Client:
                 self._bg_tasks.spawn(
                     self.config.save(), name="config_save_choose_server"
                 )
+
+                if is_switch:
+                    self._forget_previous_server(
+                        old_uid, old_host, old_hostname
+                    )
                 # Set the server future result in case someone is waiting for it
                 if not self._server.done():
                     self._server.set_result(service)
@@ -841,6 +855,46 @@ class Client:
                 return
 
         self._logger.error("Server not found among discovered services", uid=uid)
+
+    def _forget_previous_server(
+        self,
+        uid: Optional[str],
+        host: Optional[str],
+        hostname: Optional[str],
+    ) -> None:
+        """Drop the trust material of the server we just switched away from.
+
+        Reuses the same primitives as ``_on_stale_certificate``:
+        - ``remove_ca_data`` wipes ``ca_<id>.crt`` plus every mapping alias
+          (UID, resolved IP, hostname) in one pass, so no orphan alias keeps
+          pointing at a deleted file;
+        - ``remove_client_credentials`` drops the machine's client identity,
+          which was signed by the old CA and is worthless against the new one.
+
+        With both gone, ``_handle_certificate_check`` forces a clean OTP
+        re-pairing with the new server instead of retrying stale credentials.
+        Best-effort: switching must proceed even if cleanup partially fails.
+        """
+        try:
+            removed = self._cert_manager.remove_ca_data(uid, host, hostname)
+            if removed:
+                self._logger.info(
+                    "Forgot previous server on switch",
+                    uid=uid,
+                    host=host,
+                    hostname=hostname,
+                )
+        except Exception as e:
+            self._logger.error(
+                "Failed to remove previous server CA on switch", error=str(e)
+            )
+
+        try:
+            self._cert_manager.remove_client_credentials()
+        except Exception as e:
+            self._logger.error(
+                "Failed to remove client credentials on switch", error=str(e)
+            )
 
     DISCOVERY_REFRESH_INTERVAL = 60.0
     # While disconnected (initial connect or reconnect in progress) poll mDNS
