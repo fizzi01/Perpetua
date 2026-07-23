@@ -28,6 +28,7 @@ import tempfile
 import shutil
 import unittest
 from pathlib import Path
+import pytest
 
 from utils.crypto import CertificateManager
 from service.client import Client
@@ -63,6 +64,7 @@ class TestForgetPreviousServer(unittest.TestCase):
         with open(self.server_cm.ca_cert_path, "rb") as f:
             self.assertTrue(self.cm.save_ca_data(f.read(), "A"))
 
+    @pytest.mark.anyio
     def test_forget_previous_server_wipes_ca_and_client_identity(self):
         self._pair_with_server_a()
         # Precondition: both trust artefacts are present.
@@ -75,6 +77,7 @@ class TestForgetPreviousServer(unittest.TestCase):
         self.assertIsNone(self.cm.get_ca_cert_path("A"))
         self.assertFalse(self.cm.client_credentials_exist())
 
+    @pytest.mark.anyio
     def test_forget_previous_server_is_best_effort_when_nothing_stored(self):
         # No CA and no client identity: cleanup must not raise.
         self.assertIsNone(self.cm.get_ca_cert_path("A"))
