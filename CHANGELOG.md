@@ -1,5 +1,38 @@
 # Changelog
 
+## [1.6.0](https://github.com/fizzi01/Perpetua/compare/v1.5.0...v1.6.0) (2026-07-23)
+
+
+### Features
+
+* cross-platform autostart functionality and build improvements ([#77](https://github.com/fizzi01/Perpetua/issues/77)) ([7c0c51b](https://github.com/fizzi01/Perpetua/commit/7c0c51b613cc95886d7a655fd569ac18501a8981))
+* enhance connection handling with retries and server rediscovery ([7c0c51b](https://github.com/fizzi01/Perpetua/commit/7c0c51b613cc95886d7a655fd569ac18501a8981))
+* Implement multi-monitor support and enhancements ([#75](https://github.com/fizzi01/Perpetua/issues/75)) ([6bfd772](https://github.com/fizzi01/Perpetua/commit/6bfd772d35688451c27b7cedb0cb349926e51d76))
+* Implement per-client certificate issuance for mutual TLS ([#85](https://github.com/fizzi01/Perpetua/issues/85)) ([b355e51](https://github.com/fizzi01/Perpetua/commit/b355e515544428a744f1e43feb4af4d3a25b1178))
+* Improve input handling ([#78](https://github.com/fizzi01/Perpetua/issues/78)) ([7ecdf9c](https://github.com/fizzi01/Perpetua/commit/7ecdf9c750f0f0d7acdb606a7a8fec60428e3978))
+* refresh layout cache on monitor changes ([#80](https://github.com/fizzi01/Perpetua/issues/80)) ([5ade5ec](https://github.com/fizzi01/Perpetua/commit/5ade5ec15a5f6617748ee54f8b9ad84f337e12bf))
+* **ui:** expose client and server certificate security details ([b355e51](https://github.com/fizzi01/Perpetua/commit/b355e515544428a744f1e43feb4af4d3a25b1178))
+
+
+### Bug Fixes
+
+* **certificates:** add clock skew tolerance for certificate validity and TLS handshakes ([b355e51](https://github.com/fizzi01/Perpetua/commit/b355e515544428a744f1e43feb4af4d3a25b1178))
+* **certificates:** re-issue server leaf certificate when server IP changes ([b355e51](https://github.com/fizzi01/Perpetua/commit/b355e515544428a744f1e43feb4af4d3a25b1178))
+* **connection:** derive client UID from certificate identity instead of persisted config ([b355e51](https://github.com/fizzi01/Perpetua/commit/b355e515544428a744f1e43feb4af4d3a25b1178))
+* **connection:** prevent UID clobbering with UID-first client resolution ([b355e51](https://github.com/fizzi01/Perpetua/commit/b355e515544428a744f1e43feb4af4d3a25b1178))
+* **connection:** reject duplicate or mismatched client identities during handshake ([b355e51](https://github.com/fizzi01/Perpetua/commit/b355e515544428a744f1e43feb4af4d3a25b1178))
+* **gui:** fix splashscreen force close ([6bfd772](https://github.com/fizzi01/Perpetua/commit/6bfd772d35688451c27b7cedb0cb349926e51d76))
+* **gui:** update host state when local IP changes ([6bfd772](https://github.com/fizzi01/Perpetua/commit/6bfd772d35688451c27b7cedb0cb349926e51d76))
+* improve OS-level permissions handling and startup process ([#82](https://github.com/fizzi01/Perpetua/issues/82)) ([3fe0bd4](https://github.com/fizzi01/Perpetua/commit/3fe0bd487c2ea610169910234d9f319088a6c428))
+* invisible cursor on critical layout change recovery ([#84](https://github.com/fizzi01/Perpetua/issues/84)) ([6c659de](https://github.com/fizzi01/Perpetua/commit/6c659de90bb3e99319a039cd79daa47be118dce2))
+* **libei:** ensure atomic access to device and error states in _EiConnection ([6bfd772](https://github.com/fizzi01/Perpetua/commit/6bfd772d35688451c27b7cedb0cb349926e51d76))
+* **mouse, Windows:** improve mouse capture and handling ([6bfd772](https://github.com/fizzi01/Perpetua/commit/6bfd772d35688451c27b7cedb0cb349926e51d76))
+
+
+### Performance Improvements
+
+* **mouse, Windows:** replace wx-based cursor handler with in-process management ([6bfd772](https://github.com/fizzi01/Perpetua/commit/6bfd772d35688451c27b7cedb0cb349926e51d76))
+
 ## [1.5.0](https://github.com/fizzi01/Perpetua/compare/v1.4.0...v1.5.0) (2026-05-16)
 
 
