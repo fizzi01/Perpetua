@@ -66,7 +66,7 @@ from input.mouse import ServerMouseListener, ServerMouseController
 from input.keyboard import ServerKeyboardListener
 from input.clipboard import ClipboardListener, ClipboardController
 
-from utils import BackgroundTasks
+from utils import BackgroundTasks, UIDGenerator
 from utils.metrics import PerformanceMonitor
 from utils.net import get_local_ip
 from utils.crypto import CertificateManager
@@ -116,6 +116,10 @@ class Server:
             cert_dir=self.app_config.get_certificate_path()
         )
         self._cert_sharing: Optional[CertificateSharing] = None
+        # UIDs already handed out at pairing but not yet in the allowlist (the
+        # client is added at connection-approval time). Guards uniqueness across
+        # concurrent pairings.
+        self._issued_uids: set[str] = set()
 
         self.certfile, self.keyfile = None, None
         if self.config.ssl_enabled:
@@ -271,6 +275,34 @@ class Server:
             self._logger.error("Error setting up SSL certificates", error=str(e))
             raise
 
+    def _generate_unique_client_uid(self) -> str:
+        """Mint a client UID not used by any authorized or just-issued client.
+
+        The client never chooses its own UID: the server assigns it here at
+        pairing time so an attacker cannot obtain a certificate bound to another
+        client's identity.
+        """
+        while True:
+            uid = UIDGenerator.generate_uid(self.config.uid or "server")
+            if uid in self._issued_uids:
+                continue
+            if self.clients_manager.get_client(uid=uid) is not None:
+                continue
+            return uid
+
+    def _sign_client_csr_assigning(self, csr_pem: bytes) -> Optional[bytes]:
+        """CSR-signer wired into the pairing flow.
+
+        Ignores the CN requested in the CSR and stamps a fresh, server-assigned
+        UID into the issued certificate. Returns the signed cert PEM, or None.
+        """
+        uid = self._generate_unique_client_uid()
+        cert = self._cert_manager.sign_client_csr(csr_pem, uid=uid)
+        if cert is not None:
+            self._issued_uids.add(uid)
+            self._logger.info("Issued client certificate", assigned_uid=uid)
+        return cert
+
     async def start_pairing_service(
         self,
         host: Optional[str] = None,
@@ -309,7 +341,7 @@ class Server:
             port=bind_port,
             timeout=30,
             pairing_request_callback=self._on_pairing_requested,
-            csr_signer=self._cert_manager.sign_client_csr,
+            csr_signer=self._sign_client_csr_assigning,
         )
 
         ok = await self._cert_sharing.start_service()
@@ -402,7 +434,7 @@ class Server:
                 port=bind_port,
                 timeout=timeout,
                 pairing_request_callback=self._on_pairing_requested,
-                csr_signer=self._cert_manager.sign_client_csr,
+                csr_signer=self._sign_client_csr_assigning,
             )
 
             success, otp = await self._cert_sharing.start_sharing()

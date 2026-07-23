@@ -497,21 +497,6 @@ files = [
 ]
 
 [[package]]
-name = "pyjwt"
-version = "2.13.0"
-description = "JSON Web Token implementation in Python"
-optional = false
-python-versions = ">=3.9"
-groups = ["main"]
-files = [
-    {file = "pyjwt-2.13.0-py3-none-any.whl", hash = "sha256:66adcc2aff09b3f1bbd95fc1e1577df8ac8723c978552fd43304c8a290ac5728"},
-    {file = "pyjwt-2.13.0.tar.gz", hash = "sha256:41571c89ca91598c79e8ef18a2d07367d4810fbbd6f637794879baf1b7703423"},
-]
-
-[package.extras]
-crypto = ["cryptography (>=3.4.0)"]
-
-[[package]]
 name = "pynput"
 version = "1.8.2"
 description = "Monitor and control user input devices"
@@ -4741,4 +4726,4 @@ cffi = ["cffi (>=1.17,<2.0) ; platform_python_implementation != \"PyPy\" and pyt
 [metadata]
 lock-version = "2.1"
 python-versions = ">=3.11,<3.13"
-content-hash = "09b853754c29eae458b3291f4fc7ce26b441de1133a255dab9f3c433e9a69c5a"
+content-hash = "9ee25c0d75778d2844b4d756e5514467c866a709a99ded86c81da3955243029c"

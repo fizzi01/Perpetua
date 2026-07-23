@@ -869,17 +869,24 @@ class TestOtpHardeningAndCsrSigning(unittest.TestCase):
         async def run_test():
             client_dir = tempfile.mkdtemp()
             client_cm = CertificateManager(Path(client_dir))
+            # The server assigns the UID: the signer ignores the CSR CN and
+            # stamps a fixed uid here (a real Server mints a unique one).
+            assigned_uid = "server-assigned-e2e"
+
+            def _assign(csr_pem):
+                return self.cert_manager.sign_client_csr(csr_pem, assigned_uid)
+
             sharing = CertificateSharing(
                 cert_data=self.cert_data,
                 host=self.test_host,
                 port=self.test_port + 1,
                 timeout=30,
-                csr_signer=self.cert_manager.sign_client_csr,
+                csr_signer=_assign,
             )
             ok, otp = await sharing.start_sharing()
             try:
                 self.assertTrue(ok)
-                csr_pem = client_cm.generate_client_key_and_csr("client-uid-e2e")
+                csr_pem = client_cm.generate_client_key_and_csr()
                 receiver = CertificateReceiver(
                     server_host=self.test_host,
                     server_port=self.test_port + 1,
@@ -892,6 +899,11 @@ class TestOtpHardeningAndCsrSigning(unittest.TestCase):
                 self.assertIsNotNone(ca_cert)
                 self.assertIsNotNone(client_cert)
                 self.assertIn("BEGIN CERTIFICATE", client_cert)
+                # The issued cert carries the server-assigned UID as its CN.
+                self.assertEqual(
+                    CertificateManager.read_certificate_common_name(client_cert),
+                    assigned_uid,
+                )
             finally:
                 await sharing.stop_sharing()
                 _shutil.rmtree(client_dir, ignore_errors=True)

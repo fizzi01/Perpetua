@@ -201,13 +201,17 @@ class CertificateManager:
             self._logger.error("Server certificate generation error", error=str(e))
             return False
 
-    def generate_client_key_and_csr(self, uid: str) -> Optional[bytes]:
+    # Placeholder CN used in the client CSR: the client does NOT choose its own
+    # UID - the server assigns it at signing time and stamps it into the cert CN.
+    CLIENT_CSR_PLACEHOLDER_CN = "unassigned"
+
+    def generate_client_key_and_csr(self) -> Optional[bytes]:
         """Generate a client private key and a CSR for mutual-TLS identity.
 
         The private key is persisted locally (``client.key``, mode 0o600) and
-        never leaves this machine. Returns the CSR (PEM) to send to the server
-        for signing, or None on failure. ``uid`` is placed in the CSR subject
-        Common Name; the server re-asserts it when signing.
+        never leaves this machine. The CSR carries a placeholder Common Name -
+        the client has no UID yet; the server generates one and forces it into
+        the signed certificate. Returns the CSR (PEM), or None on failure.
         """
         try:
             client_key = rsa.generate_private_key(
@@ -224,7 +228,9 @@ class CertificateManager:
                                 NameOID.ORGANIZATION_NAME,
                                 ApplicationConfig.service_name,
                             ),
-                            x509.NameAttribute(NameOID.COMMON_NAME, uid),
+                            x509.NameAttribute(
+                                NameOID.COMMON_NAME, self.CLIENT_CSR_PLACEHOLDER_CN
+                            ),
                         ]
                     )
                 )
@@ -317,6 +323,25 @@ class CertificateManager:
             return client_cert.public_bytes(serialization.Encoding.PEM)
         except Exception as e:
             self._logger.error("Client CSR signing error", error=str(e))
+            return None
+
+    @staticmethod
+    def read_certificate_common_name(cert_data: bytes | str) -> Optional[str]:
+        """Return the subject Common Name of a PEM certificate, or None.
+
+        Used by the client to learn the server-assigned UID from the leaf
+        certificate it was issued at pairing.
+        """
+        try:
+            if isinstance(cert_data, str):
+                cert_data = cert_data.encode("utf-8")
+            cert = x509.load_pem_x509_certificate(cert_data, default_backend())
+            attrs = cert.subject.get_attributes_for_oid(NameOID.COMMON_NAME)
+            if not attrs:
+                return None
+            cn = attrs[0].value
+            return cn.decode("utf-8") if isinstance(cn, bytes) else cn
+        except Exception:
             return None
 
     def save_client_certificate(self, cert_data: bytes | str) -> bool:

@@ -56,44 +56,43 @@ class TestClientCertificateIssuance(unittest.TestCase):
         with open(self.server_cm.ca_cert_path, "rb") as f:
             return x509.load_pem_x509_certificate(f.read(), default_backend())
 
-    def test_csr_signed_into_ca_cert_with_uid_cn(self):
-        uid = "client-uid-123"
-        csr_pem = self.client_cm.generate_client_key_and_csr(uid)
+    def test_csr_has_placeholder_cn_not_a_real_uid(self):
+        # The client does not choose a UID: the CSR carries a placeholder CN so
+        # nothing on the plaintext pairing channel reveals a real UID.
+        csr_pem = self.client_cm.generate_client_key_and_csr()
         self.assertIsNotNone(csr_pem)
-        # The private key stays on the client only.
         self.assertTrue(self.client_cm.client_key_path.exists())
+        csr = x509.load_pem_x509_csr(csr_pem, default_backend())
+        cn = csr.subject.get_attributes_for_oid(NameOID.COMMON_NAME)[0].value
+        self.assertEqual(cn, CertificateManager.CLIENT_CSR_PLACEHOLDER_CN)
 
+    def test_server_stamps_assigned_uid_ignoring_csr_cn(self):
+        # Whatever CN the CSR carries, the server-supplied uid wins.
+        uid = "server-assigned-uid-123"
+        csr_pem = self.client_cm.generate_client_key_and_csr()
         cert_pem = self.server_cm.sign_client_csr(csr_pem, uid)
         self.assertIsNotNone(cert_pem)
-
         cert = x509.load_pem_x509_certificate(cert_pem, default_backend())
         cn = cert.subject.get_attributes_for_oid(NameOID.COMMON_NAME)[0].value
         self.assertEqual(cn, uid)
-        # Issued by our CA.
         self.assertEqual(cert.issuer, self._load_ca().subject)
 
-    def test_uid_derived_from_csr_when_not_passed(self):
-        uid = "derive-me"
-        csr_pem = self.client_cm.generate_client_key_and_csr(uid)
-        cert_pem = self.server_cm.sign_client_csr(csr_pem)  # uid omitted
-        cert = x509.load_pem_x509_certificate(cert_pem, default_backend())
-        cn = cert.subject.get_attributes_for_oid(NameOID.COMMON_NAME)[0].value
-        self.assertEqual(cn, uid)
-
-    def test_server_forces_cn_even_if_uid_differs_from_csr(self):
-        # A CSR requesting one UID but signed for another: the server's UID wins.
-        csr_pem = self.client_cm.generate_client_key_and_csr("attacker-claim")
-        cert_pem = self.server_cm.sign_client_csr(csr_pem, "authoritative-uid")
-        cert = x509.load_pem_x509_certificate(cert_pem, default_backend())
-        cn = cert.subject.get_attributes_for_oid(NameOID.COMMON_NAME)[0].value
-        self.assertEqual(cn, "authoritative-uid")
+    def test_read_certificate_common_name(self):
+        uid = "cn-read-uid"
+        csr_pem = self.client_cm.generate_client_key_and_csr()
+        cert_pem = self.server_cm.sign_client_csr(csr_pem, uid)
+        # The client learns its UID by reading the CN of its issued cert.
+        self.assertEqual(CertificateManager.read_certificate_common_name(cert_pem), uid)
+        self.assertIsNone(
+            CertificateManager.read_certificate_common_name(b"not a cert")
+        )
 
     def test_garbage_csr_rejected(self):
         self.assertIsNone(self.server_cm.sign_client_csr(b"not a csr", "uid"))
 
     def test_client_credentials_roundtrip(self):
         self.assertFalse(self.client_cm.client_credentials_exist())
-        csr_pem = self.client_cm.generate_client_key_and_csr("uid-x")
+        csr_pem = self.client_cm.generate_client_key_and_csr()
         cert_pem = self.server_cm.sign_client_csr(csr_pem, "uid-x")
         self.assertTrue(self.client_cm.save_client_certificate(cert_pem))
         self.assertTrue(self.client_cm.client_credentials_exist())

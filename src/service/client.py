@@ -473,19 +473,12 @@ class Client:
 
             # Generate this client's key + CSR so the server can issue a
             # per-client certificate for mutual TLS. The private key is written
-            # locally and never sent; only the CSR travels (inside the OTP-
-            # encrypted channel). CN carries our UID, which the server binds.
-            client_uid = self.config.get_uid()
-            csr_pem = (
-                self._cert_manager.generate_client_key_and_csr(client_uid)
-                if client_uid
-                else None
-            )
+            # locally and never sent; only the CSR travels. The CSR carries a
+            # placeholder CN - the client does NOT choose its UID: the server
+            # assigns it and stamps it into the signed certificate.
+            csr_pem = self._cert_manager.generate_client_key_and_csr()
             if csr_pem is None:
-                self._logger.error(
-                    "Could not generate client CSR for pairing",
-                    client_uid=client_uid,
-                )
+                self._logger.error("Could not generate client CSR for pairing")
                 return False
 
             # Receive certificate (CA + our signed client cert)
@@ -503,11 +496,35 @@ class Client:
                 self._logger.error("Received empty certificate data")
                 return False
 
-            # Persist the CA-signed client leaf certificate for mutual TLS.
+            # Persist the CA-signed client leaf certificate for mutual TLS, then
+            # adopt the server-assigned UID it carries in its Common Name. The
+            # UID is learned only from this (encrypted) certificate - it is never
+            # sent in cleartext.
             if client_cert_data:
                 if not self._cert_manager.save_client_certificate(client_cert_data):
                     self._logger.error("Failed to save client certificate")
                     return False
+                assigned_uid = self._cert_manager.read_certificate_common_name(
+                    client_cert_data
+                )
+                if assigned_uid:
+                    self.config.set_uid(assigned_uid)
+                    # Keep the in-memory client object in sync so the very next
+                    # handshake presents the assigned UID as client_name (which
+                    # the server binds against the certificate CN).
+                    if self.main_client is not None:
+                        self.main_client.uid = assigned_uid
+                    self._bg_tasks.spawn(
+                        self.config.save(), name="config_save_assigned_uid"
+                    )
+                    self._logger.info(
+                        "Adopted server-assigned client UID", uid=assigned_uid
+                    )
+                else:
+                    self._logger.warning(
+                        "Issued client certificate has no Common Name; "
+                        "client UID not updated"
+                    )
             else:
                 self._logger.warning(
                     "Server did not return a client certificate; mutual TLS "
