@@ -53,6 +53,24 @@ class StaleCertificateError(Exception):
     pass
 
 
+def _is_hostname_mismatch(error: ssl.SSLCertVerificationError) -> bool:
+    """True when the TLS failure is a hostname/IP-SAN mismatch, not distrust.
+
+    A mismatch means the CA still trusts the presented chain but the leaf's
+    Subject Alternative Name does not cover the address we dialed (typically
+    the server changed IP and hasn't re-issued its leaf yet). This is NOT a
+    stale CA and must NOT trigger a cert purge / OTP re-pair. OpenSSL reports
+    it with verify_code 62 ("Hostname mismatch"); the ``verify_message`` reads
+    "IP address mismatch" or "Hostname mismatch" depending on the SAN type.
+    """
+    message = (getattr(error, "verify_message", "") or "").lower()
+    if "mismatch" in message:
+        return True
+    # Fall back to the verify code (62 == X509_V_ERR_HOSTNAME_MISMATCH) for
+    # builds where verify_message is empty.
+    return getattr(error, "verify_code", None) == 62
+
+
 class ConnectionHandler(BaseConnectionHandler):
     """
     Async client-side connection handler using asyncio.
@@ -505,9 +523,22 @@ class ConnectionHandler(BaseConnectionHandler):
             )
             return False
         except ssl.SSLCertVerificationError as e:
-            # Stale local CA: the server regenerated its CA but we still hold an
-            # old one. Surface a specific error so the service can purge and
-            # re-pair instead of looping on a cryptic SSL log line.
+            if _is_hostname_mismatch(e):
+                # The CA still trusts the chain; only the leaf's SAN is out of
+                # date (e.g. the server changed IP and hasn't re-issued its leaf
+                # yet). Purging our CA and re-pairing would NOT fix this, so
+                # treat it as a retryable connection failure and let the server
+                # catch up while auto-reconnect keeps trying.
+                self._logger.log(
+                    f"TLS hostname/IP mismatch connecting to {self.host}:{self.port}: {e}. "
+                    f"The server's certificate does not cover this address yet; "
+                    f"retrying without re-pairing.",
+                    Logger.WARNING,
+                )
+                return False
+            # Genuine CA-trust failure: the server regenerated its CA but we
+            # still hold an old one. Surface a specific error so the service can
+            # purge and re-pair instead of looping on a cryptic SSL log line.
             self._logger.log(
                 f"TLS verification failed connecting to {self.host}:{self.port}: {e}. "
                 f"The locally stored CA certificate looks stale.",
@@ -755,6 +786,15 @@ class ConnectionHandler(BaseConnectionHandler):
                 )
                 return False
             except ssl.SSLCertVerificationError as e:
+                if _is_hostname_mismatch(e):
+                    # Leaf SAN out of date (e.g. server IP changed), CA still
+                    # valid. Retryable — don't wipe the CA or force re-pairing.
+                    self._logger.log(
+                        f"TLS hostname/IP mismatch on stream {stream_type}: {e}. "
+                        f"Retrying without re-pairing.",
+                        Logger.WARNING,
+                    )
+                    return False
                 # The local CA can't verify the server's cert. Almost always
                 # means the server regenerated its CA but we still hold an
                 # older one. Surface this as a specific error so the upper
@@ -771,6 +811,14 @@ class ConnectionHandler(BaseConnectionHandler):
                 # the specific subclass for verification failures. Detect by
                 # message and treat the same.
                 msg = str(e).lower()
+                if "mismatch" in msg:
+                    # Leaf SAN out of date, CA still valid — retryable.
+                    self._logger.log(
+                        f"TLS hostname/IP mismatch on stream {stream_type}: {e}. "
+                        f"Retrying without re-pairing.",
+                        Logger.WARNING,
+                    )
+                    return False
                 if (
                     "certificate verify failed" in msg
                     or "certificate signature failure" in msg

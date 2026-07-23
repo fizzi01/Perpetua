@@ -69,7 +69,7 @@ from input.clipboard import ClipboardListener, ClipboardController
 
 from utils import BackgroundTasks, UIDGenerator
 from utils.metrics import PerformanceMonitor
-from utils.net import get_local_ip
+from utils.net import get_local_ip, invalidate_local_ip_cache
 from utils.crypto import CertificateManager
 from utils.crypto.sharing import CertificateSharing
 
@@ -266,6 +266,14 @@ class Server:
                 self._logger.info("SSL certificates generated successfully")
                 return certfile, keyfile
             else:
+                # Certificates already exist. The leaf cert bakes the machine's
+                # IP into its SAN; if the IP changed (e.g. DHCP rebind, network
+                # switch) the old SAN no longer matches and clients fail TLS
+                # verification with "IP address mismatch". Re-issue ONLY the leaf
+                # (signed by the same, unchanged CA) so already-paired clients
+                # keep trusting us with no re-pairing required.
+                self._reissue_server_cert_if_ip_changed()
+
                 certfile, keyfile = self._cert_manager.get_server_credentials()
                 if not certfile or not keyfile:
                     raise RuntimeError("SSL certificates found but failed to load")
@@ -275,6 +283,45 @@ class Server:
         except Exception as e:
             self._logger.error("Error setting up SSL certificates", error=str(e))
             raise
+
+    def _reissue_server_cert_if_ip_changed(self) -> None:
+        """Re-issue the server leaf cert when the current IP left its SAN.
+
+        Keeps the CA intact (clients stay paired) and unions the current IP with
+        the SANs already present, so a client still dialing the old IP mid-
+        reconnect keeps validating until mDNS retargets it.
+        """
+        # Force a fresh lookup: the 30s TTL cache may still hold the pre-change
+        # IP right after a network event.
+        invalidate_local_ip_cache()
+        current_ip = get_local_ip(force_refresh=True)
+
+        san_ips, san_dns = self._cert_manager.get_server_cert_san()
+        if current_ip in san_ips:
+            return
+
+        hostname = socket.gethostname()
+        # Preserve existing SAN entries (old IPs + any DNS names) and add the
+        # current IP and localhost, de-duplicated while keeping order.
+        # generate_server_certificate() always re-adds ``hostname`` as a DNS
+        # name, and classifies each remaining entry as an IP or, on failure, a
+        # DNS name (so preserved hostnames stay valid).
+        extra_names: list[str] = []
+        for name in [*san_ips, *san_dns, current_ip, "localhost"]:
+            if name != hostname and name not in extra_names:
+                extra_names.append(name)
+
+        self._logger.warning(
+            "Server IP not covered by certificate SAN, re-issuing leaf certificate",
+            current_ip=current_ip,
+            previous_san_ips=san_ips,
+            new_san_names=extra_names,
+        )
+
+        if not self._cert_manager.generate_server_certificate(
+            hostname, extra_names, force=True
+        ):
+            self._logger.error("Failed to re-issue server certificate after IP change")
 
     def _generate_unique_client_uid(self) -> str:
         """Mint a client UID not used by any authorized or just-issued client.

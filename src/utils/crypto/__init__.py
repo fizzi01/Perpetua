@@ -557,6 +557,32 @@ class CertificateManager:
             return str(self.server_cert_path), str(self.server_key_path)
         return None, None
 
+    def get_server_cert_san(self) -> Tuple[list[str], list[str]]:
+        """Return ``(ip_addresses, dns_names)`` from the server cert's SAN.
+
+        Reads the Subject Alternative Name extension of ``server.crt`` and
+        splits it into IP-address entries and DNS-name entries. Returns
+        ``([], [])`` if the cert is missing or has no SAN. Used to detect when
+        the machine's current IP is no longer covered by the leaf cert (e.g.
+        after a DHCP rebind), so the server can re-issue the leaf.
+        """
+        if not self.server_cert_path.exists():
+            return [], []
+        try:
+            with open(self.server_cert_path, "rb") as f:
+                cert = x509.load_pem_x509_certificate(f.read(), default_backend())
+            san = cert.extensions.get_extension_for_class(
+                x509.SubjectAlternativeName
+            ).value
+            ips = [str(ip) for ip in san.get_values_for_type(x509.IPAddress)]
+            dns = list(san.get_values_for_type(x509.DNSName))
+            return ips, dns
+        except x509.ExtensionNotFound:
+            return [], []
+        except Exception as e:
+            self._logger.error("Error reading server certificate SAN", error=str(e))
+            return [], []
+
     def get_ca_cert_path(self, source_id: Optional[str] = None) -> Optional[str]:
         """Return the path of CA certificate for a specific server"""
         if source_id is None:
