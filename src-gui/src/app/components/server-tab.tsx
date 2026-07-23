@@ -955,20 +955,12 @@ export function ServerTab({onStatusChange, state}: ServerTabProps) {
                 addNotification(
                     'info',
                     'Client added',
-                    `${hostname || ips.join(', ')} - open the Layout Editor to place its monitors`,
+                    `${hostname || ips.join(', ')} added manually`,
                 );
                 setClientIpTags([]);
                 setClientIpInput('');
 
                 clientManager.addClient(hostname, ips);
-
-                // Auto-open the Layout Editor; the editor refreshes when the daemon echoes back monitors.
-                const newClientUid =
-                    clientManager.clients.find(c => c.name === hostname
-                        || (c.ips ?? []).some(ip => ips.includes(ip)))?.uid;
-                openLayoutEditorWindow(newClientUid).catch((err) => {
-                    console.error('Failed to auto-open layout editor', err);
-                });
 
                 listeners.removeListener('add-client');
                 listeners.removeListener('add-client-error');
