@@ -606,6 +606,20 @@ class Client:
             )
         return None
 
+    def get_security_info(self) -> Dict[str, object]:
+        """Return UI-safe metadata about the certificates securing the client."""
+        return self._cert_manager.get_security_info(
+            source_id=self.config.get_server_uid(),
+            ssl_enabled=self.config.ssl_enabled,
+        )
+
+    def _connection_info_payload(self) -> Dict[str, object]:
+        """Connection data sent to GUI events, without private key material."""
+        return {
+            **self.config.server_info.to_dict(),
+            "security_info": self.get_security_info(),
+        }
+
     # ==================== Stream Management ====================
 
     async def enable_stream(self, stream_type: int) -> None:
@@ -1762,7 +1776,7 @@ class Client:
         try:
             await self._send_notification(
                 ConnectingEvent(
-                    connection_data=self.config.server_info.to_dict(),
+                    connection_data=self._connection_info_payload(),
                 )
             )
         except Exception as e:
@@ -1802,7 +1816,7 @@ class Client:
         # Send connection notification
         await self._send_notification(
             ConnectedEvent(
-                connection_data=self.config.server_info.to_dict(),
+                connection_data=self._connection_info_payload(),
             )
         )
         return None
@@ -1846,7 +1860,7 @@ class Client:
 
         # Send disconnection notification
         await self._send_notification(
-            DisconnectedEvent(connection_data=self.config.server_info.to_dict())
+            DisconnectedEvent(connection_data=self._connection_info_payload())
         )
         return None
 

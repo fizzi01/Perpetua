@@ -1424,6 +1424,7 @@ class Daemon:
                 self._state["client"].start()
                 response_data = {
                     **self._client.config.server_info.to_dict(),
+                    "security_info": self._client.get_security_info(),
                     "start_time": self._state["client"].get_timestamp(),
                     "enabled_streams": self._client.get_enabled_streams(),
                 }
@@ -1509,6 +1510,7 @@ class Daemon:
             }  # ty:ignore[invalid-assignment]
 
         if self._client_config and self._client:
+            client_security_info = self._client.get_security_info()
             status["client_info"] = {
                 **self._client_config.to_dict(),
                 "running": self._client.is_running(),
@@ -1516,7 +1518,11 @@ class Daemon:
                 "start_time": self._state["client"].get_timestamp(),
                 "otp_needed": await self._client.otp_needed(),
                 "service_choice_needed": await self._client.server_choice_needed(),
+                "security_info": client_security_info,
             }  # ty:ignore[invalid-assignment]
+            status["client_info"]["server_info"]["security_info"] = (  # ty:ignore[index]
+                client_security_info
+            )
 
             if await self._client.server_choice_needed():
                 status["client_info"]["available_servers"] = [  # ty:ignore[invalid-assignment]

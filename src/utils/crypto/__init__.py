@@ -18,7 +18,7 @@
 from cryptography.x509 import DNSName, IPAddress
 from pathlib import Path
 import msgspec.json
-from typing import Tuple, Optional, Dict
+from typing import Tuple, Optional, Dict, Any
 from cryptography import x509
 from cryptography.x509.oid import NameOID, ExtendedKeyUsageOID
 from cryptography.hazmat.primitives import hashes, serialization
@@ -372,6 +372,95 @@ class CertificateManager:
             return cn.decode("utf-8") if isinstance(cn, bytes) else cn
         except Exception:
             return None
+
+    @staticmethod
+    def _certificate_name_common_name(name: x509.Name) -> Optional[str]:
+        attrs = name.get_attributes_for_oid(NameOID.COMMON_NAME)
+        if not attrs:
+            return None
+        value = attrs[0].value
+        return value.decode("utf-8") if isinstance(value, bytes) else value
+
+    @staticmethod
+    def _certificate_time_to_iso(cert: x509.Certificate, attr: str) -> str:
+        value = getattr(cert, f"{attr}_utc", None)
+        if value is None:
+            value = getattr(cert, attr)
+            if value.tzinfo is None:
+                value = value.replace(tzinfo=datetime.UTC)
+        return value.isoformat()
+
+    @staticmethod
+    def _public_key_info(cert: x509.Certificate) -> Tuple[str, Optional[int]]:
+        public_key = cert.public_key()
+        if isinstance(public_key, rsa.RSAPublicKey):
+            return "RSA", public_key.key_size
+        algorithm = public_key.__class__.__name__.replace("PublicKey", "")
+        key_size = getattr(public_key, "key_size", None)
+        return algorithm or "Unknown", key_size
+
+    @classmethod
+    def read_certificate_metadata(
+        cls, cert_path: Optional[str | Path]
+    ) -> Dict[str, Any]:
+        """Return sanitized certificate metadata for UI/status payloads.
+
+        This deliberately omits filesystem paths and raw PEM/key material.
+        """
+        if not cert_path:
+            return {"present": False}
+
+        path = Path(cert_path)
+        if not path.exists():
+            return {"present": False}
+
+        try:
+            with open(path, "rb") as f:
+                cert = x509.load_pem_x509_certificate(f.read(), default_backend())
+
+            algorithm, key_size = cls._public_key_info(cert)
+            valid_until = cls._certificate_time_to_iso(cert, "not_valid_after")
+            expires_at = datetime.datetime.fromisoformat(valid_until)
+
+            return {
+                "present": True,
+                "subject_common_name": cls._certificate_name_common_name(cert.subject),
+                "issuer_common_name": cls._certificate_name_common_name(cert.issuer),
+                "valid_from": cls._certificate_time_to_iso(cert, "not_valid_before"),
+                "valid_until": valid_until,
+                "expired": datetime.datetime.now(datetime.UTC) > expires_at,
+                "sha256_fingerprint": cert.fingerprint(hashes.SHA256()).hex().upper(),
+                "public_key_algorithm": algorithm,
+                "public_key_size": key_size,
+            }
+        except Exception:
+            return {"present": False, "error": "unreadable"}
+
+    def get_security_info(
+        self, source_id: Optional[str] = None, ssl_enabled: bool = True
+    ) -> Dict[str, Any]:
+        """Return UI-safe details about the local mutual-TLS material."""
+        server_ca = self.read_certificate_metadata(self.get_ca_cert_path(source_id))
+        client_certificate = self.read_certificate_metadata(self.client_cert_path)
+        private_key_present = self.client_key_path.exists()
+        certificate_expired = bool(
+            server_ca.get("expired") or client_certificate.get("expired")
+        )
+        mutual_tls_available = bool(
+            ssl_enabled
+            and server_ca.get("present")
+            and client_certificate.get("present")
+            and private_key_present
+            and not certificate_expired
+        )
+
+        return {
+            "ssl_enabled": ssl_enabled,
+            "mutual_tls_available": mutual_tls_available,
+            "server_ca": server_ca,
+            "client_certificate": client_certificate,
+            "private_key_present": private_key_present,
+        }
 
     def get_client_uid(self) -> Optional[str]:
         """Return the client UID (the Common Name of the client certificate).

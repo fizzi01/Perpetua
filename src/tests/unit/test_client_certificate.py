@@ -115,6 +115,55 @@ class TestClientCertificateIssuance(unittest.TestCase):
         self.assertTrue(self.client_cm.remove_client_credentials())
         self.assertFalse(self.client_cm.client_credentials_exist())
 
+    def test_security_info_reports_valid_certificate_material(self):
+        csr_pem = self.client_cm.generate_client_key_and_csr()
+        cert_pem = self.server_cm.sign_client_csr(csr_pem, "secure-client-uid")
+        self.assertTrue(self.client_cm.save_client_certificate(cert_pem))
+        with open(self.server_cm.ca_cert_path, "rb") as f:
+            self.assertTrue(self.client_cm.save_ca_data(f.read(), "server-uid"))
+
+        info = self.client_cm.get_security_info("server-uid", ssl_enabled=True)
+
+        self.assertTrue(info["mutual_tls_available"])
+        self.assertTrue(info["private_key_present"])
+        self.assertTrue(info["server_ca"]["present"])
+        self.assertTrue(info["client_certificate"]["present"])
+        self.assertEqual(
+            info["client_certificate"]["subject_common_name"], "secure-client-uid"
+        )
+        self.assertEqual(info["server_ca"]["public_key_algorithm"], "RSA")
+        self.assertEqual(info["server_ca"]["public_key_size"], 4096)
+        self.assertEqual(info["client_certificate"]["public_key_size"], 2048)
+        self.assertEqual(len(info["server_ca"]["sha256_fingerprint"]), 64)
+        self.assertEqual(len(info["client_certificate"]["sha256_fingerprint"]), 64)
+        self.assertNotIn("path", info["server_ca"])
+        self.assertNotIn("path", info["client_certificate"])
+
+    def test_security_info_reports_missing_private_key(self):
+        csr_pem = self.client_cm.generate_client_key_and_csr()
+        cert_pem = self.server_cm.sign_client_csr(csr_pem, "missing-key-uid")
+        self.assertTrue(self.client_cm.save_client_certificate(cert_pem))
+        with open(self.server_cm.ca_cert_path, "rb") as f:
+            self.assertTrue(self.client_cm.save_ca_data(f.read(), "server-uid"))
+        self.client_cm.client_key_path.unlink()
+
+        info = self.client_cm.get_security_info("server-uid", ssl_enabled=True)
+
+        self.assertFalse(info["mutual_tls_available"])
+        self.assertFalse(info["private_key_present"])
+        self.assertTrue(info["client_certificate"]["present"])
+
+    def test_security_info_handles_unreadable_certificate(self):
+        bad_cert = self.client_cm.cert_dir / "bad.crt"
+        bad_cert.write_bytes(b"not a certificate")
+        self.assertTrue(self.client_cm.extend_mapping("bad-server", bad_cert.name))
+
+        info = self.client_cm.get_security_info("bad-server", ssl_enabled=True)
+
+        self.assertFalse(info["mutual_tls_available"])
+        self.assertFalse(info["server_ca"]["present"])
+        self.assertEqual(info["server_ca"]["error"], "unreadable")
+
 
 class TestServerMutualTlsContext(unittest.TestCase):
     def setUp(self):
