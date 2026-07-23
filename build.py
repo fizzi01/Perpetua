@@ -275,7 +275,7 @@ class Builder:
         output_exe = self.gui_exe
 
         # Check that the GUI executable exists
-        if not output_exe.exists():
+        if not output_exe.exists() and not self.skip_gui:
             # Try to copy data files
             self.log.error("GUI executable not found, build GUI first")
             return -1
@@ -293,9 +293,11 @@ class Builder:
             "--include-package=utils",
             "--include-package=input",
             "--python-flag=no_docstrings",
-            "--no-prefer-source-code",
-            f"--include-data-files={output_exe}=_{self.gui_exe.name}",
+            "--prefer-source-code",
         ]
+
+        if not self.skip_gui:
+            nuitka_cmd.append(f"--include-data-files={output_exe}={self.gui_exe.name}")
 
         if self.is_macos:
             nuitka_cmd.extend(
@@ -536,7 +538,7 @@ class Builder:
                 raise RuntimeError("GUI build failed")
             if self._build_daemon() != 0:
                 raise RuntimeError("Daemon build failed")
-            elif not self.skip_daemon:
+            elif not self.skip_daemon and not self.skip_gui:
                 if self._swap_executables() != 0:
                     raise RuntimeError("Executable swap failed")
                 self._sign_bundle()
