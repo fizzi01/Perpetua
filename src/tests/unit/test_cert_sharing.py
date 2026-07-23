@@ -17,10 +17,9 @@
 
 # tests/test_cert_sharing.py
 """
-Unit tests for certificate sharing system with OTP and JWT
+Unit tests for certificate sharing system with OTP-derived AES-GCM encryption
 """
 
-import hashlib
 import unittest
 import asyncio
 import tempfile
@@ -83,8 +82,11 @@ class TestCertificateSharing(unittest.TestCase):
         unique_otps = set(otps)
         self.assertGreater(len(unique_otps), 90)  # At least 90% unique
 
-    def test_jwt_creation_and_decryption(self):
-        """Test JWT creation and decryption with OTP"""
+    def test_envelope_creation_and_decryption(self):
+        """The certificate envelope is base64(JSON) of AES-GCM fields (no JWT)."""
+        import base64
+        import json
+
         sharing = CertificateSharing(
             cert_data=self.cert_data,
             host=self.test_host,
@@ -93,31 +95,25 @@ class TestCertificateSharing(unittest.TestCase):
         )
 
         otp = "123456"
-        token = asyncio.run(sharing._create_jwt(otp))
+        token = asyncio.run(sharing._create_envelope(otp))
 
         # Token should be a non-empty string
         self.assertIsInstance(token, str)
         self.assertGreater(len(token), 0)
 
-        # Should be able to decode with same OTP
-        import jwt
+        # It decodes as base64(JSON) - NOT a JWT (no dotted header.payload.sig).
+        payload = json.loads(base64.b64decode(token))
 
-        jwt_secret = hashlib.sha256(otp.encode("utf-8")).hexdigest()
-        payload = jwt.decode(
-            token, jwt_secret, algorithms=["HS256"], options={"verify_iat": False}
-        )
-
-        # Check payload contains encrypted certificate and salt
+        # Check payload carries the AES-GCM fields; no signature / exp / iat.
         self.assertIn("encrypted_cert", payload)
+        self.assertIn("nonce", payload)
         self.assertIn("salt", payload)
-        self.assertIn("exp", payload)
-        self.assertIn("iat", payload)
+        self.assertNotIn("exp", payload)
+        self.assertNotIn("iat", payload)
 
         # Check salt is base64 encoded string
         self.assertIsInstance(payload["salt"], str)
         self.assertGreater(len(payload["salt"]), 0)
-
-        import base64
 
         # Decrypt certificate data using salt from payload
         decrypted_cert = CertificateSharing.decrypt_data(
@@ -401,8 +397,13 @@ class TestCertificateSharing(unittest.TestCase):
 
         asyncio.run(run_test())
 
-    def test_multiple_clients(self):
-        """Test multiple clients receiving certificate"""
+    def test_otp_is_single_use(self):
+        """An OTP is consumed on first successful delivery; a replay fails.
+
+        This is the anti-replay guarantee: a passive eavesdropper can only
+        capture the token after the legitimate client received it, by which
+        point the OTP is already burned.
+        """
 
         async def run_test():
             sharing = CertificateSharing(
@@ -416,26 +417,27 @@ class TestCertificateSharing(unittest.TestCase):
             self.assertTrue(success)
 
             try:
-                await asyncio.sleep(0.5)
+                await asyncio.sleep(0.3)
 
-                # Create multiple receivers
-                async def receive_cert(client_id):
-                    receiver = CertificateReceiver(
-                        server_host=self.test_host,
-                        server_port=self.test_port,
-                        timeout=5,
-                    )
-                    return await receiver.receive_certificate(otp)
-
-                # Receive from multiple clients concurrently
-                results = await asyncio.gather(
-                    receive_cert(1), receive_cert(2), receive_cert(3)
+                # First client succeeds and consumes the OTP.
+                first = CertificateReceiver(
+                    server_host=self.test_host,
+                    server_port=self.test_port,
+                    timeout=5,
                 )
+                ok1, cert1, _ = await first.receive_certificate(otp)
+                self.assertTrue(ok1)
+                self.assertIsNotNone(cert1)
 
-                # All should succeed
-                for success, cert, _ in results:
-                    self.assertTrue(success)
-                    self.assertIsNotNone(cert)
+                # A replay with the same (now consumed) OTP is rejected.
+                replay = CertificateReceiver(
+                    server_host=self.test_host,
+                    server_port=self.test_port,
+                    timeout=5,
+                )
+                ok2, cert2, _ = await replay.receive_certificate(otp)
+                self.assertFalse(ok2)
+                self.assertIsNone(cert2)
 
             finally:
                 await sharing.stop_sharing()

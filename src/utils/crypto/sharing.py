@@ -1,5 +1,5 @@
 """
-Secure certificate sharing system with OTP and JWT
+Secure certificate sharing system with OTP-derived AES-GCM encryption
 """
 
 
@@ -23,12 +23,10 @@ Secure certificate sharing system with OTP and JWT
 import asyncio
 import secrets
 import time
-import hashlib
 import hmac
 import base64
+import json
 from typing import Optional, Tuple, Callable, Awaitable, Dict
-import jwt
-from datetime import datetime, timedelta, timezone
 from cryptography.hazmat.primitives.ciphers.aead import AESGCM
 from cryptography.hazmat.primitives import hashes
 from cryptography.hazmat.primitives.kdf.pbkdf2 import PBKDF2HMAC
@@ -254,7 +252,7 @@ class CertificateSharing:
             algorithm=hashes.SHA256(),
             length=32,
             salt=salt,
-            iterations=100000,
+            iterations=600000,
         )
         return kdf.derive(otp.encode("utf-8"))
 
@@ -331,18 +329,27 @@ class CertificateSharing:
         aesgcm = AESGCM(key)
         return aesgcm.decrypt(nonce, encrypted_data, None)
 
-    async def _create_jwt(self, otp: str, client_cert: Optional[bytes] = None) -> str:
+    async def _create_envelope(
+        self, otp: str, client_cert: Optional[bytes] = None
+    ) -> str:
         """
-        Create JWT containing encrypted certificate data.
+        Build the encrypted certificate envelope delivered to the client.
+
+        The payload is protected by AES-256-GCM (authenticated encryption): the
+        GCM tag provides integrity and authenticity, so no separate signature is
+        used. Deliberately NOT a JWT — a JWT signed with a fast hash of the OTP
+        would give an eavesdropper a millisecond offline oracle to brute-force
+        the OTP, defeating the PBKDF2 hardening.
 
         Args:
-            otp: One-time password used for encryption
+            otp: One-time password used to derive the AES key.
             client_cert: Optional CA-signed client leaf cert (PEM) to deliver
-                alongside the CA. When present it is encrypted independently
-                and added under the ``encrypted_client_cert`` fields.
+                alongside the CA. When present it is encrypted independently and
+                added under the ``encrypted_client_cert`` fields.
 
         Returns:
-            JWT token with encrypted certificate
+            base64(JSON) string carrying the AES-GCM ciphertext(s), nonce(s) and
+            salt(s).
         """
         # Encrypt certificate data (PBKDF2 runs in executor)
         encrypted_data, nonce, salt = await self.encrypt_data_async(
@@ -354,8 +361,6 @@ class CertificateSharing:
             "encrypted_cert": base64.b64encode(encrypted_data).decode("utf-8"),
             "nonce": base64.b64encode(nonce).decode("utf-8"),
             "salt": base64.b64encode(salt).decode("utf-8"),
-            "exp": datetime.now(timezone.utc) + timedelta(seconds=self._timeout),
-            "iat": datetime.now(tz=timezone.utc).timestamp(),
         }
 
         if client_cert is not None:
@@ -368,9 +373,8 @@ class CertificateSharing:
             payload["client_cert_nonce"] = base64.b64encode(nonce_c).decode("utf-8")
             payload["client_cert_salt"] = base64.b64encode(salt_c).decode("utf-8")
 
-        # Sign JWT (using a hash of OTP to avoid using OTP directly as JWT secret)
-        jwt_secret = hashlib.sha256(otp.encode("utf-8")).hexdigest()
-        return jwt.encode(payload, jwt_secret, algorithm="HS256")
+        raw = json.dumps(payload).encode("utf-8")
+        return base64.b64encode(raw).decode("utf-8")
 
     async def _handle_client(
         self, reader: asyncio.StreamReader, writer: asyncio.StreamWriter
@@ -609,11 +613,19 @@ class CertificateSharing:
                 await deny(ERR_SIGNING_FAILED)
                 return
 
-        # PBKDF2 derivation runs off the event loop inside _create_jwt.
-        token = await self._create_jwt(otp, client_cert=client_cert)
+        # PBKDF2 derivation runs off the event loop inside _create_envelope.
+        token = await self._create_envelope(otp, client_cert=client_cert)
         writer.write(f"{RESP_TOKEN}:{token}\n".encode("utf-8"))
         await writer.drain()
 
+        # One-time use: burn the OTP now that the certificate has been
+        # delivered. A passive eavesdropper can only capture this token *after*
+        # this point, so a replayed GET_CERTIFICATE (even with the correct OTP)
+        # finds no active OTP — closing the impersonation replay window.
+        async with self._otp_lock:
+            self._otp = None
+            self._otp_expiry = None
+            self._otp_attempts = 0
         self._shared = True
         self._logger.info(
             "Certificate sent to client",
@@ -1015,28 +1027,19 @@ class CertificateReceiver:
                 self._logger.log("Invalid server response", Logger.ERROR)
                 return False, None, None
 
-            # Extract JWT token
+            # Extract the base64(JSON) envelope.
             token = response.split(":", 1)[1]
 
-            # Verify and decode JWT using OTP hash as secret
+            # Decode the envelope and AES-GCM decrypt. Authenticity comes from
+            # the GCM tag: a wrong OTP yields the wrong key and decryption fails
+            # (InvalidTag) - there is no separate signature to verify.
             try:
-                jwt_secret = hashlib.sha256(otp.encode("utf-8")).hexdigest()
-                payload = jwt.decode(
-                    token,
-                    jwt_secret,
-                    algorithms=["HS256"],
-                    options={"verify_iat": False},
-                )
+                payload = json.loads(base64.b64decode(token))
 
                 # Extract encrypted data components
-                encrypted_cert_b64 = payload["encrypted_cert"]
-                nonce_b64 = payload["nonce"]
-                salt_b64 = payload["salt"]
-
-                # Decode from base64
-                encrypted_cert = base64.b64decode(encrypted_cert_b64)
-                nonce = base64.b64decode(nonce_b64)
-                salt = base64.b64decode(salt_b64)
+                encrypted_cert = base64.b64decode(payload["encrypted_cert"])
+                nonce = base64.b64decode(payload["nonce"])
+                salt = base64.b64decode(payload["salt"])
 
                 # Decrypt certificate data using OTP (PBKDF2 in executor)
                 cert_data = await CertificateSharing.decrypt_data_async(
@@ -1070,13 +1073,8 @@ class CertificateReceiver:
                 )
                 return True, cert_data_str, client_cert_str
 
-            except jwt.ExpiredSignatureError:
-                self._logger.log("JWT expired", Logger.ERROR)
-                return False, None, None
-            except jwt.InvalidTokenError as e:
-                self._logger.error("Invalid JWT or OTP", error=str(e))
-                return False, None, None
             except Exception as e:
+                # Wrong OTP (AEAD InvalidTag) or a malformed envelope.
                 self._logger.log(
                     f"Failed to decrypt certificate data: {e}", Logger.ERROR
                 )
