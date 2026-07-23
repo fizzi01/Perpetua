@@ -1,5 +1,5 @@
 """
-Secure certificate sharing system with OTP and JWT
+Secure certificate sharing system with OTP-derived AES-GCM encryption
 """
 
 
@@ -23,11 +23,10 @@ Secure certificate sharing system with OTP and JWT
 import asyncio
 import secrets
 import time
-import hashlib
+import hmac
 import base64
+import json
 from typing import Optional, Tuple, Callable, Awaitable, Dict
-import jwt
-from datetime import datetime, timedelta, timezone
 from cryptography.hazmat.primitives.ciphers.aead import AESGCM
 from cryptography.hazmat.primitives import hashes
 from cryptography.hazmat.primitives.kdf.pbkdf2 import PBKDF2HMAC
@@ -46,14 +45,31 @@ ERR_NO_ACTIVE_OTP = "NO_ACTIVE_OTP"
 ERR_OTP_EXPIRED = "OTP_EXPIRED"
 ERR_RATE_LIMITED = "RATE_LIMITED"
 ERR_UNKNOWN_REQUEST = "UNKNOWN_REQUEST"
+# The client supplied a wrong OTP on GET_CERTIFICATE (or none at all).
+ERR_INVALID_OTP = "INVALID_OTP"
+# Too many wrong-OTP attempts: the active OTP has been invalidated.
+ERR_TOO_MANY_ATTEMPTS = "TOO_MANY_ATTEMPTS"
+# The client CSR was malformed or its signature did not verify.
+ERR_CSR_INVALID = "CSR_INVALID"
+# The server failed to sign the CSR (e.g. no signer wired, CA read error).
+ERR_SIGNING_FAILED = "SIGNING_FAILED"
 # Returned when a pairing_request_callback raises (e.g. GUI not reachable).
 # The fresh OTP generated for the request is invalidated server-side so it
 # cannot be guessed in the 6-digit window.
 ERR_CALLBACK_FAILED = "CALLBACK_FAILED"
 
+# Header names on the GET_CERTIFICATE request.
+HDR_OTP = "OTP"
+HDR_CSR_LENGTH = "CSR-LENGTH"
+
 # Read at most this many bytes before the first newline on a pre-auth connection,
 # to avoid a hostile client tying up resources with a never-ending header.
 _MAX_HEADER_BYTES = 1024
+# Cap the CSR body a client may send (a 2048-bit RSA CSR PEM is ~1KB).
+_MAX_CSR_BYTES = 8192
+# Wrong-OTP attempts allowed on GET_CERTIFICATE before the OTP is burned, so a
+# leaked ciphertext can't be paired with an online brute force of the 6 digits.
+MAX_OTP_ATTEMPTS = 5
 # Default per-IP cooldown between pairing requests (seconds).
 DEFAULT_PAIRING_COOLDOWN = 5.0
 # Default number of adjacent ports to try if the preferred one is occupied.
@@ -91,6 +107,7 @@ class CertificateSharing:
         pairing_request_callback: Optional[
             Callable[[Dict[str, str]], Awaitable[None]]
         ] = None,
+        csr_signer: Optional[Callable[[bytes], Optional[bytes]]] = None,
         pairing_cooldown: float = DEFAULT_PAIRING_COOLDOWN,
         port_fallback_range: int = DEFAULT_PORT_FALLBACK_RANGE,
     ):
@@ -123,6 +140,12 @@ class CertificateSharing:
 
         self._otp: Optional[str] = None
         self._otp_expiry: Optional[float] = None
+        # Wrong-OTP attempts against the current OTP on GET_CERTIFICATE.
+        self._otp_attempts = 0
+        # Signs a client CSR into a CA-signed leaf cert. Wired by the server
+        # service (which owns the CertificateManager). Takes the CSR PEM and
+        # returns the signed client cert PEM, or None on failure.
+        self._csr_signer = csr_signer
         self._server: Optional[asyncio.Server] = None
         self._running = False
         self._shared = False
@@ -144,6 +167,12 @@ class CertificateSharing:
     ) -> None:
         """Update the pairing request callback. Safe to call at any time."""
         self._pairing_request_callback = callback
+
+    def set_csr_signer(
+        self, signer: Optional[Callable[[bytes], Optional[bytes]]]
+    ) -> None:
+        """Set the CSR-signing callback (server side). Safe to call any time."""
+        self._csr_signer = signer
 
     def update_cert_data(self, cert_data: bytes) -> None:
         """Replace the certificate payload (used when certs are regenerated)."""
@@ -223,7 +252,7 @@ class CertificateSharing:
             algorithm=hashes.SHA256(),
             length=32,
             salt=salt,
-            iterations=100000,
+            iterations=600000,
         )
         return kdf.derive(otp.encode("utf-8"))
 
@@ -300,15 +329,27 @@ class CertificateSharing:
         aesgcm = AESGCM(key)
         return aesgcm.decrypt(nonce, encrypted_data, None)
 
-    async def _create_jwt(self, otp: str) -> str:
+    async def _create_envelope(
+        self, otp: str, client_cert: Optional[bytes] = None
+    ) -> str:
         """
-        Create JWT containing encrypted certificate data.
+        Build the encrypted certificate envelope delivered to the client.
+
+        The payload is protected by AES-256-GCM (authenticated encryption): the
+        GCM tag provides integrity and authenticity, so no separate signature is
+        used. Deliberately NOT a JWT — a JWT signed with a fast hash of the OTP
+        would give an eavesdropper a millisecond offline oracle to brute-force
+        the OTP, defeating the PBKDF2 hardening.
 
         Args:
-            otp: One-time password used for encryption
+            otp: One-time password used to derive the AES key.
+            client_cert: Optional CA-signed client leaf cert (PEM) to deliver
+                alongside the CA. When present it is encrypted independently and
+                added under the ``encrypted_client_cert`` fields.
 
         Returns:
-            JWT token with encrypted certificate
+            base64(JSON) string carrying the AES-GCM ciphertext(s), nonce(s) and
+            salt(s).
         """
         # Encrypt certificate data (PBKDF2 runs in executor)
         encrypted_data, nonce, salt = await self.encrypt_data_async(
@@ -320,13 +361,20 @@ class CertificateSharing:
             "encrypted_cert": base64.b64encode(encrypted_data).decode("utf-8"),
             "nonce": base64.b64encode(nonce).decode("utf-8"),
             "salt": base64.b64encode(salt).decode("utf-8"),
-            "exp": datetime.now(timezone.utc) + timedelta(seconds=self._timeout),
-            "iat": datetime.now(tz=timezone.utc).timestamp(),
         }
 
-        # Sign JWT (using a hash of OTP to avoid using OTP directly as JWT secret)
-        jwt_secret = hashlib.sha256(otp.encode("utf-8")).hexdigest()
-        return jwt.encode(payload, jwt_secret, algorithm="HS256")
+        if client_cert is not None:
+            enc_client, nonce_c, salt_c = await self.encrypt_data_async(
+                client_cert, otp
+            )
+            payload["encrypted_client_cert"] = base64.b64encode(enc_client).decode(
+                "utf-8"
+            )
+            payload["client_cert_nonce"] = base64.b64encode(nonce_c).decode("utf-8")
+            payload["client_cert_salt"] = base64.b64encode(salt_c).decode("utf-8")
+
+        raw = json.dumps(payload).encode("utf-8")
+        return base64.b64encode(raw).decode("utf-8")
 
     async def _handle_client(
         self, reader: asyncio.StreamReader, writer: asyncio.StreamWriter
@@ -349,7 +397,7 @@ class CertificateSharing:
             if request_type == REQ_REQUEST_PAIRING:
                 await self._handle_pairing_request(writer, peer_ip, peer_port, headers)
             elif request_type == REQ_GET_CERTIFICATE or request_type is None:
-                await self._handle_certificate_request(writer, addr)
+                await self._handle_certificate_request(reader, writer, addr, headers)
             else:
                 self._logger.log(
                     f"Unknown request '{request_type}' from {addr}", Logger.WARNING
@@ -454,6 +502,7 @@ class CertificateSharing:
             if not otp_was_active:
                 self._otp = self._generate_otp()
                 self._otp_expiry = time.time() + self._timeout
+                self._otp_attempts = 0
                 self._shared = False
                 self._logger.log(
                     f"Generated OTP {self._otp}, valid {self._timeout}s) "
@@ -497,24 +546,92 @@ class CertificateSharing:
         await writer.drain()
 
     async def _handle_certificate_request(
-        self, writer: asyncio.StreamWriter, addr
+        self,
+        reader: asyncio.StreamReader,
+        writer: asyncio.StreamWriter,
+        addr,
+        headers: Dict[str, str],
     ) -> None:
-        if not self._is_otp_valid():
-            code = ERR_OTP_EXPIRED if self._otp else ERR_NO_ACTIVE_OTP
+        async def deny(code: str) -> None:
             self._logger.log(
                 f"Certificate request from {addr} rejected: {code}", Logger.WARNING
             )
             writer.write(f"{RESP_ERROR}:{code}\n".encode("utf-8"))
             await writer.drain()
+
+        if not self._is_otp_valid():
+            await deny(ERR_OTP_EXPIRED if self._otp else ERR_NO_ACTIVE_OTP)
             return
 
-        # PBKDF2 derivation runs off the event loop inside _create_jwt.
-        token = await self._create_jwt(self._otp)  # ty:ignore[invalid-argument-type]
+        # --- Verify the client-supplied OTP (constant-time) ---
+        # The certificate material is only released to a caller that proves it
+        # knows the out-of-band OTP. Wrong attempts are counted and burn the
+        # OTP after MAX_OTP_ATTEMPTS, so a captured ciphertext can't be paired
+        # with an online guess of the 6 digits.
+        client_otp = headers.get(HDR_OTP, "")
+        async with self._otp_lock:
+            if not self._otp or not hmac.compare_digest(client_otp, self._otp):
+                self._otp_attempts += 1
+                if self._otp_attempts >= MAX_OTP_ATTEMPTS:
+                    self._otp = None
+                    self._otp_expiry = None
+                    await deny(ERR_TOO_MANY_ATTEMPTS)
+                else:
+                    await deny(ERR_INVALID_OTP)
+                return
+            otp = self._otp
+
+        # --- Optionally sign a client CSR carried in the request body ---
+        client_cert: Optional[bytes] = None
+        csr_len_raw = headers.get(HDR_CSR_LENGTH)
+        if csr_len_raw:
+            try:
+                csr_len = int(csr_len_raw)
+            except ValueError:
+                await deny(ERR_CSR_INVALID)
+                return
+            if csr_len <= 0 or csr_len > _MAX_CSR_BYTES:
+                await deny(ERR_CSR_INVALID)
+                return
+            try:
+                csr_pem = await asyncio.wait_for(
+                    reader.readexactly(csr_len), timeout=self._read_timeout()
+                )
+            except (asyncio.IncompleteReadError, asyncio.TimeoutError):
+                await deny(ERR_CSR_INVALID)
+                return
+
+            if self._csr_signer is None:
+                await deny(ERR_SIGNING_FAILED)
+                return
+            try:
+                client_cert = self._csr_signer(csr_pem)
+            except Exception as e:
+                self._logger.error("CSR signer raised", error=str(e))
+                client_cert = None
+            if client_cert is None:
+                await deny(ERR_SIGNING_FAILED)
+                return
+
+        # PBKDF2 derivation runs off the event loop inside _create_envelope.
+        token = await self._create_envelope(otp, client_cert=client_cert)
         writer.write(f"{RESP_TOKEN}:{token}\n".encode("utf-8"))
         await writer.drain()
 
+        # One-time use: burn the OTP now that the certificate has been
+        # delivered. A passive eavesdropper can only capture this token *after*
+        # this point, so a replayed GET_CERTIFICATE (even with the correct OTP)
+        # finds no active OTP — closing the impersonation replay window.
+        async with self._otp_lock:
+            self._otp = None
+            self._otp_expiry = None
+            self._otp_attempts = 0
         self._shared = True
-        self._logger.info("Certificate sent to client", address=addr)
+        self._logger.info(
+            "Certificate sent to client",
+            address=addr,
+            client_cert_issued=client_cert is not None,
+        )
 
     def _is_otp_valid(self) -> bool:
         """Check if OTP is still valid"""
@@ -540,6 +657,7 @@ class CertificateSharing:
         try:
             self._otp = self._generate_otp()
             self._otp_expiry = time.time() + self._timeout
+            self._otp_attempts = 0
             self._shared = False
 
             server = await self._bind_with_fallback()
@@ -630,6 +748,7 @@ class CertificateSharing:
             ttl = timeout if timeout and timeout > 0 else self._timeout
             self._otp = self._generate_otp()
             self._otp_expiry = time.time() + ttl
+            self._otp_attempts = 0
             self._shared = False
             self._logger.log(
                 f"Generated OTP (len={len(self._otp)}, valid {ttl}s) "
@@ -829,15 +948,21 @@ class CertificateReceiver:
             self._logger.error("Pairing request failed", error=str(e))
             return False, 0, "ERROR"
 
-    async def receive_certificate(self, otp: str) -> Tuple[bool, Optional[str]]:
+    async def receive_certificate(
+        self, otp: str, csr_pem: Optional[bytes] = None
+    ) -> Tuple[bool, Optional[str], Optional[str]]:
         """
         Connect to server and receive certificate using OTP.
 
         Args:
             otp: One-time password from server
+            csr_pem: Optional client CSR (PEM). When provided, the server signs
+                it and returns the client leaf certificate alongside the CA.
 
         Returns:
-            Tuple of (success, certificate_data). Certificate is None if failed.
+            Tuple of (success, ca_certificate, client_certificate). The CA cert
+            is None on failure; the client cert is None when no CSR was sent or
+            the server did not return one.
         """
         try:
             self._logger.log(
@@ -870,10 +995,16 @@ class CertificateReceiver:
                         Logger.DEBUG,
                     )
 
-            # Explicit request keeps the protocol unambiguous on the new
-            # always-on listener. Legacy servers that connect-and-send still
-            # work because they ignore inbound data.
-            writer.write(f"{REQ_GET_CERTIFICATE}\n\n".encode("utf-8"))
+            # Explicit request with the OTP (verified server-side) and, when a
+            # CSR is supplied, a length-delimited body carrying it. The blank
+            # line terminates the headers; the CSR bytes follow.
+            request = f"{REQ_GET_CERTIFICATE}\n{HDR_OTP}:{otp}\n"
+            if csr_pem is not None:
+                request += f"{HDR_CSR_LENGTH}:{len(csr_pem)}\n"
+            request += "\n"
+            writer.write(request.encode("utf-8"))
+            if csr_pem is not None:
+                writer.write(csr_pem)
             try:
                 await writer.drain()
             except Exception:
@@ -890,34 +1021,25 @@ class CertificateReceiver:
             if response.startswith("ERROR:"):
                 error_type = response.split(":", 1)[1]
                 self._logger.error("Server error", error_type=error_type)
-                return False, None
+                return False, None, None
 
             if not response.startswith("TOKEN:"):
                 self._logger.log("Invalid server response", Logger.ERROR)
-                return False, None
+                return False, None, None
 
-            # Extract JWT token
+            # Extract the base64(JSON) envelope.
             token = response.split(":", 1)[1]
 
-            # Verify and decode JWT using OTP hash as secret
+            # Decode the envelope and AES-GCM decrypt. Authenticity comes from
+            # the GCM tag: a wrong OTP yields the wrong key and decryption fails
+            # (InvalidTag) - there is no separate signature to verify.
             try:
-                jwt_secret = hashlib.sha256(otp.encode("utf-8")).hexdigest()
-                payload = jwt.decode(
-                    token,
-                    jwt_secret,
-                    algorithms=["HS256"],
-                    options={"verify_iat": False},
-                )
+                payload = json.loads(base64.b64decode(token))
 
                 # Extract encrypted data components
-                encrypted_cert_b64 = payload["encrypted_cert"]
-                nonce_b64 = payload["nonce"]
-                salt_b64 = payload["salt"]
-
-                # Decode from base64
-                encrypted_cert = base64.b64decode(encrypted_cert_b64)
-                nonce = base64.b64decode(nonce_b64)
-                salt = base64.b64decode(salt_b64)
+                encrypted_cert = base64.b64decode(payload["encrypted_cert"])
+                nonce = base64.b64decode(payload["nonce"])
+                salt = base64.b64decode(payload["salt"])
 
                 # Decrypt certificate data using OTP (PBKDF2 in executor)
                 cert_data = await CertificateSharing.decrypt_data_async(
@@ -931,41 +1053,51 @@ class CertificateReceiver:
                     else cert_data
                 )
 
+                # Optionally decrypt the CA-signed client leaf cert.
+                client_cert_str: Optional[str] = None
+                if "encrypted_client_cert" in payload:
+                    enc_client = base64.b64decode(payload["encrypted_client_cert"])
+                    nonce_c = base64.b64decode(payload["client_cert_nonce"])
+                    salt_c = base64.b64decode(payload["client_cert_salt"])
+                    client_data = await CertificateSharing.decrypt_data_async(
+                        enc_client, nonce_c, salt_c, otp
+                    )
+                    client_cert_str = (
+                        client_data.decode("utf-8")
+                        if isinstance(client_data, bytes)
+                        else client_data
+                    )
+
                 self._logger.log(
                     "Certificate received and decrypted successfully", Logger.INFO
                 )
-                return True, cert_data_str
+                return True, cert_data_str, client_cert_str
 
-            except jwt.ExpiredSignatureError:
-                self._logger.log("JWT expired", Logger.ERROR)
-                return False, None
-            except jwt.InvalidTokenError as e:
-                self._logger.error("Invalid JWT or OTP", error=str(e))
-                return False, None
             except Exception as e:
+                # Wrong OTP (AEAD InvalidTag) or a malformed envelope.
                 self._logger.log(
                     f"Failed to decrypt certificate data: {e}", Logger.ERROR
                 )
                 import traceback
 
                 self._logger.log(traceback.format_exc(), Logger.DEBUG)
-                return False, None
+                return False, None, None
 
         except asyncio.TimeoutError:
             self._logger.log("Connection timeout", Logger.ERROR)
-            return False, None
+            return False, None, None
         except ConnectionRefusedError:
             self._logger.log(
                 f"Connection refused by {self._server_host}:{self._server_port}",
                 Logger.ERROR,
             )
-            return False, None
+            return False, None, None
         except Exception as e:
             self._logger.error("Error receiving certificate", error=str(e))
             import traceback
 
             self._logger.log(traceback.format_exc(), Logger.ERROR)
-            return False, None
+            return False, None, None
         finally:
             if self.__writer:
                 self.__writer.close()

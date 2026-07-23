@@ -81,6 +81,7 @@ export enum EventType {
     ClientUpdated,
     ClientApprovalRequested,
     ClientApprovalResolved,
+    ClientRejected,
 
     // Stream events
     StreamEnabled,
@@ -316,6 +317,27 @@ export interface ServerStatus {
     pending_approvals?: ClientApprovalRequest[];
 }
 
+export interface CertificateMetadata {
+    present: boolean;
+    subject_common_name?: string | null;
+    issuer_common_name?: string | null;
+    valid_from?: string;
+    valid_until?: string;
+    expired?: boolean;
+    sha256_fingerprint?: string;
+    public_key_algorithm?: string;
+    public_key_size?: number | null;
+    error?: string;
+}
+
+export interface ClientSecurityInfo {
+    ssl_enabled: boolean;
+    mutual_tls_available: boolean;
+    server_ca: CertificateMetadata;
+    client_certificate: CertificateMetadata;
+    private_key_present: boolean;
+}
+
 export interface ClientConnectionInfo {
     uid: string;
     host: string;
@@ -323,6 +345,7 @@ export interface ClientConnectionInfo {
     port: number;
     ssl: boolean;
     auto_reconnect: boolean;
+    security_info?: ClientSecurityInfo;
 }
 
 export interface ClientStatus {
@@ -337,6 +360,7 @@ export interface ClientStatus {
     streams_enabled: number[];
     ssl_enabled: boolean;
     server_info: ClientConnectionInfo;
+    security_info?: ClientSecurityInfo;
 }
 
 export interface ServiceStatus {
@@ -374,6 +398,14 @@ export interface ClientApprovalResolved {
     // Legacy — kept for backward compatibility; new approvals open the Layout Editor instead.
     screen_position?: string;
     reason: string;
+}
+
+
+export interface ClientRejected {
+    peer_ip: string;
+    reason: string;
+    hostname: string;
+    uid: string;
 }
 
 

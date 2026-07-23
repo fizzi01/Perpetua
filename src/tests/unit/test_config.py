@@ -21,6 +21,7 @@ Tests ApplicationConfig, ServerConfig, and ClientConfig classes.
 #  along with this program.  If not, see <https://www.gnu.org/licenses/>.
 #
 
+import json
 import msgspec.json
 import os
 
@@ -341,8 +342,6 @@ class TestConfigCacheInvalidation:
 
     def test_cache_evicts_lru_when_over_capacity(self, server_config, temp_dir):
         """OrderedDict eviction kicks in once `_CONFIG_CACHE_MAX` is exceeded."""
-        import json
-
         from config import _CONFIG_CACHE_MAX, _config_cache, _get_cached_or_load_sync
 
         _config_cache.clear()
@@ -364,8 +363,6 @@ class TestConfigCacheInvalidation:
 
     def test_cache_hit_promotes_entry(self, temp_dir):
         """Touching an entry moves it to most-recently-used end of the LRU."""
-        import json
-
         from config import _config_cache, _get_cached_or_load_sync
 
         _config_cache.clear()
@@ -490,6 +487,16 @@ class TestServerInfoSerialization:
         assert new_info.heartbeat_interval == 5
         assert new_info.auto_reconnect is False
 
+    def test_from_dict_defaults_ssl_to_true(self):
+        """Encryption is forced: a server_info block missing 'ssl' loads as True.
+
+        A missing key must never silently downgrade to an insecure connection;
+        this matches ClientConfig.ssl_enabled and ServerInfo.__init__ defaults.
+        """
+        info = ServerInfo.from_dict({"host": "10.0.0.1", "port": 8080})
+
+        assert info.ssl is True
+
 
 # ============================================================================
 # Test ClientConfig - Serialization
@@ -529,6 +536,23 @@ class TestClientConfigSerialization:
         assert client_config.is_stream_enabled(4) is True
         assert client_config.is_stream_enabled(12) is False
 
+    def test_uid_not_serialized(self, client_config):
+        """The client UID lives only in the certificate, never in config.json."""
+        client_config.set_uid("in-memory-uid")
+
+        data = client_config.to_dict()
+
+        assert "uid" not in data
+
+    def test_from_dict_ignores_stray_uid(self, client_config):
+        """A stray 'uid' in an existing file is ignored (not read back)."""
+        data = {"uid": "leftover-uid", "client_hostname": "test-client"}
+
+        client_config.from_dict(data)
+
+        assert client_config.get_uid() is None
+        assert client_config.get_hostname() == "test-client"
+
 
 # ============================================================================
 # Test ClientConfig - Persistence
@@ -562,6 +586,25 @@ class TestClientConfigPersistence:
         assert new_config.get_server_host() == "10.0.0.1"
         assert new_config.get_server_port() == 8080
         assert new_config.is_stream_enabled(1) is True
+
+    async def test_uid_never_written_to_file(self, client_config, temp_dir):
+        """A save/load round-trip must never write 'uid' to the JSON file."""
+        config_file = os.path.join(str(temp_dir), "no_uid.json")
+
+        client_config.set_hostname("roundtrip-client")
+        client_config.set_uid("in-memory-uid")
+
+        await client_config.save(config_file)
+
+        with open(config_file, "r") as f:
+            saved = json.load(f)
+        # The client section must carry no top-level 'uid' (the nested
+        # server_info block legitimately keeps the *server* uid).
+        assert "uid" not in saved[client_config.app_config.client_key]
+
+        new_config = ClientConfig()
+        await new_config.load(config_file)
+        assert new_config.get_uid() is None
 
     async def test_load_non_existent_file(self, client_config, temp_dir):
         """Test loading from non-existent file returns False."""

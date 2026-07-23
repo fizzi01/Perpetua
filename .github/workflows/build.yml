@@ -146,7 +146,7 @@ jobs:
           echo "PERPETUA_MACOS_SIGN_IDENTITY=$MACOS_SIGN_IDENTITY" >> "$GITHUB_ENV"
 
       - name: Build daemon
-        run: poetry run python build.py --skip-gui --nuitka-args --assume-yes-for-downloads
+        run: poetry run python build.py --skip-gui --gui-external --nuitka-args --assume-yes-for-downloads
 
       - name: Clean Nuitka build cache
         run: find ${{ matrix.build-output }} -maxdepth 1 -name '*.build' -type d -exec rm -rf {} +
@@ -269,7 +269,7 @@ jobs:
         run: cargo tauri build --target ${{ matrix.rust-target }}
 
       - name: Build daemon
-        run: poetry run python build.py --skip-gui --nuitka-args --assume-yes-for-downloads
+        run: poetry run python build.py --skip-gui --gui-external --nuitka-args --assume-yes-for-downloads
 
       - name: Clean Nuitka build cache
         run: find ${{ matrix.build-output }} -maxdepth 1 -name '*.build' -type d -exec rm -rf {} +

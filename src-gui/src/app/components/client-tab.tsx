@@ -18,7 +18,7 @@
  */
 
 import {useState, useEffect, useRef} from 'react';
-import {Settings, Wifi, Clock, Lock, Shield, Info, User} from 'lucide-react';
+import {Settings, Wifi, Clock, Lock, Shield, ShieldAlert, Info, User} from 'lucide-react';
 import {motion, AnimatePresence} from 'motion/react';
 
 import {Switch} from "./ui/switch";
@@ -72,7 +72,6 @@ export function ClientTab({onStatusChange, state}: ClientTabProps) {
     const [enableMouse, setEnableMouse] = useState(parseStreams(state.streams_enabled).includes(StreamType.Mouse));
     const [enableKeyboard, setEnableKeyboard] = useState(parseStreams(state.streams_enabled).includes(StreamType.Keyboard));
     const [enableClipboard, setEnableClipboard] = useState(parseStreams(state.streams_enabled).includes(StreamType.Clipboard));
-    const [requireSSL, setRequireSSL] = useState(state.ssl_enabled);
     const [hostname, setHostname] = useState(state.server_info.hostname || '');
     const [host, setHost] = useState(state.server_info.host || state.server_info.hostname || '');
     const [port, setPort] = useState(state.server_info.port ? state.server_info.port.toString() : '8080');
@@ -89,6 +88,10 @@ export function ClientTab({onStatusChange, state}: ClientTabProps) {
     const [controlStatus, setControlStatus] = useState<'none' | 'controlled' | 'idle'>('none');
     const [notifications, setNotifications] = useState<Notification[]>([]);
     const [pendingForceStop, setPendingForceStop] = useState(false);
+    // UID of a server the user picked that would replace a *different* saved
+    // server. Non-null while the switch-confirmation panel is shown; the
+    // actual ``chooseServer`` call is deferred until the user confirms.
+    const [pendingSwitchUid, setPendingSwitchUid] = useState<string | null>(null);
 
     const listeners = useEventListeners('client-tab');
     const connectionListeners = handleConnectionListeners();
@@ -172,7 +175,6 @@ export function ClientTab({onStatusChange, state}: ClientTabProps) {
         setHostname(state.server_info.hostname || '');
         setPort(state.server_info.port ? state.server_info.port.toString() : '');
         setAutoReconnect(state.server_info.auto_reconnect);
-        setRequireSSL(state.ssl_enabled);
         setShowServerChoice(state.service_choice_needed);
         setShowOtpInput(state.otp_needed);
 
@@ -443,6 +445,18 @@ export function ClientTab({onStatusChange, state}: ClientTabProps) {
     };
 
     const handleServerSelect = (serverUid: string) => {
+        // Gate: if a *different* server is already saved, confirm the switch
+        // first — switching forgets the previous server's trust material and
+        // forces a fresh OTP re-pairing. First connect or re-selecting the
+        // same server proceeds directly (unchanged behaviour).
+        if (currentConnection?.uid && serverUid !== currentConnection.uid) {
+            setPendingSwitchUid(serverUid);
+            return;
+        }
+        confirmServerSelect(serverUid);
+    };
+
+    const confirmServerSelect = (serverUid: string) => {
         // Set up listeners for the command response
         listenCommand(EventType.CommandSuccess, CommandType.ChooseServer, () => {
             addNotification('success', 'Server Selected');
@@ -524,6 +538,37 @@ export function ClientTab({onStatusChange, state}: ClientTabProps) {
         return `${hours}:${minutes.toString().padStart(2, '0')}:${secs.toString().padStart(2, '0')}`;
     };
 
+    const securityInfo = isConnected
+        ? (currentConnection?.security_info ?? state.security_info)
+        : state.security_info;
+    const securityAvailable = isConnected && securityInfo?.mutual_tls_available === true;
+    const showConnectedServerDetails = isConnected && Boolean(currentConnection?.security_info);
+    const serverCa = showConnectedServerDetails ? securityInfo?.server_ca : undefined;
+    const clientCertificate = securityInfo?.client_certificate;
+    const hasCertificateDetails = Boolean(
+        securityInfo && (
+            clientCertificate?.present ||
+            securityInfo.private_key_present ||
+            (showConnectedServerDetails && serverCa?.present)
+        )
+    );
+
+    const formatSecurityDate = (value?: string) => {
+        if (!value) return 'Unknown';
+        const date = new Date(value);
+        if (Number.isNaN(date.getTime())) return 'Unknown';
+        return new Intl.DateTimeFormat(undefined, {
+            year: 'numeric',
+            month: 'short',
+            day: '2-digit',
+        }).format(date);
+    };
+
+    const formatPublicKey = (algorithm?: string, size?: number | null) => {
+        if (!algorithm) return 'Unknown key';
+        return size ? `${algorithm} ${size}` : algorithm;
+    };
+
     // const formatData = (mb: number) => {
     //   if (mb >= 1024) {
     //     return `${(mb / 1024).toFixed(2)} GB`;
@@ -566,6 +611,59 @@ export function ClientTab({onStatusChange, state}: ClientTabProps) {
                 isVisible={showServerChoice}
                 onCancel={handleCancelServerSelection}
             />
+
+            {/* Switch-server confirmation */}
+            {pendingSwitchUid !== null && (
+                <motion.div
+                    initial={{opacity: 0, y: -8}}
+                    animate={{opacity: 1, y: 0}}
+                    exit={{opacity: 0, y: -8}}
+                    className="p-4 rounded-lg border backdrop-blur-sm space-y-3"
+                    style={{
+                        backgroundColor: 'var(--app-surface)',
+                        borderColor: 'var(--app-border)',
+                    }}
+                >
+                    <div className="text-sm" style={{color: 'var(--app-text)'}}>
+                        Switching to a new server — you'll need to re-pair with a
+                        new one-time code (OTP); the previous server
+                        {currentConnection?.hostname || currentConnection?.host
+                            ? ` (${currentConnection.hostname || currentConnection.host})`
+                            : ''}{' '}
+                        will be forgotten.
+                    </div>
+                    <div className="flex items-center gap-2">
+                        <motion.button
+                            whileHover={{scale: 1.02}}
+                            whileTap={{scale: 0.98}}
+                            className="px-3 py-2 rounded-md text-sm font-medium"
+                            style={{
+                                backgroundColor: 'var(--app-accent)',
+                                color: 'var(--app-accent-contrast)',
+                            }}
+                            onClick={() => {
+                                const uid = pendingSwitchUid;
+                                setPendingSwitchUid(null);
+                                confirmServerSelect(uid);
+                            }}
+                        >
+                            Switch server
+                        </motion.button>
+                        <motion.button
+                            whileHover={{scale: 1.02}}
+                            whileTap={{scale: 0.98}}
+                            className="px-3 py-2 rounded-md text-sm font-medium border"
+                            style={{
+                                borderColor: 'var(--app-border)',
+                                color: 'var(--app-text)',
+                            }}
+                            onClick={() => setPendingSwitchUid(null)}
+                        >
+                            Cancel
+                        </motion.button>
+                    </div>
+                </motion.div>
+            )}
 
             {/* Disconnected Status Info */}
             {/* {!isConnected && !showOtpInput && host && port && ( */}
@@ -867,25 +965,120 @@ export function ClientTab({onStatusChange, state}: ClientTabProps) {
                                 Security Settings
                             </h3>
 
+                            {/*
+                              * Encryption is forced by the server (mutual TLS +
+                              * per-client certificate): the client can no longer
+                              * choose an insecure connection, so this is a read-only
+                              * status indicator rather than a toggle.
+                              */}
                             <div className="space-y-3">
-                                <div className="flex items-center justify-between">
-                                    <label className="flex items-center gap-2"
-                                           style={{color: 'var(--app-text-primary)'}}
-                                    >
-                                        <Lock size={18}/>
-                                        <span>Secure connection</span>
-                                    </label>
-                                    <Switch
-                                        id="requireSSL"
-                                        checked={requireSSL}
-                                        disabled={isConnected}
-                                        onCheckedChange={(checked) => {
-                                            if (isConnected) return;
-                                            setRequireSSL(checked);
-                                            handleSaveOptions(host, hostname, port, checked, autoReconnect, false);
-                                        }}
-                                    />
+                                <div className="flex items-center gap-2">
+                                    {securityAvailable ? (
+                                        <Lock size={18} style={{color: 'var(--app-success, #22c55e)'}}/>
+                                    ) : (
+                                        <ShieldAlert size={18} style={{color: 'var(--app-warning, #f59e0b)'}}/>
+                                    )}
+                                    <span style={{color: 'var(--app-text-primary)'}}>
+                                        {securityAvailable
+                                            ? 'End-to-end encrypted'
+                                            : 'Encryption unavailable'}
+                                    </span>
                                 </div>
+                                {/* <p className="text-xs" style={{color: 'var(--app-text-secondary)'}}>
+                                    Per-client certificate, paired via one-time code (OTP).
+                                </p> */}
+
+                                {!hasCertificateDetails && (
+                                    <div className="p-3 rounded-lg border text-xs"
+                                         style={{
+                                             backgroundColor: 'var(--app-bg-secondary)',
+                                             borderColor: 'var(--app-card-border)',
+                                             color: 'var(--app-text-secondary)'
+                                         }}
+                                    >
+                                        No certificate details available yet. Pair with OTP to create client credentials.
+                                    </div>
+                                )}
+
+                                {hasCertificateDetails && (
+                                    <div className="space-y-2">
+                                        {showConnectedServerDetails && (
+                                            <div className="flex items-center justify-between gap-3 text-xs">
+                                                <div style={{color: 'var(--app-text-muted)'}}>Server CA</div>
+                                                <div className="flex min-w-0 items-center gap-2">
+                                                    {serverCa?.sha256_fingerprint ? (
+                                                        <CopyableBadge
+                                                            fullText={serverCa.sha256_fingerprint}
+                                                            displayText={abbreviateText(serverCa.sha256_fingerprint, 10, 8)}
+                                                            label="SHA-256"
+                                                            titleText={`Click to copy Server CA fingerprint: ${serverCa.sha256_fingerprint}`}
+                                                            className="max-w-full"
+                                                        />
+                                                    ) : (
+                                                        <span style={{color: 'var(--app-text-secondary)'}}>
+                                                            {serverCa?.present ? 'Present' : 'Missing'}
+                                                        </span>
+                                                    )}
+                                                </div>
+                                            </div>
+                                        )}
+
+                                        <div className="flex items-center justify-between gap-3 text-xs">
+                                            <div style={{color: 'var(--app-text-muted)'}}>Client identity</div>
+                                            <div className="min-w-0 text-right" style={{color: 'var(--app-text-secondary)'}}>
+                                                <div className="truncate" title={clientCertificate?.subject_common_name || undefined}>
+                                                    {clientCertificate?.subject_common_name || 'Not paired'}
+                                                </div>
+                                                {clientCertificate?.present && (
+                                                    <div style={{color: 'var(--app-text-muted)'}}>
+                                                        {formatPublicKey(
+                                                            clientCertificate.public_key_algorithm,
+                                                            clientCertificate.public_key_size,
+                                                        )}
+                                                    </div>
+                                                )}
+                                            </div>
+                                        </div>
+
+                                        <div className="flex items-center justify-between gap-3 text-xs">
+                                            <div style={{color: 'var(--app-text-muted)'}}>Private key</div>
+                                            <div style={{color: securityInfo?.private_key_present ? 'var(--app-success, #22c55e)' : 'var(--app-warning, #f59e0b)'}}>
+                                                {securityInfo?.private_key_present ? 'Present locally' : 'Missing'}
+                                            </div>
+                                        </div>
+
+                                        <div className="flex items-center justify-between gap-3 text-xs">
+                                            <div style={{color: 'var(--app-text-muted)'}}>Valid until</div>
+                                            <div style={{color: clientCertificate?.expired ? 'var(--app-warning, #f59e0b)' : 'var(--app-text-secondary)'}}>
+                                                {clientCertificate?.present
+                                                    ? `${formatSecurityDate(clientCertificate.valid_until)}${clientCertificate.expired ? ' (expired)' : ''}`
+                                                    : 'Unknown'}
+                                            </div>
+                                        </div>
+
+                                        {showConnectedServerDetails && (
+                                            <div className="flex items-center justify-between gap-3 text-xs">
+                                                <div style={{color: 'var(--app-text-muted)'}}>Issued by</div>
+                                                <div className="truncate text-right" style={{color: 'var(--app-text-secondary)'}} title={clientCertificate?.issuer_common_name || undefined}>
+                                                    {clientCertificate?.issuer_common_name || 'Unknown'}
+                                                </div>
+                                            </div>
+                                        )}
+
+                                        {clientCertificate?.sha256_fingerprint && (
+                                            <div className="flex items-center justify-between gap-3 text-xs">
+                                                <div style={{color: 'var(--app-text-muted)'}}>Client cert</div>
+                                                <CopyableBadge
+                                                    fullText={clientCertificate.sha256_fingerprint}
+                                                    displayText={abbreviateText(clientCertificate.sha256_fingerprint, 10, 8)}
+                                                    label="SHA-256"
+                                                    titleText={`Click to copy Client certificate fingerprint: ${clientCertificate.sha256_fingerprint}`}
+                                                    className="max-w-full"
+                                                />
+                                            </div>
+                                        )}
+                                    </div>
+                                )}
                             </div>
                         </div>
                     </motion.div>
@@ -965,11 +1158,11 @@ export function ClientTab({onStatusChange, state}: ClientTabProps) {
                                         if (!is_ip && newHost !== hostname) {
                                             setHostname(newHost);
                                             setHost('');
-                                            scheduleOptionsSave('', newHost, port, requireSSL, autoReconnect, false);
+                                            scheduleOptionsSave('', newHost, port, true, autoReconnect, false);
                                         } else if (newHost !== host) {
                                             setHostname('');
                                             setHost(newHost);
-                                            scheduleOptionsSave(newHost, '', port, requireSSL, autoReconnect, false);
+                                            scheduleOptionsSave(newHost, '', port, true, autoReconnect, false);
                                         }
                                     }}
                                     className="app-input"
@@ -995,7 +1188,7 @@ export function ClientTab({onStatusChange, state}: ClientTabProps) {
                                             return; // Only allow numeric input
                                         }
                                         setPort(newPort);
-                                        scheduleOptionsSave(host, hostname, newPort, requireSSL, autoReconnect, false);
+                                        scheduleOptionsSave(host, hostname, newPort, true, autoReconnect, false);
                                     }}
                                     className="app-input"
                                     disabled={isRunning}
@@ -1034,7 +1227,7 @@ export function ClientTab({onStatusChange, state}: ClientTabProps) {
                                         checked={autoReconnect}
                                         onCheckedChange={(checked) => {
                                             setAutoReconnect(checked);
-                                            handleSaveOptions(host, hostname, port, requireSSL, checked, false);
+                                            handleSaveOptions(host, hostname, port, true, checked, false);
                                         }}
                                     />
                                 </div>

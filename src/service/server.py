@@ -31,6 +31,7 @@ from event.notification import (
     NotificationEvent,
     ClientApprovalRequestedEvent,
     ClientApprovalResolvedEvent,
+    ClientRejectedEvent,
     ClientConnectedEvent as ClientConnectedNotification,
     ClientDisconnectedEvent as ClientDisconnectedNotification,
     ConfigSavedEvent,
@@ -66,9 +67,9 @@ from input.mouse import ServerMouseListener, ServerMouseController
 from input.keyboard import ServerKeyboardListener
 from input.clipboard import ClipboardListener, ClipboardController
 
-from utils import BackgroundTasks
+from utils import BackgroundTasks, UIDGenerator
 from utils.metrics import PerformanceMonitor
-from utils.net import get_local_ip
+from utils.net import get_local_ip, invalidate_local_ip_cache
 from utils.crypto import CertificateManager
 from utils.crypto.sharing import CertificateSharing
 
@@ -116,6 +117,10 @@ class Server:
             cert_dir=self.app_config.get_certificate_path()
         )
         self._cert_sharing: Optional[CertificateSharing] = None
+        # UIDs already handed out at pairing but not yet in the allowlist (the
+        # client is added at connection-approval time). Guards uniqueness across
+        # concurrent pairings.
+        self._issued_uids: set[str] = set()
 
         self.certfile, self.keyfile = None, None
         if self.config.ssl_enabled:
@@ -261,6 +266,14 @@ class Server:
                 self._logger.info("SSL certificates generated successfully")
                 return certfile, keyfile
             else:
+                # Certificates already exist. The leaf cert bakes the machine's
+                # IP into its SAN; if the IP changed (e.g. DHCP rebind, network
+                # switch) the old SAN no longer matches and clients fail TLS
+                # verification with "IP address mismatch". Re-issue ONLY the leaf
+                # (signed by the same, unchanged CA) so already-paired clients
+                # keep trusting us with no re-pairing required.
+                self._reissue_server_cert_if_ip_changed()
+
                 certfile, keyfile = self._cert_manager.get_server_credentials()
                 if not certfile or not keyfile:
                     raise RuntimeError("SSL certificates found but failed to load")
@@ -270,6 +283,73 @@ class Server:
         except Exception as e:
             self._logger.error("Error setting up SSL certificates", error=str(e))
             raise
+
+    def _reissue_server_cert_if_ip_changed(self) -> None:
+        """Re-issue the server leaf cert when the current IP left its SAN.
+
+        Keeps the CA intact (clients stay paired) and unions the current IP with
+        the SANs already present, so a client still dialing the old IP mid-
+        reconnect keeps validating until mDNS retargets it.
+        """
+        # Force a fresh lookup: the 30s TTL cache may still hold the pre-change
+        # IP right after a network event.
+        invalidate_local_ip_cache()
+        current_ip = get_local_ip(force_refresh=True)
+
+        san_ips, san_dns = self._cert_manager.get_server_cert_san()
+        if current_ip in san_ips:
+            return
+
+        hostname = socket.gethostname()
+        # Preserve existing SAN entries (old IPs + any DNS names) and add the
+        # current IP and localhost, de-duplicated while keeping order.
+        # generate_server_certificate() always re-adds ``hostname`` as a DNS
+        # name, and classifies each remaining entry as an IP or, on failure, a
+        # DNS name (so preserved hostnames stay valid).
+        extra_names: list[str] = []
+        for name in [*san_ips, *san_dns, current_ip, "localhost"]:
+            if name != hostname and name not in extra_names:
+                extra_names.append(name)
+
+        self._logger.warning(
+            "Server IP not covered by certificate SAN, re-issuing leaf certificate",
+            current_ip=current_ip,
+            previous_san_ips=san_ips,
+            new_san_names=extra_names,
+        )
+
+        if not self._cert_manager.generate_server_certificate(
+            hostname, extra_names, force=True
+        ):
+            self._logger.error("Failed to re-issue server certificate after IP change")
+
+    def _generate_unique_client_uid(self) -> str:
+        """Mint a client UID not used by any authorized or just-issued client.
+
+        The client never chooses its own UID: the server assigns it here at
+        pairing time so an attacker cannot obtain a certificate bound to another
+        client's identity.
+        """
+        while True:
+            uid = UIDGenerator.generate_uid(self.config.uid or "server")
+            if uid in self._issued_uids:
+                continue
+            if self.clients_manager.get_client(uid=uid) is not None:
+                continue
+            return uid
+
+    def _sign_client_csr_assigning(self, csr_pem: bytes) -> Optional[bytes]:
+        """CSR-signer wired into the pairing flow.
+
+        Ignores the CN requested in the CSR and stamps a fresh, server-assigned
+        UID into the issued certificate. Returns the signed cert PEM, or None.
+        """
+        uid = self._generate_unique_client_uid()
+        cert = self._cert_manager.sign_client_csr(csr_pem, uid=uid)
+        if cert is not None:
+            self._issued_uids.add(uid)
+            self._logger.info("Issued client certificate", assigned_uid=uid)
+        return cert
 
     async def start_pairing_service(
         self,
@@ -309,6 +389,7 @@ class Server:
             port=bind_port,
             timeout=30,
             pairing_request_callback=self._on_pairing_requested,
+            csr_signer=self._sign_client_csr_assigning,
         )
 
         ok = await self._cert_sharing.start_service()
@@ -361,6 +442,29 @@ class Server:
                 OtpGeneratedEvent(otp=otp, timeout=timeout_val)
             )
 
+    async def _on_client_rejected(
+        self,
+        peer_ip: str,
+        hostname: str,
+        uid: str,
+        reason: str,
+    ) -> None:
+        """Surface an identity-based handshake rejection to the GUI.
+
+        The connection handler rejects clients that fail a certificate/UID/
+        hostname/IP check at handshake time; without this bridge the failure is
+        invisible outside the daemon log (e.g. a re-paired client whose new UID
+        no longer matches the pinned one).
+        """
+        await self._send_notification(
+            ClientRejectedEvent(
+                peer_ip=peer_ip,
+                reason=reason,
+                hostname=hostname,
+                uid=uid,
+            )
+        )
+
     async def share_certificate(
         self,
         host: str = "0.0.0.0",
@@ -401,6 +505,7 @@ class Server:
                 port=bind_port,
                 timeout=timeout,
                 pairing_request_callback=self._on_pairing_requested,
+                csr_signer=self._sign_client_csr_assigning,
             )
 
             success, otp = await self._cert_sharing.start_sharing()
@@ -469,11 +574,15 @@ class Server:
         ip_address: Optional[str] = None,
         hostname: Optional[str] = None,
         screen_position: Optional[str] = None,
+        uid: Optional[str] = None,
         auto_save: bool = True,
     ) -> bool:
         """Remove a client from the authorized list."""
         client = self.config.get_client(
-            ip_address=ip_address, hostname=hostname, screen_position=screen_position
+            uid=uid,
+            ip_address=ip_address,
+            hostname=hostname,
+            screen_position=screen_position,
         )
         if client:
             if self._running and self.connection_handler is not None:
@@ -487,7 +596,7 @@ class Server:
             if auto_save:
                 await self.save_config()
 
-            net_id = ip_address or hostname or screen_position
+            net_id = uid or ip_address or hostname or screen_position
             self._logger.info("Removed client", net_id=net_id)
             return True
         return False
@@ -500,9 +609,13 @@ class Server:
         ip_address: Optional[str] = None,
         hostname: Optional[str] = None,
         screen_position: Optional[str] = None,
+        uid: Optional[str] = None,
     ) -> Optional[ClientObj]:
         return self.config.get_client(
-            ip_address=ip_address, hostname=hostname, screen_position=screen_position
+            uid=uid,
+            ip_address=ip_address,
+            hostname=hostname,
+            screen_position=screen_position,
         )
 
     async def set_client_layout(
@@ -881,10 +994,12 @@ class Server:
         old_screen_position: Optional[str] = None,
         new_screen_position: Optional[str] = None,
         new_ip_addresses: Optional[list[str] | str] = None,
+        uid: Optional[str] = None,
         auto_save: bool = True,
     ) -> ClientObj:
         """Edit a client's properties."""
         client = self.config.get_client(
+            uid=uid,
             ip_address=ip_address,
             hostname=hostname,
             screen_position=old_screen_position,
@@ -1223,7 +1338,14 @@ class Server:
             allowlist=self.clients_manager,
             certfile=self.certfile,
             keyfile=self.keyfile,
+            ca_certfile=(
+                self._cert_manager.get_ca_cert_path()
+                if self.config.ssl_enabled
+                else None
+            ),
+            ssl_enabled=self.config.ssl_enabled,
             approval_callback=self._request_client_approval,
+            rejected_callback=self._on_client_rejected,
             server_uid=self.config.uid,
         )
 

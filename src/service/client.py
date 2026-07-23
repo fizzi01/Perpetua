@@ -123,6 +123,14 @@ class Client:
             ):
                 self._load_certificate()
 
+            # The client UID's single source of truth is the client
+            # certificate's Common Name. Derive it into memory here; a fresh
+            # (unpaired) client has no cert yet, so the UID stays None until
+            # pairing issues one.
+            derived_uid = self._cert_manager.get_client_uid()
+            if derived_uid:
+                self.config.set_uid(derived_uid)
+
         # Initialize core components
         self.clients_manager = ClientsManager(client_mode=True)
         self.event_bus = AsyncEventBus()
@@ -471,8 +479,22 @@ class Client:
                 server_host=server_host, server_port=port, timeout=timeout
             )
 
-            # Receive certificate
-            success, cert_data = await self._cert_receiver.receive_certificate(otp)
+            # Generate this client's key + CSR so the server can issue a
+            # per-client certificate for mutual TLS. The private key is written
+            # locally and never sent; only the CSR travels. The CSR carries a
+            # placeholder CN - the client does NOT choose its UID: the server
+            # assigns it and stamps it into the signed certificate.
+            csr_pem = self._cert_manager.generate_client_key_and_csr()
+            if csr_pem is None:
+                self._logger.error("Could not generate client CSR for pairing")
+                return False
+
+            # Receive certificate (CA + our signed client cert)
+            (
+                success,
+                cert_data,
+                client_cert_data,
+            ) = await self._cert_receiver.receive_certificate(otp, csr_pem=csr_pem)
 
             if not success:
                 self._logger.error("Failed to receive certificate from server")
@@ -481,6 +503,40 @@ class Client:
             if not cert_data:
                 self._logger.error("Received empty certificate data")
                 return False
+
+            # Persist the CA-signed client leaf certificate for mutual TLS, then
+            # adopt the server-assigned UID it carries in its Common Name. The
+            # UID is learned only from this (encrypted) certificate - it is never
+            # sent in cleartext.
+            if client_cert_data:
+                if not self._cert_manager.save_client_certificate(client_cert_data):
+                    self._logger.error("Failed to save client certificate")
+                    return False
+                assigned_uid = self._cert_manager.read_certificate_common_name(
+                    client_cert_data
+                )
+                if assigned_uid:
+                    # In-memory only: the UID's source of truth is the saved
+                    # client certificate CN, so there is nothing to persist to
+                    # config.json. Keep the in-memory client object in sync so
+                    # the very next handshake presents the assigned UID as
+                    # client_name (which the server binds against the cert CN).
+                    self.config.set_uid(assigned_uid)
+                    if self.main_client is not None:
+                        self.main_client.uid = assigned_uid
+                    self._logger.info(
+                        "Adopted server-assigned client UID", uid=assigned_uid
+                    )
+                else:
+                    self._logger.warning(
+                        "Issued client certificate has no Common Name; "
+                        "client UID not updated"
+                    )
+            else:
+                self._logger.warning(
+                    "Server did not return a client certificate; mutual TLS "
+                    "connections will be refused until re-pairing"
+                )
 
             # Save certificate. Falling back to the resolved server host
             # when the UID is missing prevents the cert from being saved
@@ -549,6 +605,20 @@ class Client:
                 source_id=self.config.get_server_uid()
             )
         return None
+
+    def get_security_info(self) -> Dict[str, object]:
+        """Return UI-safe metadata about the certificates securing the client."""
+        return self._cert_manager.get_security_info(
+            source_id=self.config.get_server_uid(),
+            ssl_enabled=self.config.ssl_enabled,
+        )
+
+    def _connection_info_payload(self) -> Dict[str, object]:
+        """Connection data sent to GUI events, without private key material."""
+        return {
+            **self.config.server_info.to_dict(),
+            "security_info": self.get_security_info(),
+        }
 
     # ==================== Stream Management ====================
 
@@ -739,6 +809,15 @@ class Client:
         """
         for service in self._found_services:
             if service.uid == uid:
+                # Capture the previously-saved server identifiers *before*
+                # overwriting them, so we can forget its trust material on a
+                # real switch (first connect / reconnect to the same server
+                # leave it untouched).
+                old_uid = self.config.get_server_uid()
+                old_host = self.config.get_server_host()
+                old_hostname = self.config.get_server_hostname()
+                is_switch = bool(old_uid) and old_uid != service.uid
+
                 self.config.set_server_connection(
                     uid=service.uid,
                     host=service.address,
@@ -752,6 +831,9 @@ class Client:
                 self._bg_tasks.spawn(
                     self.config.save(), name="config_save_choose_server"
                 )
+
+                if is_switch:
+                    self._forget_previous_server(old_uid, old_host, old_hostname)
                 # Set the server future result in case someone is waiting for it
                 if not self._server.done():
                     self._server.set_result(service)
@@ -771,6 +853,46 @@ class Client:
                 return
 
         self._logger.error("Server not found among discovered services", uid=uid)
+
+    def _forget_previous_server(
+        self,
+        uid: Optional[str],
+        host: Optional[str],
+        hostname: Optional[str],
+    ) -> None:
+        """Drop the trust material of the server we just switched away from.
+
+        Reuses the same primitives as ``_on_stale_certificate``:
+        - ``remove_ca_data`` wipes ``ca_<id>.crt`` plus every mapping alias
+          (UID, resolved IP, hostname) in one pass, so no orphan alias keeps
+          pointing at a deleted file;
+        - ``remove_client_credentials`` drops the machine's client identity,
+          which was signed by the old CA and is worthless against the new one.
+
+        With both gone, ``_handle_certificate_check`` forces a clean OTP
+        re-pairing with the new server instead of retrying stale credentials.
+        Best-effort: switching must proceed even if cleanup partially fails.
+        """
+        try:
+            removed = self._cert_manager.remove_ca_data(uid, host, hostname)
+            if removed:
+                self._logger.info(
+                    "Forgot previous server on switch",
+                    uid=uid,
+                    host=host,
+                    hostname=hostname,
+                )
+        except Exception as e:
+            self._logger.error(
+                "Failed to remove previous server CA on switch", error=str(e)
+            )
+
+        try:
+            self._cert_manager.remove_client_credentials()
+        except Exception as e:
+            self._logger.error(
+                "Failed to remove client credentials on switch", error=str(e)
+            )
 
     DISCOVERY_REFRESH_INTERVAL = 60.0
     # While disconnected (initial connect or reconnect in progress) poll mDNS
@@ -1047,13 +1169,20 @@ class Client:
             otherwise, None.
         """
         try:
-            if self.config.ssl_enabled and not self.has_certificate():
+            # Need pairing when the CA is missing OR we hold no client identity
+            # (cert+key) for mutual TLS. The latter covers migration: a client
+            # paired under the old CA-only scheme must re-pair to obtain a
+            # client certificate before a TLS-mode server will accept it.
+            needs_client_identity = not self._cert_manager.client_credentials_exist()
+            if self.config.ssl_enabled and (
+                not self.has_certificate() or needs_client_identity
+            ):
                 certfile = self._cert_manager.get_ca_cert_path(
                     source_id=self.config.get_server_uid(),
                 )
 
-                # If still not found,force start certificate receiving process
-                if not certfile:
+                # If the CA or our client identity is missing, (re-)pair.
+                if not certfile or needs_client_identity:
                     self._otp_needed.set_result(True)
                     self._logger.info(
                         "Waiting to receive certificate from server. Provide OTP to continue..."
@@ -1283,6 +1412,16 @@ class Client:
                         auto_reconnect=self.config.do_auto_reconnect(),
                         use_ssl=self.config.ssl_enabled,
                         certfile=certfile,
+                        client_certfile=(
+                            self._cert_manager.get_client_credentials()[0]
+                            if self.config.ssl_enabled
+                            else None
+                        ),
+                        client_keyfile=(
+                            self._cert_manager.get_client_credentials()[1]
+                            if self.config.ssl_enabled
+                            else None
+                        ),
                     )
 
                     # Connect to server
@@ -1689,7 +1828,7 @@ class Client:
         try:
             await self._send_notification(
                 ConnectingEvent(
-                    connection_data=self.config.server_info.to_dict(),
+                    connection_data=self._connection_info_payload(),
                 )
             )
         except Exception as e:
@@ -1729,7 +1868,7 @@ class Client:
         # Send connection notification
         await self._send_notification(
             ConnectedEvent(
-                connection_data=self.config.server_info.to_dict(),
+                connection_data=self._connection_info_payload(),
             )
         )
         return None
@@ -1773,7 +1912,7 @@ class Client:
 
         # Send disconnection notification
         await self._send_notification(
-            DisconnectedEvent(connection_data=self.config.server_info.to_dict())
+            DisconnectedEvent(connection_data=self._connection_info_payload())
         )
         return None
 
@@ -1843,6 +1982,13 @@ class Client:
                 )
         except Exception as e:
             self._logger.error("Failed to remove stale certificate", error=str(e))
+
+        # Also drop our client identity: a regenerated server CA can no longer
+        # vouch for the old client cert, so re-pairing must mint a fresh one.
+        try:
+            self._cert_manager.remove_client_credentials()
+        except Exception as e:
+            self._logger.error("Failed to remove client credentials", error=str(e))
 
         # Force-reset the pairing futures unconditionally: in a successful
         # previous run ``_otp_needed`` ends with result False (done state),

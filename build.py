@@ -43,6 +43,7 @@ class Builder:
         release: bool = True,
         target: Optional[str] = None,
         nuitka_args: Optional[list[str]] = None,
+        gui_external: bool = False,
     ):
         self.system = sys.platform
         self.is_macos = self.system == "darwin"
@@ -51,6 +52,7 @@ class Builder:
 
         self.project_root = project_root
         self.skip_gui = skip_gui
+        self.gui_external = gui_external
         self.skip_daemon = skip_daemon
         self.clean = clean
         self.release = release
@@ -275,7 +277,7 @@ class Builder:
         output_exe = self.gui_exe
 
         # Check that the GUI executable exists
-        if not output_exe.exists():
+        if not output_exe.exists() and (self.gui_external or not self.skip_gui):
             # Try to copy data files
             self.log.error("GUI executable not found, build GUI first")
             return -1
@@ -293,8 +295,11 @@ class Builder:
             "--include-package=utils",
             "--include-package=input",
             "--python-flag=no_docstrings",
-            f"--include-data-files={output_exe}=_{self.gui_exe.name}",
+            "--no-prefer-source-code",
         ]
+
+        if not self.skip_gui or self.gui_external:
+            nuitka_cmd.append(f"--include-data-files={output_exe}=_{self.gui_exe.name}")
 
         if self.is_macos:
             nuitka_cmd.extend(
@@ -481,7 +486,14 @@ class Builder:
     def _verify_signature(self, app_bundle: Path):
         # Hard verification: fail the build if the signature is broken.
         self._run(
-            ["codesign", "--verify", "--deep", "--strict", "--verbose=2", str(app_bundle)]
+            [
+                "codesign",
+                "--verify",
+                "--deep",
+                "--strict",
+                "--verbose=2",
+                str(app_bundle),
+            ]
         )
         # Informational: log the effective identity/authority chain.
         self._run(["codesign", "-dvvv", str(app_bundle)])
@@ -554,6 +566,11 @@ def main():
         "--skip-gui", "-d", action="store_true", help="Skip GUI build (Daemon only)"
     )
     parser.add_argument(
+        "--gui-external",
+        action="store_true",
+        help="Use external GUI build (skip GUI build)",
+    )
+    parser.add_argument(
         "--skip-daemon", "-g", action="store_true", help="Skip daemon build (GUI only)"
     )
     parser.add_argument("--clean", "-c", action="store_true", help="Clean before build")
@@ -581,6 +598,7 @@ def main():
         release=not args.debug,
         nuitka_args=args.nuitka_args,
         target=args.target,
+        gui_external=args.gui_external,
     )
     builder.build()
 

@@ -38,8 +38,8 @@ export function addClient(hostname: string, ip_addresses: string[]): Promise<voi
     });
 }
 
-export function removeClient(hostname: string, ip_address: string): Promise<void> {
-    return invoke(getType(CommandType, CommandType.RemoveClient), {hostname, ipAddress: ip_address});
+export function removeClient(client_uid: string, hostname: string, ip_address: string): Promise<void> {
+    return invoke(getType(CommandType, CommandType.RemoveClient), {clientUid: client_uid, hostname, ipAddress: ip_address});
 }
 
 export function approveClient(peer_ip: string): Promise<void> {
