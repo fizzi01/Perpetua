@@ -47,18 +47,34 @@ export function useClientManagement() {
 
     /**
      * Find an existing client using cascading match logic:
-     * 1. If both have UID, match by UID
-     * 2. Otherwise match by IP if present
-     * 3. Finally match by hostname
+     * 1. If the incoming client has a UID, match ONLY by UID. IP/hostname
+     *    fallback is restricted to records that have no UID yet (upgrading a
+     *    still-anonymous entry) - never merge into a record with a different
+     *    UID, which would clobber a distinct client that merely shares an IP
+     *    or hostname (e.g. two machines behind the same NAT).
+     * 2. If it has no UID, fall back to IP, then hostname (legacy).
      */
     const findExistingClient = useCallback((clientData: ClientObj, clientList: Client[]) => {
-        // First try to find by UID if present
         if (clientData.uid) {
             const byUid = clientList.find(c => c.uid === clientData.uid);
             if (byUid) return byUid;
+
+            // UID present but unknown: only adopt a still-anonymous record
+            // (no UID) that overlaps by IP/hostname; skip records that carry a
+            // different UID.
+            const anon = (c: Client) => !c.uid;
+            if (clientData.ip_addresses && clientData.ip_addresses.length > 0) {
+                const byIp = clientList.find(c => anon(c) && c.ips && clientData.ip_addresses.some(ip => c.ips!.includes(ip)));
+                if (byIp) return byIp;
+            }
+            if (clientData.host_name) {
+                const byName = clientList.find(c => anon(c) && c.name === clientData.host_name);
+                if (byName) return byName;
+            }
+            return undefined;
         }
 
-        // Then try by IP if present (check any IP overlap)
+        // No UID: match by IP if present (any IP overlap)
         if (clientData.ip_addresses && clientData.ip_addresses.length > 0) {
             const byIp = clientList.find(c => c.ips && clientData.ip_addresses.some(ip => c.ips!.includes(ip)));
             if (byIp) return byIp;
