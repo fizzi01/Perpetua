@@ -846,6 +846,8 @@ class ClientConfig:
 
         # Client-specific settings
         self.client_hostname: Optional[str] = None
+        # The client UID is derived from the Common Name of the client
+        # certificate and kept in memory only - never persisted to config.json.
         self.uid: Optional[str] = None
 
         # Stream management
@@ -860,11 +862,11 @@ class ClientConfig:
         self._write_lock = asyncio.Lock()
 
     def get_uid(self) -> Optional[str]:
-        """Get the client UID"""
+        """Get the in-memory client UID (derived from the client certificate)."""
         return self.uid
 
     def set_uid(self, uid: str) -> None:
-        """Set the client UID"""
+        """Set the in-memory client UID (runtime only, never persisted)."""
         self.uid = uid
 
     def set_hostname(self, hostname: str) -> None:
@@ -968,7 +970,6 @@ class ClientConfig:
         """Convert configuration to dictionary for serialization"""
         return {
             "server_info": self.server_info.to_dict(),
-            "uid": self.uid,
             "client_hostname": self.client_hostname,
             "streams_enabled": self.streams_enabled,
             "ssl_enabled": self.ssl_enabled,
@@ -991,7 +992,9 @@ class ClientConfig:
         #         ssl=data.get("ssl_enabled", False)
         #     )
 
-        self.uid = data.get("uid")
+        # The UID is intentionally NOT read from config: its single source of
+        # truth is the client certificate Common Name. A stray "uid" left in an
+        # existing file is ignored and dropped on the next save.
         self.client_hostname = data.get("client_hostname", self.client_hostname)
 
         # Load streams and convert string keys to int if necessary

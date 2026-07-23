@@ -344,6 +344,22 @@ class CertificateManager:
         except Exception:
             return None
 
+    def get_client_uid(self) -> Optional[str]:
+        """Return the client UID (the Common Name of the client certificate).
+
+        This is the single source of truth for the client identity: it is read
+        from ``client.crt`` when present, or None if no client certificate has
+        been issued yet (unpaired client).
+        """
+        if not self.client_cert_path.exists():
+            return None
+        try:
+            with open(self.client_cert_path, "rb") as f:
+                return self.read_certificate_common_name(f.read())
+        except Exception as e:
+            self._logger.error("Error reading client UID", error=str(e))
+            return None
+
     def save_client_certificate(self, cert_data: bytes | str) -> bool:
         """Persist the CA-signed client leaf certificate (public, mode 0o644)."""
         try:

@@ -87,6 +87,18 @@ class TestClientCertificateIssuance(unittest.TestCase):
             CertificateManager.read_certificate_common_name(b"not a cert")
         )
 
+    def test_get_client_uid_returns_cn_of_installed_cert(self):
+        # The client UID's single source of truth is the installed client.crt.
+        self.assertIsNone(self.client_cm.get_client_uid())
+        uid = "installed-cert-uid"
+        csr_pem = self.client_cm.generate_client_key_and_csr()
+        cert_pem = self.server_cm.sign_client_csr(csr_pem, uid)
+        self.assertTrue(self.client_cm.save_client_certificate(cert_pem))
+        self.assertEqual(self.client_cm.get_client_uid(), uid)
+        # Removing the credentials drops the derived identity again.
+        self.client_cm.remove_client_credentials()
+        self.assertIsNone(self.client_cm.get_client_uid())
+
     def test_garbage_csr_rejected(self):
         self.assertIsNone(self.server_cm.sign_client_csr(b"not a csr", "uid"))
 

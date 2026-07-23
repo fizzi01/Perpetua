@@ -123,6 +123,14 @@ class Client:
             ):
                 self._load_certificate()
 
+            # The client UID's single source of truth is the client
+            # certificate's Common Name. Derive it into memory here; a fresh
+            # (unpaired) client has no cert yet, so the UID stays None until
+            # pairing issues one.
+            derived_uid = self._cert_manager.get_client_uid()
+            if derived_uid:
+                self.config.set_uid(derived_uid)
+
         # Initialize core components
         self.clients_manager = ClientsManager(client_mode=True)
         self.event_bus = AsyncEventBus()
@@ -508,15 +516,14 @@ class Client:
                     client_cert_data
                 )
                 if assigned_uid:
+                    # In-memory only: the UID's source of truth is the saved
+                    # client certificate CN, so there is nothing to persist to
+                    # config.json. Keep the in-memory client object in sync so
+                    # the very next handshake presents the assigned UID as
+                    # client_name (which the server binds against the cert CN).
                     self.config.set_uid(assigned_uid)
-                    # Keep the in-memory client object in sync so the very next
-                    # handshake presents the assigned UID as client_name (which
-                    # the server binds against the certificate CN).
                     if self.main_client is not None:
                         self.main_client.uid = assigned_uid
-                    self._bg_tasks.spawn(
-                        self.config.save(), name="config_save_assigned_uid"
-                    )
                     self._logger.info(
                         "Adopted server-assigned client UID", uid=assigned_uid
                     )
