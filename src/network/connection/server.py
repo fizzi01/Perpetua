@@ -473,6 +473,54 @@ class ConnectionHandler(BaseConnectionHandler):
             hostname is not None and client_obj.host_name == hostname
         )
 
+    @staticmethod
+    def _resolve_client(
+        clients: ClientsManager,
+        ip_prematch: Optional[ClientObj],
+        uid: Optional[str],
+        hostname: Optional[str],
+    ) -> Optional[ClientObj]:
+        """Resolve the connecting client, preferring strong identity over IP.
+
+        Precedence is UID (from the cert CN) -> hostname -> IP, matching
+        ``ClientsManager.get_client``. Matching by IP alone is unsafe: a
+        different machine reusing a stale IP (same IP, new hostname/UID) must
+        be treated as a distinct client instead of being bound to the record
+        found by IP - which would then be rejected by the UID/hostname
+        consistency checks.
+
+        ``ip_prematch`` is the object already looked up by IP in
+        ``_handle_client``. When strong identity is presented but matches no
+        known client, we return ``None`` so the connection is routed to the
+        approval callback as a new client, rather than inheriting the stale
+        IP record.
+        """
+        resolved: Optional[ClientObj] = None
+        if uid is not None:
+            resolved = clients.get_client(uid=uid)
+        if resolved is None and hostname is not None:
+            resolved = clients.get_client(hostname=hostname)
+        if resolved is not None:
+            return resolved
+
+        if uid is not None or hostname is not None:
+            # Strong identity presented but unknown. If the IP-matched record
+            # has no identity of its own (legacy IP-only entry), adopt it and
+            # learn the hostname; otherwise this is a different machine reusing
+            # a stale IP -> unknown, so it goes through the approval callback.
+            if (
+                ip_prematch is not None
+                and ip_prematch.uid is None
+                and ip_prematch.host_name is None
+            ):
+                if hostname is not None:
+                    ip_prematch.host_name = hostname
+                return ip_prematch
+            return None
+
+        # No identity presented: keep the IP prematch as-is.
+        return ip_prematch
+
     async def _wait_for_handshake_response(
         self,
         msg_exchange: MessageExchange,
@@ -613,19 +661,13 @@ class ConnectionHandler(BaseConnectionHandler):
                 tmp_uid = response.payload.get("client_name", None)
 
                 # --- Client resolution with allowlist verification ---
-
-                if tmp_host_name is not None and client is None:
-                    # Get client obj by hostname if not found by IP
-                    client = self.clients.get_client(hostname=tmp_host_name)
-                elif tmp_uid is not None and client is None:  # Fallback to UID
-                    client = self.clients.get_client(uid=tmp_uid)
-                elif client is None:
-                    # Try again to get client by IP if hostname not provided
-                    client = self.clients.get_client(ip_address=client_addr)
-                elif client and tmp_host_name:
-                    if not client.host_name:
-                        # Update hostname if needed
-                        client.host_name = tmp_host_name
+                # Prefer strong identity (UID from the cert CN, then hostname)
+                # over the IP-based prematch, so a different machine reusing a
+                # stale IP is treated as a new client instead of being force-
+                # matched to the record found by IP.
+                client = self._resolve_client(
+                    self.clients, client, tmp_uid, tmp_host_name
+                )
 
                 if (
                     client is None

@@ -22,7 +22,7 @@ learned, or rejected - the logic behind the "same UID, different IP" fix
 (a client reconnecting from a new DHCP address must not be denied).
 """
 
-from model.client import ClientObj
+from model.client import ClientObj, ClientsManager
 from network.connection.server import ConnectionHandler
 
 
@@ -86,3 +86,63 @@ class TestIpAdmission:
         client.add_ip("10.0.0.99")
         assert client.has_ip("10.0.0.99")
         assert "10.0.0.5" in client.ip_addresses
+
+
+class TestResolveClient:
+    """Strong identity (UID -> hostname) must win over the IP-based prematch.
+
+    The bug: a different machine reusing a stale IP (same IP, new
+    hostname/UID) was force-matched to the record found by IP and then
+    rejected by the UID consistency check.
+    """
+
+    def _manager(self):
+        mgr = ClientsManager()
+        mgr.add_client(
+            ClientObj(uid="federico-uid", hostname="Federico", ip_addresses=["10.0.0.5"])
+        )
+        return mgr
+
+    def test_same_ip_different_identity_is_new_client(self):
+        """fede-udu reuses Federico's IP -> unknown, routed to approval."""
+        mgr = self._manager()
+        ip_prematch = mgr.get_client(ip_address="10.0.0.5")
+        assert ip_prematch is not None
+        resolved = ConnectionHandler._resolve_client(
+            mgr, ip_prematch, uid="fede-udu-uid", hostname="fede-udu"
+        )
+        assert resolved is None
+
+    def test_matching_uid_resolves_even_from_new_ip(self):
+        mgr = self._manager()
+        resolved = ConnectionHandler._resolve_client(
+            mgr, None, uid="federico-uid", hostname="whatever"
+        )
+        assert resolved is not None
+        assert resolved.uid == "federico-uid"
+
+    def test_matching_hostname_resolves_without_uid(self):
+        mgr = self._manager()
+        resolved = ConnectionHandler._resolve_client(
+            mgr, None, uid=None, hostname="Federico"
+        )
+        assert resolved is not None
+        assert resolved.host_name == "Federico"
+
+    def test_no_identity_keeps_ip_prematch(self):
+        mgr = self._manager()
+        ip_prematch = mgr.get_client(ip_address="10.0.0.5")
+        resolved = ConnectionHandler._resolve_client(
+            mgr, ip_prematch, uid=None, hostname=None
+        )
+        assert resolved is ip_prematch
+
+    def test_legacy_ip_only_record_adopts_hostname(self):
+        mgr = ClientsManager()
+        legacy = ClientObj(ip_addresses=["10.0.0.5"])
+        mgr.add_client(legacy)
+        resolved = ConnectionHandler._resolve_client(
+            mgr, legacy, uid="new-uid", hostname="new-host"
+        )
+        assert resolved is legacy
+        assert resolved.host_name == "new-host"
