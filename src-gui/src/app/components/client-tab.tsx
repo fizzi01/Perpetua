@@ -18,7 +18,7 @@
  */
 
 import {useState, useEffect, useRef} from 'react';
-import {Settings, Wifi, Clock, Lock, Shield, Info, User} from 'lucide-react';
+import {Settings, Wifi, Clock, Lock, Shield, ShieldAlert, Info, User} from 'lucide-react';
 import {motion, AnimatePresence} from 'motion/react';
 
 import {Switch} from "./ui/switch";
@@ -72,7 +72,6 @@ export function ClientTab({onStatusChange, state}: ClientTabProps) {
     const [enableMouse, setEnableMouse] = useState(parseStreams(state.streams_enabled).includes(StreamType.Mouse));
     const [enableKeyboard, setEnableKeyboard] = useState(parseStreams(state.streams_enabled).includes(StreamType.Keyboard));
     const [enableClipboard, setEnableClipboard] = useState(parseStreams(state.streams_enabled).includes(StreamType.Clipboard));
-    const [requireSSL, setRequireSSL] = useState(state.ssl_enabled);
     const [hostname, setHostname] = useState(state.server_info.hostname || '');
     const [host, setHost] = useState(state.server_info.host || state.server_info.hostname || '');
     const [port, setPort] = useState(state.server_info.port ? state.server_info.port.toString() : '8080');
@@ -172,7 +171,6 @@ export function ClientTab({onStatusChange, state}: ClientTabProps) {
         setHostname(state.server_info.hostname || '');
         setPort(state.server_info.port ? state.server_info.port.toString() : '');
         setAutoReconnect(state.server_info.auto_reconnect);
-        setRequireSSL(state.ssl_enabled);
         setShowServerChoice(state.service_choice_needed);
         setShowOtpInput(state.otp_needed);
 
@@ -867,25 +865,39 @@ export function ClientTab({onStatusChange, state}: ClientTabProps) {
                                 Security Settings
                             </h3>
 
+                            {/*
+                              * Encryption is forced by the server (mutual TLS +
+                              * per-client certificate): the client can no longer
+                              * choose an insecure connection, so this is a read-only
+                              * status indicator rather than a toggle.
+                              */}
                             <div className="space-y-3">
-                                <div className="flex items-center justify-between">
-                                    <label className="flex items-center gap-2"
-                                           style={{color: 'var(--app-text-primary)'}}
-                                    >
-                                        <Lock size={18}/>
-                                        <span>Secure connection</span>
-                                    </label>
-                                    <Switch
-                                        id="requireSSL"
-                                        checked={requireSSL}
-                                        disabled={isConnected}
-                                        onCheckedChange={(checked) => {
-                                            if (isConnected) return;
-                                            setRequireSSL(checked);
-                                            handleSaveOptions(host, hostname, port, checked, autoReconnect, false);
-                                        }}
-                                    />
+                                <div className="flex items-center gap-2">
+                                    {state.ssl_enabled ? (
+                                        <Lock size={18} style={{color: 'var(--app-success, #22c55e)'}}/>
+                                    ) : (
+                                        <ShieldAlert size={18} style={{color: 'var(--app-warning, #f59e0b)'}}/>
+                                    )}
+                                    <span style={{color: 'var(--app-text-primary)'}}>
+                                        {state.ssl_enabled
+                                            ? 'End-to-end encrypted (mutual TLS)'
+                                            : 'Encryption unavailable'}
+                                    </span>
                                 </div>
+                                <p className="text-xs" style={{color: 'var(--app-text-secondary)'}}>
+                                    Per-client certificate, paired via one-time code (OTP).
+                                </p>
+                                {currentConnection && (currentConnection.hostname || currentConnection.host) && (
+                                    <div className="flex items-center gap-2 text-xs"
+                                         style={{color: 'var(--app-text-secondary)'}}
+                                    >
+                                        <User size={14}/>
+                                        <span>
+                                            Paired with: {currentConnection.hostname || currentConnection.host}
+                                            {currentConnection.port ? `:${currentConnection.port}` : ''}
+                                        </span>
+                                    </div>
+                                )}
                             </div>
                         </div>
                     </motion.div>
@@ -965,11 +977,11 @@ export function ClientTab({onStatusChange, state}: ClientTabProps) {
                                         if (!is_ip && newHost !== hostname) {
                                             setHostname(newHost);
                                             setHost('');
-                                            scheduleOptionsSave('', newHost, port, requireSSL, autoReconnect, false);
+                                            scheduleOptionsSave('', newHost, port, true, autoReconnect, false);
                                         } else if (newHost !== host) {
                                             setHostname('');
                                             setHost(newHost);
-                                            scheduleOptionsSave(newHost, '', port, requireSSL, autoReconnect, false);
+                                            scheduleOptionsSave(newHost, '', port, true, autoReconnect, false);
                                         }
                                     }}
                                     className="app-input"
@@ -995,7 +1007,7 @@ export function ClientTab({onStatusChange, state}: ClientTabProps) {
                                             return; // Only allow numeric input
                                         }
                                         setPort(newPort);
-                                        scheduleOptionsSave(host, hostname, newPort, requireSSL, autoReconnect, false);
+                                        scheduleOptionsSave(host, hostname, newPort, true, autoReconnect, false);
                                     }}
                                     className="app-input"
                                     disabled={isRunning}
@@ -1034,7 +1046,7 @@ export function ClientTab({onStatusChange, state}: ClientTabProps) {
                                         checked={autoReconnect}
                                         onCheckedChange={(checked) => {
                                             setAutoReconnect(checked);
-                                            handleSaveOptions(host, hostname, port, requireSSL, checked, false);
+                                            handleSaveOptions(host, hostname, port, true, checked, false);
                                         }}
                                     />
                                 </div>

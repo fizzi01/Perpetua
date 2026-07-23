@@ -1160,6 +1160,9 @@ class ServerInfo:
             port=data.get("port", ClientConfig.DEFAULT_SERVER_PORT),
             heartbeat_interval=data.get("heartbeat_interval", 1),
             auto_reconnect=data.get("auto_reconnect", True),
-            ssl=data.get("ssl", False),
+            # Encryption is forced (mutual TLS): a server_info block missing the
+            # 'ssl' key must default to True, consistent with ClientConfig.ssl_enabled
+            # and ServerInfo.__init__ - never silently load as insecure.
+            ssl=data.get("ssl", True),
             additional_params=data.get("additional_params", {}),
         )

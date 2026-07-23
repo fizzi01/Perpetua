@@ -487,6 +487,16 @@ class TestServerInfoSerialization:
         assert new_info.heartbeat_interval == 5
         assert new_info.auto_reconnect is False
 
+    def test_from_dict_defaults_ssl_to_true(self):
+        """Encryption is forced: a server_info block missing 'ssl' loads as True.
+
+        A missing key must never silently downgrade to an insecure connection;
+        this matches ClientConfig.ssl_enabled and ServerInfo.__init__ defaults.
+        """
+        info = ServerInfo.from_dict({"host": "10.0.0.1", "port": 8080})
+
+        assert info.ssl is True
+
 
 # ============================================================================
 # Test ClientConfig - Serialization
