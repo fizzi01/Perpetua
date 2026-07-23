@@ -299,7 +299,7 @@ class Builder:
         ]
 
         if not self.skip_gui or self.gui_external:
-            nuitka_cmd.append(f"--include-data-files={output_exe}={self.gui_exe.name}")
+            nuitka_cmd.append(f"--include-data-files={output_exe}=_{self.gui_exe.name}")
 
         if self.is_macos:
             nuitka_cmd.extend(
