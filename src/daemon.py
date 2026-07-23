@@ -403,9 +403,7 @@ class Daemon:
                             message="Could not verify the Accessibility permission",
                             can_request=True,
                         )
-                        await self._on_permission_lost(
-                            [unknown], reason="check_failed"
-                        )
+                        await self._on_permission_lost([unknown], reason="check_failed")
                         return
                 except Exception as e:
                     self._logger.warning(

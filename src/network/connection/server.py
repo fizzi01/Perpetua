@@ -164,9 +164,7 @@ class ConnectionHandler(BaseConnectionHandler):
         if self.rejected_callback is None:
             return
         try:
-            result = self.rejected_callback(
-                peer_ip, hostname or "", uid or "", reason
-            )
+            result = self.rejected_callback(peer_ip, hostname or "", uid or "", reason)
             if asyncio.iscoroutine(result):
                 await result
         except Exception as e:

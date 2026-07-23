@@ -101,7 +101,9 @@ class TestResolveClient:
     def _manager(self):
         mgr = ClientsManager()
         mgr.add_client(
-            ClientObj(uid="federico-uid", hostname="Federico", ip_addresses=["10.0.0.5"])
+            ClientObj(
+                uid="federico-uid", hostname="Federico", ip_addresses=["10.0.0.5"]
+            )
         )
         return mgr
 
@@ -177,7 +179,9 @@ class TestUpdateClient:
 
     def test_update_unknown_uid_raises(self):
         mgr = ClientsManager()
-        mgr.add_client(ClientObj(uid="X", hostname="Federico", ip_addresses=["10.0.0.5"]))
+        mgr.add_client(
+            ClientObj(uid="X", hostname="Federico", ip_addresses=["10.0.0.5"])
+        )
         with pytest.raises(ValueError):
             mgr.update_client(
                 ClientObj(uid="Z", hostname="ghost", ip_addresses=["10.0.0.9"])
