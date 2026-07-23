@@ -24,11 +24,8 @@ the handshake.
 """
 
 import ssl
-import tempfile
-import shutil
-import unittest
-from pathlib import Path
 
+import pytest
 from cryptography import x509
 from cryptography.hazmat.backends import default_backend
 from cryptography.x509.oid import NameOID
@@ -37,171 +34,197 @@ from utils.crypto import CertificateManager
 from network.connection.server import ConnectionHandler
 
 
-class TestClientCertificateIssuance(unittest.TestCase):
-    def setUp(self):
-        self.server_dir = tempfile.mkdtemp()
-        self.client_dir = tempfile.mkdtemp()
-        self.server_cm = CertificateManager(Path(self.server_dir))
-        self.client_cm = CertificateManager(Path(self.client_dir))
-        self.server_cm.generate_ca()
-        self.server_cm.generate_server_certificate(
-            ip_addresses=["127.0.0.1"], hostname="test.local"
-        )
+# ---------------------------------------------------------------------------
+# Client certificate issuance
+# ---------------------------------------------------------------------------
+@pytest.fixture
+def issuance_setup(tmp_path):
+    """A server CA (+ server cert) and a separate client cert store."""
+    server_dir = tmp_path / "server"
+    client_dir = tmp_path / "client"
+    server_dir.mkdir()
+    client_dir.mkdir()
 
-    def tearDown(self):
-        shutil.rmtree(self.server_dir, ignore_errors=True)
-        shutil.rmtree(self.client_dir, ignore_errors=True)
-
-    def _load_ca(self):
-        with open(self.server_cm.ca_cert_path, "rb") as f:
-            return x509.load_pem_x509_certificate(f.read(), default_backend())
-
-    def test_csr_has_placeholder_cn_not_a_real_uid(self):
-        # The client does not choose a UID: the CSR carries a placeholder CN so
-        # nothing on the plaintext pairing channel reveals a real UID.
-        csr_pem = self.client_cm.generate_client_key_and_csr()
-        self.assertIsNotNone(csr_pem)
-        self.assertTrue(self.client_cm.client_key_path.exists())
-        csr = x509.load_pem_x509_csr(csr_pem, default_backend())
-        cn = csr.subject.get_attributes_for_oid(NameOID.COMMON_NAME)[0].value
-        self.assertEqual(cn, CertificateManager.CLIENT_CSR_PLACEHOLDER_CN)
-
-    def test_server_stamps_assigned_uid_ignoring_csr_cn(self):
-        # Whatever CN the CSR carries, the server-supplied uid wins.
-        uid = "server-assigned-uid-123"
-        csr_pem = self.client_cm.generate_client_key_and_csr()
-        cert_pem = self.server_cm.sign_client_csr(csr_pem, uid)
-        self.assertIsNotNone(cert_pem)
-        cert = x509.load_pem_x509_certificate(cert_pem, default_backend())
-        cn = cert.subject.get_attributes_for_oid(NameOID.COMMON_NAME)[0].value
-        self.assertEqual(cn, uid)
-        self.assertEqual(cert.issuer, self._load_ca().subject)
-
-    def test_read_certificate_common_name(self):
-        uid = "cn-read-uid"
-        csr_pem = self.client_cm.generate_client_key_and_csr()
-        cert_pem = self.server_cm.sign_client_csr(csr_pem, uid)
-        # The client learns its UID by reading the CN of its issued cert.
-        self.assertEqual(CertificateManager.read_certificate_common_name(cert_pem), uid)
-        self.assertIsNone(
-            CertificateManager.read_certificate_common_name(b"not a cert")
-        )
-
-    def test_get_client_uid_returns_cn_of_installed_cert(self):
-        # The client UID's single source of truth is the installed client.crt.
-        self.assertIsNone(self.client_cm.get_client_uid())
-        uid = "installed-cert-uid"
-        csr_pem = self.client_cm.generate_client_key_and_csr()
-        cert_pem = self.server_cm.sign_client_csr(csr_pem, uid)
-        self.assertTrue(self.client_cm.save_client_certificate(cert_pem))
-        self.assertEqual(self.client_cm.get_client_uid(), uid)
-        # Removing the credentials drops the derived identity again.
-        self.client_cm.remove_client_credentials()
-        self.assertIsNone(self.client_cm.get_client_uid())
-
-    def test_garbage_csr_rejected(self):
-        self.assertIsNone(self.server_cm.sign_client_csr(b"not a csr", "uid"))
-
-    def test_client_credentials_roundtrip(self):
-        self.assertFalse(self.client_cm.client_credentials_exist())
-        csr_pem = self.client_cm.generate_client_key_and_csr()
-        cert_pem = self.server_cm.sign_client_csr(csr_pem, "uid-x")
-        self.assertTrue(self.client_cm.save_client_certificate(cert_pem))
-        self.assertTrue(self.client_cm.client_credentials_exist())
-        cert, key = self.client_cm.get_client_credentials()
-        self.assertIsNotNone(cert)
-        self.assertIsNotNone(key)
-        # Removal (used before re-pairing) clears both.
-        self.assertTrue(self.client_cm.remove_client_credentials())
-        self.assertFalse(self.client_cm.client_credentials_exist())
-
-    def test_security_info_reports_valid_certificate_material(self):
-        csr_pem = self.client_cm.generate_client_key_and_csr()
-        cert_pem = self.server_cm.sign_client_csr(csr_pem, "secure-client-uid")
-        self.assertTrue(self.client_cm.save_client_certificate(cert_pem))
-        with open(self.server_cm.ca_cert_path, "rb") as f:
-            self.assertTrue(self.client_cm.save_ca_data(f.read(), "server-uid"))
-
-        info = self.client_cm.get_security_info("server-uid", ssl_enabled=True)
-
-        self.assertTrue(info["mutual_tls_available"])
-        self.assertTrue(info["private_key_present"])
-        self.assertTrue(info["server_ca"]["present"])
-        self.assertTrue(info["client_certificate"]["present"])
-        self.assertEqual(
-            info["client_certificate"]["subject_common_name"], "secure-client-uid"
-        )
-        self.assertEqual(info["server_ca"]["public_key_algorithm"], "RSA")
-        self.assertEqual(info["server_ca"]["public_key_size"], 4096)
-        self.assertEqual(info["client_certificate"]["public_key_size"], 2048)
-        self.assertEqual(len(info["server_ca"]["sha256_fingerprint"]), 64)
-        self.assertEqual(len(info["client_certificate"]["sha256_fingerprint"]), 64)
-        self.assertNotIn("path", info["server_ca"])
-        self.assertNotIn("path", info["client_certificate"])
-
-    def test_security_info_reports_missing_private_key(self):
-        csr_pem = self.client_cm.generate_client_key_and_csr()
-        cert_pem = self.server_cm.sign_client_csr(csr_pem, "missing-key-uid")
-        self.assertTrue(self.client_cm.save_client_certificate(cert_pem))
-        with open(self.server_cm.ca_cert_path, "rb") as f:
-            self.assertTrue(self.client_cm.save_ca_data(f.read(), "server-uid"))
-        self.client_cm.client_key_path.unlink()
-
-        info = self.client_cm.get_security_info("server-uid", ssl_enabled=True)
-
-        self.assertFalse(info["mutual_tls_available"])
-        self.assertFalse(info["private_key_present"])
-        self.assertTrue(info["client_certificate"]["present"])
-
-    def test_security_info_handles_unreadable_certificate(self):
-        bad_cert = self.client_cm.cert_dir / "bad.crt"
-        bad_cert.write_bytes(b"not a certificate")
-        self.assertTrue(self.client_cm.extend_mapping("bad-server", bad_cert.name))
-
-        info = self.client_cm.get_security_info("bad-server", ssl_enabled=True)
-
-        self.assertFalse(info["mutual_tls_available"])
-        self.assertFalse(info["server_ca"]["present"])
-        self.assertEqual(info["server_ca"]["error"], "unreadable")
+    server_cm = CertificateManager(server_dir)
+    client_cm = CertificateManager(client_dir)
+    server_cm.generate_ca()
+    server_cm.generate_server_certificate(
+        ip_addresses=["127.0.0.1"], hostname="test.local"
+    )
+    return server_cm, client_cm
 
 
-class TestServerMutualTlsContext(unittest.TestCase):
-    def setUp(self):
-        self.server_dir = tempfile.mkdtemp()
-        self.cm = CertificateManager(Path(self.server_dir))
-        self.cm.generate_ca()
-        self.cm.generate_server_certificate(
-            ip_addresses=["127.0.0.1"], hostname="test.local"
-        )
-        cert, key = self.cm.get_server_credentials()
-        self.certfile, self.keyfile = cert, key
-
-    def tearDown(self):
-        shutil.rmtree(self.server_dir, ignore_errors=True)
-
-    def test_context_requires_client_cert_when_ca_present(self):
-        handler = ConnectionHandler(
-            certfile=self.certfile,
-            keyfile=self.keyfile,
-            ca_certfile=self.cm.get_ca_cert_path(),
-            ssl_enabled=True,
-        )
-        ctx = handler._get_ssl_context()
-        self.assertIsNotNone(ctx)
-        self.assertEqual(ctx.verify_mode, ssl.CERT_REQUIRED)
-
-    def test_context_without_ca_does_not_require_client_cert(self):
-        handler = ConnectionHandler(
-            certfile=self.certfile,
-            keyfile=self.keyfile,
-            ca_certfile=None,
-            ssl_enabled=True,
-        )
-        ctx = handler._get_ssl_context()
-        self.assertIsNotNone(ctx)
-        self.assertEqual(ctx.verify_mode, ssl.CERT_NONE)
+def _load_ca(server_cm):
+    with open(server_cm.ca_cert_path, "rb") as f:
+        return x509.load_pem_x509_certificate(f.read(), default_backend())
 
 
+def test_csr_has_placeholder_cn_not_a_real_uid(issuance_setup):
+    # The client does not choose a UID: the CSR carries a placeholder CN so
+    # nothing on the plaintext pairing channel reveals a real UID.
+    _server_cm, client_cm = issuance_setup
+    csr_pem = client_cm.generate_client_key_and_csr()
+    assert csr_pem is not None
+    assert client_cm.client_key_path.exists()
+    csr = x509.load_pem_x509_csr(csr_pem, default_backend())
+    cn = csr.subject.get_attributes_for_oid(NameOID.COMMON_NAME)[0].value
+    assert cn == CertificateManager.CLIENT_CSR_PLACEHOLDER_CN
+
+
+def test_server_stamps_assigned_uid_ignoring_csr_cn(issuance_setup):
+    # Whatever CN the CSR carries, the server-supplied uid wins.
+    server_cm, client_cm = issuance_setup
+    uid = "server-assigned-uid-123"
+    csr_pem = client_cm.generate_client_key_and_csr()
+    cert_pem = server_cm.sign_client_csr(csr_pem, uid)
+    assert cert_pem is not None
+    cert = x509.load_pem_x509_certificate(cert_pem, default_backend())
+    cn = cert.subject.get_attributes_for_oid(NameOID.COMMON_NAME)[0].value
+    assert cn == uid
+    assert cert.issuer == _load_ca(server_cm).subject
+
+
+def test_read_certificate_common_name(issuance_setup):
+    server_cm, client_cm = issuance_setup
+    uid = "cn-read-uid"
+    csr_pem = client_cm.generate_client_key_and_csr()
+    cert_pem = server_cm.sign_client_csr(csr_pem, uid)
+    # The client learns its UID by reading the CN of its issued cert.
+    assert CertificateManager.read_certificate_common_name(cert_pem) == uid
+    assert CertificateManager.read_certificate_common_name(b"not a cert") is None
+
+
+def test_get_client_uid_returns_cn_of_installed_cert(issuance_setup):
+    # The client UID's single source of truth is the installed client.crt.
+    server_cm, client_cm = issuance_setup
+    assert client_cm.get_client_uid() is None
+    uid = "installed-cert-uid"
+    csr_pem = client_cm.generate_client_key_and_csr()
+    cert_pem = server_cm.sign_client_csr(csr_pem, uid)
+    assert client_cm.save_client_certificate(cert_pem)
+    assert client_cm.get_client_uid() == uid
+    # Removing the credentials drops the derived identity again.
+    client_cm.remove_client_credentials()
+    assert client_cm.get_client_uid() is None
+
+
+def test_garbage_csr_rejected(issuance_setup):
+    server_cm, _client_cm = issuance_setup
+    assert server_cm.sign_client_csr(b"not a csr", "uid") is None
+
+
+def test_client_credentials_roundtrip(issuance_setup):
+    server_cm, client_cm = issuance_setup
+    assert not client_cm.client_credentials_exist()
+    csr_pem = client_cm.generate_client_key_and_csr()
+    cert_pem = server_cm.sign_client_csr(csr_pem, "uid-x")
+    assert client_cm.save_client_certificate(cert_pem)
+    assert client_cm.client_credentials_exist()
+    cert, key = client_cm.get_client_credentials()
+    assert cert is not None
+    assert key is not None
+    # Removal (used before re-pairing) clears both.
+    assert client_cm.remove_client_credentials()
+    assert not client_cm.client_credentials_exist()
+
+
+def test_security_info_reports_valid_certificate_material(issuance_setup):
+    server_cm, client_cm = issuance_setup
+    csr_pem = client_cm.generate_client_key_and_csr()
+    cert_pem = server_cm.sign_client_csr(csr_pem, "secure-client-uid")
+    assert client_cm.save_client_certificate(cert_pem)
+    with open(server_cm.ca_cert_path, "rb") as f:
+        assert client_cm.save_ca_data(f.read(), "server-uid")
+
+    info = client_cm.get_security_info("server-uid", ssl_enabled=True)
+
+    assert info["mutual_tls_available"]
+    assert info["private_key_present"]
+    assert info["server_ca"]["present"]
+    assert info["client_certificate"]["present"]
+    assert info["client_certificate"]["subject_common_name"] == "secure-client-uid"
+    assert info["server_ca"]["public_key_algorithm"] == "RSA"
+    assert info["server_ca"]["public_key_size"] == 4096
+    assert info["client_certificate"]["public_key_size"] == 2048
+    assert len(info["server_ca"]["sha256_fingerprint"]) == 64
+    assert len(info["client_certificate"]["sha256_fingerprint"]) == 64
+    assert "path" not in info["server_ca"]
+    assert "path" not in info["client_certificate"]
+
+
+def test_security_info_reports_missing_private_key(issuance_setup):
+    server_cm, client_cm = issuance_setup
+    csr_pem = client_cm.generate_client_key_and_csr()
+    cert_pem = server_cm.sign_client_csr(csr_pem, "missing-key-uid")
+    assert client_cm.save_client_certificate(cert_pem)
+    with open(server_cm.ca_cert_path, "rb") as f:
+        assert client_cm.save_ca_data(f.read(), "server-uid")
+    client_cm.client_key_path.unlink()
+
+    info = client_cm.get_security_info("server-uid", ssl_enabled=True)
+
+    assert not info["mutual_tls_available"]
+    assert not info["private_key_present"]
+    assert info["client_certificate"]["present"]
+
+
+def test_security_info_handles_unreadable_certificate(issuance_setup):
+    _server_cm, client_cm = issuance_setup
+    bad_cert = client_cm.cert_dir / "bad.crt"
+    bad_cert.write_bytes(b"not a certificate")
+    assert client_cm.extend_mapping("bad-server", bad_cert.name)
+
+    info = client_cm.get_security_info("bad-server", ssl_enabled=True)
+
+    assert not info["mutual_tls_available"]
+    assert not info["server_ca"]["present"]
+    assert info["server_ca"]["error"] == "unreadable"
+
+
+# ---------------------------------------------------------------------------
+# Server mutual-TLS context
+# ---------------------------------------------------------------------------
+@pytest.fixture
+def server_tls_setup(tmp_path):
+    """A server CertificateManager with a minted CA + server certificate."""
+    server_dir = tmp_path / "server"
+    server_dir.mkdir()
+    cm = CertificateManager(server_dir)
+    cm.generate_ca()
+    cm.generate_server_certificate(ip_addresses=["127.0.0.1"], hostname="test.local")
+    certfile, keyfile = cm.get_server_credentials()
+    return cm, certfile, keyfile
+
+
+def test_context_requires_client_cert_when_ca_present(server_tls_setup):
+    cm, certfile, keyfile = server_tls_setup
+    handler = ConnectionHandler(
+        certfile=certfile,
+        keyfile=keyfile,
+        ca_certfile=cm.get_ca_cert_path(),
+        ssl_enabled=True,
+    )
+    ctx = handler._get_ssl_context()
+    assert ctx is not None
+    assert ctx.verify_mode == ssl.CERT_REQUIRED
+
+
+def test_context_without_ca_does_not_require_client_cert(server_tls_setup):
+    _cm, certfile, keyfile = server_tls_setup
+    handler = ConnectionHandler(
+        certfile=certfile,
+        keyfile=keyfile,
+        ca_certfile=None,
+        ssl_enabled=True,
+    )
+    ctx = handler._get_ssl_context()
+    assert ctx is not None
+    assert ctx.verify_mode == ssl.CERT_NONE
+
+
+# ---------------------------------------------------------------------------
+# Peer certificate CN extraction
+# ---------------------------------------------------------------------------
 class _FakeSSLObject:
     def __init__(self, peercert):
         self._peercert = peercert
@@ -220,21 +243,18 @@ class _FakeWriter:
         return None
 
 
-class TestPeerCertCnExtraction(unittest.TestCase):
-    def test_extracts_common_name(self):
-        peercert = {"subject": ((("commonName", "my-uid"),),)}
-        writer = _FakeWriter(_FakeSSLObject(peercert))
-        self.assertEqual(ConnectionHandler._peer_cert_cn(writer), "my-uid")
-
-    def test_none_without_tls(self):
-        writer = _FakeWriter(None)
-        self.assertIsNone(ConnectionHandler._peer_cert_cn(writer))
-
-    def test_none_when_no_cn(self):
-        peercert = {"subject": ((("organizationName", "Perpetua"),),)}
-        writer = _FakeWriter(_FakeSSLObject(peercert))
-        self.assertIsNone(ConnectionHandler._peer_cert_cn(writer))
+def test_extracts_common_name():
+    peercert = {"subject": ((("commonName", "my-uid"),),)}
+    writer = _FakeWriter(_FakeSSLObject(peercert))
+    assert ConnectionHandler._peer_cert_cn(writer) == "my-uid"
 
 
-if __name__ == "__main__":
-    unittest.main()
+def test_none_without_tls():
+    writer = _FakeWriter(None)
+    assert ConnectionHandler._peer_cert_cn(writer) is None
+
+
+def test_none_when_no_cn():
+    peercert = {"subject": ((("organizationName", "Perpetua"),),)}
+    writer = _FakeWriter(_FakeSSLObject(peercert))
+    assert ConnectionHandler._peer_cert_cn(writer) is None

@@ -486,7 +486,14 @@ class Builder:
     def _verify_signature(self, app_bundle: Path):
         # Hard verification: fail the build if the signature is broken.
         self._run(
-            ["codesign", "--verify", "--deep", "--strict", "--verbose=2", str(app_bundle)]
+            [
+                "codesign",
+                "--verify",
+                "--deep",
+                "--strict",
+                "--verbose=2",
+                str(app_bundle),
+            ]
         )
         # Informational: log the effective identity/authority chain.
         self._run(["codesign", "-dvvv", str(app_bundle)])
@@ -559,7 +566,9 @@ def main():
         "--skip-gui", "-d", action="store_true", help="Skip GUI build (Daemon only)"
     )
     parser.add_argument(
-        "--gui-external", action="store_true", help="Use external GUI build (skip GUI build)"
+        "--gui-external",
+        action="store_true",
+        help="Use external GUI build (skip GUI build)",
     )
     parser.add_argument(
         "--skip-daemon", "-g", action="store_true", help="Skip daemon build (GUI only)"

@@ -28,8 +28,8 @@ import datetime
 import socket
 import ssl
 import threading
-import unittest
 
+import pytest
 from cryptography import x509
 from cryptography.hazmat.primitives import hashes, serialization
 from cryptography.hazmat.primitives.asymmetric import rsa
@@ -42,7 +42,9 @@ from network.connection.handler import (
 )
 
 
-def _mkcert(not_before, not_after, ca_key=None, ca_cert=None, is_ca=False, cn="localhost"):
+def _mkcert(
+    not_before, not_after, ca_key=None, ca_cert=None, is_ca=False, cn="localhost"
+):
     key = rsa.generate_private_key(public_exponent=65537, key_size=2048)
     subject = x509.Name([x509.NameAttribute(NameOID.COMMON_NAME, cn)])
     issuer = ca_cert.subject if ca_cert else subject
@@ -131,119 +133,122 @@ class _TlsHarness:
             listener.close()
 
 
-class TestTlsClockSkewTolerance(unittest.TestCase):
-    def setUp(self):
-        import tempfile
-        from pathlib import Path
-
-        self._dir = tempfile.mkdtemp()
-        self.tmp = Path(self._dir)
-        now = datetime.datetime.now(datetime.UTC)
-        self.ca_cert, self.ca_key = _mkcert(
-            now - datetime.timedelta(days=1),
-            now + datetime.timedelta(days=3650),
-            is_ca=True,
-            cn="TestCA",
-        )
-        self._now = now
-
-    def tearDown(self):
-        import shutil
-
-        shutil.rmtree(self._dir, ignore_errors=True)
-
-    def test_flag_constant_matches_openssl(self):
-        self.assertEqual(SSL_NO_CHECK_TIME, 0x200000)
-
-    def test_policy_sets_the_flag(self):
-        ctx = ssl.create_default_context(ssl.Purpose.SERVER_AUTH)
-        apply_skew_tolerant_time_policy(ctx)
-        self.assertTrue(int(ctx.verify_flags) & SSL_NO_CHECK_TIME)
-
-    def test_not_yet_valid_cert_rejected_without_policy(self):
-        # Baseline: reproduce the user's failure. A server cert that is not yet
-        # valid (issued "tomorrow") is rejected when the policy is NOT applied.
-        future = self._now + datetime.timedelta(days=1)
-        srv, key = _mkcert(
-            future,
-            future + datetime.timedelta(days=365),
-            ca_key=self.ca_key,
-            ca_cert=self.ca_cert,
-        )
-        err = _TlsHarness(self.tmp, self.ca_cert, srv, key).run(apply_policy=False)
-        self.assertIsNotNone(err)
-        self.assertIn("not yet valid", str(err).lower())
-
-    def test_not_yet_valid_cert_accepted_with_policy(self):
-        # With the skew-tolerant policy, the same not-yet-valid cert handshakes
-        # successfully — a client behind by a day can now connect.
-        future = self._now + datetime.timedelta(days=1)
-        srv, key = _mkcert(
-            future,
-            future + datetime.timedelta(days=365),
-            ca_key=self.ca_key,
-            ca_cert=self.ca_cert,
-        )
-        err = _TlsHarness(self.tmp, self.ca_cert, srv, key).run(apply_policy=True)
-        self.assertIsNone(err, f"handshake should have succeeded, got: {err}")
-
-    def test_untrusted_ca_still_rejected_with_policy(self):
-        # The policy relaxes ONLY time: a cert from an unknown CA is still
-        # rejected, proving chain/signature verification is intact.
-        other_ca, other_key = _mkcert(
-            self._now - datetime.timedelta(days=1),
-            self._now + datetime.timedelta(days=3650),
-            is_ca=True,
-            cn="OtherCA",
-        )
-        srv, key = _mkcert(
-            self._now,
-            self._now + datetime.timedelta(days=365),
-            ca_key=other_key,
-            ca_cert=other_ca,
-        )
-        # Client trusts self.ca_cert, but the server cert is signed by other_ca.
-        err = _TlsHarness(self.tmp, self.ca_cert, srv, key).run(apply_policy=True)
-        self.assertIsNotNone(err)
-        self.assertIn("verify failed", str(err).lower())
+# ---------------------------------------------------------------------------
+# TLS clock-skew tolerance
+# ---------------------------------------------------------------------------
+@pytest.fixture
+def ca():
+    """A test CA cert/key valid from yesterday, plus the reference ``now``."""
+    now = datetime.datetime.now(datetime.UTC)
+    ca_cert, ca_key = _mkcert(
+        now - datetime.timedelta(days=1),
+        now + datetime.timedelta(days=3650),
+        is_ca=True,
+        cn="TestCA",
+    )
+    return ca_cert, ca_key, now
 
 
-class TestPeerCertExpiry(unittest.TestCase):
-    """The manual expiry re-check that keeps notAfter enforced."""
-
-    class _FakeSSLObject:
-        def __init__(self, peercert):
-            self._peercert = peercert
-
-        def getpeercert(self):
-            return self._peercert
-
-    @staticmethod
-    def _cert_dict(not_after: datetime.datetime):
-        # ssl.getpeercert() renders notAfter in this exact strftime layout.
-        stamp = not_after.strftime("%b %d %H:%M:%S %Y GMT")
-        return {"notAfter": stamp, "subject": ((("commonName", "peer"),),)}
-
-    def test_expired_cert_detected(self):
-        past = datetime.datetime.now(datetime.UTC) - datetime.timedelta(days=1)
-        obj = self._FakeSSLObject(self._cert_dict(past))
-        self.assertTrue(peer_cert_is_expired(obj))
-
-    def test_valid_cert_not_flagged(self):
-        future = datetime.datetime.now(datetime.UTC) + datetime.timedelta(days=30)
-        obj = self._FakeSSLObject(self._cert_dict(future))
-        self.assertFalse(peer_cert_is_expired(obj))
-
-    def test_no_tls_layer_is_not_expired(self):
-        self.assertFalse(peer_cert_is_expired(None))
-
-    def test_no_peer_cert_is_not_expired(self):
-        self.assertFalse(peer_cert_is_expired(self._FakeSSLObject(None)))
-
-    def test_missing_not_after_is_not_expired(self):
-        obj = self._FakeSSLObject({"subject": ((("commonName", "peer"),),)})
-        self.assertFalse(peer_cert_is_expired(obj))
+def test_flag_constant_matches_openssl():
+    assert SSL_NO_CHECK_TIME == 0x200000
 
 
-if __name__ == "__main__":
-    unittest.main()
+def test_policy_sets_the_flag():
+    ctx = ssl.create_default_context(ssl.Purpose.SERVER_AUTH)
+    apply_skew_tolerant_time_policy(ctx)
+    assert int(ctx.verify_flags) & SSL_NO_CHECK_TIME
+
+
+def test_not_yet_valid_cert_rejected_without_policy(tmp_path, ca):
+    # Baseline: reproduce the user's failure. A server cert that is not yet
+    # valid (issued "tomorrow") is rejected when the policy is NOT applied.
+    ca_cert, ca_key, now = ca
+    future = now + datetime.timedelta(days=1)
+    srv, key = _mkcert(
+        future,
+        future + datetime.timedelta(days=365),
+        ca_key=ca_key,
+        ca_cert=ca_cert,
+    )
+    err = _TlsHarness(tmp_path, ca_cert, srv, key).run(apply_policy=False)
+    assert err is not None
+    assert "not yet valid" in str(err).lower()
+
+
+def test_not_yet_valid_cert_accepted_with_policy(tmp_path, ca):
+    # With the skew-tolerant policy, the same not-yet-valid cert handshakes
+    # successfully — a client behind by a day can now connect.
+    ca_cert, ca_key, now = ca
+    future = now + datetime.timedelta(days=1)
+    srv, key = _mkcert(
+        future,
+        future + datetime.timedelta(days=365),
+        ca_key=ca_key,
+        ca_cert=ca_cert,
+    )
+    err = _TlsHarness(tmp_path, ca_cert, srv, key).run(apply_policy=True)
+    assert err is None, f"handshake should have succeeded, got: {err}"
+
+
+def test_untrusted_ca_still_rejected_with_policy(tmp_path, ca):
+    # The policy relaxes ONLY time: a cert from an unknown CA is still
+    # rejected, proving chain/signature verification is intact.
+    ca_cert, _ca_key, now = ca
+    other_ca, other_key = _mkcert(
+        now - datetime.timedelta(days=1),
+        now + datetime.timedelta(days=3650),
+        is_ca=True,
+        cn="OtherCA",
+    )
+    srv, key = _mkcert(
+        now,
+        now + datetime.timedelta(days=365),
+        ca_key=other_key,
+        ca_cert=other_ca,
+    )
+    # Client trusts ca_cert, but the server cert is signed by other_ca.
+    err = _TlsHarness(tmp_path, ca_cert, srv, key).run(apply_policy=True)
+    assert err is not None
+    assert "verify failed" in str(err).lower()
+
+
+# ---------------------------------------------------------------------------
+# Peer cert expiry re-check
+# ---------------------------------------------------------------------------
+class _FakeSSLObject:
+    def __init__(self, peercert):
+        self._peercert = peercert
+
+    def getpeercert(self):
+        return self._peercert
+
+
+def _cert_dict(not_after: datetime.datetime):
+    # ssl.getpeercert() renders notAfter in this exact strftime layout.
+    stamp = not_after.strftime("%b %d %H:%M:%S %Y GMT")
+    return {"notAfter": stamp, "subject": ((("commonName", "peer"),),)}
+
+
+def test_expired_cert_detected():
+    past = datetime.datetime.now(datetime.UTC) - datetime.timedelta(days=1)
+    obj = _FakeSSLObject(_cert_dict(past))
+    assert peer_cert_is_expired(obj)
+
+
+def test_valid_cert_not_flagged():
+    future = datetime.datetime.now(datetime.UTC) + datetime.timedelta(days=30)
+    obj = _FakeSSLObject(_cert_dict(future))
+    assert not peer_cert_is_expired(obj)
+
+
+def test_no_tls_layer_is_not_expired():
+    assert not peer_cert_is_expired(None)
+
+
+def test_no_peer_cert_is_not_expired():
+    assert not peer_cert_is_expired(_FakeSSLObject(None))
+
+
+def test_missing_not_after_is_not_expired():
+    obj = _FakeSSLObject({"subject": ((("commonName", "peer"),),)})
+    assert not peer_cert_is_expired(obj)

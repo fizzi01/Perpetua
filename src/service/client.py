@@ -833,9 +833,7 @@ class Client:
                 )
 
                 if is_switch:
-                    self._forget_previous_server(
-                        old_uid, old_host, old_hostname
-                    )
+                    self._forget_previous_server(old_uid, old_host, old_hostname)
                 # Set the server future result in case someone is waiting for it
                 if not self._server.done():
                     self._server.set_result(service)
