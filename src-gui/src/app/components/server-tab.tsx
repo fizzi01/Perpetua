@@ -1010,7 +1010,7 @@ export function ServerTab({onStatusChange, state}: ServerTabProps) {
             listeners.addListener('remove-client-error', unlisten);
         });
 
-        removeClientCommand(client?.name || '', client?.ips?.[0] || '').catch((err) => {
+        removeClientCommand(client?.uid || '', client?.name || '', client?.ips?.[0] || '').catch((err) => {
             console.error('Error removing client:', err);
             addNotification('error', err.toString());
             listeners.forceRemoveListener('remove-client');

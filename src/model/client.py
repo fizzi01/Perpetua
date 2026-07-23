@@ -361,11 +361,21 @@ class ClientsManager:
         self._is_client_main = client_mode
 
     def update_client(self, client: "ClientObj") -> "ClientsManager":
-        """Update existing client info. Matches by uid, then hostname, then IP."""
+        """Update existing client info.
+
+        Strong identity wins: when both records carry a UID, match only by UID
+        (mirroring ``get_client``'s ``continue`` gate). Fall back to hostname
+        then IP only when a UID is absent on at least one side - to upgrade a
+        still-anonymous record. This never merges two records with conflicting
+        UIDs, which would clobber a distinct client that merely shares an IP or
+        hostname (e.g. two machines behind the same NAT).
+        """
         for idx, existing_client in enumerate(self.clients):
-            if client.uid and existing_client.uid and existing_client.uid == client.uid:
-                self.clients[idx] = client
-                return self
+            if client.uid and existing_client.uid:
+                if existing_client.uid == client.uid:
+                    self.clients[idx] = client
+                    return self
+                continue
             if (
                 client.host_name
                 and existing_client.host_name

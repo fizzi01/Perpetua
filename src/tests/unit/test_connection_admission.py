@@ -22,6 +22,8 @@ learned, or rejected - the logic behind the "same UID, different IP" fix
 (a client reconnecting from a new DHCP address must not be denied).
 """
 
+import pytest
+
 from model.client import ClientObj, ClientsManager
 from network.connection.server import ConnectionHandler
 
@@ -146,3 +148,60 @@ class TestResolveClient:
         )
         assert resolved is legacy
         assert resolved.host_name == "new-host"
+
+
+class TestUpdateClient:
+    """``update_client`` must match on strong identity (UID) and never clobber a
+    different client that merely shares an IP or hostname.
+    """
+
+    def test_same_ip_does_not_clobber_other_uid(self):
+        """The corruption: update_client(fede-udu) must not overwrite Federico,
+        which shares the same IP but has a different UID."""
+        mgr = ClientsManager()
+        federico = ClientObj(uid="X", hostname="Federico", ip_addresses=["10.0.0.5"])
+        fede_udu = ClientObj(uid="Y", hostname="fede-udu", ip_addresses=["10.0.0.5"])
+        mgr.add_client(federico)
+        mgr.add_client(fede_udu)
+
+        updated = ClientObj(uid="Y", hostname="fede-udu", ip_addresses=["10.0.0.5"])
+        mgr.update_client(updated)
+
+        clients = mgr.get_clients()
+        assert len(clients) == 2
+        assert {c.uid for c in clients} == {"X", "Y"}
+        # Federico is untouched.
+        assert mgr.get_client(uid="X") is federico
+        # fede-udu is the freshly updated object.
+        assert mgr.get_client(uid="Y") is updated
+
+    def test_update_unknown_uid_raises(self):
+        mgr = ClientsManager()
+        mgr.add_client(ClientObj(uid="X", hostname="Federico", ip_addresses=["10.0.0.5"]))
+        with pytest.raises(ValueError):
+            mgr.update_client(
+                ClientObj(uid="Z", hostname="ghost", ip_addresses=["10.0.0.9"])
+            )
+
+    def test_anonymous_record_upgraded_by_ip(self):
+        """A still-anonymous record (no UID) is upgraded when an update arrives
+        with a UID and a matching IP."""
+        mgr = ClientsManager()
+        anon = ClientObj(ip_addresses=["10.0.0.5"])
+        mgr.add_client(anon)
+        upgraded = ClientObj(uid="Y", hostname="fede-udu", ip_addresses=["10.0.0.5"])
+        mgr.update_client(upgraded)
+        clients = mgr.get_clients()
+        assert len(clients) == 1
+        assert clients[0] is upgraded
+        assert clients[0].uid == "Y"
+
+    def test_match_by_hostname_without_uid(self):
+        mgr = ClientsManager()
+        original = ClientObj(hostname="host-a", ip_addresses=["10.0.0.5"])
+        mgr.add_client(original)
+        replacement = ClientObj(hostname="host-a", ip_addresses=["10.0.0.9"])
+        mgr.update_client(replacement)
+        clients = mgr.get_clients()
+        assert len(clients) == 1
+        assert clients[0] is replacement

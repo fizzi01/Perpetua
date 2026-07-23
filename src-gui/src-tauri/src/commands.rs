@@ -232,18 +232,20 @@ pub async fn deny_client(
 
 #[tauri::command]
 pub async fn remove_client(
+    client_uid: String,
     hostname: String,
     ip_address: String,
     s: tauri::State<'_, AtomicAsyncWriter>,
 ) -> Result<(), String> {
-    if hostname.is_empty() && ip_address.is_empty() {
-        return Err("Either hostname or ip address must be provided".to_string());
+    if client_uid.is_empty() && hostname.is_empty() && ip_address.is_empty() {
+        return Err("client_uid, hostname or ip address must be provided".to_string());
     }
 
     let command = CommandEvent::build(
         CommandType::RemoveClient,
         &format!(
-            r#"{{ "hostname": {}, "ip_address": {} }}"#,
+            r#"{{ "client_uid": {}, "hostname": {}, "ip_address": {} }}"#,
+            handle_string_param(client_uid),
             handle_string_param(hostname),
             handle_string_param(ip_address)
         ),

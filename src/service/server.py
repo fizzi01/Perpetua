@@ -527,11 +527,15 @@ class Server:
         ip_address: Optional[str] = None,
         hostname: Optional[str] = None,
         screen_position: Optional[str] = None,
+        uid: Optional[str] = None,
         auto_save: bool = True,
     ) -> bool:
         """Remove a client from the authorized list."""
         client = self.config.get_client(
-            ip_address=ip_address, hostname=hostname, screen_position=screen_position
+            uid=uid,
+            ip_address=ip_address,
+            hostname=hostname,
+            screen_position=screen_position,
         )
         if client:
             if self._running and self.connection_handler is not None:
@@ -545,7 +549,7 @@ class Server:
             if auto_save:
                 await self.save_config()
 
-            net_id = ip_address or hostname or screen_position
+            net_id = uid or ip_address or hostname or screen_position
             self._logger.info("Removed client", net_id=net_id)
             return True
         return False
@@ -558,9 +562,13 @@ class Server:
         ip_address: Optional[str] = None,
         hostname: Optional[str] = None,
         screen_position: Optional[str] = None,
+        uid: Optional[str] = None,
     ) -> Optional[ClientObj]:
         return self.config.get_client(
-            ip_address=ip_address, hostname=hostname, screen_position=screen_position
+            uid=uid,
+            ip_address=ip_address,
+            hostname=hostname,
+            screen_position=screen_position,
         )
 
     async def set_client_layout(
@@ -939,10 +947,12 @@ class Server:
         old_screen_position: Optional[str] = None,
         new_screen_position: Optional[str] = None,
         new_ip_addresses: Optional[list[str] | str] = None,
+        uid: Optional[str] = None,
         auto_save: bool = True,
     ) -> ClientObj:
         """Edit a client's properties."""
         client = self.config.get_client(
+            uid=uid,
             ip_address=ip_address,
             hostname=hostname,
             screen_position=old_screen_position,

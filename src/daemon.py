@@ -2065,21 +2065,28 @@ class Daemon:
             return
 
         try:
+            client_uid = params.get("client_uid")
             hostname = params.get("hostname")
             ip_address = params.get("ip_address")
 
-            if not hostname and not ip_address:
+            if not client_uid and not hostname and not ip_address:
                 await self._notification_manager.notify_command_error(
-                    command, "Must provide either hostname or ip_address"
+                    command, "Must provide client_uid, hostname or ip_address"
                 )
                 return
 
-            await self._server.remove_client(hostname=hostname, ip_address=ip_address)
+            await self._server.remove_client(
+                uid=client_uid, hostname=hostname, ip_address=ip_address
+            )
 
             await self._notification_manager.notify_command_success(
                 command,
                 "Client removed",
-                result_data={"hostname": hostname, "ip_address": ip_address},
+                result_data={
+                    "client_uid": client_uid,
+                    "hostname": hostname,
+                    "ip_address": ip_address,
+                },
             )
         except Exception as e:
             await self._notification_manager.notify_command_error(command, f"{str(e)}")
@@ -2192,14 +2199,15 @@ class Daemon:
             return
 
         try:
+            client_uid = params.get("client_uid")
             hostname = params.get("hostname")
             ip_address = params.get("ip_address")
             new_screen_position = params.get("new_screen_position")
             new_ip_addresses = params.get("new_ip_addresses")
 
-            if not hostname and not ip_address:
+            if not client_uid and not hostname and not ip_address:
                 await self._notification_manager.notify_command_error(
-                    command, "Must provide either hostname or ip_address"
+                    command, "Must provide client_uid, hostname or ip_address"
                 )
                 return
 
@@ -2210,6 +2218,7 @@ class Daemon:
                 return
 
             await self._server.edit_client(
+                uid=client_uid,
                 hostname=hostname,
                 ip_address=ip_address,
                 new_screen_position=new_screen_position,
@@ -2220,6 +2229,7 @@ class Daemon:
                 command,
                 "Client updated",
                 result_data={
+                    "client_uid": client_uid,
                     "hostname": hostname,
                     "ip_address": ip_address,
                     "new_screen_position": new_screen_position,
