@@ -31,12 +31,15 @@ from service.client import Client
 
 
 @pytest.fixture
-def switch_setup(tmp_path):
+async def switch_setup(tmp_path):
     """A client trusting server A, with isolated on-disk cert stores.
 
     Returns ``(client, server_cm, client_cm)`` where ``server_cm`` has already
     minted a CA + server certificate and ``client_cm`` points at a separate
     temp directory. The client is built without touching disk config.
+
+    Async so ``Client()`` is instantiated inside a running event loop: its
+    ``asyncio.Future`` fields (see ``Client.__init__``) require one on 3.12+.
     """
     server_dir = tmp_path / "server"
     client_dir = tmp_path / "client"
@@ -67,7 +70,7 @@ def _pair_with_server_a(server_cm: CertificateManager, client_cm: CertificateMan
         assert client_cm.save_ca_data(f.read(), "A")
 
 @pytest.mark.anyio
-def test_forget_previous_server_wipes_ca_and_client_identity(switch_setup):
+async def test_forget_previous_server_wipes_ca_and_client_identity(switch_setup):
     client, server_cm, client_cm = switch_setup
     _pair_with_server_a(server_cm, client_cm)
     # Precondition: both trust artefacts are present.
@@ -81,7 +84,7 @@ def test_forget_previous_server_wipes_ca_and_client_identity(switch_setup):
     assert not client_cm.client_credentials_exist()
 
 @pytest.mark.anyio
-def test_forget_previous_server_is_best_effort_when_nothing_stored(switch_setup):
+async def test_forget_previous_server_is_best_effort_when_nothing_stored(switch_setup):
     client, _server_cm, client_cm = switch_setup
     # No CA and no client identity: cleanup must not raise.
     assert client_cm.get_ca_cert_path("A") is None
