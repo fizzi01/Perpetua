@@ -293,7 +293,7 @@ class Builder:
             "--include-package=utils",
             "--include-package=input",
             "--python-flag=no_docstrings",
-            "--prefer-source-code",
+            "--no-prefer-source-code",
         ]
 
         if not self.skip_gui:
