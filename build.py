@@ -43,6 +43,7 @@ class Builder:
         release: bool = True,
         target: Optional[str] = None,
         nuitka_args: Optional[list[str]] = None,
+        gui_external: bool = False,
     ):
         self.system = sys.platform
         self.is_macos = self.system == "darwin"
@@ -51,6 +52,7 @@ class Builder:
 
         self.project_root = project_root
         self.skip_gui = skip_gui
+        self.gui_external = gui_external
         self.skip_daemon = skip_daemon
         self.clean = clean
         self.release = release
@@ -275,7 +277,7 @@ class Builder:
         output_exe = self.gui_exe
 
         # Check that the GUI executable exists
-        if not output_exe.exists() and not self.skip_gui:
+        if not output_exe.exists() and (self.gui_external or not self.skip_gui):
             # Try to copy data files
             self.log.error("GUI executable not found, build GUI first")
             return -1
@@ -296,7 +298,7 @@ class Builder:
             "--no-prefer-source-code",
         ]
 
-        if not self.skip_gui:
+        if not self.skip_gui and not self.gui_external:
             nuitka_cmd.append(f"--include-data-files={output_exe}={self.gui_exe.name}")
 
         if self.is_macos:
@@ -538,7 +540,7 @@ class Builder:
                 raise RuntimeError("GUI build failed")
             if self._build_daemon() != 0:
                 raise RuntimeError("Daemon build failed")
-            elif not self.skip_daemon and not self.skip_gui:
+            elif not self.skip_daemon:
                 if self._swap_executables() != 0:
                     raise RuntimeError("Executable swap failed")
                 self._sign_bundle()
@@ -555,6 +557,9 @@ def main():
     parser = argparse.ArgumentParser(description="Build script")
     parser.add_argument(
         "--skip-gui", "-d", action="store_true", help="Skip GUI build (Daemon only)"
+    )
+    parser.add_argument(
+        "--gui-external", action="store_true", help="Use external GUI build (skip GUI build)"
     )
     parser.add_argument(
         "--skip-daemon", "-g", action="store_true", help="Skip daemon build (GUI only)"
@@ -584,6 +589,7 @@ def main():
         release=not args.debug,
         nuitka_args=args.nuitka_args,
         target=args.target,
+        gui_external=args.gui_external,
     )
     builder.build()
 
