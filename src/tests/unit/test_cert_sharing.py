@@ -25,6 +25,7 @@ import unittest
 import asyncio
 import tempfile
 import os
+import shutil
 from pathlib import Path
 import time
 
@@ -291,7 +292,7 @@ class TestCertificateSharing(unittest.TestCase):
                     server_host=self.test_host, server_port=self.test_port, timeout=5
                 )
 
-                success, received_cert = await receiver.receive_certificate(otp)  # ty:ignore[invalid-argument-type]
+                success, received_cert, _ = await receiver.receive_certificate(otp)  # ty:ignore[invalid-argument-type]
 
                 # Check success
                 self.assertTrue(success)
@@ -333,7 +334,9 @@ class TestCertificateSharing(unittest.TestCase):
                 )
 
                 wrong_otp = "000000"  # Wrong OTP
-                success, received_cert = await receiver.receive_certificate(wrong_otp)
+                success, received_cert, _ = await receiver.receive_certificate(
+                    wrong_otp
+                )
 
                 # Should fail
                 self.assertFalse(success)
@@ -369,7 +372,7 @@ class TestCertificateSharing(unittest.TestCase):
                     server_host=self.test_host, server_port=self.test_port, timeout=5
                 )
 
-                success, received_cert = await receiver.receive_certificate(otp)
+                success, received_cert, _ = await receiver.receive_certificate(otp)
 
                 # Should fail (server auto-shutdown)
                 self.assertFalse(success)
@@ -390,7 +393,7 @@ class TestCertificateSharing(unittest.TestCase):
             )
 
             # Try to receive without server running
-            success, received_cert = await receiver.receive_certificate("123456")
+            success, received_cert, _ = await receiver.receive_certificate("123456")
 
             # Should fail
             self.assertFalse(success)
@@ -430,7 +433,7 @@ class TestCertificateSharing(unittest.TestCase):
                 )
 
                 # All should succeed
-                for success, cert in results:
+                for success, cert, _ in results:
                     self.assertTrue(success)
                     self.assertIsNotNone(cert)
 
@@ -460,7 +463,7 @@ class TestCertificateSharing(unittest.TestCase):
                     timeout=1,  # Short timeout
                 )
 
-                success, cert = await receiver.receive_certificate("123456")
+                success, cert, _ = await receiver.receive_certificate("123456")
 
                 # Should timeout and fail
                 self.assertFalse(success)
@@ -523,7 +526,7 @@ class TestCertificateSharingIntegration(unittest.TestCase):
                     server_host=self.test_host, server_port=self.test_port, timeout=5
                 )
 
-                success, received_cert = await receiver.receive_certificate(otp)
+                success, received_cert, _ = await receiver.receive_certificate(otp)
                 self.assertTrue(success)
 
                 # Save to temporary file
@@ -568,7 +571,7 @@ class TestCertificateSharingIntegration(unittest.TestCase):
             )
 
             # Use wrong OTP
-            fail_success, _ = await receiver.receive_certificate("000000")
+            fail_success, _, _ = await receiver.receive_certificate("000000")
             self.assertFalse(fail_success)
 
             # Stop first attempt
@@ -584,7 +587,7 @@ class TestCertificateSharingIntegration(unittest.TestCase):
             try:
                 await asyncio.sleep(0.5)
 
-                success, received_cert = await receiver.receive_certificate(otp2)
+                success, received_cert, _ = await receiver.receive_certificate(otp2)
                 self.assertTrue(success)
                 self.assertIsNotNone(received_cert)
 
@@ -799,6 +802,99 @@ class TestCertificateManagerAtomicWrites(unittest.TestCase):
             p for p in self.cert_manager.cert_dir.iterdir() if p.name.endswith(".tmp")
         ]
         self.assertEqual(leftovers, [], f"temp files leaked: {leftovers}")
+
+
+class TestOtpHardeningAndCsrSigning(unittest.TestCase):
+    """OTP is verified server-side and burns after too many wrong attempts;
+    a CSR sent with a valid OTP is signed and the client cert returned."""
+
+    def setUp(self):
+        self.temp_dir = tempfile.mkdtemp()
+        self.cert_manager = CertificateManager(Path(self.temp_dir))
+        self.cert_manager.generate_ca()
+        self.cert_manager.generate_server_certificate(
+            ip_addresses=["127.0.0.1"], hostname="test.local"
+        )
+        with open(self.cert_manager.ca_cert_path, "rb") as f:
+            self.cert_data = f.read()
+        self.test_host = "127.0.0.1"
+        self.test_port = 15570
+
+    def tearDown(self):
+        shutil.rmtree(self.temp_dir, ignore_errors=True)
+
+    def test_wrong_otp_rejected_then_locked_out(self):
+        from utils.crypto.sharing import MAX_OTP_ATTEMPTS
+
+        async def run_test():
+            sharing = CertificateSharing(
+                cert_data=self.cert_data,
+                host=self.test_host,
+                port=self.test_port,
+                timeout=30,
+            )
+            self.assertTrue(await sharing.start_service())
+            try:
+                otp, _ = await sharing.ensure_active_otp()
+                self.assertIsNotNone(otp)
+
+                # Burn through the allowed wrong attempts.
+                for _ in range(MAX_OTP_ATTEMPTS):
+                    receiver = CertificateReceiver(
+                        server_host=self.test_host,
+                        server_port=self.test_port,
+                        timeout=3,
+                    )
+                    ok, ca, _client = await receiver.receive_certificate("000000")
+                    self.assertFalse(ok)
+
+                # OTP is now burned: even the correct OTP no longer works.
+                receiver = CertificateReceiver(
+                    server_host=self.test_host,
+                    server_port=self.test_port,
+                    timeout=3,
+                )
+                ok, ca, _client = await receiver.receive_certificate(otp)
+                self.assertFalse(ok)
+            finally:
+                await sharing.stop_sharing()
+
+        asyncio.run(run_test())
+
+    def test_valid_otp_with_csr_returns_signed_client_cert(self):
+        import shutil as _shutil
+
+        async def run_test():
+            client_dir = tempfile.mkdtemp()
+            client_cm = CertificateManager(Path(client_dir))
+            sharing = CertificateSharing(
+                cert_data=self.cert_data,
+                host=self.test_host,
+                port=self.test_port + 1,
+                timeout=30,
+                csr_signer=self.cert_manager.sign_client_csr,
+            )
+            ok, otp = await sharing.start_sharing()
+            try:
+                self.assertTrue(ok)
+                csr_pem = client_cm.generate_client_key_and_csr("client-uid-e2e")
+                receiver = CertificateReceiver(
+                    server_host=self.test_host,
+                    server_port=self.test_port + 1,
+                    timeout=3,
+                )
+                success, ca_cert, client_cert = await receiver.receive_certificate(
+                    otp, csr_pem=csr_pem
+                )
+                self.assertTrue(success)
+                self.assertIsNotNone(ca_cert)
+                self.assertIsNotNone(client_cert)
+                self.assertIn("BEGIN CERTIFICATE", client_cert)
+            finally:
+                await sharing.stop_sharing()
+                _shutil.rmtree(client_dir, ignore_errors=True)
+
+        asyncio.run(run_test())
 
 
 if __name__ == "__main__":

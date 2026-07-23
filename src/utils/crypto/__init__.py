@@ -20,7 +20,7 @@ from pathlib import Path
 import msgspec.json
 from typing import Tuple, Optional, Dict
 from cryptography import x509
-from cryptography.x509.oid import NameOID
+from cryptography.x509.oid import NameOID, ExtendedKeyUsageOID
 from cryptography.hazmat.primitives import hashes, serialization
 from cryptography.hazmat.primitives.asymmetric import rsa
 from cryptography.hazmat.backends import default_backend
@@ -46,6 +46,10 @@ class CertificateManager:
         self.ca_key_path = self.cert_dir / "ca.key"
         self.server_cert_path = self.cert_dir / "server.crt"
         self.server_key_path = self.cert_dir / "server.key"
+        # Client-side identity material (mutual TLS). The private key never
+        # leaves the client; the cert is the CA-signed leaf received at pairing.
+        self.client_cert_path = self.cert_dir / "client.crt"
+        self.client_key_path = self.cert_dir / "client.key"
 
         self._logger = get_logger(self.__class__.__name__)
 
@@ -196,6 +200,160 @@ class CertificateManager:
         except Exception as e:
             self._logger.error("Server certificate generation error", error=str(e))
             return False
+
+    def generate_client_key_and_csr(self, uid: str) -> Optional[bytes]:
+        """Generate a client private key and a CSR for mutual-TLS identity.
+
+        The private key is persisted locally (``client.key``, mode 0o600) and
+        never leaves this machine. Returns the CSR (PEM) to send to the server
+        for signing, or None on failure. ``uid`` is placed in the CSR subject
+        Common Name; the server re-asserts it when signing.
+        """
+        try:
+            client_key = rsa.generate_private_key(
+                public_exponent=65537, key_size=2048, backend=default_backend()
+            )
+
+            csr = (
+                x509.CertificateSigningRequestBuilder()
+                .subject_name(
+                    x509.Name(
+                        [
+                            x509.NameAttribute(NameOID.COUNTRY_NAME, "IT"),
+                            x509.NameAttribute(
+                                NameOID.ORGANIZATION_NAME,
+                                ApplicationConfig.service_name,
+                            ),
+                            x509.NameAttribute(NameOID.COMMON_NAME, uid),
+                        ]
+                    )
+                )
+                .sign(client_key, hashes.SHA256(), default_backend())
+            )
+
+            atomic_write_bytes(
+                self.client_key_path,
+                client_key.private_bytes(
+                    encoding=serialization.Encoding.PEM,
+                    format=serialization.PrivateFormat.PKCS8,
+                    encryption_algorithm=serialization.NoEncryption(),
+                ),
+                mode=0o600,
+            )
+
+            return csr.public_bytes(serialization.Encoding.PEM)
+        except Exception as e:
+            self._logger.error("Client CSR generation error", error=str(e))
+            return None
+
+    def sign_client_csr(
+        self, csr_pem: bytes, uid: Optional[str] = None
+    ) -> Optional[bytes]:
+        """Sign a client CSR with the CA, producing a client leaf certificate.
+
+        The certificate's Common Name is forced to ``uid`` regardless of what
+        the CSR requested, so the server controls the identity binding. When
+        ``uid`` is None it is taken from the CSR subject Common Name (so this
+        method can be wired directly as a single-argument signer callback). The
+        client private key is never seen here. Returns the signed cert (PEM),
+        or None on failure.
+        """
+        try:
+            csr = x509.load_pem_x509_csr(csr_pem, default_backend())
+            if not csr.is_signature_valid:
+                self._logger.log("Client CSR signature invalid", Logger.WARNING)
+                return None
+
+            if uid is None:
+                cn = csr.subject.get_attributes_for_oid(NameOID.COMMON_NAME)
+                if not cn:
+                    self._logger.log(
+                        "Client CSR has no Common Name to bind", Logger.WARNING
+                    )
+                    return None
+                uid = cn[0].value
+                if isinstance(uid, bytes):
+                    uid = uid.decode("utf-8")
+
+            with open(self.ca_key_path, "rb") as f:
+                ca_key = serialization.load_pem_private_key(
+                    f.read(), password=None, backend=default_backend()
+                )
+            with open(self.ca_cert_path, "rb") as f:
+                ca_cert = x509.load_pem_x509_certificate(f.read(), default_backend())
+
+            # Force CN = uid: the server decides the identity, not the client.
+            subject = x509.Name(
+                [
+                    x509.NameAttribute(NameOID.COUNTRY_NAME, "IT"),
+                    x509.NameAttribute(
+                        NameOID.ORGANIZATION_NAME, ApplicationConfig.service_name
+                    ),
+                    x509.NameAttribute(NameOID.COMMON_NAME, uid),
+                ]
+            )
+
+            client_cert = (
+                x509.CertificateBuilder()
+                .subject_name(subject)
+                .issuer_name(ca_cert.subject)
+                .public_key(csr.public_key())
+                .serial_number(x509.random_serial_number())
+                .not_valid_before(datetime.datetime.now(datetime.UTC))
+                .not_valid_after(
+                    datetime.datetime.now(datetime.UTC) + datetime.timedelta(days=365)
+                )
+                .add_extension(
+                    x509.BasicConstraints(ca=False, path_length=None),
+                    critical=True,
+                )
+                .add_extension(
+                    x509.ExtendedKeyUsage([ExtendedKeyUsageOID.CLIENT_AUTH]),
+                    critical=False,
+                )
+                .sign(ca_key, hashes.SHA256(), default_backend())  # ty:ignore[invalid-argument-type]
+            )
+
+            return client_cert.public_bytes(serialization.Encoding.PEM)
+        except Exception as e:
+            self._logger.error("Client CSR signing error", error=str(e))
+            return None
+
+    def save_client_certificate(self, cert_data: bytes | str) -> bool:
+        """Persist the CA-signed client leaf certificate (public, mode 0o644)."""
+        try:
+            if isinstance(cert_data, str):
+                cert_data = cert_data.encode("utf-8")
+            atomic_write_bytes(self.client_cert_path, cert_data, mode=0o644)
+            return True
+        except Exception as e:
+            self._logger.error("Error saving client certificate", error=str(e))
+            return False
+
+    def client_credentials_exist(self) -> bool:
+        """True if this machine holds a client cert + key for mutual TLS."""
+        return self.client_cert_path.exists() and self.client_key_path.exists()
+
+    def get_client_credentials(self) -> Tuple[Optional[str], Optional[str]]:
+        """Return the (cert, key) paths for the client identity, or (None, None)."""
+        if self.client_credentials_exist():
+            return str(self.client_cert_path), str(self.client_key_path)
+        return None, None
+
+    def remove_client_credentials(self) -> bool:
+        """Delete the local client cert + key (used before re-pairing)."""
+        removed = False
+        for path in (self.client_cert_path, self.client_key_path):
+            try:
+                path.unlink()
+                removed = True
+            except FileNotFoundError:
+                pass
+            except OSError as e:
+                self._logger.log(
+                    f"Error removing client credential {path}: {e}", Logger.WARNING
+                )
+        return removed
 
     def certificates_exist(self) -> bool:
         """

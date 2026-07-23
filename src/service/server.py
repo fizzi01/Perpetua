@@ -309,6 +309,7 @@ class Server:
             port=bind_port,
             timeout=30,
             pairing_request_callback=self._on_pairing_requested,
+            csr_signer=self._cert_manager.sign_client_csr,
         )
 
         ok = await self._cert_sharing.start_service()
@@ -401,6 +402,7 @@ class Server:
                 port=bind_port,
                 timeout=timeout,
                 pairing_request_callback=self._on_pairing_requested,
+                csr_signer=self._cert_manager.sign_client_csr,
             )
 
             success, otp = await self._cert_sharing.start_sharing()
@@ -1223,6 +1225,12 @@ class Server:
             allowlist=self.clients_manager,
             certfile=self.certfile,
             keyfile=self.keyfile,
+            ca_certfile=(
+                self._cert_manager.get_ca_cert_path()
+                if self.config.ssl_enabled
+                else None
+            ),
+            ssl_enabled=self.config.ssl_enabled,
             approval_callback=self._request_client_approval,
             server_uid=self.config.uid,
         )

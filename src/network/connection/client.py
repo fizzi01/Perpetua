@@ -87,6 +87,8 @@ class ConnectionHandler(BaseConnectionHandler):
         clients: Optional[ClientsManager] = None,
         open_streams: Optional[list[int]] = None,
         certfile: Optional[str] = None,
+        client_certfile: Optional[str] = None,
+        client_keyfile: Optional[str] = None,
         use_ssl: bool = False,
         auto_reconnect: bool = True,
     ):
@@ -135,8 +137,13 @@ class ConnectionHandler(BaseConnectionHandler):
         self.auto_reconnect = auto_reconnect
 
         self.certfile = certfile
+        # Client identity for mutual TLS: the CA-signed leaf cert and its
+        # private key. Presented to the server so it can cryptographically
+        # authenticate this client (CN == UID). The key never leaves here.
+        self.client_certfile = client_certfile
+        self.client_keyfile = client_keyfile
         self.use_ssl = use_ssl
-        self._ssl_context_cache: Optional[tuple[Optional[str], ssl.SSLContext]] = None
+        self._ssl_context_cache: Optional[tuple[Optional[tuple], ssl.SSLContext]] = None
 
         if self.use_ssl and self.certfile is None:
             raise ValueError("SSL is enabled but no certificate file provided")
@@ -433,9 +440,23 @@ class ConnectionHandler(BaseConnectionHandler):
     async def _connect(self) -> bool:
         """Establish command stream connection"""
         try:
+            # When TLS is enabled the connection is wrapped in mutual TLS from
+            # the start, so the handshake and COMMAND channel are encrypted and
+            # the server can authenticate us via our client certificate.
+            ssl_context = self._get_ssl_context()
+
             # Connect to server
+            if ssl_context is not None:
+                open_coro = asyncio.open_connection(
+                    self.host,
+                    self.port,
+                    ssl=ssl_context,
+                    server_hostname=self.host,
+                )
+            else:
+                open_coro = asyncio.open_connection(self.host, self.port)
             _command_reader, _command_writer = await asyncio.wait_for(
-                asyncio.open_connection(self.host, self.port),
+                open_coro,
                 timeout=self.CONNECTION_ATTEMPT_TIMEOUT,
             )
             set_socket_nodelay(_command_writer)
@@ -443,7 +464,12 @@ class ConnectionHandler(BaseConnectionHandler):
                 reader=_command_reader, writer=_command_writer
             )
 
-            self._logger.debug("Connected", host=self.host, port=self.port)
+            self._logger.debug(
+                "Connected",
+                host=self.host,
+                port=self.port,
+                tls=ssl_context is not None,
+            )
             return True
 
         except asyncio.TimeoutError:
@@ -456,6 +482,16 @@ class ConnectionHandler(BaseConnectionHandler):
                 f"Connection refused by {self.host}:{self.port}", Logger.WARNING
             )
             return False
+        except ssl.SSLCertVerificationError as e:
+            # Stale local CA: the server regenerated its CA but we still hold an
+            # old one. Surface a specific error so the service can purge and
+            # re-pair instead of looping on a cryptic SSL log line.
+            self._logger.log(
+                f"TLS verification failed connecting to {self.host}:{self.port}: {e}. "
+                f"The locally stored CA certificate looks stale.",
+                Logger.ERROR,
+            )
+            raise StaleCertificateError(str(e)) from e
         except Exception as e:
             self._logger.error("Connection error", error=str(e))
             return False
@@ -613,14 +649,22 @@ class ConnectionHandler(BaseConnectionHandler):
         """
         if not self.use_ssl or not self.certfile:
             return None
+        cache_key = (self.certfile, self.client_certfile, self.client_keyfile)
         if (
             self._ssl_context_cache is not None
-            and self._ssl_context_cache[0] == self.certfile
+            and self._ssl_context_cache[0] == cache_key
         ):
             return self._ssl_context_cache[1]
         context = ssl.create_default_context(ssl.Purpose.SERVER_AUTH)
         context.load_verify_locations(self.certfile)
-        self._ssl_context_cache = (self.certfile, context)
+        # Present our client identity for mutual TLS. Absent it, a TLS-mode
+        # server (verify_mode=CERT_REQUIRED) refuses the connection — which is
+        # the signal to (re-)pair and obtain a client certificate.
+        if self.client_certfile and self.client_keyfile:
+            context.load_cert_chain(
+                certfile=self.client_certfile, keyfile=self.client_keyfile
+            )
+        self._ssl_context_cache = (cache_key, context)
         return context
 
     async def _open_additional_streams(self, streams: list[int]) -> bool:
@@ -641,20 +685,23 @@ class ConnectionHandler(BaseConnectionHandler):
 
         for stream_type in streams:
             try:
-                # Connect to server for this stream
+                # Connect to server for this stream. When TLS is on the stream
+                # is wrapped from the start (matching the server listener), so
+                # there is no separate start_tls upgrade step.
+                if ssl_context is not None:
+                    open_coro = asyncio.open_connection(
+                        self.host,
+                        self.port,
+                        ssl=ssl_context,
+                        server_hostname=self.host,
+                    )
+                else:
+                    open_coro = asyncio.open_connection(self.host, self.port)
                 reader, writer = await asyncio.wait_for(
-                    asyncio.open_connection(self.host, self.port),
+                    open_coro,
                     timeout=self.CONNECTION_ATTEMPT_TIMEOUT,
                 )
                 set_socket_nodelay(writer)
-
-                # Upgrade to TLS if needed
-                if self.use_ssl and ssl_context:
-                    await asyncio.wait_for(
-                        writer.start_tls(sslcontext=ssl_context),
-                        timeout=self.CONNECTION_ATTEMPT_TIMEOUT,
-                    )
-                    set_socket_nodelay(writer)
 
                 # Store connected stream readers and writers in ClientConnection
                 if self._client_obj is None:

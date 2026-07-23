@@ -77,6 +77,8 @@ class ConnectionHandler(BaseConnectionHandler):
         allowlist: Optional[ClientsManager] = None,
         certfile: Optional[str] = None,
         keyfile: Optional[str] = None,
+        ca_certfile: Optional[str] = None,
+        ssl_enabled: bool = False,
         approval_callback: Optional[
             Callable[[str, str, str], Awaitable[Optional["ClientObj"]]]
         ] = None,
@@ -84,6 +86,13 @@ class ConnectionHandler(BaseConnectionHandler):
     ):
         self.certfile = certfile
         self.keyfile = keyfile
+        # CA used to verify client certificates for mutual TLS. When set (and
+        # ssl_enabled), the listener requires a CA-signed client cert.
+        self.ca_certfile = ca_certfile
+        # Server-side TLS policy. When True, the whole connection (handshake,
+        # COMMAND, and all streams) is wrapped in mutual TLS from accept; the
+        # decision is the server's, not dictated by the client handshake flag.
+        self.ssl_enabled = ssl_enabled
         # Sent to clients in the handshake ack so they can persist a stable
         # identifier for this server (used as the cert mapping key). Without
         # this, manual-config clients never learn the UID and their cert
@@ -136,17 +145,26 @@ class ConnectionHandler(BaseConnectionHandler):
         try:
             self._running = True
 
+            # TLS is a server-side policy decision: when enabled (and certs are
+            # present) the listener is wrapped in mutual TLS, so the handshake,
+            # COMMAND channel, and every additional stream are encrypted and the
+            # client must present a CA-signed certificate. When disabled the
+            # listener stays plaintext (best-effort, documented-insecure mode).
+            ssl_context = self._get_ssl_context() if self.ssl_enabled else None
+
             # Crea il server asyncio
             self.server = await asyncio.start_server(
                 self._handle_client,
                 self.host,
                 self.port,
-                # ssl=self._get_ssl_context() Choose it based on client request in handshake
+                ssl=ssl_context,
             )
             # Serve forever in background
             self._server_task = asyncio.create_task(self._serve_forever())
 
-            self._logger.info("Started", host=self.host, port=self.port)
+            self._logger.info(
+                "Started", host=self.host, port=self.port, tls=ssl_context is not None
+            )
 
             # Start heartbeat task
             self._heartbeat_task = asyncio.create_task(self._heartbeat_loop())
@@ -372,6 +390,28 @@ class ConnectionHandler(BaseConnectionHandler):
         return client_obj.has_ip(address)
 
     @staticmethod
+    def _peer_cert_cn(writer: asyncio.StreamWriter) -> Optional[str]:
+        """Return the Common Name of the verified peer (client) certificate.
+
+        Only meaningful under mutual TLS (verify_mode=CERT_REQUIRED); returns
+        None when there is no TLS layer or the cert carries no CN.
+        """
+        ssl_object = writer.get_extra_info("ssl_object")
+        if ssl_object is None:
+            return None
+        try:
+            peer_cert = ssl_object.getpeercert()
+        except Exception:
+            return None
+        if not peer_cert:
+            return None
+        for rdn in peer_cert.get("subject", ()):
+            for key, value in rdn:
+                if key == "commonName":
+                    return value
+        return None
+
+    @staticmethod
     def _is_identity_confirmed(
         client_obj: ClientObj,
         uid: Optional[str],
@@ -577,6 +617,25 @@ class ConnectionHandler(BaseConnectionHandler):
                         await cur_stream.close()
                         return False
 
+                # --- TLS identity binding (mutual-TLS mode only) ---
+                # CERT_REQUIRED already guaranteed the peer holds a CA-signed
+                # certificate. Bind that certificate to the claimed identity:
+                # the cert Common Name must equal the UID asserted in the
+                # handshake. This is what makes the UID unforgeable — a stolen
+                # UID string is useless without the matching private key.
+                if self.ssl_enabled:
+                    cert_cn = self._peer_cert_cn(writer)
+                    if cert_cn is None or cert_cn != tmp_uid:
+                        self._logger.log(
+                            f"Client certificate CN '{cert_cn}' does not match "
+                            f"claimed UID '{tmp_uid}' from {client_addr}. "
+                            f"Rejecting handshake.",
+                            Logger.WARNING,
+                        )
+                        await client_msg_exchange.stop()
+                        await cur_stream.close()
+                        return False
+
                 # --- UID consistency check ---
                 # If the client already has a saved uid, verify it matches the received one
                 if (
@@ -652,7 +711,8 @@ class ConnectionHandler(BaseConnectionHandler):
                     "screen_resolution", "0x0"
                 )
                 client.additional_params = response.payload.get("additional_params", {})
-                client.ssl = response.payload.get("ssl", False)
+                # TLS state is the server's policy, not the client's assertion.
+                client.ssl = self.ssl_enabled
                 # Parse monitor list once at ingress; malformed entries are
                 # dropped. Legacy clients omit the field — empty list signals
                 # "single monitor = screen_resolution" downstream.
@@ -824,17 +884,9 @@ class ConnectionHandler(BaseConnectionHandler):
                 stream_addr = stream_writer.get_extra_info("peername")
                 set_socket_nodelay(stream_writer)
 
-                # Wrap SSL
-                if client.ssl and self.certfile and self.keyfile:
-                    await asyncio.wait_for(
-                        stream_writer.start_tls(self._get_ssl_context()),
-                        timeout=self.CONNECTION_ATTEMPT_TIMEOUT,
-                    )
-                    set_socket_nodelay(stream_writer)
-                    self._logger.log(
-                        f"SSL stream connection for {stream_type} from {stream_addr}",
-                        Logger.INFO,
-                    )
+                # No per-stream TLS upgrade: when the server TLS policy is on,
+                # the listener already wrapped this connection in mutual TLS at
+                # accept, so the stream transport is encrypted end-to-end.
 
                 conn = client.get_connection()
                 if conn is None:
@@ -1085,13 +1137,20 @@ class ConnectionHandler(BaseConnectionHandler):
         if not self.certfile or not self.keyfile:
             return None
 
-        cache_key = (self.certfile, self.keyfile)
+        cache_key = (self.certfile, self.keyfile, self.ca_certfile)
         cached = getattr(self, "_ssl_context_cache", None)
         if cached is not None and cached[0] == cache_key:
             return cached[1]
 
         context = ssl.create_default_context(ssl.Purpose.CLIENT_AUTH)
         context.load_cert_chain(certfile=self.certfile, keyfile=self.keyfile)
+        # Mutual TLS: require and verify a CA-signed client certificate. This is
+        # what cryptographically authenticates the client — the UID claimed in
+        # the handshake is only trusted once it matches the verified cert (see
+        # the CN binding check in _handshake).
+        if self.ca_certfile:
+            context.load_verify_locations(cafile=self.ca_certfile)
+            context.verify_mode = ssl.CERT_REQUIRED
         self._ssl_context_cache = (cache_key, context)
         return context
 

@@ -34,9 +34,7 @@ def _admission(client, address, uid, hostname):
     """
     if ConnectionHandler._check_client(client, address):
         return "ok"
-    identity_confirmed = ConnectionHandler._is_identity_confirmed(
-        client, uid, hostname
-    )
+    identity_confirmed = ConnectionHandler._is_identity_confirmed(client, uid, hostname)
     if client.ip_addresses and not identity_confirmed:
         return "reject"
     return "register"
@@ -49,15 +47,12 @@ class TestIsIdentityConfirmed:
 
     def test_matching_hostname_confirms(self):
         client = ClientObj(uid="abc", ip_addresses=["10.0.0.5"], hostname="host-a")
-        assert (
-            ConnectionHandler._is_identity_confirmed(client, None, "host-a") is True
-        )
+        assert ConnectionHandler._is_identity_confirmed(client, None, "host-a") is True
 
     def test_mismatched_uid_not_confirmed(self):
         client = ClientObj(uid="abc", ip_addresses=["10.0.0.5"])
         assert (
-            ConnectionHandler._is_identity_confirmed(client, "different", None)
-            is False
+            ConnectionHandler._is_identity_confirmed(client, "different", None) is False
         )
 
     def test_no_identifiers_not_confirmed(self):
@@ -78,15 +73,12 @@ class TestIpAdmission:
     def test_hostname_only_client_learns_first_ip(self):
         client = ClientObj(uid="abc", hostname="host-a", ip_addresses=None)
         assert (
-            _admission(client, "10.0.0.7", uid="abc", hostname="host-a")
-            == "register"
+            _admission(client, "10.0.0.7", uid="abc", hostname="host-a") == "register"
         )
 
     def test_unknown_ip_without_identity_is_rejected(self):
         client = ClientObj(uid="abc", ip_addresses=["10.0.0.5"])
-        assert (
-            _admission(client, "10.0.0.99", uid=None, hostname=None) == "reject"
-        )
+        assert _admission(client, "10.0.0.99", uid=None, hostname=None) == "reject"
 
     def test_add_ip_persists_new_address(self):
         client = ClientObj(uid="abc", ip_addresses=["10.0.0.5"])
