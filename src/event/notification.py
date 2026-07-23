@@ -88,6 +88,7 @@ class NotificationEventType(str, Enum):
     CLIENT_UPDATED = "client_updated"
     CLIENT_APPROVAL_REQUESTED = "client_approval_requested"
     CLIENT_APPROVAL_RESOLVED = "client_approval_resolved"
+    CLIENT_REJECTED = "client_rejected"
 
     # Stream events
     STREAM_ENABLED = "stream_enabled"
@@ -574,6 +575,42 @@ class ClientApprovalResolvedEvent(NotificationEvent):
             data=data,
             source="server",
             message=f"Client {peer_ip} {verb}",
+        )
+
+
+@dataclass
+class ClientRejectedEvent(NotificationEvent):
+    """A client's handshake was rejected on identity grounds.
+
+    Unlike a pending-approval denial, this fires for a client that already
+    passed (or bypassed) admission but failed an identity check at handshake
+    time - expired/mismatched certificate, UID or hostname mismatch, or an
+    unauthorized source address. Emitted so the GUI can tell the admin *why*
+    a known client silently failed to connect (e.g. after re-pairing produced
+    a new UID that no longer matches the pinned one).
+    """
+
+    def __init__(
+        self,
+        peer_ip: str,
+        reason: str,
+        hostname: str = "",
+        uid: str = "",
+        **kwargs,
+    ):
+        data = {
+            "peer_ip": peer_ip,
+            "reason": reason,
+            "hostname": hostname,
+            "uid": uid,
+        }
+        data.update(kwargs)
+        display = hostname or peer_ip or "unknown client"
+        super().__init__(
+            event_type=NotificationEventType.CLIENT_REJECTED,
+            data=data,
+            source="server",
+            message=f"Connection from {display} rejected: {reason}",
         )
 
 

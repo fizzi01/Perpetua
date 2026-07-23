@@ -87,6 +87,7 @@ class ConnectionHandler(BaseConnectionHandler):
         approval_callback: Optional[
             Callable[[str, str, str], Awaitable[Optional["ClientObj"]]]
         ] = None,
+        rejected_callback: Optional[Callable[[str, str, str, str], Any]] = None,
         server_uid: Optional[str] = None,
     ):
         self.certfile = certfile
@@ -113,6 +114,12 @@ class ConnectionHandler(BaseConnectionHandler):
         # The callback receives (peer_ip, hostname, uid) and returns either a
         # populated ClientObj or None (denied / timeout).
         self.approval_callback = approval_callback
+        # When set, a handshake rejected on identity grounds (expired/mismatched
+        # certificate, UID/hostname mismatch, unauthorized IP) is reported to
+        # this callback so the GUI can surface the failure - otherwise a
+        # rejection is only visible in the daemon log. Receives
+        # (peer_ip, hostname, uid, reason); never raises into the handshake.
+        self.rejected_callback = rejected_callback
 
         self.host = host
         self.port = port
@@ -134,6 +141,39 @@ class ConnectionHandler(BaseConnectionHandler):
     ) -> None:
         """Plug in (or remove) an interactive approval callback at runtime."""
         self.approval_callback = callback
+
+    def set_rejected_callback(
+        self,
+        callback: Optional[Callable[[str, str, str, str], Any]],
+    ) -> None:
+        """Plug in (or remove) the handshake-rejection callback at runtime."""
+        self.rejected_callback = callback
+
+    async def _notify_rejection(
+        self,
+        peer_ip: str,
+        hostname: Optional[str],
+        uid: Optional[str],
+        reason: str,
+    ) -> None:
+        """Report an identity-based handshake rejection to the GUI.
+
+        Best-effort: a failing/absent callback must never disturb the handshake
+        teardown, so all errors are swallowed (and logged).
+        """
+        if self.rejected_callback is None:
+            return
+        try:
+            result = self.rejected_callback(
+                peer_ip, hostname or "", uid or "", reason
+            )
+            if asyncio.iscoroutine(result):
+                await result
+        except Exception as e:
+            self._logger.log(
+                f"rejected_callback raised for {peer_ip} ({e})",
+                Logger.ERROR,
+            )
 
     def set_server_uid(self, uid: Optional[str]) -> None:
         """Update the advertised server UID at runtime.
@@ -639,6 +679,12 @@ class ConnectionHandler(BaseConnectionHandler):
                             f"Rejecting handshake.",
                             Logger.WARNING,
                         )
+                        await self._notify_rejection(
+                            client_addr,
+                            tmp_host_name,
+                            tmp_uid,
+                            "expired certificate",
+                        )
                         await client_msg_exchange.stop()
                         await cur_stream.close()
                         return False
@@ -649,6 +695,12 @@ class ConnectionHandler(BaseConnectionHandler):
                             f"claimed UID '{tmp_uid}' from {client_addr}. "
                             f"Rejecting handshake.",
                             Logger.WARNING,
+                        )
+                        await self._notify_rejection(
+                            client_addr,
+                            tmp_host_name,
+                            tmp_uid,
+                            "certificate identity mismatch",
                         )
                         await client_msg_exchange.stop()
                         await cur_stream.close()
@@ -667,6 +719,12 @@ class ConnectionHandler(BaseConnectionHandler):
                         f"Rejecting handshake.",
                         Logger.WARNING,
                     )
+                    await self._notify_rejection(
+                        client_addr,
+                        tmp_host_name or client.host_name,
+                        tmp_uid,
+                        "UID mismatch",
+                    )
                     await client_msg_exchange.stop()
                     await cur_stream.close()
                     return False
@@ -683,6 +741,12 @@ class ConnectionHandler(BaseConnectionHandler):
                         f"expected '{client.host_name}', received '{tmp_host_name}'. "
                         f"Rejecting handshake.",
                         Logger.WARNING,
+                    )
+                    await self._notify_rejection(
+                        client_addr,
+                        tmp_host_name,
+                        tmp_uid,
+                        "hostname mismatch",
                     )
                     await client_msg_exchange.stop()
                     await cur_stream.close()
@@ -706,6 +770,12 @@ class ConnectionHandler(BaseConnectionHandler):
                             f"{client.get_net_id()} (known: {client.ip_addresses}). "
                             f"Rejecting handshake.",
                             Logger.WARNING,
+                        )
+                        await self._notify_rejection(
+                            client_addr,
+                            tmp_host_name or client.host_name,
+                            tmp_uid,
+                            "unauthorized address",
                         )
                         await client_msg_exchange.stop()
                         await cur_stream.close()

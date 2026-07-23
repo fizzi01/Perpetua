@@ -49,6 +49,7 @@ import {listenCommand, listenGeneralEvent} from '../api/Listener';
 import {
     ClientApprovalRequest,
     ClientApprovalResolved,
+    ClientRejected,
     ClientEditObj,
     ClientObj,
     CommandType,
@@ -590,6 +591,19 @@ export function ServerTab({onStatusChange, state}: ServerTabProps) {
                 listeners.addListenerOnce('approval-resolved', unlisten);
             });
 
+            // A known/admitted client failed an identity check at handshake
+            // time (expired/mismatched cert, UID or hostname mismatch,
+            // unauthorized address). This is otherwise only visible in the
+            // daemon log - surface it so the admin knows why a client that
+            // looked paired never actually connected.
+            listenGeneralEvent(EventType.ClientRejected, false, (event) => {
+                const info = event.data as ClientRejected | undefined;
+                if (!info || !info.peer_ip) return;
+                handleClientRejected(info);
+            }).then(unlisten => {
+                listeners.addListenerOnce('client-rejected', unlisten);
+            });
+
             // Server monitor hot-plug/topology change. The daemon already
             // auto-prunes placements that no longer touch any server monitor;
             // surface the orphans (if any) so the admin can re-place them.
@@ -647,6 +661,25 @@ export function ServerTab({onStatusChange, state}: ServerTabProps) {
     const handleApprovalResolved = (info: ClientApprovalResolved) => {
         setPendingApprovals((prev) =>
             prev.filter((r) => r.peer_ip !== info.peer_ip)
+        );
+    };
+
+    const handleClientRejected = (info: ClientRejected) => {
+        const who = info.hostname || info.peer_ip;
+        // A UID/certificate mismatch is the classic "re-paired client" case:
+        // the client holds a fresh identity the server never learned. Point the
+        // admin at the fix (remove & re-pair) instead of a bare reason string.
+        const isIdentityMismatch =
+            info.reason.includes('UID') ||
+            info.reason.includes('certificate') ||
+            info.reason.includes('hostname');
+        const detail = isIdentityMismatch
+            ? `${info.reason} - remove this client and pair it again to trust its new identity`
+            : info.reason;
+        addNotification(
+            'error',
+            `Connection from ${who} rejected`,
+            detail,
         );
     };
 

@@ -81,6 +81,7 @@ export enum EventType {
     ClientUpdated,
     ClientApprovalRequested,
     ClientApprovalResolved,
+    ClientRejected,
 
     // Stream events
     StreamEnabled,
@@ -397,6 +398,14 @@ export interface ClientApprovalResolved {
     // Legacy — kept for backward compatibility; new approvals open the Layout Editor instead.
     screen_position?: string;
     reason: string;
+}
+
+
+export interface ClientRejected {
+    peer_ip: string;
+    reason: string;
+    hostname: string;
+    uid: string;
 }
 
 

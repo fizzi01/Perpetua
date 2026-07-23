@@ -31,6 +31,7 @@ from event.notification import (
     NotificationEvent,
     ClientApprovalRequestedEvent,
     ClientApprovalResolvedEvent,
+    ClientRejectedEvent,
     ClientConnectedEvent as ClientConnectedNotification,
     ClientDisconnectedEvent as ClientDisconnectedNotification,
     ConfigSavedEvent,
@@ -393,6 +394,29 @@ class Server:
             await self._send_notification(
                 OtpGeneratedEvent(otp=otp, timeout=timeout_val)
             )
+
+    async def _on_client_rejected(
+        self,
+        peer_ip: str,
+        hostname: str,
+        uid: str,
+        reason: str,
+    ) -> None:
+        """Surface an identity-based handshake rejection to the GUI.
+
+        The connection handler rejects clients that fail a certificate/UID/
+        hostname/IP check at handshake time; without this bridge the failure is
+        invisible outside the daemon log (e.g. a re-paired client whose new UID
+        no longer matches the pinned one).
+        """
+        await self._send_notification(
+            ClientRejectedEvent(
+                peer_ip=peer_ip,
+                reason=reason,
+                hostname=hostname,
+                uid=uid,
+            )
+        )
 
     async def share_certificate(
         self,
@@ -1264,6 +1288,7 @@ class Server:
             ),
             ssl_enabled=self.config.ssl_enabled,
             approval_callback=self._request_client_approval,
+            rejected_callback=self._on_client_rejected,
             server_uid=self.config.uid,
         )
 
