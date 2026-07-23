@@ -522,15 +522,18 @@ export function ClientTab({onStatusChange, state}: ClientTabProps) {
         return `${hours}:${minutes.toString().padStart(2, '0')}:${secs.toString().padStart(2, '0')}`;
     };
 
-    const securityInfo = currentConnection?.security_info ?? state.security_info;
-    const securityAvailable = securityInfo?.mutual_tls_available === true;
-    const serverCa = securityInfo?.server_ca;
+    const securityInfo = isConnected
+        ? (currentConnection?.security_info ?? state.security_info)
+        : state.security_info;
+    const securityAvailable = isConnected && securityInfo?.mutual_tls_available === true;
+    const showConnectedServerDetails = isConnected && Boolean(currentConnection?.security_info);
+    const serverCa = showConnectedServerDetails ? securityInfo?.server_ca : undefined;
     const clientCertificate = securityInfo?.client_certificate;
     const hasCertificateDetails = Boolean(
         securityInfo && (
-            serverCa?.present ||
             clientCertificate?.present ||
-            securityInfo.private_key_present
+            securityInfo.private_key_present ||
+            (showConnectedServerDetails && serverCa?.present)
         )
     );
 
@@ -912,9 +915,9 @@ export function ClientTab({onStatusChange, state}: ClientTabProps) {
                                             : 'Encryption unavailable'}
                                     </span>
                                 </div>
-                                <p className="text-xs" style={{color: 'var(--app-text-secondary)'}}>
+                                {/* <p className="text-xs" style={{color: 'var(--app-text-secondary)'}}>
                                     Per-client certificate, paired via one-time code (OTP).
-                                </p>
+                                </p> */}
 
                                 {!hasCertificateDetails && (
                                     <div className="p-3 rounded-lg border text-xs"
@@ -930,24 +933,26 @@ export function ClientTab({onStatusChange, state}: ClientTabProps) {
 
                                 {hasCertificateDetails && (
                                     <div className="space-y-2">
-                                        <div className="flex items-center justify-between gap-3 text-xs">
-                                            <div style={{color: 'var(--app-text-muted)'}}>Server CA</div>
-                                            <div className="flex min-w-0 items-center gap-2">
-                                                {serverCa?.sha256_fingerprint ? (
-                                                    <CopyableBadge
-                                                        fullText={serverCa.sha256_fingerprint}
-                                                        displayText={abbreviateText(serverCa.sha256_fingerprint, 10, 8)}
-                                                        label="SHA-256"
-                                                        titleText={`Click to copy Server CA fingerprint: ${serverCa.sha256_fingerprint}`}
-                                                        className="max-w-full"
-                                                    />
-                                                ) : (
-                                                    <span style={{color: 'var(--app-text-secondary)'}}>
-                                                        {serverCa?.present ? 'Present' : 'Missing'}
-                                                    </span>
-                                                )}
+                                        {showConnectedServerDetails && (
+                                            <div className="flex items-center justify-between gap-3 text-xs">
+                                                <div style={{color: 'var(--app-text-muted)'}}>Server CA</div>
+                                                <div className="flex min-w-0 items-center gap-2">
+                                                    {serverCa?.sha256_fingerprint ? (
+                                                        <CopyableBadge
+                                                            fullText={serverCa.sha256_fingerprint}
+                                                            displayText={abbreviateText(serverCa.sha256_fingerprint, 10, 8)}
+                                                            label="SHA-256"
+                                                            titleText={`Click to copy Server CA fingerprint: ${serverCa.sha256_fingerprint}`}
+                                                            className="max-w-full"
+                                                        />
+                                                    ) : (
+                                                        <span style={{color: 'var(--app-text-secondary)'}}>
+                                                            {serverCa?.present ? 'Present' : 'Missing'}
+                                                        </span>
+                                                    )}
+                                                </div>
                                             </div>
-                                        </div>
+                                        )}
 
                                         <div className="flex items-center justify-between gap-3 text-xs">
                                             <div style={{color: 'var(--app-text-muted)'}}>Client identity</div>
@@ -982,12 +987,14 @@ export function ClientTab({onStatusChange, state}: ClientTabProps) {
                                             </div>
                                         </div>
 
-                                        <div className="flex items-center justify-between gap-3 text-xs">
-                                            <div style={{color: 'var(--app-text-muted)'}}>Issued by</div>
-                                            <div className="truncate text-right" style={{color: 'var(--app-text-secondary)'}} title={clientCertificate?.issuer_common_name || undefined}>
-                                                {clientCertificate?.issuer_common_name || 'Unknown'}
+                                        {showConnectedServerDetails && (
+                                            <div className="flex items-center justify-between gap-3 text-xs">
+                                                <div style={{color: 'var(--app-text-muted)'}}>Issued by</div>
+                                                <div className="truncate text-right" style={{color: 'var(--app-text-secondary)'}} title={clientCertificate?.issuer_common_name || undefined}>
+                                                    {clientCertificate?.issuer_common_name || 'Unknown'}
+                                                </div>
                                             </div>
-                                        </div>
+                                        )}
 
                                         {clientCertificate?.sha256_fingerprint && (
                                             <div className="flex items-center justify-between gap-3 text-xs">
@@ -1001,10 +1008,6 @@ export function ClientTab({onStatusChange, state}: ClientTabProps) {
                                                 />
                                             </div>
                                         )}
-
-                                        <p className="text-xs" style={{color: 'var(--app-text-muted)'}}>
-                                            Paired via OTP; private key never leaves this device.
-                                        </p>
                                     </div>
                                 )}
                             </div>
