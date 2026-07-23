@@ -46,7 +46,7 @@ ty = "<0.1.0"
 ruff = "<1.0.0"
 
 [tool.poetry.group.build.dependencies]
-nuitka = "<3.0.0"
+nuitka = "<5.0.0"
 
 [tool.poetry.group.test.dependencies]
 anyio = "^4.12.0"
