@@ -539,8 +539,8 @@ This section is for contributors and people building from source. End users can 
 
 
 - GUI Framework:
-    - Node.js
-    - Rust
+    - Node.js (CI builds with Node 24)
+    - Rust (stable toolchain)
 
 </details>
 <details>
@@ -568,13 +568,16 @@ This section is for contributors and people building from source. End users can 
             libtool \
             libwebkit2gtk-4.1-dev \
             build-essential \
+            pkg-config \
             curl \
             wget \
             file \
             libxdo-dev \
             libssl-dev \
+            libtiff-dev \
             libayatana-appindicator3-dev \
             librsvg2-dev \
+            patchelf \
             fakeroot
     ```
 </details>
@@ -624,7 +627,9 @@ in a separate terminal.
 
 2. **Start the daemon**:
    ```bash
-   python launcher.py
+   python src/launcher.py
+   # or, after `poetry install`:
+   poetry run launcher
    ```
 
 3. **Install GUI dependencies (optional, if you need to modify the GUI):**
