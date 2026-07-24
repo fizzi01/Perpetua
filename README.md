@@ -178,11 +178,9 @@ Basic server setup (certificates, network binding) is handled automatically. To 
 - **Let the GUI handle it**: when a new client tries to connect, the `Server` shows an Allow/Deny card. Approving opens the Layout Editor. The full flow is described in [First Connection and OTP Pairing](#first-connection-and-otp-pairing).
 - **Pre-register each client manually** in `Server > Clients` (or by editing the config file). Identify each entry by its `host_name` and/or `ip_addresses`, you **cannot** set the client's `uid` yourself, the server assigns it during pairing (see [First Connection and OTP Pairing](#first-connection-and-otp-pairing)). Optionally add a list of `placements` to position the client's monitors (recommended for multi-monitor, see [Manual placements](#manual-placements)); the legacy `screen_position` (`left`, `right`, `top`, `bottom`) still works as a single-monitor fallback.
 
-> [!NOTE]
-> Pre-registering a client by hostname/IP only skips the **Allow/Deny** prompt. The one-time **OTP certificate exchange still has to happen once** (TLS mode) before the client can connect, that step currently goes through the GUI.
+**Note:** pre-registering a client by hostname/IP only skips the **Allow/Deny** prompt. The one-time **OTP certificate exchange still has to happen once** (TLS mode) before the client can connect, and that step currently goes through the GUI.
 
-> [!TIP]
-> **Clipboard-only clients:** a client that is authorized and connected but has **no `placements`** (and no meaningful `screen_position`, e.g. `center`) is not part of the mouse/keyboard layout, yet it **still stays in clipboard sync**. Clipboard is broadcast to every connected client; only mouse and keyboard follow the layout. This lets you keep any number of machines synchronized on the clipboard without positioning them for cursor/keyboard control. (Clipboard delivery still respects `streams_enabled`.)
+**Clipboard-only clients:** a client that is authorized and connected but has **no `placements`** (and no meaningful `screen_position`, e.g. `center`) is not part of the mouse/keyboard layout, yet it **still stays in clipboard sync**. Clipboard is broadcast to every connected client; only mouse and keyboard follow the layout. This lets you keep any number of machines synchronized on the clipboard without positioning them for cursor/keyboard control. (Clipboard delivery still respects `streams_enabled`.)
 
 </details>
 
