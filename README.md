@@ -110,7 +110,15 @@ Perpetua supports multi-monitor setups on both the server and the client. Instea
 
 ### The Layout Editor
 
-After a client is approved (or any time you open `Server > Clients > <client> > Layout`), the server shows a grid with your server monitors on one side and the client's monitors on the other. **Drag each client monitor to where you want the cursor to enter that screen**, then press **Save**. Subsequent reconnections of the same client skip the editor and reuse the saved layout.
+After a client is approved (or any time you open `Server > Layout`), the server shows a grid with your server monitors on one side and the client's monitors on the other. **Drag each client monitor to where you want the cursor to enter that screen**, then press **Save**. Subsequent reconnections of the same client skip the editor and reuse the saved layout.
+
+<div align="center">
+    <picture>
+        <source media="(prefers-color-scheme: dark)" srcset="docs/imgs/layout-dark.png?raw=true">
+        <source media="(prefers-color-scheme: light)" srcset="docs/imgs/layout-light.png?raw=true">
+        <img alt="Perpetua Layout Editor" srcset="docs/imgs/layout-dark.png" width="450">
+    </picture>
+</div>
 
 > [!TIP]
 > At least one client monitor must touch a server monitor (sharing an edge). Without that, the cursor has no way to cross over. The editor refuses to save a layout that breaks this rule, and explains why.
@@ -121,7 +129,7 @@ Plugging or unplugging a display on either machine is detected automatically, no
 
 ### Backwards compatibility
 
-Older configurations that use a single `screen_position` (`top` / `bottom` / `left` / `right`) keep working as a fallback when a client has no explicit `placements`. The first time you open the Layout Editor for a legacy client and save, the configuration is upgraded automatically.
+Older configurations that use a single `screen_position` (`top` / `bottom` / `left` / `right`) keep working as a fallback when a client has no explicit `placements`: the server synthesizes a single placement next to its primary monitor. This is a single-monitor fallback only, for multi-monitor setups use `placements`. A `screen_position` of `center` (the default) produces no placement, so the client is not in the mouse/keyboard layout (but still receives clipboard sync). The first time you open the Layout Editor for a legacy client and save, the configuration is upgraded to explicit `placements` automatically.
 
 If you prefer to skip the GUI and edit the JSON config file directly, see [Manual placements](#manual-placements) in the Configuration section.
 
@@ -147,6 +155,26 @@ For a full list of available commands and options:
 ```bash
 Perpetua --help
 ```
+
+### System Tray & Launch at Login
+
+<div align="center">
+    <img src="docs/imgs/tray.png?raw=true" alt="Perpetua tray menu" width="300">
+</div>
+
+| Menu item | What it does |
+|---|---|
+| **Show** | Opens / focuses the main window. |
+| **Show Logs** | Opens the log view. |
+| **Quit** | Stops the service (clean shutdown if connected) and exits. |
+
+The **Launch at login** submenu lets you pick how Perpetua starts with your session:
+
+- **Off** : no auto-start (default).
+- **As Server** : auto-start and run as **server** at login.
+- **As Client** : auto-start and run as **client** at login.
+
+When you pick *As Server* or *As Client*, Perpetua registers a native login item (macOS LaunchAgent, Windows `Run` registry key, Linux XDG autostart entry). On your next login it launches **minimized to the tray** and starts the chosen service automatically. Selecting **Off** removes the login item. This is the GUI/tray equivalent of the `--server` / `--client` flags shown in [Background Mode](#background-mode).
 
 ### Keyboard Shortcuts
 
@@ -176,7 +204,11 @@ Perpetua uses JSON to define client and server settings. The configuration file 
 Basic server setup (certificates, network binding) is handled automatically. To accept client connections you have two options:
 
 - **Let the GUI handle it**: when a new client tries to connect, the `Server` shows an Allow/Deny card. Approving opens the Layout Editor. The full flow is described in [First Connection and OTP Pairing](#first-connection-and-otp-pairing).
-- **Pre-register each client manually** in `Server > Clients` (or by editing the config file). Pre-registered clients skip the Allow/Deny prompt. For each entry specify the client's IPs and/or hostname, plus either a legacy `screen_position` (`left`, `right`, `top`, `bottom`) or a list of `placements` (recommended for multi-monitor setups, see [Manual placements](#manual-placements)).
+- **Pre-register each client manually** in `Server > Clients` (or by editing the config file). Identify each entry by its `host_name` and/or `ip_addresses`, you **cannot** set the client's `uid` yourself, the server assigns it during pairing (see [First Connection and OTP Pairing](#first-connection-and-otp-pairing)). Optionally add a list of `placements` to position the client's monitors (recommended for multi-monitor, see [Manual placements](#manual-placements)); the legacy `screen_position` (`left`, `right`, `top`, `bottom`) still works as a single-monitor fallback.
+
+**Note:** pre-registering a client by hostname/IP only skips the **Allow/Deny** prompt. The one-time **OTP certificate exchange still has to happen once** (TLS mode) before the client can connect, and that step currently goes through the GUI.
+
+**Clipboard-only clients:** a client that is authorized and connected but has **no `placements`** (and no meaningful `screen_position`, e.g. `center`) is not part of the mouse/keyboard layout, yet it **still stays in clipboard sync**. Clipboard is broadcast to every connected client; only mouse and keyboard follow the layout. This lets you keep any number of machines synchronized on the clipboard without positioning them for cursor/keyboard control. (Clipboard delivery still respects `streams_enabled`.)
 
 </details>
 
@@ -232,6 +264,7 @@ The configuration [json file](#file-structure) is split into three sections: `se
 - `1`: Mouse
 - `4`: Keyboard
 - `12`: Clipboard
+- `0`: Command (internal control channel, always on)
 
 `log_level` sets the logging verbosity:
 - `0`: Debug (detailed logs)
@@ -239,12 +272,13 @@ The configuration [json file](#file-structure) is split into three sections: `se
 
 `pairing_port` is the port used for the initial OTP-based certificate exchange. Leave it `null` to derive it as `port - 2`. The value is advertised over mDNS so clients discover it automatically.
 
-`authorized_clients` lists the clients that can connect. To add a new client, you only need to specify:
-- `uid`: Unique identifier
-- `host_name` and/or `ip_addresses`: Client's network identity
-- `screen_position`: Where the client is positioned relative to the server (`left`, `right`, `top`, `bottom`)
+`authorized_clients` lists the clients that can connect. To pre-register a client by hand, you only need to specify:
 
-Other fields are automatically populated by the system. Clients can also be added on the fly from the GUI via the Allow/Deny prompt.
+- `host_name` and/or `ip_addresses`: the client's network identity, used to recognize it on connect.
+- `placements` *(optional)*: where the client's monitors sit in the server's layout, for mouse/keyboard cross-screen routing (see [Manual placements](#manual-placements)). Omit it to keep the client in **clipboard-only** sync.
+- `screen_position` *(optional, legacy)*: single-monitor fallback used only when `placements` is empty, `left`/`right`/`top`/`bottom` place the client next to the server's primary monitor; `center` means "no position" (no mouse/keyboard routing). For multi-monitor use `placements`.
+
+You do **not** set `uid`: the server assigns it during pairing (the client cannot choose its own identity). All the remaining fields (`uid`, dates, `monitors`, `screen_resolution`, `ssl`, `is_connected`, …) are populated automatically. Clients can also be added on the fly from the GUI via the Allow/Deny prompt.
 
 #### Client Section
 
@@ -266,21 +300,37 @@ These parameters affect the application's internal behavior. Only modify them if
         "streams_enabled": {
             "1": true,
             "4": true,
-            "12": true
+            "12": true,
+            "0": true
         },
         "ssl_enabled": true,
         "log_level": 1,
         "authorized_clients": [
             {
-                "uid": "...",
+                "uid": "4ea910668be0ca80c8d3b5203b35b19339e25182f5122b4d",
                 "host_name": "MYCLIENT",
                 "ip_addresses": [
                     "192.168.1.66"
                 ],
                 "first_connection_date": "2026-02-02 19:09:00",
                 "last_connection_date": "2026-02-02 19:16:12",
-                "screen_position": "top",
+                "screen_position": "center",
                 "screen_resolution": "1920x1080",
+                "ssl": true,
+                "is_connected": false,
+                "additional_params": {},
+                "monitors": [
+                    {
+                        "monitor_id": 0,
+                        "min_x": 0,
+                        "min_y": 0,
+                        "max_x": 1920,
+                        "max_y": 1080,
+                        "is_primary": true,
+                        "name": "",
+                        "scaling_factor": 1.0
+                    }
+                ],
                 "placements": [
                     {
                         "client_monitor_id": 0,
@@ -289,10 +339,7 @@ These parameters affect the application's internal behavior. Only modify them if
                         "width": 1920,
                         "height": 1080
                     }
-                ],
-                "ssl": true,
-                "is_connected": true,
-                "additional_params": {}
+                ]
             }
         ]
     },
@@ -307,13 +354,8 @@ These parameters affect the application's internal behavior. Only modify them if
             "ssl": true,
             "additional_params": {}
         },
-        "uid": "...",
-        "client_hostname": "MYSERVER",
-        "streams_enabled": {
-            "1": true,
-            "4": true,
-            "12": true
-        },
+        "client_hostname": null,
+        "streams_enabled": {},
         "ssl_enabled": true,
         "log_level": 1
     },
@@ -405,6 +447,7 @@ Reading the canvas left-to-right:
 
 #### Tips
 
+- **Clipboard-only client**: leave `placements` empty (`[]`) and `screen_position` at `center`. The client won't take mouse/keyboard, but it stays in clipboard sync like every other connected client.
 - **Single monitor**: write one placement that touches the chosen server edge (left, right, top or bottom). Use the client monitor's native width and height.
 - **Stacking vertically**: change `workspace_y` instead of `workspace_x`.
 - **Two clients on the same side**: allowed, as long as their placements don't overlap. Put them at different `workspace_y` values, or one above the other. If two placements end up sharing the exact same entry edge, the server picks the first one and logs a warning. Just move one of them to disambiguate.
@@ -444,7 +487,7 @@ You can also generate the OTP manually from the `Security` section on the `Serve
 <details>
 <summary><b>Cursor doesn't cross to the other screen</b></summary>
 
-Check the client's screen position in `Server > Clients`. The position (top, bottom, left, right) defines which edge of the server screen the cursor uses to enter the client. If the client is offline, the cursor stays on the server side.
+Open `Server > Layout` and check that the client has a `placement` adjacent to a server monitor, that's what defines where the cursor crosses over. A client with **no placement** (e.g. `screen_position` `center`) is intentionally not in the mouse/keyboard layout (it still stays in clipboard sync). If the client is offline, the cursor stays on the server side.
 
 If the cursor gets stuck on the wrong machine, press `Ctrl + Shift + Q` on the server to force-quit Perpetua.
 
@@ -522,8 +565,8 @@ This section is for contributors and people building from source. End users can 
 
 
 - GUI Framework:
-    - Node.js
-    - Rust
+    - Node.js (CI builds with Node 24)
+    - Rust (stable toolchain)
 
 </details>
 <details>
@@ -551,13 +594,16 @@ This section is for contributors and people building from source. End users can 
             libtool \
             libwebkit2gtk-4.1-dev \
             build-essential \
+            pkg-config \
             curl \
             wget \
             file \
             libxdo-dev \
             libssl-dev \
+            libtiff-dev \
             libayatana-appindicator3-dev \
             librsvg2-dev \
+            patchelf \
             fakeroot
     ```
 </details>
@@ -607,7 +653,9 @@ in a separate terminal.
 
 2. **Start the daemon**:
    ```bash
-   python launcher.py
+   python src/launcher.py
+   # or, after `poetry install`:
+   poetry run launcher
    ```
 
 3. **Install GUI dependencies (optional, if you need to modify the GUI):**
@@ -689,6 +737,8 @@ poetry run python build.py --skip-gui
 
 - [X] Linux support
 - [X] Multi-monitor placements
+- [ ] Extended Wayland suppport
+- [ ] Inter-client monitor crossing
 - [ ] File transfers
 - [ ] Advanced clipboard format support (including proprietary formats)
 
