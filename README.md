@@ -110,7 +110,15 @@ Perpetua supports multi-monitor setups on both the server and the client. Instea
 
 ### The Layout Editor
 
-After a client is approved (or any time you open `Server > Clients > <client> > Layout`), the server shows a grid with your server monitors on one side and the client's monitors on the other. **Drag each client monitor to where you want the cursor to enter that screen**, then press **Save**. Subsequent reconnections of the same client skip the editor and reuse the saved layout.
+After a client is approved (or any time you open `Server > Layout`), the server shows a grid with your server monitors on one side and the client's monitors on the other. **Drag each client monitor to where you want the cursor to enter that screen**, then press **Save**. Subsequent reconnections of the same client skip the editor and reuse the saved layout.
+
+<div align="center">
+    <picture>
+        <source media="(prefers-color-scheme: dark)" srcset="docs/imgs/layout-dark.png?raw=true">
+        <source media="(prefers-color-scheme: light)" srcset="docs/imgs/layout-light.png?raw=true">
+        <img alt="Perpetua Layout Editor" srcset="docs/imgs/layout-dark.png" width="450">
+    </picture>
+</div>
 
 > [!TIP]
 > At least one client monitor must touch a server monitor (sharing an edge). Without that, the cursor has no way to cross over. The editor refuses to save a layout that breaks this rule, and explains why.
