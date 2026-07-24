@@ -148,6 +148,26 @@ For a full list of available commands and options:
 Perpetua --help
 ```
 
+### System Tray & Launch at Login
+
+<div align="center">
+    <img src="docs/imgs/tray.png?raw=true" alt="Perpetua tray menu" width="300">
+</div>
+
+| Menu item | What it does |
+|---|---|
+| **Show** | Opens / focuses the main window. |
+| **Show Logs** | Opens the log view. |
+| **Quit** | Stops the service (clean shutdown if connected) and exits. |
+
+The **Launch at login** submenu lets you pick how Perpetua starts with your session:
+
+- **Off** : no auto-start (default).
+- **As Server** : auto-start and run as **server** at login.
+- **As Client** : auto-start and run as **client** at login.
+
+When you pick *As Server* or *As Client*, Perpetua registers a native login item (macOS LaunchAgent, Windows `Run` registry key, Linux XDG autostart entry). On your next login it launches **minimized to the tray** and starts the chosen service automatically. Selecting **Off** removes the login item. This is the GUI/tray equivalent of the `--server` / `--client` flags shown in [Background Mode](#background-mode).
+
 ### Keyboard Shortcuts
 
 The following hotkeys are available on the **server** machine to control input focus without moving the mouse to a screen edge.
