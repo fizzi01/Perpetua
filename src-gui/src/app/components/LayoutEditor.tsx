@@ -35,7 +35,7 @@ import {
     workspaceToCanvas,
 } from "../commons/layout";
 
-import { Monitor, GripVertical } from "lucide-react";
+import { AlertTriangle, GripVertical, Monitor, X } from "lucide-react";
 
 export interface LayoutEditorClient {
     uid: string;
@@ -78,7 +78,7 @@ interface DragState {
     originY: number;
 }
 
-const SNAP_THRESHOLD_PX = 12;
+const SNAP_THRESHOLD_PX = 10;
 
 // Pointer-based drag from sidebar; HTML5 DnD drop events are unreliable in Tauri's WebView (macOS WKWebView).
 interface PendingPlacement {
@@ -105,6 +105,7 @@ export function LayoutEditor({
     const [canvasSize, setCanvasSize] = useState({width: 600, height});
     const [drag, setDrag] = useState<DragState | null>(null);
     const [pendingNew, setPendingNew] = useState<PendingPlacement | null>(null);
+    const [selectedPlacementIdx, setSelectedPlacementIdx] = useState<number | null>(null);
 
     useLayoutEffect(() => {
         if (!canvasRef.current) return;
@@ -139,9 +140,34 @@ export function LayoutEditor({
         [serverMonitors, placements],
     );
 
+    const serverRects = useMemo(
+        () => serverMonitors.map(monitorAsRect),
+        [serverMonitors],
+    );
+
+    const validationSummary = useMemo(() => {
+        const overlapCount = validation.overlappingIndices.size;
+        const detachedCount = validation.notAdjacentToServerIndices.size;
+
+        if (overlapCount > 0 && detachedCount === 0) {
+            return `${overlapCount} overlap${overlapCount === 1 ? "" : "s"}`;
+        }
+        if (detachedCount > 0 && overlapCount === 0) {
+            return `${detachedCount} detached monitor${detachedCount === 1 ? "" : "s"}`;
+        }
+        const total = overlapCount + detachedCount;
+        return `${total} layout issue${total === 1 ? "" : "s"}`;
+    }, [validation.overlappingIndices, validation.notAdjacentToServerIndices]);
+
     useEffect(() => {
         onValidityChange?.(validation.ok, validation.errors);
     }, [validation.ok, validation.errors, onValidityChange]);
+
+    useEffect(() => {
+        setSelectedPlacementIdx((idx) =>
+            idx !== null && idx >= placements.length ? null : idx,
+        );
+    }, [placements.length]);
 
     const clientColors = useMemo(() => {
         const m: Record<string, string> = {};
@@ -174,10 +200,81 @@ export function LayoutEditor({
         return out;
     }, [clients, placements]);
 
+    const isValidPlacementRect = useCallback((
+        candidate: {x: number; y: number; width: number; height: number},
+        otherPlacementRects: ReturnType<typeof placementAsRect>[],
+    ) => {
+        const obstacles = [...serverRects, ...otherPlacementRects];
+        const touchesServer =
+            serverRects.length === 0 || isAdjacentToAny(candidate, serverRects);
+        return touchesServer && !obstacles.some((o) => rectsOverlap(candidate, o));
+    }, [serverRects]);
+
+    const chooseValidLanding = useCallback((
+        candidate: {x: number; y: number; width: number; height: number},
+        otherPlacementRects: ReturnType<typeof placementAsRect>[],
+        fallback: {x: number; y: number},
+    ) => {
+        const roundedCandidate = {
+            ...candidate,
+            x: Math.round(candidate.x),
+            y: Math.round(candidate.y),
+        };
+        const snapTargets = serverRects.length > 0
+            ? serverRects
+            : otherPlacementRects;
+        const snapped = snapRect(
+            roundedCandidate,
+            snapTargets,
+            SNAP_THRESHOLD_PX / metrics.scale,
+        );
+        const snappedCandidate = {
+            ...roundedCandidate,
+            x: Math.round(snapped.x),
+            y: Math.round(snapped.y),
+        };
+        if (isValidPlacementRect(snappedCandidate, otherPlacementRects)) {
+            return {x: snappedCandidate.x, y: snappedCandidate.y};
+        }
+        if (isValidPlacementRect(roundedCandidate, otherPlacementRects)) {
+            return {x: roundedCandidate.x, y: roundedCandidate.y};
+        }
+
+        let bestDist = Infinity;
+        let best = fallback;
+        const cx = roundedCandidate.x + roundedCandidate.width / 2;
+        const cy = roundedCandidate.y + roundedCandidate.height / 2;
+        for (const r of snapTargets) {
+            const slots = [
+                {x: r.x + r.width, y: r.y},
+                {x: r.x - roundedCandidate.width, y: r.y},
+                {x: r.x, y: r.y + r.height},
+                {x: r.x, y: r.y - roundedCandidate.height},
+            ];
+            for (const slot of slots) {
+                const test = {
+                    ...roundedCandidate,
+                    x: slot.x,
+                    y: slot.y,
+                };
+                if (!isValidPlacementRect(test, otherPlacementRects)) continue;
+                const dx = slot.x + roundedCandidate.width / 2 - cx;
+                const dy = slot.y + roundedCandidate.height / 2 - cy;
+                const dist = dx * dx + dy * dy;
+                if (dist < bestDist) {
+                    bestDist = dist;
+                    best = slot;
+                }
+            }
+        }
+        return best;
+    }, [isValidPlacementRect, metrics.scale, serverRects]);
+
     function onPlacementPointerDown(e: React.PointerEvent, idx: number) {
         e.preventDefault();
         e.stopPropagation();
         if (!canvasRef.current) return;
+        setSelectedPlacementIdx(idx);
         const rect = canvasRef.current.getBoundingClientRect();
         const ws = canvasToWorkspace(
             e.clientX - rect.left,
@@ -207,96 +304,45 @@ export function LayoutEditor({
         const target = placements[drag.placementIdx];
         if (!target) return;
 
-        const candidate = {
-            x: ws.x - drag.grabDx,
-            y: ws.y - drag.grabDy,
-            width: target.width,
-            height: target.height,
-        };
-
-        const others = [
-            ...serverMonitors.map(monitorAsRect),
-            ...placements
-                .filter((_, i) => i !== drag.placementIdx)
-                .map(placementAsRect),
-        ];
-        const snapped = snapRect(candidate, others, SNAP_THRESHOLD_PX / metrics.scale);
-
         const next = placements.slice();
         next[drag.placementIdx] = {
             ...target,
-            workspace_x: snapped.x,
-            workspace_y: snapped.y,
+            workspace_x: Math.round(ws.x - drag.grabDx),
+            workspace_y: Math.round(ws.y - drag.grabDy),
         };
         onChange(next);
-    }, [drag, metrics, placements, serverMonitors, onChange]);
+    }, [drag, metrics, placements, onChange]);
 
-    // On release: if invalid, snap to the closest valid flush-to-edge slot around existing rects; else revert to origin.
+    // On release, apply snap or fall back to the closest valid flush-to-server slot.
     const onDragEnd = useCallback(() => {
         setDrag((d) => {
             if (!d) return null;
             const target = placements[d.placementIdx];
             if (!target) return null;
 
-            const others = [
-                ...serverMonitors.map(monitorAsRect),
-                ...placements
-                    .filter((_, i) => i !== d.placementIdx)
-                    .map(placementAsRect),
-            ];
+            const otherPlacementRects = placements
+                .filter((_, i) => i !== d.placementIdx)
+                .map(placementAsRect);
             const candidate = {
                 x: target.workspace_x,
                 y: target.workspace_y,
                 width: target.width,
                 height: target.height,
             };
-
-            const isValid = (r: typeof candidate) =>
-                isAdjacentToAny(r, others)
-                && !others.some((o) => rectsOverlap(r, o));
-
-            if (!isValid(candidate)) {
-                let bestDist = Infinity;
-                let bestX = d.originX;
-                let bestY = d.originY;
-                const cx = candidate.x + candidate.width / 2;
-                const cy = candidate.y + candidate.height / 2;
-                for (const r of others) {
-                    const slots = [
-                        {x: r.x + r.width, y: r.y},
-                        {x: r.x - candidate.width, y: r.y},
-                        {x: r.x, y: r.y + r.height},
-                        {x: r.x, y: r.y - candidate.height},
-                    ];
-                    for (const s of slots) {
-                        const test = {
-                            x: s.x,
-                            y: s.y,
-                            width: candidate.width,
-                            height: candidate.height,
-                        };
-                        if (!isValid(test)) continue;
-                        const dx = s.x + candidate.width / 2 - cx;
-                        const dy = s.y + candidate.height / 2 - cy;
-                        const d2 = dx * dx + dy * dy;
-                        if (d2 < bestDist) {
-                            bestDist = d2;
-                            bestX = s.x;
-                            bestY = s.y;
-                        }
-                    }
-                }
-                const next = placements.slice();
-                next[d.placementIdx] = {
-                    ...target,
-                    workspace_x: bestX,
-                    workspace_y: bestY,
-                };
-                onChange(next);
-            }
+            const landing = chooseValidLanding(candidate, otherPlacementRects, {
+                x: d.originX,
+                y: d.originY,
+            });
+            const next = placements.slice();
+            next[d.placementIdx] = {
+                ...target,
+                workspace_x: landing.x,
+                workspace_y: landing.y,
+            };
+            onChange(next);
             return null;
         });
-    }, [placements, serverMonitors, onChange]);
+    }, [chooseValidLanding, placements, onChange]);
 
     useEffect(() => {
         if (!drag) return;
@@ -355,68 +401,17 @@ export function LayoutEditor({
                 ev.clientY - rect.top,
                 metrics,
             );
-            const others = [
-                ...serverMonitors.map(monitorAsRect),
-                ...placements.map(placementAsRect),
-            ];
+            const otherPlacementRects = placements.map(placementAsRect);
 
             // Try the snapped cursor-centered candidate first, then fall back to the closest valid flush-to-edge slot.
-            const cursorCandidate = snapRect(
-                {
-                    x: ws.x - prev.width / 2,
-                    y: ws.y - prev.height / 2,
-                    width: prev.width,
-                    height: prev.height,
-                },
-                others,
-                SNAP_THRESHOLD_PX / metrics.scale,
-            );
             const cursorRect = {
-                ...cursorCandidate,
+                x: ws.x - prev.width / 2,
+                y: ws.y - prev.height / 2,
                 width: prev.width,
                 height: prev.height,
             };
-
-            let chosen: {x: number; y: number} | null = null;
-            if (
-                isAdjacentToAny(cursorRect, others)
-                && !others.some((r) => rectsOverlap(cursorRect, r))
-            ) {
-                chosen = {x: cursorCandidate.x, y: cursorCandidate.y};
-            } else {
-                let bestDist = Infinity;
-                for (const r of others) {
-                    const candidates = [
-                        {x: r.x + r.width, y: r.y},
-                        {x: r.x - prev.width, y: r.y},
-                        {x: r.x, y: r.y + r.height},
-                        {x: r.x, y: r.y - prev.height},
-                    ];
-                    for (const c of candidates) {
-                        const test = {
-                            x: c.x,
-                            y: c.y,
-                            width: prev.width,
-                            height: prev.height,
-                        };
-                        if (others.some((o) => rectsOverlap(test, o))) continue;
-                        const dx = c.x + prev.width / 2 - ws.x;
-                        const dy = c.y + prev.height / 2 - ws.y;
-                        const d2 = dx * dx + dy * dy;
-                        if (d2 < bestDist) {
-                            bestDist = d2;
-                            chosen = {x: c.x, y: c.y};
-                        }
-                    }
-                }
-                if (!chosen) {
-                    const fallback = suggestInitialPlacement(
-                        serverMonitors,
-                        placements,
-                    );
-                    chosen = {x: fallback.x, y: fallback.y};
-                }
-            }
+            const fallback = suggestInitialPlacement(serverMonitors, placements);
+            const chosen = chooseValidLanding(cursorRect, otherPlacementRects, fallback);
 
             const newPlacement: MonitorPlacement = {
                 client_uid: prev.clientUid,
@@ -427,9 +422,10 @@ export function LayoutEditor({
                 height: prev.height,
             };
             onChange([...placements, newPlacement]);
+            setSelectedPlacementIdx(placements.length);
             return null;
         });
-    }, [metrics, placements, serverMonitors, onChange]);
+    }, [chooseValidLanding, metrics, placements, serverMonitors, onChange]);
 
     const onPendingCancel = useCallback(() => setPendingNew(null), []);
 
@@ -448,6 +444,44 @@ export function LayoutEditor({
     function removePlacement(idx: number) {
         const next = placements.slice();
         next.splice(idx, 1);
+        onChange(next);
+        setSelectedPlacementIdx((selected) => {
+            if (selected === null) return null;
+            if (selected === idx) return null;
+            return selected > idx ? selected - 1 : selected;
+        });
+    }
+
+    function movePlacementByKeyboard(
+        e: React.KeyboardEvent<HTMLDivElement>,
+        idx: number,
+    ) {
+        const step = e.shiftKey ? 10 : 1;
+        const deltaByKey: Record<string, {dx: number; dy: number}> = {
+            ArrowLeft: {dx: -step, dy: 0},
+            ArrowRight: {dx: step, dy: 0},
+            ArrowUp: {dx: 0, dy: -step},
+            ArrowDown: {dx: 0, dy: step},
+        };
+
+        if (e.key === "Delete" || e.key === "Backspace") {
+            e.preventDefault();
+            removePlacement(idx);
+            return;
+        }
+
+        const delta = deltaByKey[e.key];
+        if (!delta) return;
+        e.preventDefault();
+        setSelectedPlacementIdx(idx);
+        const target = placements[idx];
+        if (!target) return;
+        const next = placements.slice();
+        next[idx] = {
+            ...target,
+            workspace_x: target.workspace_x + delta.dx,
+            workspace_y: target.workspace_y + delta.dy,
+        };
         onChange(next);
     }
 
@@ -500,13 +534,19 @@ export function LayoutEditor({
         const isOrphan = validation.notAdjacentToServerIndices.has(idx);
         const isBad = isOverlap || isOrphan;
         const isDragging = drag?.placementIdx === idx;
+        const isSelected = selectedPlacementIdx === idx;
         const badTitle = isOverlap
             ? `overlaps with another monitor - drag to a free area`
-            : `not adjacent to any server monitor - drag against a server edge`;
+            : `monitor detached - drag against a server edge`;
         return (
             <div
                 key={`p-${p.client_uid}-${p.client_monitor_id}-${idx}`}
                 onPointerDown={(e) => onPlacementPointerDown(e, idx)}
+                onFocus={() => setSelectedPlacementIdx(idx)}
+                onKeyDown={(e) => movePlacementByKeyboard(e, idx)}
+                tabIndex={0}
+                role="button"
+                aria-label={`${client?.name || p.client_uid} monitor ${p.client_monitor_id}`}
                 style={{
                     position: "absolute",
                     left: tl.x,
@@ -526,7 +566,11 @@ export function LayoutEditor({
                     fontWeight: 600,
                     userSelect: "none",
                     cursor: isDragging ? "grabbing" : "grab",
-                    boxShadow: isDragging
+                    outline: isSelected
+                        ? "2px solid var(--app-primary-light)"
+                        : "2px solid transparent",
+                    outlineOffset: 2,
+                    boxShadow: isDragging || isSelected
                         ? "0 4px 12px rgba(0,0,0,0.25)"
                         : "none",
                     zIndex: isDragging ? 10 : 1,
@@ -562,32 +606,41 @@ export function LayoutEditor({
                             pointerEvents: "none",
                         }}
                     >
-                        !
+                        <AlertTriangle size={11} style={{margin: "2.5px auto"}} />
                     </div>
                 )}
                 <button
+                    type="button"
+                    aria-label={`Remove ${client?.name || p.client_uid} monitor ${p.client_monitor_id}`}
+                    onPointerDown={(e) => {
+                        e.preventDefault();
+                        e.stopPropagation();
+                    }}
                     onClick={(e) => {
                         e.stopPropagation();
                         removePlacement(idx);
                     }}
                     title="Remove from workspace"
+                    className="transition-all duration-150 hover:scale-105 active:scale-95 focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2"
                     style={{
                         position: "absolute",
-                        top: 3,
-                        right: 3,
-                        width: 16,
-                        height: 16,
+                        top: 4,
+                        right: 4,
+                        width: 22,
+                        height: 22,
                         borderRadius: "50%",
-                        border: "none",
-                        backgroundColor: "rgba(0,0,0,0.55)",
+                        border: "1px solid rgba(255,255,255,0.45)",
+                        backgroundColor: "rgba(0,0,0,0.62)",
                         color: "white",
-                        fontSize: 10,
-                        lineHeight: "16px",
                         padding: 0,
                         cursor: "pointer",
+                        display: "flex",
+                        alignItems: "center",
+                        justifyContent: "center",
+                        outlineColor: "var(--app-primary-light)",
                     }}
                 >
-                    ×
+                    <X size={13} strokeWidth={2.5} />
                 </button>
             </div>
         );
@@ -678,11 +731,8 @@ export function LayoutEditor({
                             backgroundColor: "rgba(239, 68, 68, 0.92)",
                         }}
                     >
-                        <span className="text-xs leading-none">⚠</span>
-                        <span>
-                            {validation.errors.length} overlap
-                            {validation.errors.length === 1 ? "" : "s"}
-                        </span>
+                        <AlertTriangle size={13} />
+                        <span>{validationSummary}</span>
                     </div>
                 )}
             </div>

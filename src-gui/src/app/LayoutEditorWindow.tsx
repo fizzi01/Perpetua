@@ -19,6 +19,7 @@
 import {useEffect, useRef, useState} from "react";
 import {emit, listen, type UnlistenFn} from "@tauri-apps/api/event";
 import {getCurrentWindow} from "@tauri-apps/api/window";
+import {motion} from "motion/react";
 
 import {LayoutEditor, type LayoutEditorClient} from "./components/LayoutEditor";
 import type {MonitorInfo, MonitorPlacement} from "./api/Interface";
@@ -131,32 +132,40 @@ export default function LayoutEditorWindow() {
                     Layout Configuration
                 </span>
                 <div data-tauri-drag-region style={{ flex: 1, height: "100%" }} />
-                <button
+                <motion.button
+                    type="button"
+                    whileHover={{scale: 1.02}}
+                    whileTap={{scale: 0.98}}
                     onClick={handleCancel}
-                    className="px-4 py-2 rounded-lg border text-sm font-medium transition-colors"
+                    className="px-4 py-2 rounded-lg border text-sm font-medium transition-all duration-200 focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2"
                     style={{
                         borderColor: "var(--app-card-border)",
                         backgroundColor: "transparent",
                         color: "var(--app-text-primary)",
                         cursor: "pointer",
+                        outlineColor: "var(--app-primary-light)",
                     }}
                 >
                     Cancel
-                </button>
-                <button
+                </motion.button>
+                <motion.button
+                    type="button"
+                    whileHover={valid ? {scale: 1.02} : undefined}
+                    whileTap={valid ? {scale: 0.98} : undefined}
                     onClick={handleSave}
                     disabled={!valid}
-                    className="px-4 py-2 rounded-lg border-none text-sm font-semibold transition-colors shadow-sm"
+                    className="px-4 py-2 rounded-lg border-none text-sm font-semibold transition-all duration-200 shadow-sm focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2"
                     style={{
                         backgroundColor: valid
                             ? "var(--app-primary)"
                             : "var(--app-bg-tertiary)",
                         color: valid ? "white" : "var(--app-text-muted)",
                         cursor: valid ? "pointer" : "not-allowed",
+                        outlineColor: "var(--app-primary-light)",
                     }}
                 >
                     Save Layout
-                </button>
+                </motion.button>
             </div>
 
             <div
