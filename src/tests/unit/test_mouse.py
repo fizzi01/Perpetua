@@ -536,6 +536,45 @@ class TestServerMouseListener:
             assert listener._listening is False
 
     @pytest.mark.anyio
+    async def test_recross_guard_after_return_blocks_then_unlocks(
+        self,
+        event_bus,
+        mock_stream_handler,
+        mock_mouse_listener,
+    ):
+        """After a return, re-crossing the same edge is suppressed until the
+        cursor moves inward off it - the retained edge-ward history would
+        otherwise re-fire on the next tick."""
+        with patch("input.mouse._base.MouseListener", return_value=mock_mouse_listener):
+            with _ScreenGeometry(1920, 1080):
+                listener = ServerMouseListener(
+                    event_bus,
+                    mock_stream_handler,
+                    mock_stream_handler,
+                    filtering=False,
+                )
+                # Return landed ~6px inside the RIGHT edge (client was off the
+                # right). Arms the re-cross lock on the RIGHT edge.
+                event = ActiveScreenChangedEvent(
+                    active_screen=None,
+                    source="server",
+                    position=(1913, 500),
+                )
+                await listener._on_active_screen_changed(event)
+                assert listener._recross_locked_edge == ScreenEdge.RIGHT
+
+                # Still near the edge -> a RIGHT crossing is suppressed, while a
+                # crossing through a different edge is not (and leaves the lock).
+                assert listener._recross_lock_blocks(ScreenEdge.RIGHT, 1913, 500)
+                assert not listener._recross_lock_blocks(ScreenEdge.LEFT, 1913, 500)
+                assert listener._recross_locked_edge == ScreenEdge.RIGHT
+
+                # Cursor moves inward past the margin -> lock clears, RIGHT
+                # crossings are allowed again.
+                assert not listener._recross_lock_blocks(ScreenEdge.RIGHT, 1900, 500)
+                assert listener._recross_locked_edge is None
+
+    @pytest.mark.anyio
     async def test_on_click_sends_event_when_listening(
         self,
         event_bus,
@@ -758,6 +797,39 @@ class TestClientMouseController:
 
             assert controller._is_active is True
             assert controller._running is True
+            # No explicit landing / entry edge -> nothing locked.
+            assert controller._return_locked_edge is None
+            assert controller._inward_travel == 0
+
+            await controller.stop()
+
+    @pytest.mark.anyio
+    async def test_on_client_active_locks_entry_edge(
+        self,
+        event_bus,
+        mock_stream_handler,
+        mock_mouse_controller,
+    ):
+        """The server-supplied entry edge locks return-to-server on activation."""
+        with patch(
+            "input.mouse._base.MouseController", return_value=mock_mouse_controller
+        ):
+            controller = ClientMouseController(
+                event_bus,
+                mock_stream_handler,
+                mock_stream_handler,
+            )
+
+            event = ClientActiveEvent(
+                client_uid="server",
+                position_x=0.0,
+                position_y=0.5,
+                entry_edge="left",
+            )
+            await controller._on_client_active(event)
+
+            assert controller._return_locked_edge == ScreenEdge.LEFT
+            assert controller._inward_travel == 0
 
             await controller.stop()
 
@@ -779,6 +851,8 @@ class TestClientMouseController:
             )
             controller._is_active = True
             controller._movement_history.append((100, 200))
+            controller._return_locked_edge = ScreenEdge.LEFT
+            controller._inward_travel = 5
 
             event = ClientActiveEvent(client_uid="server")
 
@@ -786,6 +860,93 @@ class TestClientMouseController:
 
             assert controller._is_active is False
             assert len(controller._movement_history) == 0
+            assert controller._return_locked_edge is None
+            assert controller._inward_travel == 0
+
+    def _make_client(self, event_bus, mock_stream_handler, mock_mouse_controller):
+        with patch(
+            "input.mouse._base.MouseController", return_value=mock_mouse_controller
+        ):
+            return ClientMouseController(
+                event_bus, mock_stream_handler, mock_stream_handler
+            )
+
+    def test_accumulate_inward_travel_unlocks_after_margin(
+        self, event_bus, mock_stream_handler, mock_mouse_controller
+    ):
+        """Net inward travel past the margin unlocks the entry edge."""
+        c = self._make_client(event_bus, mock_stream_handler, mock_mouse_controller)
+        c._return_locked_edge = ScreenEdge.LEFT
+        c._inward_travel = 0
+
+        # Inward for a LEFT lock is +X. Below margin stays locked.
+        c._accumulate_inward_travel(5, 0)
+        assert c._return_locked_edge == ScreenEdge.LEFT
+        # Crossing the margin unlocks for good.
+        c._accumulate_inward_travel(ClientMouseController.RETURN_UNLOCK_MARGIN, 0)
+        assert c._return_locked_edge is None
+
+    def test_accumulate_inward_travel_is_angle_agnostic(
+        self, event_bus, mock_stream_handler, mock_mouse_controller
+    ):
+        """Only the component perpendicular to the locked edge counts."""
+        c = self._make_client(event_bus, mock_stream_handler, mock_mouse_controller)
+        c._return_locked_edge = ScreenEdge.LEFT
+        c._inward_travel = 0
+
+        # Pure parallel motion (along Y) contributes nothing.
+        c._accumulate_inward_travel(0, 999)
+        assert c._inward_travel == 0
+        assert c._return_locked_edge == ScreenEdge.LEFT
+
+        # Diagonal moves count only their +X (perpendicular) component; a
+        # steep angle still accumulates the small inward part.
+        for _ in range(6):
+            c._accumulate_inward_travel(3, -50)  # +3 inward each, large parallel
+        assert c._return_locked_edge is None  # 18 >= margin
+
+    def test_accumulate_inward_travel_edge_ward_jitter_holds_lock(
+        self, event_bus, mock_stream_handler, mock_mouse_controller
+    ):
+        """An edge-ward jitter reduces the net, keeping the lock engaged."""
+        c = self._make_client(event_bus, mock_stream_handler, mock_mouse_controller)
+        c._return_locked_edge = ScreenEdge.RIGHT  # inward is -X
+        c._inward_travel = 0
+
+        c._accumulate_inward_travel(-8, 0)  # inward +8
+        c._accumulate_inward_travel(8, 0)  # edge-ward, net back to 0
+        assert c._inward_travel == 0
+        assert c._return_locked_edge == ScreenEdge.RIGHT
+
+    def test_accumulate_inward_travel_noop_when_unlocked(
+        self, event_bus, mock_stream_handler, mock_mouse_controller
+    ):
+        """No lock -> accumulation is a no-op."""
+        c = self._make_client(event_bus, mock_stream_handler, mock_mouse_controller)
+        c._return_locked_edge = None
+        c._accumulate_inward_travel(100, 100)
+        assert c._inward_travel == 0
+        assert c._return_locked_edge is None
+
+    def test_resolve_entry_edge_prefers_server_value(
+        self, event_bus, mock_stream_handler, mock_mouse_controller
+    ):
+        """Explicit server-supplied edge wins over landing inference."""
+        c = self._make_client(event_bus, mock_stream_handler, mock_mouse_controller)
+        # Coords would infer LEFT, but the server said BOTTOM -> trust it.
+        assert c._resolve_entry_edge("bottom", 0.0, 0.5) == ScreenEdge.BOTTOM
+
+    def test_resolve_entry_edge_infers_from_landing(
+        self, event_bus, mock_stream_handler, mock_mouse_controller
+    ):
+        """Old servers: infer the edge from the pinned landing axis."""
+        c = self._make_client(event_bus, mock_stream_handler, mock_mouse_controller)
+        assert c._resolve_entry_edge(None, 0.0, 0.5) == ScreenEdge.LEFT
+        assert c._resolve_entry_edge(None, 1.0, 0.5) == ScreenEdge.RIGHT
+        assert c._resolve_entry_edge(None, 0.5, 0.0) == ScreenEdge.TOP
+        assert c._resolve_entry_edge(None, 0.5, 1.0) == ScreenEdge.BOTTOM
+        # No explicit landing (hotkey path) -> nothing to lock.
+        assert c._resolve_entry_edge(None, -1, -1) is None
 
     @pytest.mark.anyio
     async def test_mouse_event_callback_queues_event(

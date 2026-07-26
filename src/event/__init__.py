@@ -260,11 +260,16 @@ class ClientActiveEvent(BusEvent):
         client_monitor_id: Optional[int] = None,
         position_x: float = -1,
         position_y: float = -1,
+        entry_edge: Optional[str] = None,
     ):
         self.client_uid = client_uid
         self.client_monitor_id = client_monitor_id
         self.position_x = position_x
         self.position_y = position_y
+        # Client-space edge the cursor crossed in through ("left"/"right"/
+        # "top"/"bottom"), used to lock return-to-server against that edge
+        # until the cursor moves inward. ``None`` = infer from landing coords.
+        self.entry_edge = entry_edge
 
     def to_dict(self) -> dict:
         return {
@@ -272,6 +277,7 @@ class ClientActiveEvent(BusEvent):
             "client_monitor_id": self.client_monitor_id,
             "position_x": self.position_x,
             "position_y": self.position_y,
+            "entry_edge": self.entry_edge,
         }
 
 
@@ -388,6 +394,7 @@ class CrossScreenCommandEvent(CommandEvent):
         x: float | int = -1,
         y: float | int = -1,
         client_monitor_id: Optional[int] = None,
+        entry_edge: Optional[str] = None,
     ):
         super().__init__(
             command=CommandEvent.CROSS_SCREEN,
@@ -397,6 +404,10 @@ class CrossScreenCommandEvent(CommandEvent):
                 "x": x,
                 "y": y,
                 "client_monitor_id": client_monitor_id,
+                # Client-space edge the cursor entered through, so the client
+                # can lock return-to-server against it until it moves inward.
+                # ``None`` for old servers / the return path (client -> server).
+                "entry_edge": entry_edge,
             },
         )
 
@@ -407,6 +418,10 @@ class CrossScreenCommandEvent(CommandEvent):
         v = self.params.get("client_monitor_id")
         return int(v) if v is not None else None
 
+    def get_entry_edge(self) -> Optional[str]:
+        v = self.params.get("entry_edge")
+        return str(v) if v is not None else None
+
     @classmethod
     def from_command_event(cls, event: CommandEvent) -> Self:
         cm_raw = event.params.get("client_monitor_id")
@@ -416,6 +431,7 @@ class CrossScreenCommandEvent(CommandEvent):
             x=event.params.get("x", -1),
             y=event.params.get("y", -1),
             client_monitor_id=int(cm_raw) if cm_raw is not None else None,
+            entry_edge=event.params.get("entry_edge"),
         )
 
     def to_dict(self) -> dict:
@@ -425,6 +441,7 @@ class CrossScreenCommandEvent(CommandEvent):
                 "x": self.params.get("x", -1),
                 "y": self.params.get("y", -1),
                 "client_monitor_id": self.params.get("client_monitor_id"),
+                "entry_edge": self.params.get("entry_edge"),
             },
         }
 

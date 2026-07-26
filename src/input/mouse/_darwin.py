@@ -336,8 +336,28 @@ class ServerMouseListener(_base.ServerMouseListener):
             # cursor won't composite the blank frame until the next motion, which
             # adds a visible delay. Hiding while the pointer is still moving into
             # the edge lets the next motion frame render the blank immediately.
+            #
+            # DIAGNOSTIC (temporary): sample CGCursorIsVisible() around the hide
+            # to tell whether the hide *counter* flips immediately (True->False
+            # right after _hide_cursor) while the cursor is still visually
+            # present. If ``visible_after_hide`` is False but the pointer still
+            # lingers on screen, the delay is a WindowServer composite lag on a
+            # frozen (decoupled) cursor - the case the CGWarpMouseCursorPosition
+            # re-composite fix addresses. If it stays True, background hiding
+            # (SetsCursorInBackground) isn't taking effect. Remove once the
+            # slow-hide cause is confirmed on-device.
+            visible_before = bool(CGCursorIsVisible())
             _hide_cursor()
+            visible_after_hide = bool(CGCursorIsVisible())
             _decouple_mouse()
+            visible_after_decouple = bool(CGCursorIsVisible())
+            self._logger.debug(
+                "cursor hide diagnostics",
+                bg_hide_enabled=self._bg_hide_enabled,
+                visible_before=visible_before,
+                visible_after_hide=visible_after_hide,
+                visible_after_decouple=visible_after_decouple,
+            )
         except Exception as e:
             self._logger.error("failed to hide/pin cursor", error=str(e))
 

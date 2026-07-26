@@ -479,6 +479,13 @@ async def test_return_to_server_from_placed_secondary_client_monitor():
 
         server_events = h.track(h.server_bus, BusEventType.ACTIVE_SCREEN_CHANGED)
 
+        # The crossing entered monitor 1 through its LEFT edge, so return is
+        # locked against that edge until the cursor travels inward. Advance it
+        # past the unlock margin (net +X) the way _move_cursor would.
+        for _ in range(4):
+            ctrl._accumulate_inward_travel(4, 0)
+        assert ctrl._return_locked_edge is None
+
         # Push toward monitor 1's LEFT edge (bound back to the server RIGHT).
         for x in range(1932, 1920, -2):
             ctrl._movement_history.append((x, 540))

@@ -23,6 +23,7 @@ from event import (
     MouseEvent,
     ClientConnectedEvent,
 )
+from input.utils import ScreenEdge
 from network.stream import StreamType
 
 from tests.integration.harness import build_bridge
@@ -150,7 +151,27 @@ async def test_client_return_to_server():
         assert ctrl._edge_bindings, "client should have received the topology"
         assert ctrl._server_bbox == (0, 0, 1920, 1080)
 
+        # Server-coordinated entry edge: the crossing came in through the
+        # client's LEFT edge, so return-to-server through it is locked until
+        # the cursor travels inward.
+        assert ctrl._return_locked_edge == ScreenEdge.LEFT
+        # A push straight back to the LEFT edge while still locked must NOT
+        # hand control back (this is the false cross-back the fix prevents).
+        for x in range(10, 0, -2):
+            ctrl._movement_history.append((x, 500))
+        h.client.mouse_mock.position = (0, 500)
+        await ctrl._check_edge()
+        await h.settle(20)
+        assert ctrl._is_active is True, "locked entry edge must block the return"
+
+        # Move inward past the unlock margin (net +X travel off the LEFT edge),
+        # fed from the lag-free HID deltas exactly as _move_cursor would.
+        for _ in range(4):
+            ctrl._accumulate_inward_travel(4, 0)
+        assert ctrl._return_locked_edge is None
+
         # Cursor pushed against the client's LEFT edge (bound to server RIGHT).
+        ctrl._movement_history.clear()
         for x in range(10, 0, -2):
             ctrl._movement_history.append((x, 500))
         h.client.mouse_mock.position = (0, 500)

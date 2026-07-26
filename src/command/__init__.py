@@ -100,6 +100,7 @@ class CommandHandler:
                     client_monitor_id=crs_event.get_client_monitor_id(),
                     position_x=pos_x,
                     position_y=pos_y,
+                    entry_edge=crs_event.get_entry_edge(),
                 ),
             )
 
