@@ -137,11 +137,10 @@ export default function LayoutEditorWindow() {
                     whileHover={{scale: 1.02}}
                     whileTap={{scale: 0.98}}
                     onClick={handleCancel}
-                    className="px-4 py-2 rounded-lg border text-sm font-medium transition-all duration-200 focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2"
+                    className="px-4 py-2 rounded-lg border-none text-sm font-semibold transition-all duration-200 shadow-sm focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2"
                     style={{
-                        borderColor: "var(--app-card-border)",
-                        backgroundColor: "transparent",
-                        color: "var(--app-text-primary)",
+                        backgroundColor: "var(--app-secondary)",
+                        color: "var(--app-secondary-light)",
                         cursor: "pointer",
                         outlineColor: "var(--app-primary-light)",
                     }}
