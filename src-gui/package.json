@@ -6,6 +6,8 @@
   "scripts": {
     "dev": "vite",
     "build": "tsc && vite build",
+    "test": "vitest",
+    "test:run": "vitest run",
     "preview": "vite preview",
     "tauri": "tauri"
   },
@@ -78,11 +80,15 @@
   "devDependencies": {
     "@tailwindcss/vite": "4.1.12",
     "@tauri-apps/cli": "^2",
+    "@testing-library/jest-dom": "^7.0.0",
+    "@testing-library/react": "^16.3.2",
     "@types/react": "^18",
     "@types/react-dom": "^18",
     "@vitejs/plugin-react": "^4.6.0",
+    "jsdom": "^29.1.1",
     "tailwindcss": "4.1.12",
     "typescript": "~5.8.3",
-    "vite": "^7.0.4"
+    "vite": "^7.0.4",
+    "vitest": "^4.1.10"
   }
 }

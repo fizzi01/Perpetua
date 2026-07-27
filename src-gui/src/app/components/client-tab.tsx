@@ -48,6 +48,17 @@ import {OtpInputPanel} from './ui/otp-input-panel';
 import {ActionButton} from './ui/action-button';
 import { getLocalIpAddress } from '../api/Sender';
 
+function getClientPairingKey(state: ClientStatus) {
+    const server = state.server_info;
+    return [
+        state.start_time || '',
+        server.uid || '',
+        server.host || '',
+        server.hostname || '',
+        server.port?.toString() || '',
+    ].join('|');
+}
+
 export function ClientTab({onStatusChange, state}: ClientTabProps) {
     let previousState = useRef<ClientStatus | null>(null);
 
@@ -96,12 +107,28 @@ export function ClientTab({onStatusChange, state}: ClientTabProps) {
     const listeners = useEventListeners('client-tab');
     const connectionListeners = handleConnectionListeners();
     const saveOptionsTimeoutRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+    // Tauri event callbacks need the latest OTP state synchronously; refs avoid
+    // stale closures while React state still controls the visible panel.
+    const currentPairingKeyRef = useRef(getClientPairingKey(state));
+    const otpSubmittedPairingKeyRef = useRef<string | null>(null);
 
     const [ipAddr, setIpAddr] = useState<string | null>(null);
 
     useEffect(() => {
         getLocalIpAddress().then(ip => setIpAddr(ip));
     }, []);
+
+    const resetOtpSubmissionSuppression = () => {
+        otpSubmittedPairingKeyRef.current = null;
+    };
+
+    const markOtpSubmittedForCurrentPairing = () => {
+        otpSubmittedPairingKeyRef.current = currentPairingKeyRef.current;
+    };
+
+    const isOtpSuppressedForCurrentPairing = () => {
+        return otpSubmittedPairingKeyRef.current === currentPairingKeyRef.current;
+    };
 
     const addNotification = (type: Notification['type'], message: string, description?: string) => {
         const newNotification: Notification = {
@@ -176,7 +203,11 @@ export function ClientTab({onStatusChange, state}: ClientTabProps) {
         setPort(state.server_info.port ? state.server_info.port.toString() : '');
         setAutoReconnect(state.server_info.auto_reconnect);
         setShowServerChoice(state.service_choice_needed);
-        setShowOtpInput(state.otp_needed);
+        currentPairingKeyRef.current = getClientPairingKey(state);
+        if (!state.otp_needed) {
+            resetOtpSubmissionSuppression();
+        }
+        setShowOtpInput(state.otp_needed && !isOtpSuppressedForCurrentPairing());
 
         if (state.service_choice_needed && state.available_servers) {
             setAvailableServers(state.available_servers);
@@ -220,6 +251,7 @@ export function ClientTab({onStatusChange, state}: ClientTabProps) {
                 setIsConnecting(false);
                 switchTrayIcon(true);
                 setShowOtpInput(false);
+                resetOtpSubmissionSuppression();
                 addNotification('success', 'Connected', `${res.host}:${res.port}`);
             }).then((unlisten) => {
                 listeners.addListenerOnce('client-connected', unlisten);
@@ -233,6 +265,7 @@ export function ClientTab({onStatusChange, state}: ClientTabProps) {
                 // setDataUsage(0);
                 setControlStatus('none'); //TODO: Implement in backend
                 setShowOtpInput(false);
+                resetOtpSubmissionSuppression();
                 addNotification('warning', 'Disconnected');
             }).then((unlisten) => {
                 listeners.addListenerOnce('client-disconnected', unlisten);
@@ -251,7 +284,9 @@ export function ClientTab({onStatusChange, state}: ClientTabProps) {
             });
 
             listenGeneralEvent(EventType.OtpNeeded, false, () => {
-                setShowOtpInput(true);
+                if (!isOtpSuppressedForCurrentPairing()) {
+                    setShowOtpInput(true);
+                }
                 listeners.removeListener('otp-needed');
             }).then((unlisten) => {
                 listeners.addListenerOnce('otp-needed', unlisten);
@@ -311,6 +346,7 @@ export function ClientTab({onStatusChange, state}: ClientTabProps) {
             setConnectionTime(0);
             // setDataUsage(0);
             setShowOtpInput(false);
+            resetOtpSubmissionSuppression();
             setAvailableServers(null);
             setShowServerChoice(false);
             setControlStatus('none');
@@ -347,6 +383,7 @@ export function ClientTab({onStatusChange, state}: ClientTabProps) {
 
     const handleToggleClient = () => {
         if (!isRunning) {
+            resetOtpSubmissionSuppression();
             setRunningPending(true);
             onStatusChange(true);
 
@@ -381,6 +418,7 @@ export function ClientTab({onStatusChange, state}: ClientTabProps) {
                 onStatusChange(false);
 
                 setShowOtpInput(false);
+                resetOtpSubmissionSuppression();
                 setShowServerChoice(false);
                 setAvailableServers(null);
 
@@ -411,6 +449,7 @@ export function ClientTab({onStatusChange, state}: ClientTabProps) {
     const handleOtpSubmit = (otp: string) => {
         listenCommand(EventType.CommandSuccess, CommandType.SetOtp, (event) => {
             console.log(`OTP accepted`, event);
+            markOtpSubmittedForCurrentPairing();
             setShowOtpInput(false);
             addNotification('success', 'OTP Accepted');
 
@@ -424,6 +463,7 @@ export function ClientTab({onStatusChange, state}: ClientTabProps) {
             console.error(`OTP rejected`, event);
             addNotification('error', 'OTP Rejected', event.data?.error || 'Unknown error');
             setShowOtpInput(false);
+            resetOtpSubmissionSuppression();
             listeners.removeListener('otp-error');
             listeners.removeListener('otp-success');
             handleStopClient(); // Stop the client since OTP failed
@@ -440,6 +480,7 @@ export function ClientTab({onStatusChange, state}: ClientTabProps) {
 
     const handleCancelOtp = () => {
         setShowOtpInput(false);
+        resetOtpSubmissionSuppression();
         addNotification('info', 'Authentication Cancelled', 'OTP input was cancelled');
         handleStopClient(); // Stop the client since OTP was cancelled
     };
@@ -457,6 +498,7 @@ export function ClientTab({onStatusChange, state}: ClientTabProps) {
     };
 
     const confirmServerSelect = (serverUid: string) => {
+        resetOtpSubmissionSuppression();
         // Set up listeners for the command response
         listenCommand(EventType.CommandSuccess, CommandType.ChooseServer, () => {
             addNotification('success', 'Server Selected');
@@ -1148,6 +1190,7 @@ export function ClientTab({onStatusChange, state}: ClientTabProps) {
                                     value={host || hostname}
                                     onChange={(e) => {
                                         const newHost = e.target.value;
+                                        resetOtpSubmissionSuppression();
                                         if (newHost === '') {
                                             console.log('Clearing host and hostname');
                                             setHost(newHost);
@@ -1187,6 +1230,7 @@ export function ClientTab({onStatusChange, state}: ClientTabProps) {
                                         if (newPort !== '' && !/^\d*$/.test(newPort)) {
                                             return; // Only allow numeric input
                                         }
+                                        resetOtpSubmissionSuppression();
                                         setPort(newPort);
                                         scheduleOptionsSave(host, hostname, newPort, true, autoReconnect, false);
                                     }}
