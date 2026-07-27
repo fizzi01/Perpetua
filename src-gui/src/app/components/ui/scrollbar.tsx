@@ -35,6 +35,7 @@ const ScrollArea = React.forwardRef<HTMLDivElement, ScrollAreaProps>(
         return (
             <div
                 ref={ref}
+                data-scrollbar-gutter={isWindows ? 'stable' : 'overlay'}
                 className={classNames(
                     "custom-scrollbar",
                     platformExtraPadding,

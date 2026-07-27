@@ -29,6 +29,9 @@
   scrollbar-width: thin;
   scrollbar-color: var(--app-primary) transparent;
   transition: scrollbar-color 0.3s ease;
+}
+
+.custom-scrollbar[data-scrollbar-gutter="stable"] {
   scrollbar-gutter: stable;
 }
 
@@ -492,4 +495,3 @@
 .SelectScrollButton:hover {
   color: var(--app-text-primary);
 }
-
