@@ -1810,7 +1810,7 @@ class Server:
         )
         await self.save_config()
         self._logger.info(
-            f"Client {client.get_net_id()} connected at position {client.screen_position}"
+            f"Client {client.get_net_id()} connected"
         )
 
         await self._send_notification(
@@ -1833,7 +1833,7 @@ class Server:
         )
         await self.save_config()
         self._logger.info(
-            f"Client {client.get_net_id()} disconnected from position {client.screen_position}"
+            f"Client {client.get_net_id()} disconnected"
         )
 
         await self._send_notification(
