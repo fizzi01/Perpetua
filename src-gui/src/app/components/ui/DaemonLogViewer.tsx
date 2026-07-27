@@ -26,6 +26,13 @@
 import React, {useEffect, useMemo, useRef, useState} from 'react';
 import {invoke} from '@tauri-apps/api/core';
 import {FileText, Pause, Play, RefreshCw, Search, WrapText, X} from 'lucide-react';
+import {
+    Select,
+    SelectContent,
+    SelectItem,
+    SelectTrigger,
+    SelectValue,
+} from './select';
 
 interface LogViewerProps {
     // Optional: customize the number of lines to fetch
@@ -218,25 +225,44 @@ export const DaemonLogViewer: React.FC<LogViewerProps> = ({
                         <div className="flex items-center gap-1.5">
                             <label className="text-xs font-medium"
                                    style={{color: 'var(--app-text-muted)'}}>Lines</label>
-                            <select
-                                value={numLines}
-                                onChange={(e) => {
-                                    const value = parseInt(e.target.value);
+                            <Select
+                                value={String(numLines)}
+                                onValueChange={(nextValue) => {
+                                    const value = parseInt(nextValue, 10);
                                     setNumLines(value);
                                     fetchLogs(value);
                                 }}
-                                className="border rounded-md px-1.5 py-0.5 text-xs font-medium transition-all cursor-pointer hover:border-opacity-70 focus:outline-none focus:ring-2 focus:ring-opacity-50"
-                                style={{
-                                    backgroundColor: 'var(--app-input-background)',
-                                    borderColor: 'var(--app-border)',
-                                    color: 'var(--app-foreground)',
-                                }}
                             >
-                                <option value={50}>50</option>
-                                <option value={100}>100</option>
-                                <option value={500}>500</option>
-                                <option value={1000}>1000</option>
-                            </select>
+                                <SelectTrigger
+                                    className="h-auto w-[68px] border rounded-md px-1.5 py-0.5 text-xs font-medium transition-all cursor-pointer hover:border-opacity-70 focus:outline-none focus:ring-2 focus:ring-opacity-50 shadow-none"
+                                    style={{
+                                        backgroundColor: 'var(--app-input-bg)',
+                                        borderColor: 'var(--app-border)',
+                                        color: 'var(--app-text-primary)',
+                                    }}
+                                >
+                                    <SelectValue/>
+                                </SelectTrigger>
+                                <SelectContent
+                                    position="item-aligned"
+                                    className="min-w-[68px] text-xs"
+                                    style={{
+                                        backgroundColor: 'var(--app-bg-secondary)',
+                                        borderColor: 'var(--app-border)',
+                                        color: 'var(--app-text-primary)',
+                                    }}
+                                >
+                                    {[50, 100, 500, 1000].map((value) => (
+                                        <SelectItem
+                                            key={value}
+                                            value={String(value)}
+                                            className="text-xs focus:bg-[var(--app-primary)] focus:text-white"
+                                        >
+                                            {value}
+                                        </SelectItem>
+                                    ))}
+                                </SelectContent>
+                            </Select>
                         </div>
 
                         {/* Auto-refresh toggle */}
@@ -404,4 +430,3 @@ export const DaemonLogViewer: React.FC<LogViewerProps> = ({
         </div>
     );
 };
-
