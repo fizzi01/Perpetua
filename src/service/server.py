@@ -1809,9 +1809,7 @@ class Server:
             ),
         )
         await self.save_config()
-        self._logger.info(
-            f"Client {client.get_net_id()} connected"
-        )
+        self._logger.info(f"Client {client.get_net_id()} connected")
 
         await self._send_notification(
             ClientConnectedNotification(
@@ -1832,9 +1830,7 @@ class Server:
             data=ClientDisconnectedEvent(client_uid=client.uid, streams=streams),
         )
         await self.save_config()
-        self._logger.info(
-            f"Client {client.get_net_id()} disconnected"
-        )
+        self._logger.info(f"Client {client.get_net_id()} disconnected")
 
         await self._send_notification(
             ClientDisconnectedNotification(

@@ -69,6 +69,7 @@ def _pair_with_server_a(server_cm: CertificateManager, client_cm: CertificateMan
     with open(server_cm.ca_cert_path, "rb") as f:
         assert client_cm.save_ca_data(f.read(), "A")
 
+
 @pytest.mark.anyio
 async def test_forget_previous_server_wipes_ca_and_client_identity(switch_setup):
     client, server_cm, client_cm = switch_setup
@@ -82,6 +83,7 @@ async def test_forget_previous_server_wipes_ca_and_client_identity(switch_setup)
     # The old CA and the stale client identity are both gone.
     assert client_cm.get_ca_cert_path("A") is None
     assert not client_cm.client_credentials_exist()
+
 
 @pytest.mark.anyio
 async def test_forget_previous_server_is_best_effort_when_nothing_stored(switch_setup):
