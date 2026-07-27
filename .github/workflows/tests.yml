@@ -10,11 +10,63 @@ on:
       - master
 
 jobs:
+  should_run_tests:
+    runs-on: ubuntu-latest
+    outputs:
+      run_tests: ${{ steps.filter.outputs.run_tests }}
+    steps:
+      - uses: actions/checkout@v6
+        with:
+          fetch-depth: 0
+          ref: ${{ github.event.after || github.event.pull_request.head.sha || github.sha }}
+
+      - id: filter
+        shell: bash
+        env:
+          ACTOR: ${{ github.actor }}
+          EVENT_NAME: ${{ github.event_name }}
+          BEFORE_SHA: ${{ github.event.before }}
+          AFTER_SHA: ${{ github.event.after || github.event.pull_request.head.sha || github.sha }}
+          PR_TITLE: ${{ github.event.pull_request.title }}
+        run: |
+          run_tests=true
+          null_sha="0000000000000000000000000000000000000000"
+
+          if [[ "$ACTOR" == "github-actions[bot]" ]]; then
+            run_tests=false
+          fi
+
+          if [[ "$EVENT_NAME" == "pull_request" && "$PR_TITLE" =~ ^(chore|docs|ci) ]]; then
+            run_tests=false
+          fi
+
+          if [[ -n "$BEFORE_SHA" && "$BEFORE_SHA" != "$null_sha" && -n "$AFTER_SHA" ]] &&
+            git cat-file -e "$BEFORE_SHA^{commit}" &&
+            git cat-file -e "$AFTER_SHA^{commit}"; then
+            commit_log_command=(git log --format=%s "$BEFORE_SHA..$AFTER_SHA")
+          else
+            commit_log_command=(git log -1 --format=%s "${AFTER_SHA:-HEAD}")
+          fi
+
+          saw_commit=false
+          has_testable_commit=false
+          while IFS= read -r commit_subject; do
+            saw_commit=true
+            if [[ ! "$commit_subject" =~ ^(chore|docs|ci) && "$commit_subject" != *"(gui)"* ]]; then
+              has_testable_commit=true
+              break
+            fi
+          done < <("${commit_log_command[@]}")
+
+          if [[ "$saw_commit" == false || "$has_testable_commit" == false ]]; then
+            run_tests=false
+          fi
+
+          echo "run_tests=$run_tests" >> "$GITHUB_OUTPUT"
+
   test:
-    if: |
-      github.actor != 'github-actions[bot]' &&
-      !(startsWith(github.event.pull_request.title, 'chore') || startsWith(github.event.pull_request.title, 'docs') || startsWith(github.event.pull_request.title, 'ci')) &&
-      !(startsWith(github.event.head_commit.message, 'chore') || startsWith(github.event.head_commit.message, 'docs') || startsWith(github.event.head_commit.message, 'ci'))
+    needs: should_run_tests
+    if: needs.should_run_tests.outputs.run_tests == 'true'
     runs-on: ${{ matrix.os }}
     strategy:
       fail-fast: false
