@@ -1439,9 +1439,10 @@ class ClientMouseController(object):
         perpendicular to ``_return_locked_edge`` (direction/angle-agnostic: a
         diagonal move contributes only its perpendicular component, movement
         parallel to the edge contributes nothing). Because the landing sits on
-        the edge, this IS the cursor's perpendicular offset from it. Not clamped
-        and never reset here: an edge-ward jitter reduces the net so the offset
-        keeps tracking the true distance from the edge. Once it reaches
+        the edge, this IS the cursor's perpendicular offset from it - clamped to
+        ``[0, monitor span]`` so it stays faithful to the OS-clamped cursor
+        (never reset to 0 by a margin): an edge-ward jitter reduces the net so
+        the offset keeps tracking the true distance from the edge. Once it reaches
         ``RETURN_ARM_MARGIN`` the cursor has genuinely entered, so the return
         lock is *armed*; the actual return is then gated on the offset falling
         back to ``RETURN_RELEASE_MARGIN`` in ``_check_edge`` (hysteresis). This
@@ -1451,14 +1452,31 @@ class ClientMouseController(object):
         edge = self._return_locked_edge
         if edge is None:
             return
+        min_x, min_y, max_x, max_y = self._active_target_bbox
         if edge == ScreenEdge.LEFT:
             self._inward_travel += dx
+            span = max_x - min_x
         elif edge == ScreenEdge.RIGHT:
             self._inward_travel -= dx
+            span = max_x - min_x
         elif edge == ScreenEdge.TOP:
             self._inward_travel += dy
+            span = max_y - min_y
         elif edge == ScreenEdge.BOTTOM:
             self._inward_travel -= dy
+            span = max_y - min_y
+        else:
+            return
+        # Clamp to the perpendicular extent of the active monitor: the cursor
+        # is pinned by the OS at the screen edges, but the server keeps
+        # forwarding deltas while the user pushes, so without this the offset
+        # diverges far past the monitor and a real return sweep can never bring
+        # it back into the release band (control gets stuck on the client). The
+        # 0 floor also self-resyncs: pushing into the entry edge drives it to 0
+        # so the return gate reliably opens there. Skip on a degenerate bbox,
+        # else the floor would cap arming at 0.
+        if span > 0:
+            self._inward_travel = max(0, min(span, self._inward_travel))
         if self._inward_travel >= self.RETURN_ARM_MARGIN:
             self._return_armed = True
 

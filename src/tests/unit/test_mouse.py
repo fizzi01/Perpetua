@@ -877,6 +877,7 @@ class TestClientMouseController:
         """Net inward travel past the arm margin arms - it does NOT unlock:
         the edge stays locked and the offset keeps tracking (hysteresis)."""
         c = self._make_client(event_bus, mock_stream_handler, mock_mouse_controller)
+        c._active_target_bbox = (0, 0, 1920, 1080)  # deterministic clamp span
         c._return_locked_edge = ScreenEdge.LEFT
         c._inward_travel = 0
         c._return_armed = False
@@ -897,6 +898,7 @@ class TestClientMouseController:
     ):
         """Only the component perpendicular to the locked edge counts."""
         c = self._make_client(event_bus, mock_stream_handler, mock_mouse_controller)
+        c._active_target_bbox = (0, 0, 1920, 1080)  # deterministic clamp span
         c._return_locked_edge = ScreenEdge.LEFT
         c._inward_travel = 0
         c._return_armed = False
@@ -915,8 +917,9 @@ class TestClientMouseController:
     def test_accumulate_inward_travel_edge_ward_jitter_reduces_offset(
         self, event_bus, mock_stream_handler, mock_mouse_controller
     ):
-        """An edge-ward jitter reduces the net offset (it is not clamped)."""
+        """An edge-ward jitter reduces the net offset back toward the edge."""
         c = self._make_client(event_bus, mock_stream_handler, mock_mouse_controller)
+        c._active_target_bbox = (0, 0, 1920, 1080)  # deterministic clamp span
         c._return_locked_edge = ScreenEdge.RIGHT  # inward is -X
         c._inward_travel = 0
 
@@ -934,6 +937,71 @@ class TestClientMouseController:
         c._accumulate_inward_travel(100, 100)
         assert c._inward_travel == 0
         assert c._return_armed is False
+
+    def test_accumulate_inward_travel_clamps_to_monitor_span(
+        self, event_bus, mock_stream_handler, mock_mouse_controller
+    ):
+        """Offset caps at the perpendicular monitor span (upper) and 0 (lower),
+        so overshoot at a far edge can't diverge it beyond the screen."""
+        c = self._make_client(event_bus, mock_stream_handler, mock_mouse_controller)
+        c._active_target_bbox = (0, 0, 1920, 1080)
+        c._return_locked_edge = ScreenEdge.LEFT  # perpendicular axis = width
+        c._inward_travel = 0
+        # Overshoot far past the right edge -> capped at the 1920 width.
+        c._accumulate_inward_travel(999999, 0)
+        assert c._inward_travel == 1920
+        assert c._return_armed is True
+        # Edge-ward beyond the span -> floored at 0 (never negative).
+        c._accumulate_inward_travel(-999999, 0)
+        assert c._inward_travel == 0
+
+    def test_accumulate_inward_travel_clamp_uses_perp_axis(
+        self, event_bus, mock_stream_handler, mock_mouse_controller
+    ):
+        """A TOP/BOTTOM lock clamps to the monitor HEIGHT, not width."""
+        c = self._make_client(event_bus, mock_stream_handler, mock_mouse_controller)
+        c._active_target_bbox = (0, 0, 1920, 1080)
+        c._return_locked_edge = ScreenEdge.TOP  # perpendicular axis = height
+        c._inward_travel = 0
+        c._accumulate_inward_travel(0, 999999)
+        assert c._inward_travel == 1080
+
+    def test_accumulate_inward_travel_skips_clamp_on_degenerate_bbox(
+        self, event_bus, mock_stream_handler, mock_mouse_controller
+    ):
+        """A zero-width bbox must skip the clamp, else the 0 floor would cap
+        arming at 0 and the client could never hand control back."""
+        c = self._make_client(event_bus, mock_stream_handler, mock_mouse_controller)
+        c._active_target_bbox = (0, 0, 0, 1080)  # zero width
+        c._return_locked_edge = ScreenEdge.LEFT
+        c._inward_travel = 0
+        c._accumulate_inward_travel(ClientMouseController.RETURN_ARM_MARGIN, 0)
+        assert c._inward_travel == ClientMouseController.RETURN_ARM_MARGIN
+        assert c._return_armed is True
+
+    @pytest.mark.anyio
+    async def test_overshoot_then_return_reaches_release_band(
+        self, event_bus, mock_stream_handler, mock_mouse_controller
+    ):
+        """Regression: after overshooting a far edge, a full return sweep brings
+        the offset back into the release band and the return fires."""
+        with _ScreenGeometry(1920, 1080):
+            c = self._make_client(event_bus, mock_stream_handler, mock_mouse_controller)
+            self._activate_left_entry(c)
+            # Enter and overshoot the far (RIGHT) edge many times over.
+            for _ in range(200):
+                c._move_cursor(-1, -1, 40, 0)  # +X inward for a LEFT lock
+            assert c._inward_travel == 1920  # capped at the width, not 8000
+            assert c._return_armed is True
+            # One full return sweep back to the LEFT edge.
+            for _ in range(200):
+                c._move_cursor(-1, -1, -40, 0)
+            assert c._inward_travel <= c.RETURN_RELEASE_MARGIN
+            # Deliberate push onto the edge now hands control back.
+            c._controller.position = (0, 500)
+            c._last_move_delta = (-3, 0)
+            await c._check_edge()
+            assert mock_stream_handler.send.called
 
     def test_resolve_entry_edge_prefers_server_value(
         self, event_bus, mock_stream_handler, mock_mouse_controller
