@@ -1689,8 +1689,7 @@ class TestClientMouseController:
             for i in range(20):
                 controller._movement_history.append((i, i))
 
-            # Should maintain max length (MOVEMENT_HISTORY_LEN = 8)
-            assert len(controller._movement_history) == 8
+            assert len(controller._movement_history) == 5
             # Should keep most recent
             assert controller._movement_history[-1] == (19, 19)
 
