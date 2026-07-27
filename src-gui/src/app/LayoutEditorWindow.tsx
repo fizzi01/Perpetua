@@ -189,10 +189,9 @@ export default function LayoutEditorWindow() {
             </div>
 
             <div
-                className="flex-1 flex overflow-hidden rounded-xl border shadow-sm"
+                className="flex-1 flex overflow-hidden rounded-xl shadow-sm"
                 style={{
                     minHeight: 0,
-                    borderColor: "var(--app-card-border)",
                     backgroundColor: "var(--app-card-bg)",
                 }}
             >
