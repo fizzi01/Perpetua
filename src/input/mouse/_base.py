@@ -1029,8 +1029,8 @@ class ServerMouseController(object):
 class ClientMouseController(object):
     """Async client-side mouse controller (movements, clicks, scrolls)."""
 
-    MOVEMENT_HISTORY_N_THRESHOLD = 6
-    MOVEMENT_HISTORY_LEN = 8
+    MOVEMENT_HISTORY_N_THRESHOLD = 4
+    MOVEMENT_HISTORY_LEN = 5
     # Consecutive presses on the same button within this window are
     # tagged as a multi-click sequence (double, triple, ...).
     DOUBLE_CLICK_THRESHOLD = 0.4
