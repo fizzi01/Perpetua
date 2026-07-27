@@ -586,6 +586,13 @@ pub fn run(daemon_config: Option<DaemonConfig>, start_minimized: bool) {
                     (s.hard_close, s.connected)
                 };
 
+                if !hard_close && window.label() == "layout-editor" {
+                    api.prevent_close();
+                    let _ = app_handle.emit("layout-editor:cancel", {});
+                    let _ = window.hide();
+                    return;
+                }
+
                 if !hard_close {
                     if !connected {
                         force_close(app_handle);

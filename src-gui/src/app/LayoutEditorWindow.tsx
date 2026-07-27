@@ -16,7 +16,7 @@
  * along with this program.  If not, see <https://www.gnu.org/licenses/>.
  */
 
-import {useEffect, useRef, useState} from "react";
+import {useCallback, useEffect, useRef, useState} from "react";
 import {emit, listen, type UnlistenFn} from "@tauri-apps/api/event";
 import {getCurrentWindow} from "@tauri-apps/api/window";
 import {motion} from "motion/react";
@@ -55,8 +55,27 @@ export default function LayoutEditorWindow() {
     const initialPlacementsRef = useRef<MonitorPlacement[]>([]);
     // Mirror of `initialised` for the persistent listener: re-INIT must refresh sidebar without clobbering drags.
     const initialisedRef = useRef(false);
+    const closingRef = useRef(false);
 
     
+    const closeEditor = useCallback(async (emitCancel: boolean) => {
+        if (closingRef.current) return;
+        closingRef.current = true;
+        if (emitCancel) {
+            try {
+                await emit(LAYOUT_CANCEL_EVENT, {});
+            } catch (err) {
+                console.error("Failed to emit layout editor cancel", err);
+            }
+        }
+        try {
+            await getCurrentWindow().hide();
+        } catch (_) {
+            // hot-reload in dev can race here; state cleanup still matters.
+        }
+        initialisedRef.current = false;
+        setInitialised(false);
+    }, []);
 
     useEffect(() => {
         const handleResize = () => setWindowHeight(window.innerHeight);
@@ -67,9 +86,23 @@ export default function LayoutEditorWindow() {
     useEffect(() => {
         let unlisten: UnlistenFn | null = null;
         (async () => {
+            unlisten = await getCurrentWindow().onCloseRequested(async (event) => {
+                event.preventDefault();
+                await closeEditor(true);
+            });
+        })();
+        return () => {
+            if (unlisten) unlisten();
+        };
+    }, [closeEditor]);
+
+    useEffect(() => {
+        let unlisten: UnlistenFn | null = null;
+        (async () => {
             unlisten = await listen<LayoutEditorInitPayload>(
                 LAYOUT_INIT_EVENT,
                 (event) => {
+                    closingRef.current = false;
                     const data = event.payload;
                     setServerMonitors(data.serverMonitors || []);
                     setClients(data.clients || []);
@@ -95,24 +128,11 @@ export default function LayoutEditorWindow() {
         if (!valid) return;
         const payload: LayoutEditorSavePayload = {placements};
         await emit(LAYOUT_SAVE_EVENT, payload);
-        try {
-            await getCurrentWindow().hide();
-        } catch (_) {
-            // hot-reload in dev can race here; data already left the window.
-        }
-        initialisedRef.current = false;
-        setInitialised(false);
+        await closeEditor(false);
     }
 
     async function handleCancel() {
-        await emit(LAYOUT_CANCEL_EVENT, {});
-        try {
-            await getCurrentWindow().hide();
-        } catch (_) {
-            // ignored
-        }
-        initialisedRef.current = false;
-        setInitialised(false);
+        await closeEditor(true);
     }
 
     return (
@@ -137,10 +157,11 @@ export default function LayoutEditorWindow() {
                     whileHover={{scale: 1.02}}
                     whileTap={{scale: 0.98}}
                     onClick={handleCancel}
-                    className="px-4 py-2 rounded-lg border-none text-sm font-semibold transition-all duration-200 shadow-sm focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2"
+                    className="px-4 py-2 rounded-lg border text-sm font-semibold transition-all duration-200 shadow-sm focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2"
                     style={{
-                        backgroundColor: "var(--app-secondary)",
-                        color: "var(--app-secondary-light)",
+                        borderColor: "var(--app-input-border)",
+                        backgroundColor: "var(--app-bg-tertiary)",
+                        color: "var(--app-text-primary)",
                         cursor: "pointer",
                         outlineColor: "var(--app-primary-light)",
                     }}
