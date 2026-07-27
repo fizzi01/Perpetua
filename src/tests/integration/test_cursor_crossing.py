@@ -164,11 +164,15 @@ async def test_client_return_to_server():
         await h.settle(20)
         assert ctrl._is_active is True, "locked entry edge must block the return"
 
-        # Move inward past the unlock margin (net +X travel off the LEFT edge),
-        # fed from the lag-free HID deltas exactly as _move_cursor would.
+        # Arm the return by travelling inward past the arm margin (net +X off
+        # the LEFT edge), fed from the lag-free HID deltas as _move_cursor would.
         for _ in range(4):
             ctrl._accumulate_inward_travel(4, 0)
-        assert ctrl._return_locked_edge is None
+        assert ctrl._return_armed is True
+        # ...then travel back to the edge so the offset drops to the release
+        # band and the entry-edge return gate opens.
+        ctrl._accumulate_inward_travel(-ctrl._inward_travel, 0)
+        assert ctrl._inward_travel <= ctrl.RETURN_RELEASE_MARGIN
 
         # Cursor pushed against the client's LEFT edge (bound to server RIGHT).
         ctrl._movement_history.clear()

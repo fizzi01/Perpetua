@@ -1039,13 +1039,21 @@ class ClientMouseController(object):
     # state to detect a game pointer lock. The result is cached so the
     # per-move hot path stays a single boolean check.
     POINTER_LOCK_POLL_INTERVAL = 0.1
-    # Net inward travel (px, perpendicular to the entry edge) the cursor
-    # must accumulate after a crossing before return-to-server is unlocked
-    # through that edge. Guards against the landing sitting exactly on the
-    # edge (== the return edge), where a single reverse HID jitter would
-    # otherwise bounce control straight back to the server. Small enough
-    # to be imperceptible in normal use.
-    RETURN_UNLOCK_MARGIN = 12
+    # Hysteresis for the entry-edge return lock. After a crossing the cursor
+    # lands ON the entry edge, which is also the edge used to return to the
+    # server; a single reverse HID jitter would otherwise bounce control
+    # straight back. Return-to-server through the entry edge is gated by the
+    # LAG-FREE ``_inward_travel`` (net perpendicular offset from that edge,
+    # accumulated from the injected deltas - not the async, laggy cursor
+    # read-back that misleads edge detection on fast motion):
+    #   - it arms only once the cursor has genuinely moved inward past
+    #     ``RETURN_ARM_MARGIN`` (kills the at-landing jitter);
+    #   - once armed, the return fires only when the cursor has come back to
+    #     within ``RETURN_RELEASE_MARGIN`` of the edge (so a cursor sitting far
+    #     inside can't be bounced back by a stray reverse delta while the OS
+    #     read-back still reports the edge).
+    RETURN_ARM_MARGIN = 12
+    RETURN_RELEASE_MARGIN = 4
 
     def __init__(
         self,
@@ -1092,15 +1100,18 @@ class ClientMouseController(object):
         # the cursor pinned at ``x = monitor.min_x`` can't trigger the
         # return-to-server crossing.
         self._last_move_delta: tuple[int, int] = (0, 0)
-        # Return-to-server lockout. After a crossing the cursor lands
-        # exactly on the entry edge, which is also the edge used to return
-        # to the server; ``_return_locked_edge`` names that edge and
-        # suppresses return-to-server through it until ``_inward_travel``
-        # (net signed perpendicular displacement accumulated from the
-        # lag-free HID deltas, not the async cursor read-back) reaches
-        # ``RETURN_UNLOCK_MARGIN``. ``None`` = unlocked.
+        # Return-to-server lockout (hysteretic). After a crossing the cursor
+        # lands ON the entry edge, which is also the edge used to return to the
+        # server. ``_return_locked_edge`` names that edge; ``_inward_travel`` is
+        # the lag-free net perpendicular offset from it (accumulated from the
+        # injected HID deltas, never the async cursor read-back), and
+        # ``_return_armed`` latches once the cursor has genuinely entered past
+        # ``RETURN_ARM_MARGIN``. The entry-edge return then fires only when the
+        # offset falls back to ``RETURN_RELEASE_MARGIN`` - see
+        # ``_accumulate_inward_travel`` and the gate in ``_check_edge``.
         self._return_locked_edge: Optional[ScreenEdge] = None
         self._inward_travel: int = 0
+        self._return_armed: bool = False
         # Server's virtual desktop bbox - return-to-server (x, y) is
         # normalised over this.
         self._server_bbox: Optional[tuple[int, int, int, int]] = None
@@ -1354,6 +1365,7 @@ class ClientMouseController(object):
             else None
         )
         self._inward_travel = 0
+        self._return_armed = False
 
         self._is_active = True
         self._cross_screen_event.clear()
@@ -1382,6 +1394,7 @@ class ClientMouseController(object):
         self._last_move_delta = (0, 0)
         self._return_locked_edge = None
         self._inward_travel = 0
+        self._return_armed = False
         self._pointer_locked = False
         self._pointer_lock_ts = 0.0
 
@@ -1420,16 +1433,20 @@ class ClientMouseController(object):
         return None
 
     def _accumulate_inward_travel(self, dx: int, dy: int) -> None:
-        """Advance the return-lock toward unlocking from a lag-free HID delta.
+        """Track the cursor's offset from the entry edge from a lag-free delta.
 
-        Tracks the net signed displacement along the axis perpendicular to
-        ``_return_locked_edge`` (direction/angle-agnostic: a diagonal move
-        contributes only its perpendicular component, movement parallel to
-        the edge contributes nothing). Because the landing sits on the edge,
-        this is the cursor's perpendicular offset from it. Not clamped
-        per-tick: an edge-ward jitter reduces the net so the lock holds while
-        the cursor lingers in the false-trigger zone. Unlocks for good once
-        the offset reaches ``RETURN_UNLOCK_MARGIN``.
+        Maintains ``_inward_travel`` = net signed displacement along the axis
+        perpendicular to ``_return_locked_edge`` (direction/angle-agnostic: a
+        diagonal move contributes only its perpendicular component, movement
+        parallel to the edge contributes nothing). Because the landing sits on
+        the edge, this IS the cursor's perpendicular offset from it. Not clamped
+        and never reset here: an edge-ward jitter reduces the net so the offset
+        keeps tracking the true distance from the edge. Once it reaches
+        ``RETURN_ARM_MARGIN`` the cursor has genuinely entered, so the return
+        lock is *armed*; the actual return is then gated on the offset falling
+        back to ``RETURN_RELEASE_MARGIN`` in ``_check_edge`` (hysteresis). This
+        never trusts the async, laggy OS read-back, so a fast crossing that
+        parks the cursor far inside can't be bounced back to the server.
         """
         edge = self._return_locked_edge
         if edge is None:
@@ -1442,9 +1459,8 @@ class ClientMouseController(object):
             self._inward_travel += dy
         elif edge == ScreenEdge.BOTTOM:
             self._inward_travel -= dy
-        if self._inward_travel >= self.RETURN_UNLOCK_MARGIN:
-            self._return_locked_edge = None
-            self._inward_travel = 0
+        if self._inward_travel >= self.RETURN_ARM_MARGIN:
+            self._return_armed = True
 
     async def _on_client_topology_updated(
         self, data: Optional[ClientTopologyUpdatedEvent]
@@ -1893,18 +1909,22 @@ class ClientMouseController(object):
                 if edge is None or self._is_dragging:
                     return None
 
-                # Suppress return-to-server through the edge the cursor just
-                # entered by, until it has travelled inward off it (see
-                # ``_accumulate_inward_travel``). Only that one edge is locked,
-                # so returns through any other edge still fire immediately. The
-                # OS-drift path (``_handle_os_drift`` above) and intra-client
-                # warps below are intentionally NOT gated - drift is a real OS
-                # transition and warps route within this client, not back to
-                # the server.
-                if (
-                    edge != self._return_locked_edge
-                    and await self._try_return_to_server(edge, x, y)
-                ):
+                # Gate return-to-server through the entry edge on the lag-free
+                # ``_inward_travel`` (see ``_accumulate_inward_travel``), NOT the
+                # laggy OS read-back that drives ``edge``: allow it only once the
+                # cursor has genuinely entered (armed) AND has come back to
+                # within ``RETURN_RELEASE_MARGIN`` of the edge. This kills both
+                # the at-landing jitter and the fast-motion bounce (cursor far
+                # inside while the read-back still says the edge). Returns
+                # through any OTHER edge fire immediately. The OS-drift path
+                # (``_handle_os_drift`` above) and intra-client warps below are
+                # intentionally NOT gated - drift is a real OS transition and
+                # warps route within this client, not back to the server.
+                entry_gate_open = edge != self._return_locked_edge or (
+                    self._return_armed
+                    and self._inward_travel <= self.RETURN_RELEASE_MARGIN
+                )
+                if entry_gate_open and await self._try_return_to_server(edge, x, y):
                     return await asyncio.sleep(0)
 
                 if self._try_intra_client_warp_sync(edge, x, y, current_monitor):
@@ -2046,6 +2066,7 @@ class ClientMouseController(object):
         # return lock against it until the cursor travels inward again.
         self._return_locked_edge = self._STRING_TO_EDGE_CLIENT.get(dst_edge)
         self._inward_travel = 0
+        self._return_armed = False
         return True
 
     async def _position_cursor(self, x: float | int, y: float | int):
@@ -2084,7 +2105,7 @@ class ClientMouseController(object):
             # when OS clamping has stalled the position history.
             self._last_move_delta = (dx, dy)
             # Advance the return lockout from the raw HID delta (lag-free,
-            # unlike the async cursor read-back) - no-op when unlocked.
+            # unlike the async cursor read-back).
             self._accumulate_inward_travel(dx, dy)
             self._inject_relative(dx, dy)
         else:

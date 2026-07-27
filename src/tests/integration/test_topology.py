@@ -32,6 +32,7 @@ from event import (
     ClientLayoutUpdatedEvent,
     ClientTopologyCommandEvent,
 )
+from input.utils import ScreenEdge
 from model.monitor import MonitorInfo
 from network.stream import StreamType
 from utils.screen import compute_edge_bindings
@@ -480,11 +481,14 @@ async def test_return_to_server_from_placed_secondary_client_monitor():
         server_events = h.track(h.server_bus, BusEventType.ACTIVE_SCREEN_CHANGED)
 
         # The crossing entered monitor 1 through its LEFT edge, so return is
-        # locked against that edge until the cursor travels inward. Advance it
-        # past the unlock margin (net +X) the way _move_cursor would.
+        # locked against that edge. Arm it by travelling inward past the arm
+        # margin (net +X, as _move_cursor would), then back to the edge so the
+        # hysteretic gate opens.
+        assert ctrl._return_locked_edge == ScreenEdge.LEFT
         for _ in range(4):
             ctrl._accumulate_inward_travel(4, 0)
-        assert ctrl._return_locked_edge is None
+        assert ctrl._return_armed is True
+        ctrl._accumulate_inward_travel(-ctrl._inward_travel, 0)
 
         # Push toward monitor 1's LEFT edge (bound back to the server RIGHT).
         for x in range(1932, 1920, -2):
