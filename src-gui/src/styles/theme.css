@@ -24,20 +24,6 @@
   width: 0px;
 }
 
-.custom-scrollbar {
-  transition: scrollbar-color 0.3s ease;
-}
-
-.custom-scrollbar[data-scrollbar-gutter="stable"] {
-  scrollbar-width: thin;
-  scrollbar-color: var(--app-primary) transparent;
-  scrollbar-gutter: stable both-edges;
-}
-
-.custom-scrollbar[data-scrollbar-gutter="stable"]:hover {
-  scrollbar-color: var(--app-primary-light) transparent;
-}
-
 .custom-scrollbar[data-scrollbar-mode="overlay"] {
   scrollbar-width: none;
 }
@@ -62,13 +48,13 @@
   width: 4px;
   min-height: 24px;
   border-radius: 999px;
-  background-color: color-mix(in srgb, var(--app-primary) 72%, transparent);
+  background-color: var(--app-primary);
   box-shadow: none;
   transition: background-color 0.16s ease;
 }
 
 .custom-scrollbar-overlay:hover .custom-scrollbar-overlay-thumb {
-  background-color: color-mix(in srgb, var(--app-primary-light) 88%, transparent);
+  background-color: var(--app-primary-light);
   box-shadow: none;
 }
 

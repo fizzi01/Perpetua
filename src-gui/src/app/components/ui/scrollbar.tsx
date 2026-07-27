@@ -19,7 +19,6 @@
 
 import * as React from "react";
 import {createPortal} from "react-dom";
-import {platform} from '@tauri-apps/plugin-os';
 import {classNames} from '../../commons/utils';
 
 const OVERLAY_SCROLLBAR_HIDE_DELAY_MS = 220;
@@ -30,7 +29,7 @@ export interface ScrollAreaProps extends React.HTMLAttributes<HTMLDivElement> {
 }
 
 const ScrollArea = React.forwardRef<HTMLDivElement, ScrollAreaProps>(
-    ({className, children, extraPadding, ...props}, ref) => {
+    ({className, children, extraPadding: _extraPadding, ...props}, ref) => {
         const scrollRef = React.useRef<HTMLDivElement | null>(null);
         const scrollIdleTimeoutRef = React.useRef<ReturnType<typeof setTimeout> | null>(null);
         const [metrics, setMetrics] = React.useState({
@@ -47,10 +46,7 @@ const ScrollArea = React.forwardRef<HTMLDivElement, ScrollAreaProps>(
             startY: number;
             startScrollTop: number;
         } | null>(null);
-        const currentPlatform = platform();
-        const isWindows = currentPlatform === 'windows';
-        const useOverlayScrollbar = !isWindows;
-        const platformExtraPadding = isWindows ? extraPadding : '';
+        const useOverlayScrollbar = true;
 
         const setRefs = React.useCallback((node: HTMLDivElement | null) => {
             scrollRef.current = node;
@@ -243,11 +239,10 @@ const ScrollArea = React.forwardRef<HTMLDivElement, ScrollAreaProps>(
             <div
                 {...props}
                 ref={setRefs}
-                data-scrollbar-gutter={isWindows ? 'stable' : 'overlay'}
-                data-scrollbar-mode={useOverlayScrollbar ? 'overlay' : 'native'}
+                data-scrollbar-gutter="overlay"
+                data-scrollbar-mode="overlay"
                 className={classNames(
                     "custom-scrollbar",
-                    platformExtraPadding,
                     className
                 )}
                 onMouseEnter={onMouseEnter}
