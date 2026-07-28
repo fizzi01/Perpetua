@@ -28,6 +28,7 @@ import sys
 import threading
 from typing import Optional
 
+from AppKit import NSCursor  # ty:ignore[unresolved-import]
 from Quartz import (
     CGAssociateMouseAndMouseCursorPosition,  # ty:ignore[unresolved-import]
     CGCursorIsVisible,  # ty:ignore[unresolved-import]
@@ -557,28 +558,68 @@ class ClientMouseController(_base.ClientMouseController):
     """
 
     def _cursor_is_hidden(self) -> bool:
-        """True when the system cursor is hidden (game pointer lock).
+        """True when the system cursor is hidden — by anyone, for any reason.
 
-        Read-only: a foreground game hides the cursor when it grabs the
-        pointer. We never hide/show it ourselves.
+        Ambiguous on its own, and macOS offers nothing better: there is no
+        getter for ``CGAssociateMouseAndMouseCursorPosition``, cursor hiding is
+        a global counter with no attribution, and ``CGDisplayIsCaptured`` is
+        both deprecated and useless against borderless-fullscreen games. So a
+        game grab and AppKit's type-in-a-text-field auto-hide look identical
+        here; ``_refresh_pointer_lock`` tells them apart by pairing this with
+        ``_reveal_transient_hide``.
         """
         return not CGCursorIsVisible()
 
-    def _inject_relative(self, dx: int, dy: int) -> None:
+    def _reveal_transient_hide(self) -> None:
+        """Cancel AppKit's "hidden until the mouse moves" auto-hide.
+
+        This is the hide macOS arms while the user types in a text field. It is
+        a global flag that any mouse movement clears, so clearing it ourselves
+        is no more invasive than moving the mouse would be — and unlike
+        ``CGDisplayHideCursor`` / ``[NSCursor hide]``, which are per-connection
+        counters, it is not what a game uses.
+
+        Caveat, and the reason nothing here relies on it: it is NOT established
+        that ``setHiddenUntilMouseMoves_(False)`` clears an auto-hide armed by a
+        *different* process. It is kept because it costs ~2 us and can only
+        help; the guarantee against a frozen cursor comes from
+        ``POINTER_LOCK_MAX_PIN_SECONDS`` in the base class instead.
+
+        Must run on the main thread (it does: the only caller is
+        ``_refresh_pointer_lock``, on the asyncio loop).
+        """
+        try:
+            NSCursor.setHiddenUntilMouseMoves_(False)
+        except Exception as e:
+            self._logger.debug("could not cancel transient cursor hide", error=str(e))
+
+    def _inject_relative(self, dx: int, dy: int) -> tuple[int, int]:
         """Post a genuine relative-motion CGEvent so games read the delta.
 
         pynput's ``Controller.move`` warps the cursor to an absolute
         position; first-person games reading ``kCGMouseEventDeltaX/Y`` see
-        nothing that way. Normally we move the system cursor to
-        ``current + delta`` (so the visible pointer tracks on the desktop)
-        *and* stamp the event's delta fields, which is what the game's camera
-        consumes. Under a game pointer lock (``_pointer_locked``) the game
-        pins/centers the cursor itself, so we keep the event at the *current*
-        position — only the delta fields carry movement — otherwise our
-        absolute point would drag the pinned cursor around. During a drag the
-        motion must be delivered as a ``…MouseDragged`` event, not
+        nothing that way. We move the system cursor to ``current + delta`` (so
+        the visible pointer tracks on the desktop) *and* stamp the event's
+        delta fields, which is what the game's camera consumes. During a drag
+        the motion must be delivered as a ``…MouseDragged`` event, not
         ``MouseMoved``, or the drag breaks.
+
+        Under a *confirmed* pointer lock the game pins/centers the cursor
+        itself, so the event stays at the current position and only the delta
+        fields carry movement — otherwise the real cursor drifts until it hits
+        the menu bar, and a right-click there pulls focus out of the game.
+
+        ``_pointer_locked`` must be the confirmed sticky-hide state from
+        ``_refresh_pointer_lock``, never a bare ``CGCursorIsVisible()`` read:
+        pinning on a text-field auto-hide freezes the cursor for real, because
+        an event that never changes position is not movement, so the OS never
+        cancels the auto-hide that caused the pin.
+
+        The return value is the displacement the *cursor* took: ``(0, 0)`` while
+        pinned (the deltas went to the game, not to the pointer), so the
+        caller's return-lock bookkeeping stays faithful to the real position.
         """
+        applied = (0, 0) if self._pointer_locked else (int(dx), int(dy))
         try:
             cur_x, cur_y = self._controller.position
             if self._pointer_locked:
@@ -602,6 +643,7 @@ class ClientMouseController(_base.ClientMouseController):
             CGEventSetIntegerValueField(event, kCGMouseEventDeltaX, int(dx))
             CGEventSetIntegerValueField(event, kCGMouseEventDeltaY, int(dy))
             CGEventPost(kCGHIDEventTap, event)
+            return applied
         except Exception as e:
             self._logger.error("relative CGEvent injection failed", error=str(e))
-            super()._inject_relative(dx, dy)
+            return super()._inject_relative(dx, dy)
