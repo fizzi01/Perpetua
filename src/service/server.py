@@ -69,7 +69,7 @@ from input.clipboard import ClipboardListener, ClipboardController
 
 from utils import BackgroundTasks, UIDGenerator
 from utils.metrics import PerformanceMonitor
-from utils.net import get_local_ip, invalidate_local_ip_cache
+from utils.net import MissingIpError, get_local_ip, invalidate_local_ip_cache
 from utils.crypto import CertificateManager
 from utils.crypto.sharing import CertificateSharing
 
@@ -124,7 +124,14 @@ class Server:
 
         self.certfile, self.keyfile = None, None
         if self.config.ssl_enabled:
-            self.certfile, self.keyfile = self._setup_certificates()
+            try:
+                self.certfile, self.keyfile = self._setup_certificates()
+            except Exception as e:
+                # Construction must never fail
+                self._logger.error(
+                    "Deferring SSL certificate setup to server start",
+                    error=str(e),
+                )
 
         self.event_bus = AsyncEventBus()
 
@@ -294,7 +301,17 @@ class Server:
         # Force a fresh lookup: the 30s TTL cache may still hold the pre-change
         # IP right after a network event.
         invalidate_local_ip_cache()
-        current_ip = get_local_ip(force_refresh=True)
+        try:
+            current_ip = get_local_ip(force_refresh=True)
+        except MissingIpError as e:
+            # No usable address right now (machine offline). The existing
+            # certificates stay valid for whenever the network comes back —
+            # never discard them over a failed probe.
+            self._logger.warning(
+                "Skipping certificate SAN check, local IP unavailable",
+                error=str(e),
+            )
+            return
 
         san_ips, san_dns = self._cert_manager.get_server_cert_san()
         if current_ip in san_ips:
@@ -1320,6 +1337,23 @@ class Server:
                 port=self.config.port,
                 host=self.config.host,
             )
+
+        # Certificate setup deferred from __init__. Retry now that the user explicitly asked
+        # for a start, and report the reason if it still fails.
+        if self.config.ssl_enabled and not self.certfile:
+            try:
+                self.certfile, self.keyfile = self._setup_certificates()
+            except MissingIpError as e:
+                error_msg = (
+                    "Cannot issue TLS certificates: no local network address "
+                    "available. Connect to a network and try again."
+                )
+                self._logger.error(error_msg, error=str(e))
+                raise ServerStartError(error_msg, reason="no_local_ip") from e
+            except Exception as e:
+                error_msg = f"Cannot set up TLS certificates: {e}"
+                self._logger.error(error_msg)
+                raise ServerStartError(error_msg, reason="ssl_setup_failed") from e
 
         try:
             await self._initialize_streams()

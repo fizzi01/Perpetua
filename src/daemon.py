@@ -1249,10 +1249,10 @@ class Daemon:
             self._logger.error(
                 "Command execution failed", command=command, error=str(e)
             )
-            await self._notification_manager.notify_error(
-                f"Command execution failed: {str(e)}",
-                data={"command": command, "error": str(e)},
-            )
+            # Report as a command error, not a generic one: the GUI listens
+            # per-command, so a generic error event for an escaped exception
+            # would leave the caller waiting forever with nothing on screen.
+            await self._notification_manager.notify_command_error(command, str(e))
 
     @CommandHandler.register(DaemonCommand.SERVICE_CHOICE)
     async def _handle_service_choice(self, params: Dict[str, Any]) -> None:

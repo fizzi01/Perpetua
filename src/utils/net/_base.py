@@ -16,21 +16,96 @@
 #
 
 
+import socket
+
+
 class MissingIpError(Exception):
     """Custom exception raised when the local IP address cannot be determined."""
 
     pass
 
 
+def _is_usable_ip(ip: str | int) -> bool:
+    """Reject addresses that cannot be advertised to peers on the LAN."""
+    if not ip:
+        return False
+    if isinstance(ip, int):
+        ip = socket.inet_ntoa(ip.to_bytes(4, "big"))
+    if ip.startswith("127.") or ip.startswith("169.254."):
+        return False
+    if ip in ("0.0.0.0", "::", "::1"):
+        return False
+    return True
+
+
 class CommonNetInfo:
     """Common network information class for shared attributes or methods."""
 
+    # Unicast route probe target. Only used to ask the routing table which
+    # local address it would source from; no packet is ever sent.
+    HOST: str = "8.8.8.8"
+    PORT: int = 53
+    TIMEOUT: int = 3
+
+    # Link-local multicast (mDNS) probe target. Reachable without a default
+    # route, so it still resolves an address on a LAN with no WAN uplink.
+    MULTICAST_HOST: str = "224.0.0.251"
+    MULTICAST_PORT: int = 5353
+
     @staticmethod
-    def get_local_ip():
+    def _probe_route(host: str, port: int) -> str:
+        """Which local address it would use to reach ``host``."""
+        with socket.socket(socket.AF_INET, socket.SOCK_DGRAM) as s:
+            s.settimeout(CommonNetInfo.TIMEOUT)
+            s.connect((host, port))
+            return s.getsockname()[0]
+
+    @staticmethod
+    def _resolve_own_hostname() -> str:
+        """Last-resort lookup: resolve this machine's hostname to a LAN IPv4."""
+        for info in socket.getaddrinfo(socket.gethostname(), None, socket.AF_INET):
+            ip = info[4][0]
+            if _is_usable_ip(ip):
+                return (
+                    ip
+                    if isinstance(ip, str)
+                    else socket.inet_ntoa(ip.to_bytes(4, "big"))
+                )
+        raise MissingIpError("hostname resolves to no usable address")
+
+    @staticmethod
+    def get_local_ip() -> str:
         """
-        Placeholder function for retrieving the local IP address.
-        This function should be implemented in platform-specific modules.
+        Retrieves the local IP address of the current machine without sending
+        any data, trying progressively weaker strategies:
+
+        1. route probe towards a public host (needs a default route);
+        2. route probe towards the mDNS multicast group (works on a LAN with
+           no internet access at all);
+        3. resolution of the machine's own hostname.
+
+        :raises MissingIpError: If none of the strategies yields a usable
+            address; the last underlying error is embedded in the message.
+        :return: The local IP address of the machine as a string.
+        :rtype: str
         """
-        raise NotImplementedError(
-            "get_local_ip() must be implemented in platform-specific modules."
-        )
+        last_error: Exception = MissingIpError("no strategy available")
+
+        for strategy in (
+            lambda: CommonNetInfo._probe_route(CommonNetInfo.HOST, CommonNetInfo.PORT),
+            lambda: CommonNetInfo._probe_route(
+                CommonNetInfo.MULTICAST_HOST, CommonNetInfo.MULTICAST_PORT
+            ),
+            CommonNetInfo._resolve_own_hostname,
+        ):
+            try:
+                ip = strategy()
+            except Exception as e:  # noqa: BLE001 - try the next strategy
+                last_error = e
+                continue
+            if _is_usable_ip(ip):
+                return ip
+
+        raise MissingIpError(
+            f"Could not determine local IP address ({last_error})"
+        ) from last_error

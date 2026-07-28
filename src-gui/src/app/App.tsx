@@ -42,6 +42,7 @@ import {useEventListeners} from './hooks/useEventListeners';
 import {useAppDispatch, useAppSelector} from './hooks/redux';
 import {ActionType} from './store/actions';
 import {ScrollArea} from './components/ui/scrollbar';
+import {InlineNotification, Notification} from './components/ui/inline-notification';
 import {DaemonLogDialog} from './components/ui/DaemonLogDialog';
 import {SplashScreen} from './Splash';
 import LayoutEditorWindow from './LayoutEditorWindow';
@@ -58,6 +59,9 @@ export function Main() {
     const [pendingService, setPendingService] = useState<string | null>(null);
     // True when the gate is up because a permission was revoked at runtime.
     const [permsRevoked, setPermsRevoked] = useState<boolean>(false);
+    // App-level toasts. The tabs own their own stacks; this one covers failures
+    // that happen outside a tab, i.e. while switching service mode.
+    const [notifications, setNotifications] = useState<Notification[]>([]);
 
     const listeners = useEventListeners();
 
@@ -67,16 +71,72 @@ export function Main() {
 
     const isStartupRef = useRef(true);
 
+    const addNotification = (type: Notification['type'], message: string, description?: string) => {
+        const newNotification: Notification = {
+            id: Date.now().toString(),
+            type,
+            message,
+            description,
+        };
+        setNotifications((prev) => [...prev, newNotification]);
+        setTimeout(() => {
+            setNotifications((prev) => prev.filter((n) => n.id !== newNotification.id));
+        }, 4000);
+    };
+
+    // The daemon answers ``service_choice`` asynchronously, with either
+    // command_success or command_error. Both listeners are registered before the
+    // command goes out (the send is fire-and-forget, so a fast reply would
+    // otherwise be missed) and both are released whichever way it resolves —
+    // leaving one behind would make every later switch self-cancel through
+    // addListenerOnce.
+    function releaseServiceChoiceListeners() {
+        if (listeners.hasListener('service-choice')) {
+            listeners.forceRemoveListener('service-choice');
+        }
+        if (listeners.hasListener('service-choice-error')) {
+            listeners.forceRemoveListener('service-choice-error');
+        }
+    }
+
+    function requestServiceChoice(newMode: 'client' | 'server') {
+        const successListener = listenCommand(EventType.CommandSuccess, CommandType.ServiceChoice, (event) => {
+            console.log(`Service choice changed successfully: ${event.message}`);
+            let mode = event.message?.toLowerCase();
+            if (mode === 'client' || mode === 'server') {
+                setMode(mode);
+            }
+            releaseServiceChoiceListeners();
+        }).then((unlisten) => {
+            listeners.addListenerOnce('service-choice', unlisten);
+        });
+
+        const errorListener = listenCommand(EventType.CommandError, CommandType.ServiceChoice, (event) => {
+            const error = event.data?.error || '';
+            console.error(`Service choice failed: ${error}`);
+            // Mode intentionally left untouched: the daemon did not switch.
+            addNotification('error', `Cannot switch to ${newMode} mode`, error);
+            releaseServiceChoiceListeners();
+        }).then((unlisten) => {
+            listeners.addListenerOnce('service-choice-error', unlisten);
+        });
+
+        return Promise.all([successListener, errorListener])
+            .then(() => chooseService(newMode))
+            .catch((err) => {
+                console.error('Error changing service:', err);
+                addNotification('error', `Cannot switch to ${newMode} mode`, String(err));
+                releaseServiceChoiceListeners();
+            });
+    }
+
     function firstStartup() {
         let isStartup = isStartupRef.current;
         if (isStartup) {
             console.log('[App] First startup detected, choosing service and setting up listeners');
             setupStatusListener();
             isStartupRef.current = false;
-            chooseService(mode).catch((err) => {
-                console.error('[App] Error changing service:', err);
-                listeners.forceRemoveListener('service-choice');
-            });
+            requestServiceChoice(mode);
 
             getStatus().catch((err) => {
                 console.error('[App] Error fetching status:', err);
@@ -233,21 +293,7 @@ export function Main() {
         console.log(`Changing mode to ${newMode} (force: ${force}, previous: ${mode})`);
         if (newMode === mode && !force) return;
 
-        listenCommand(EventType.CommandSuccess, CommandType.ServiceChoice, (event) => {
-            console.log(`Service choice changed successfully: ${event.message}`);
-            let mode = event.message?.toLowerCase();
-            if (mode === 'client' || mode === 'server') {
-                setMode(mode);
-            }
-            listeners.removeListener('service-choice');
-        }).then((unlisten) => {
-            listeners.addListenerOnce('service-choice', unlisten);
-        });
-
-        chooseService(newMode).catch((err) => {
-            console.error('Error changing service:', err);
-            listeners.forceRemoveListener('service-choice');
-        });
+        requestServiceChoice(newMode);
     }
 
     return (
@@ -259,14 +305,18 @@ export function Main() {
                 <Titlebar disabled={disableModeSwitch} mode={mode} onModeChange={(newMode) => {
                     changeMode(newMode);
 
-                    // Fetch status after changing service
+                    // Fetch status after changing service. A failure here says
+                    // nothing about the pending service_choice, so its listeners
+                    // are left alone.
                     getStatus().catch((err) => {
                         console.error('Error fetching status:', err);
-                        listeners.forceRemoveListener('service-choice');
                     });
                 }}/>
                 {/* Scrollable Content */}
                 <ScrollArea extraPadding='pl-10' className={`flex-1 min-h-0 overflow-y-auto px-8 py-6 relative`}>
+                    {/* Mode-switch failures and other app-level errors */}
+                    <InlineNotification notifications={notifications}
+                        as                onDismiss={(id) => setNotifications((prev) => prev.filter((n) => n.id !== id))}/>
                     {/* Content */}
                     <motion.div
                         key={mode}

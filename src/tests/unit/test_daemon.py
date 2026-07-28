@@ -846,6 +846,42 @@ class TestErrorHandling:
         )
 
     @pytest.mark.anyio
+    async def test_escaped_exception_reported_as_command_error(
+        self, daemon_instance: Daemon
+    ):
+        """An exception escaping a handler must still yield a COMMAND_ERROR.
+
+        The GUI listens per command, so reporting a generic error event would
+        leave the caller waiting forever with nothing shown on screen.
+        """
+        captured: list[NotificationEvent] = []
+
+        async def capture(event: NotificationEvent) -> None:
+            captured.append(event)
+
+        daemon_instance._notification_manager.set_callback(capture)
+
+        command = DaemonCommand.SERVICE_CHOICE.value
+
+        async def boom(_params):
+            raise RuntimeError("Could not determine local IP address (unreachable)")
+
+        original = daemon_instance._command_handlers.get(command)
+        daemon_instance._command_handlers[command] = boom
+        try:
+            await daemon_instance._execute_command(command, {"service": "server"})
+        finally:
+            if original is not None:
+                daemon_instance._command_handlers[command] = original
+
+        assert captured, "The failure must be reported to the GUI"
+        event = captured[-1]
+        assert event.event_type == NotificationEventType.COMMAND_ERROR
+        assert event.data is not None
+        assert event.data.get("command") == command
+        assert "Could not determine local IP address" in event.data.get("error", "")
+
+    @pytest.mark.anyio
     async def test_connection_lost_handling(self, running_daemon: Daemon):
         """Test handling when client connection is lost abruptly."""
         # Connect and close abruptly

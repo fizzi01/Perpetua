@@ -20,28 +20,9 @@ from ._base import MissingIpError
 
 
 class CommonNetInfo(_base.CommonNetInfo):
-    HOST: str = "8.8.8.8"
-    PORT: int = 53
-    TIMEOUT: int = 3
+    """Linux network info: the shared route-probe implementation applies as-is."""
 
-    @staticmethod
-    def get_local_ip():
-        """
-        Retrieves the local IP address of the current machine by simulating an
-        outbound connection to a public IP without sending any actual data.
+    pass
 
-        :raises MissingIpError: If the local IP address cannot be determined due to an exception during
-            the operation, the error details are encapsulated in the exception's message and raised.
-        :return: The local IP address of the machine as a string.
-        :rtype: str
-        """
-        try:
-            import socket
 
-            with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as s:
-                s.settimeout(CommonNetInfo.TIMEOUT)
-                s.connect((CommonNetInfo.HOST, CommonNetInfo.PORT))
-                ip = s.getsockname()[0]
-                return ip
-        except Exception as e:
-            raise MissingIpError(f"Could not determine local IP address ({e})") from e
+__all__ = ["CommonNetInfo", "MissingIpError"]

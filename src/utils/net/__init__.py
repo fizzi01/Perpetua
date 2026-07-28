@@ -23,7 +23,7 @@ import socket
 import time
 
 if TYPE_CHECKING:
-    from ._base import CommonNetInfo
+    from ._base import CommonNetInfo, MissingIpError
 
     _platform_get_local_ip = CommonNetInfo.get_local_ip
 else:
