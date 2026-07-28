@@ -872,299 +872,14 @@ class TestClientMouseController:
                 event_bus, mock_stream_handler, mock_stream_handler
             )
 
-    # --- pointer lock detection -------------------------------------------
-    #
-    # A hidden cursor is ambiguous: a game hides it when it grabs the pointer,
-    # and so does the OS while the user types in a text field. The two are told
-    # apart by persistence — the typing hide dies to a reveal, a game's does
-    # not — measured over POINTER_LOCK_CONFIRM_SECONDS of continuous polling.
-
-    # One injected move at a typical ~125 Hz stream.
-    _MOVE_DT = 0.008
-
-    def _poll(self, controller, *, hidden: bool, reveal_clears: bool = False):
-        """Run one visibility poll with the OS probe and reveal mocked.
-
-        ``hidden`` is what the OS reports on entry; ``reveal_clears`` makes the
-        reveal actually work, so the post-reveal re-read reports visible. That
-        is the text-field case — a game's sticky hide survives it.
-        """
-        state = {"hidden": hidden}
-
-        def is_hidden():
-            return state["hidden"]
-
-        def reveal():
-            if reveal_clears:
-                state["hidden"] = False
-
-        reveal_mock = MagicMock(side_effect=reveal)
-        with patch.multiple(
-            controller,
-            _cursor_is_hidden=MagicMock(side_effect=is_hidden),
-            _reveal_transient_hide=reveal_mock,
-        ):
-            controller._refresh_pointer_lock()
-        return reveal_mock
-
-    def _clock(self, start: float = 1000.0):
-        """Patch the module clock with a hand-advanced one."""
-        holder = {"t": start}
-        ctx = patch("input.mouse._base.time", side_effect=lambda: holder["t"])
-        return holder, ctx
-
-    def _confirm_sticky_lock(self, controller, holder):
-        """Drive a sticky hide to confirmation the way a game would.
-
-        Steps one move at a time: the gap guard requires *continuous* polling,
-        so a single jump past the window would restart it instead.
-        """
-        deadline = holder["t"] + ClientMouseController.POINTER_LOCK_CONFIRM_SECONDS
-        while holder["t"] <= deadline + self._MOVE_DT:
-            self._poll(controller, hidden=True)
-            holder["t"] += self._MOVE_DT
-
-    def test_visible_cursor_never_locks(
-        self, event_bus, mock_stream_handler, mock_mouse_controller
-    ):
-        """A visible cursor clears the lock and never triggers a reveal."""
-        c = self._make_client(event_bus, mock_stream_handler, mock_mouse_controller)
-        c._pointer_locked = True
-        c._hidden_since = 1.0
-
-        _, ctx = self._clock()
-        with ctx:
-            reveal = self._poll(c, hidden=False)
-
-        reveal.assert_not_called()
-        assert c._pointer_locked is False
-        assert c._hidden_since is None
-
-    def test_transient_hide_never_locks(
-        self, event_bus, mock_stream_handler, mock_mouse_controller
-    ):
-        """Typing must never be mistaken for a pointer lock.
-
-        The regression: the auto-hide is re-armed on every keystroke, so polls
-        keep seeing a hidden cursor. What makes it distinguishable is that the
-        reveal clears it, which resets the window instead of accumulating it.
-        """
-        c = self._make_client(event_bus, mock_stream_handler, mock_mouse_controller)
-
-        holder, ctx = self._clock()
-        with ctx:
-            # Well past the confirmation window, one poll per injected move.
-            steps = int(
-                3 * ClientMouseController.POINTER_LOCK_CONFIRM_SECONDS / self._MOVE_DT
-            )
-            for _ in range(steps):
-                self._poll(c, hidden=True, reveal_clears=True)
-                holder["t"] += self._MOVE_DT
-                assert c._pointer_locked is False
-                assert c._hidden_since is None
-
-    def test_sticky_hide_locks_after_the_window(
-        self, event_bus, mock_stream_handler, mock_mouse_controller
-    ):
-        """A hide that survives every reveal is a game grab — but not instantly."""
-        c = self._make_client(event_bus, mock_stream_handler, mock_mouse_controller)
-        window = ClientMouseController.POINTER_LOCK_CONFIRM_SECONDS
-
-        holder, ctx = self._clock()
-        with ctx:
-            self._poll(c, hidden=True)
-            assert c._pointer_locked is False, "must not lock on the first poll"
-            assert c._hidden_since is not None
-
-            # Just short of the window: still unlocked.
-            while holder["t"] - c._hidden_since < window - self._MOVE_DT:
-                holder["t"] += self._MOVE_DT
-                self._poll(c, hidden=True)
-            assert c._pointer_locked is False
-
-            # Crossing it confirms the lock.
-            holder["t"] += self._MOVE_DT * 2
-            self._poll(c, hidden=True)
-            assert c._pointer_locked is True
-
-    def test_polling_gap_restarts_the_window(
-        self, event_bus, mock_stream_handler, mock_mouse_controller
-    ):
-        """Typing with the mouse still must not confirm a lock on the next move.
-
-        Polls only happen while moves arrive. Without the gap guard the window
-        would elapse unobserved during the pause and latch immediately.
-        """
-        c = self._make_client(event_bus, mock_stream_handler, mock_mouse_controller)
-
-        holder, ctx = self._clock()
-        with ctx:
-            self._poll(c, hidden=True)
-            # Long pause in the move stream, far beyond the window.
-            holder["t"] += 10 * ClientMouseController.POINTER_LOCK_CONFIRM_SECONDS
-            self._poll(c, hidden=True)
-
-            assert c._pointer_locked is False
-            assert c._hidden_since == holder["t"], "window should have restarted"
-
-    def test_reveal_is_retried_while_locked(
-        self, event_bus, mock_stream_handler, mock_mouse_controller
-    ):
-        """The reveal keeps firing under lock - this is what makes it freeze-proof.
-
-        Releasing the lock must never depend on the cursor moving, or a false
-        positive could pin the cursor in a way that blocks its own release.
-        """
-        c = self._make_client(event_bus, mock_stream_handler, mock_mouse_controller)
-        c._pointer_locked = True
-
-        _, ctx = self._clock()
-        with ctx:
-            reveal = self._poll(c, hidden=True)
-
-        reveal.assert_called_once()
-
-    def test_lock_releases_when_cursor_reappears(
-        self, event_bus, mock_stream_handler, mock_mouse_controller
-    ):
-        """Leaving the game releases the lock on the next poll."""
-        c = self._make_client(event_bus, mock_stream_handler, mock_mouse_controller)
-
-        holder, ctx = self._clock()
-        with ctx:
-            self._confirm_sticky_lock(c, holder)
-            assert c._pointer_locked is True
-
-            self._poll(c, hidden=False)
-
-        assert c._pointer_locked is False
-        assert c._hidden_since is None
-
-    def test_probe_failure_falls_back_to_unlocked(
-        self, event_bus, mock_stream_handler, mock_mouse_controller
-    ):
-        """A throwing visibility probe must not leave the cursor pinned."""
-        c = self._make_client(event_bus, mock_stream_handler, mock_mouse_controller)
-        c._pointer_locked = True
-        c._hidden_since = 1.0
-
-        with patch.object(
-            c, "_cursor_is_hidden", side_effect=RuntimeError("no window server")
-        ):
-            c._refresh_pointer_lock()
-
-        assert c._pointer_locked is False
-        assert c._hidden_since is None
-
-    @pytest.mark.anyio
-    async def test_activation_resets_detector_state(
-        self, event_bus, mock_stream_handler, mock_mouse_controller
-    ):
-        """Switching client on/off clears the detector state."""
-        c = self._make_client(event_bus, mock_stream_handler, mock_mouse_controller)
-
-        c._hidden_since = 1.0
-        c._pointer_locked = True
-        await c._on_client_active(ClientActiveEvent(client_uid="server"))
-        assert c._hidden_since is None
-        assert c._pointer_locked is False
-        await c.stop()
-
-        c._hidden_since = 1.0
-        c._pointer_locked = True
-        await c._on_client_inactive(ClientActiveEvent(client_uid="server"))
-        assert c._hidden_since is None
-        assert c._pointer_locked is False
-
-    def test_pinning_cannot_last_indefinitely(
-        self, event_bus, mock_stream_handler, mock_mouse_controller
-    ):
-        """The pin is bounded even if the cursor never becomes visible again.
-
-        The reported freeze: releasing the lock needs a visible cursor, but the
-        pin keeps the cursor still and only a position change cancels the
-        auto-hide, so the lock could hold forever. Past
-        ``POINTER_LOCK_MAX_PIN_SECONDS`` it must let go unconditionally — the
-        next move then really moves the cursor.
-        """
-        c = self._make_client(event_bus, mock_stream_handler, mock_mouse_controller)
-
-        holder, ctx = self._clock()
-        with ctx:
-            self._confirm_sticky_lock(c, holder)
-            assert c._pointer_locked is True
-            deadline = (
-                c._lock_since + ClientMouseController.POINTER_LOCK_MAX_PIN_SECONDS
-            )
-
-            # Hidden forever, reveal never clears it: the game case as well as
-            # the false positive — indistinguishable, by design.
-            while holder["t"] < deadline:
-                assert c._pointer_locked is True, "must hold before the ceiling"
-                self._poll(c, hidden=True)
-                holder["t"] += self._MOVE_DT
-
-            self._poll(c, hidden=True)
-            assert c._pointer_locked is False, "pin outlived the ceiling"
-            assert c._lock_since is None
-
-            # A real game grab simply re-confirms right after.
-            self._confirm_sticky_lock(c, holder)
-            assert c._pointer_locked is True
-
-    def test_lock_release_clears_movement_history(
-        self, event_bus, mock_stream_handler, mock_mouse_controller
-    ):
-        """History gathered before the lock must not survive it.
-
-        ``_check_edge`` is skipped while locked, so the buffer stays frozen with
-        pre-lock samples; voting on them would declare an edge that contradicts
-        the direction the cursor is moving now.
-        """
-        c = self._make_client(event_bus, mock_stream_handler, mock_mouse_controller)
-
-        holder, ctx = self._clock()
-        with ctx:
-            self._confirm_sticky_lock(c, holder)
-            assert c._pointer_locked is True
-
-            c._movement_history.extend([(100, 100 + i) for i in range(5)])
-            self._poll(c, hidden=False)
-
-        assert len(c._movement_history) == 0
-
-    def test_polling_gap_clears_movement_history(
-        self, event_bus, mock_stream_handler, mock_mouse_controller
-    ):
-        """A pause in the move stream invalidates the position history.
-
-        Typing with the mouse still stops the polls; the samples left behind
-        predate the pause. ``_detect_edge_via_delta`` still covers the tick.
-        """
-        c = self._make_client(event_bus, mock_stream_handler, mock_mouse_controller)
-
-        holder, ctx = self._clock()
-        with ctx:
-            self._poll(c, hidden=False)
-            c._movement_history.extend([(100, 100 + i) for i in range(5)])
-
-            # Short enough to be a continuous stream: history is kept.
-            holder["t"] += self._MOVE_DT
-            self._poll(c, hidden=False)
-            assert len(c._movement_history) == 5
-
-            holder["t"] += 10 * ClientMouseController.POINTER_LOCK_POLL_GAP
-            self._poll(c, hidden=False)
-
-        assert len(c._movement_history) == 0
-
     def test_inward_travel_tracks_applied_displacement(
         self, event_bus, mock_stream_handler, mock_mouse_controller
     ):
         """``_inward_travel`` follows the cursor, not the delta we were sent.
 
-        Under a pointer lock the macOS backend pins the event at the current
-        position, so the cursor does not move: crediting the raw delta would
+        A backend reports what the OS really applied: on macOS the deltas go
+        through the HID system, so an app holding the pointer keeps the cursor
+        still and no travel happens. Crediting the raw delta instead would
         saturate the offset and latch ``_return_armed`` against a cursor that
         never left the edge.
         """
@@ -1189,31 +904,27 @@ class TestClientMouseController:
         assert c._last_move_delta == (40, 0)
 
     @pytest.mark.anyio
-    async def test_return_to_server_survives_a_pinned_burst(
+    async def test_return_to_server_survives_an_immobile_burst(
         self, event_bus, mock_stream_handler, mock_mouse_controller
     ):
-        """After a pinned burst the entry edge must still hand control back.
+        """After a burst that moved nothing, the entry edge must still return.
 
-        The second half of the freeze: pinned events used to saturate
-        ``_inward_travel``, closing the return gate for good, so every
-        subsequent tick fell through to ``_clamp_cursor_to_monitor`` — dead
-        movement that only typing (which re-locks and skips ``_check_edge``)
-        appeared to fix.
+        A pointer held by a foreground app used to saturate ``_inward_travel``
+        from the raw deltas, closing the return gate for good, so every later
+        tick fell through to ``_clamp_cursor_to_monitor`` — dead movement.
         """
         with _ScreenGeometry(1920, 1080):
             c = self._make_client(event_bus, mock_stream_handler, mock_mouse_controller)
             self._activate_left_entry(c)
 
-            # Locked: the backend pins, nothing really moves.
-            c._pointer_locked = True
+            # The app holds the pointer: deltas arrive, nothing moves.
             with patch.object(c, "_inject_relative", return_value=(0, 0)):
                 for _ in range(200):
                     c._move_cursor(-1, -1, 40, 0)
             assert c._inward_travel == 0
             assert c._return_armed is False
 
-            # Lock gone, real movement resumes: enter, then sweep back.
-            c._release_pointer_lock()
+            # Pointer released: real movement resumes - enter, then sweep back.
             for _ in range(10):
                 c._move_cursor(-1, -1, 40, 0)
             assert c._return_armed is True
@@ -2328,102 +2039,310 @@ class TestDarwinClientMouseController:
                 event_bus, mock_stream_handler, mock_stream_handler
             )
 
+    # --- relative injection ------------------------------------------------
+    #
+    # The deltas go through IOHIDPostEvent, below
+    # CGAssociateMouseAndMouseCursorPosition, so the OS decides whether the
+    # cursor moves. That is what lets a game hold its pointer while typing stays
+    # untouched, with no cursor-visibility guessing anywhere (three earlier
+    # generations of that heuristic all froze the cursor while typing).
+
+    def _patch_hid(self, *, ok: bool, failure=None):
+        """Stand in for the module-level HID injector."""
+        injector = MagicMock()
+        injector.post.return_value = ok
+        injector.failure = failure
+        return patch("input.mouse._darwin._hid_injector", injector), injector
+
+    def test_relative_motion_goes_through_the_hid_system(
+        self, event_bus, mock_stream_handler, mock_mouse_controller
+    ):
+        """The HID path is preferred, and no CGEvent is posted when it works."""
+        c = self._make_client(event_bus, mock_stream_handler, mock_mouse_controller)
+        ctx, injector = self._patch_hid(ok=True)
+
+        with (
+            ctx,
+            patch("input.mouse._darwin.CGEventCreateMouseEvent") as create,
+            patch.object(c, "_cursor_position", return_value=(400.0, 300.0)),
+        ):
+            c._inject_relative(7, -5)
+
+        from input.mouse import _darwin
+
+        injector.post.assert_called_once_with(7, -5, _darwin._NX_MOUSEMOVED)
+        create.assert_not_called()
+
+    def test_hid_failure_falls_back_to_cgevent_and_warns_once(
+        self, event_bus, mock_stream_handler, mock_mouse_controller
+    ):
+        """An unavailable HID path degrades to CGEvents without per-event noise."""
+        c = self._make_client(event_bus, mock_stream_handler, mock_mouse_controller)
+        ctx, injector = self._patch_hid(ok=False, failure="IOServiceOpen returned 0x…")
+
+        with (
+            ctx,
+            patch("input.mouse._darwin.CGEventCreateMouseEvent") as create,
+            patch("input.mouse._darwin.CGEventSetIntegerValueField"),
+            patch("input.mouse._darwin.CGEventPost"),
+            patch.object(c, "_cursor_position", return_value=(400.0, 300.0)),
+            patch.object(c._logger, "warning") as warn,
+        ):
+            c._inject_relative(7, -5)
+            c._inject_relative(7, -5)
+
+        assert create.call_count == 2, "both moves must still be delivered"
+        # current position + delta, since the OS is not applying it for us here
+        assert create.call_args.args[2] == (407.0, 295.0)
+        warn.assert_called_once()
+
     @pytest.mark.parametrize(
-        "pointer_locked, expected, applied",
+        "button, expected_type",
         [
-            # Unlocked: the cursor follows the delta on the desktop.
-            (False, (407, 295), (7, -5)),
-            # Confirmed lock: the game pins the cursor, so the event stays put
-            # and only the stamped deltas move - otherwise the real cursor
-            # drifts into the menu bar and a right-click drops the game focus.
-            # The cursor did not move, so no displacement is reported back.
-            (True, (400, 300), (0, 0)),
+            (ButtonMapping.left.value, "_NX_LMOUSEDRAGGED"),
+            (ButtonMapping.right.value, "_NX_RMOUSEDRAGGED"),
         ],
     )
-    def test_inject_relative_pins_only_under_confirmed_lock(
+    def test_drag_motion_stays_on_hid_with_the_dragged_type(
         self,
         event_bus,
         mock_stream_handler,
         mock_mouse_controller,
-        pointer_locked,
-        expected,
-        applied,
+        button,
+        expected_type,
     ):
-        """Pinning follows the confirmed lock state, not a bare visibility read.
+        """A held button changes the event type, never the path.
 
-        ``_pointer_locked`` is only ever set by ``_refresh_pointer_lock`` after a
-        hide survives a reveal attempt. Pinning on a raw hidden-cursor read
-        froze the cursor while typing in a text field.
-
-        The return value is the displacement the cursor actually took — the
-        caller's return-lock accounting depends on it (see
-        ``_accumulate_inward_travel``).
+        Falling back to a CGEvent while dragging reintroduces the absolute
+        position, and that made a grabbed cursor drift again as soon as the user
+        held a mouse button in a game. The HID system posts the type we ask for,
+        so the drag survives on the HID path.
         """
+        from input.mouse import _darwin
+
         c = self._make_client(event_bus, mock_stream_handler, mock_mouse_controller)
-        mock_mouse_controller.position = (400, 300)
-        c._pointer_locked = pointer_locked
+        c._pressed = True
+        c._is_dragging = True
+        c._previous_button = button
+        ctx, injector = self._patch_hid(ok=True)
 
         with (
+            ctx,
+            patch("input.mouse._darwin.CGEventCreateMouseEvent") as create,
+            patch.object(c, "_cursor_position", return_value=(400.0, 300.0)),
+        ):
+            c._inject_relative(7, -5)
+
+        create.assert_not_called(), "no absolute position may be posted while dragging"
+        injector.post.assert_called_once_with(7, -5, getattr(_darwin, expected_type))
+
+    def test_drag_keeps_the_dragged_type_on_the_cgevent_fallback(
+        self, event_bus, mock_stream_handler, mock_mouse_controller
+    ):
+        """Without the HID path a drag must still arrive as a MouseDragged event."""
+        from input.mouse import _darwin
+
+        c = self._make_client(event_bus, mock_stream_handler, mock_mouse_controller)
+        c._pressed = True
+        c._is_dragging = True
+        c._previous_button = ButtonMapping.right.value
+        ctx, _ = self._patch_hid(ok=False)
+
+        with (
+            ctx,
             patch("input.mouse._darwin.CGEventCreateMouseEvent") as create,
             patch("input.mouse._darwin.CGEventSetIntegerValueField"),
             patch("input.mouse._darwin.CGEventPost"),
+            patch.object(c, "_cursor_position", return_value=(400.0, 300.0)),
         ):
-            result = c._inject_relative(7, -5)
+            c._inject_relative(7, -5)
 
-        create.assert_called_once()
-        assert create.call_args.args[2] == expected
-        assert result == applied
+        assert create.call_args.args[1] == _darwin.kCGEventRightMouseDragged
 
-    def test_inject_relative_reports_the_fallback_displacement(
+    def test_local_events_suppression_is_disabled_on_init(
         self, event_bus, mock_stream_handler, mock_mouse_controller
     ):
-        """A failed CGEvent post falls back to pynput and reports its move."""
-        c = self._make_client(event_bus, mock_stream_handler, mock_mouse_controller)
-        mock_mouse_controller.position = (400, 300)
+        """Our own warps must not freeze our own injected motion.
+
+        A warp suppresses local hardware events for 0.25 s, and the HID
+        injection *is* local hardware input - that was the multi-second dead
+        cursor at the crossing point. A failure must not stop the client.
+        """
+        with patch(
+            "input.mouse._darwin.CGSetLocalEventsSuppressionInterval"
+        ) as suppress:
+            self._make_client(event_bus, mock_stream_handler, mock_mouse_controller)
+        suppress.assert_called_once_with(0.0)
 
         with patch(
-            "input.mouse._darwin.CGEventCreateMouseEvent",
-            side_effect=RuntimeError("no event source"),
+            "input.mouse._darwin.CGSetLocalEventsSuppressionInterval",
+            side_effect=RuntimeError("gone"),
         ):
-            result = c._inject_relative(7, -5)
+            self._make_client(event_bus, mock_stream_handler, mock_mouse_controller)
 
-        mock_mouse_controller.move.assert_called_once_with(dx=7, dy=-5)
-        assert result == (7, -5)
-
-    def test_reveal_transient_hide_calls_appkit(
+    def test_applied_displacement_is_measured_not_assumed(
         self, event_bus, mock_stream_handler, mock_mouse_controller
     ):
-        """The reveal goes through AppKit's public auto-hide flag."""
+        """The reported displacement is what the cursor did, per the OS.
+
+        Under the HID path the OS may apply the delta or withhold it entirely
+        (an app holding the pointer), so it is read back rather than assumed.
+        """
         c = self._make_client(event_bus, mock_stream_handler, mock_mouse_controller)
+        ctx, _ = self._patch_hid(ok=True)
 
-        with patch("input.mouse._darwin.NSCursor") as cursor:
-            c._reveal_transient_hide()
+        with ctx, patch.object(c, "_cursor_position") as pos:
+            # First call has no baseline yet, then the cursor follows...
+            pos.side_effect = [(100.0, 100.0), (110.0, 95.0)]
+            assert c._inject_relative(10, -5) == (0, 0)
+            assert c._inject_relative(10, -5) == (10, -5)
 
-        cursor.setHiddenUntilMouseMoves_.assert_called_once_with(False)
+            # ...and here it does not move at all: no travel to report.
+            pos.side_effect = [(110.0, 95.0), (110.0, 95.0)]
+            assert c._inject_relative(10, -5) == (0, 0)
+            assert c._inject_relative(10, -5) == (0, 0)
 
-    def test_reveal_transient_hide_swallows_errors(
+    def test_immobile_cursor_counts_up_and_resets(
         self, event_bus, mock_stream_handler, mock_mouse_controller
     ):
-        """A failing reveal must never break the move hot path."""
-        c = self._make_client(event_bus, mock_stream_handler, mock_mouse_controller)
+        """A pointer the OS won't move is counted, so routing can stand down.
 
-        with patch("input.mouse._darwin.NSCursor") as cursor:
-            cursor.setHiddenUntilMouseMoves_.side_effect = RuntimeError("boom")
-            c._reveal_transient_hide()  # must not raise
+        While an app holds the cursor, ``_detect_edge_via_delta`` would read
+        "pushing at the edge" off deltas that move nothing and then clamp -
+        warping the very cursor the game is keeping still.
+        """
+        c = self._make_client(event_bus, mock_stream_handler, mock_mouse_controller)
+        ctx, _ = self._patch_hid(ok=True)
+
+        with ctx, patch.object(c, "_cursor_position", return_value=(50.0, 50.0)):
+            c._inject_relative(10, 0)  # no baseline yet: unknown, not counted
+            assert c._immobile_moves == 0
+            for expected in (1, 2, 3, 4):
+                c._inject_relative(10, 0)
+                assert c._immobile_moves == expected
+            assert c._immobile_moves >= c.IMMOBILE_MOVES_BEFORE_HOLD
+
+        # A move the OS does apply clears it immediately.
+        with ctx, patch.object(c, "_cursor_position", return_value=(60.0, 50.0)):
+            c._inject_relative(10, 0)
+        assert c._immobile_moves == 0
+
+    @pytest.mark.anyio
+    async def test_edge_routing_stands_down_while_pointer_is_held(
+        self, event_bus, mock_stream_handler, mock_mouse_controller
+    ):
+        """The worker skips edge detection once the immobile run is long enough.
+
+        Both directions are asserted: a moving cursor must still be routed.
+        """
+        c = self._make_client(event_bus, mock_stream_handler, mock_mouse_controller)
+        c._is_active = True
+        move = MouseEvent(x=-1, y=-1, dx=10, dy=0, action=MouseEvent.MOVE_ACTION)
+
+        async def pump():
+            c._running = True
+            await c._queue.put(MagicMock())
+            worker = asyncio.create_task(c._run_worker())
+            while not c._queue.empty():
+                await asyncio.sleep(0.005)
+            await asyncio.sleep(0.005)
+            c._running = False
+            worker.cancel()
+            try:
+                await worker
+            except asyncio.CancelledError:
+                pass
+
+        with (
+            patch("input.mouse._base.EventMapper.get_event", return_value=move),
+            patch.object(c, "_move_cursor"),
+            patch.object(c, "_check_edge", new=AsyncMock()) as check,
+        ):
+            c._immobile_moves = 0
+            await pump()
+            assert check.await_count == 1, "a moving cursor must still be routed"
+
+            check.reset_mock()
+            c._immobile_moves = c.IMMOBILE_MOVES_BEFORE_HOLD
+            await pump()
+            check.assert_not_awaited()
+
+    def test_warp_cursor_generates_no_event(
+        self, event_bus, mock_stream_handler, mock_mouse_controller
+    ):
+        """Absolute placement uses CGWarpMouseCursorPosition.
+
+        pynput's position setter posts a MouseMoved CGEvent; a landing repeats
+        the placement ten times, which a focused game would read as camera
+        movement. The warp also drops the measurement baseline - a jump is not
+        travel.
+        """
+        c = self._make_client(event_bus, mock_stream_handler, mock_mouse_controller)
+        c._last_seen_pos = (1.0, 2.0)
+        c._immobile_moves = 5
+
+        with (
+            patch("input.mouse._darwin.CGWarpMouseCursorPosition") as warp,
+            patch("input.mouse._darwin.CGEventPost") as post,
+        ):
+            c._warp_cursor(640, 480)
+
+        warp.assert_called_once_with((640.0, 480.0))
+        post.assert_not_called()
+        assert c._last_seen_pos is None
+        assert c._immobile_moves == 0
+
+    def test_cursor_position_reads_the_event_system(
+        self, event_bus, mock_stream_handler, mock_mouse_controller
+    ):
+        """Reads come from the event system, not from pynput's AppKit value."""
+        c = self._make_client(event_bus, mock_stream_handler, mock_mouse_controller)
+        mock_mouse_controller.position = (11, 22)
+
+        class _Loc:
+            x, y = 333.0, 444.0
+
+        with (
+            patch("input.mouse._darwin.CGEventCreate", return_value="evt"),
+            patch("input.mouse._darwin.CGEventGetLocation", return_value=_Loc()) as get,
+        ):
+            assert c._cursor_position() == (333.0, 444.0)
+        get.assert_called_once_with("evt")
+
+    def test_no_pointer_lock_heuristic_remains(
+        self, event_bus, mock_stream_handler, mock_mouse_controller
+    ):
+        """Structural regression guard: the visibility heuristic must stay gone.
+
+        It froze the cursor while typing in three successive shapes; macOS
+        exposes no way to tell a game's grab from AppKit's text-field auto-hide,
+        so any reintroduction is a bug, not a tuning problem.
+        """
+        c = self._make_client(event_bus, mock_stream_handler, mock_mouse_controller)
+        for attr in (
+            "_refresh_pointer_lock",
+            "_release_pointer_lock",
+            "_cursor_is_hidden",
+            "_reveal_transient_hide",
+            "_pointer_locked",
+        ):
+            assert not hasattr(c, attr), attr
 
     def test_inject_relative_stamps_hid_deltas(
         self, event_bus, mock_stream_handler, mock_mouse_controller
     ):
-        """The raw dx/dy still ride along in the HID delta fields (games read those)."""
+        """On the CGEvent fallback the raw dx/dy still ride in the delta fields."""
         from input.mouse import _darwin
 
         c = self._make_client(event_bus, mock_stream_handler, mock_mouse_controller)
-        mock_mouse_controller.position = (10, 10)
+        ctx, _ = self._patch_hid(ok=False)
 
         with (
+            ctx,
             patch("input.mouse._darwin.CGEventCreateMouseEvent", return_value="evt"),
             patch("input.mouse._darwin.CGEventSetIntegerValueField") as stamp,
             patch("input.mouse._darwin.CGEventPost"),
+            patch.object(c, "_cursor_position", return_value=(10.0, 10.0)),
         ):
             c._inject_relative(3, -9)
 
