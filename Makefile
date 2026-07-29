@@ -1,4 +1,4 @@
-.PHONY: help install install-dev install-build install-test clean clean-all build build-gui build-daemon build-release build-debug test lint format check run deps-update deps-show
+.PHONY: help install install-dev install-build install-test clean clean-all build build-gui build-daemon build-release build-debug test lint lint-check gui-check pre-commit-check hooks-install hooks-config-venv format check run deps-update deps-show
 
 # Variables
 PYTHON := python3
@@ -7,6 +7,8 @@ PROJECT_NAME := Perpetua
 BUILD_DIR := .build
 GUI_DIR := src-gui
 SRC_DIR := src
+PYTHON_VENV ?= $(shell git config --get perpetua.pythonVenv 2>/dev/null)
+VENV_BIN := $(if $(PYTHON_VENV),$(PYTHON_VENV)/bin/,)
 ARGS :=
 
 # Colors for output
@@ -107,6 +109,20 @@ lint: install-dev ## Run linter (ruff)
 	$(POETRY) run ruff check $(SRC_DIR)
 	@echo "$(GREEN)Linting completed$(NC)"
 
+lint-check: ## Run Python lint checks without installing dependencies
+	@echo "$(BLUE)Running Python checks...$(NC)"
+	@if [ -n "$(PYTHON_VENV)" ] && [ -x "$(VENV_BIN)ruff" ]; then \
+		"$(VENV_BIN)ruff" check $(SRC_DIR); \
+	elif $(POETRY) run ruff --version >/dev/null 2>&1; then \
+		$(POETRY) run ruff check $(SRC_DIR); \
+	elif command -v ruff >/dev/null 2>&1; then \
+		ruff check $(SRC_DIR); \
+	else \
+		echo "$(RED)ruff is not installed. Set PYTHON_VENV=/path/to/venv or run 'make install-dev'.$(NC)"; \
+		exit 127; \
+	fi
+	@echo "$(GREEN)Python checks completed$(NC)"
+
 lint-fix: install-dev ## Run linter and fix issues
 	@echo "$(BLUE)"Running linter and fixing issues..."$(NC)"
 	$(POETRY) run ruff check --fix $(SRC_DIR)
@@ -118,7 +134,7 @@ format: install-dev ## Format code with ruff
 	$(POETRY) run ruff check --fix $(SRC_DIR)
 	@echo "$(GREEN)Code formatted$(NC)"
 
-check: lint test ## Run linter and tests
+check: lint gui-check test ## Run linter, GUI checks, and tests
 	@echo "$(GREEN)All checks passed$(NC)"
 
 
@@ -127,6 +143,26 @@ gui-install: ## Install GUI dependencies (npm)
 	@echo "$(BLUE)Installing GUI dependencies...$(NC)"
 	cd $(GUI_DIR) && npm install
 	@echo "$(GREEN)GUI dependencies installed$(NC)"
+
+gui-check: ## Run GUI type checks
+	@echo "$(BLUE)Running GUI checks...$(NC)"
+	cd $(GUI_DIR) && npm run typecheck
+	@echo "$(GREEN)GUI checks completed$(NC)"
+
+pre-commit-check: lint-check gui-check ## Run checks used by the git pre-commit hook
+	@echo "$(GREEN)Pre-commit checks passed$(NC)"
+
+hooks-install: ## Enable repository git hooks
+	@git config core.hooksPath .githooks
+	@echo "$(GREEN)Git hooks enabled$(NC)"
+
+hooks-config-venv: ## Configure a local Python venv for git hooks. Use VENV=.venv
+	@if [ -z "$(VENV)" ]; then \
+		echo "$(RED)Usage: make hooks-config-venv VENV=/path/to/venv$(NC)"; \
+		exit 2; \
+	fi
+	@git config perpetua.pythonVenv "$(VENV)"
+	@echo "$(GREEN)Git hooks Python venv set to $(VENV)$(NC)"
 
 gui-dev: ## Run GUI in development mode
 	@echo "$(BLUE)Starting GUI development server...$(NC)"

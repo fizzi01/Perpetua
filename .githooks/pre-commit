@@ -1,0 +1,21 @@
+#!/bin/sh
+set -eu
+
+repo_root="$(git rev-parse --show-toplevel)"
+cd "$repo_root"
+
+if [ -z "${PYTHON_VENV:-}" ]; then
+    PYTHON_VENV="$(git config --get perpetua.pythonVenv || true)"
+fi
+
+if [ -z "${PYTHON_VENV:-}" ] && [ -d ".venv" ]; then
+    PYTHON_VENV=".venv"
+fi
+
+export PYTHON_VENV
+if [ -n "${PYTHON_VENV:-}" ] && [ -d "$PYTHON_VENV/bin" ]; then
+    PATH="$repo_root/$PYTHON_VENV/bin:$PATH"
+    export PATH
+fi
+
+make pre-commit-check
