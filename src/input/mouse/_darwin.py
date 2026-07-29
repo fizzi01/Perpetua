@@ -989,8 +989,16 @@ class ClientMouseController(_base.ClientMouseController):
                 # edge routing can stand down while an app holds the pointer
                 # (``IMMOBILE_MOVES_BEFORE_HOLD``). Only a *requested* move
                 # that produced nothing counts; without a baseline we don't
-                # know, so we don't guess.
-                if applied == (0, 0) and (dx or dy):
+                # know, so we don't guess. And a cursor already against a
+                # bound does not move when pushed further that way - that
+                # immobility is geometric, not a grab, and counting it would
+                # suspend edge routing exactly while the user is pushing at
+                # the edge to hand control back to the server.
+                if (
+                    applied == (0, 0)
+                    and (dx or dy)
+                    and not self._motion_is_bounded(pos[0], pos[1], dx, dy)
+                ):
                     self._immobile_moves += 1
                 else:
                     self._immobile_moves = 0
@@ -1013,8 +1021,14 @@ class ClientMouseController(_base.ClientMouseController):
         try:
             if pos is None:
                 return super()._inject_relative(dx, dy)
-            new_x = pos[0] + dx
-            new_y = pos[1] + dy
+            # Clamp to the desktop. A CGEvent carries an absolute location, and
+            # the position we read back is the one we posted, not the one the
+            # cursor ended up at: pushing past a screen edge would compound
+            # ``pos + delta`` every event. The HID path needs
+            # none of this - there the OS owns the position and it stays put.
+            min_x, min_y, max_x, max_y = self._screen_bbox
+            new_x = max(min_x, min(max_x - 1, pos[0] + dx))
+            new_y = max(min_y, min(max_y - 1, pos[1] + dy))
 
             if dragging:
                 if right_drag:

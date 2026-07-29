@@ -1499,14 +1499,19 @@ class ClientMouseController(object):
             span = max_y - min_y
         else:
             return
-        # Clamp to the perpendicular extent of the active monitor: the cursor
-        # is pinned by the OS at the screen edges, but the server keeps
-        # forwarding deltas while the user pushes, so without this the offset
-        # diverges far past the monitor and a real return sweep can never bring
-        # it back into the release band (control gets stuck on the client). The
-        # 0 floor also self-resyncs: pushing into the entry edge drives it to 0
-        # so the return gate reliably opens there. Skip on a degenerate bbox,
-        # else the floor would cap arming at 0.
+        # Clamp to the perpendicular extent of the active monitor. The ceiling
+        # is load-bearing for the backends that credit the RAW delta (Windows,
+        # Linux): the cursor is pinned by the OS at the screen edges, but the
+        # server keeps forwarding deltas while the user pushes, so without it
+        # the offset diverges far past the monitor and a real return sweep can
+        # never bring it back into the release band (control gets stuck on the
+        # client). Where the applied displacement is MEASURED instead (macOS)
+        # the offset stops growing on its own - the OS swallows the delta at
+        # the edge, so ``applied`` is (0, 0) - and the ceiling is belt and
+        # braces. The 0 floor is needed everywhere: it self-resyncs, since
+        # pushing into the entry edge drives the offset to 0 so the return gate
+        # reliably opens there. Skip on a degenerate bbox, else the floor would
+        # cap arming at 0.
         if span > 0:
             self._inward_travel = max(0, min(span, self._inward_travel))
         if self._inward_travel >= self.RETURN_ARM_MARGIN:
@@ -1866,7 +1871,20 @@ class ClientMouseController(object):
         return None
 
     def _clamp_cursor_to_monitor(self, monitor) -> None:
-        """Pin the cursor just inside ``monitor``'s bbox."""
+        """Bring the cursor back INSIDE ``monitor`` when it has actually left it.
+
+        Only genuinely out-of-bounds positions are moved, and only onto the
+        nearest valid pixel. Sitting *on* the boundary pixel is not "outside":
+        the OS already holds the cursor at the desktop bound, so nudging it a
+        pixel inward there would fight the system - the user pushes, the OS
+        pins at the bound, we warp inward, every tick - which is visible as the
+        cursor bouncing off the edge. Whatever we need to know about the edge
+        we compute from the position; we don't restate it by moving the cursor.
+
+        What is left to this method is the case the OS does *not* handle: a
+        cursor that drifted onto another monitor of this client, or into an
+        L-shaped dead zone (see the ``_handle_os_drift`` callers).
+        """
         if monitor is None:
             return
         try:
@@ -1874,8 +1892,8 @@ class ClientMouseController(object):
             if pos is None:
                 return
             cx, cy = pos
-            new_x = max(monitor.min_x + 1, min(monitor.max_x - 2, cx))
-            new_y = max(monitor.min_y + 1, min(monitor.max_y - 2, cy))
+            new_x = max(monitor.min_x, min(monitor.max_x - 1, cx))
+            new_y = max(monitor.min_y, min(monitor.max_y - 1, cy))
             if (new_x, new_y) != (cx, cy):
                 self._warp_cursor(new_x, new_y)
         except Exception as e:
@@ -2189,6 +2207,37 @@ class ClientMouseController(object):
         default; macOS uses it to re-arm the HID path.
         """
         return None
+
+    def _motion_bounds(self, x: float, y: float) -> tuple[int, int, int, int]:
+        """The box the cursor can move in from ``(x, y)``.
+
+        The monitor under the cursor when there is one - a taller neighbour
+        makes the desktop union bigger than where the cursor can actually go -
+        else the whole virtual desktop.
+        """
+        monitor = self._find_monitor_for_cursor(x, y)
+        if monitor is not None:
+            return (monitor.min_x, monitor.min_y, monitor.max_x, monitor.max_y)
+        return self._screen_bbox
+
+    def _motion_is_bounded(self, x: float, y: float, dx: int, dy: int) -> bool:
+        """True when the OS is expected to swallow this delta.
+
+        A cursor already against a bound does not move when pushed further that
+        way: the displacement is zero for a reason we can *see*, unlike a
+        foreground app holding the pointer. Backends that measure the applied
+        displacement use this to keep the two apart - counting the geometric
+        case as a held pointer would suspend edge routing exactly while the user
+        is pushing at the edge to hand control back to the server.
+        """
+        min_x, min_y, max_x, max_y = self._motion_bounds(x, y)
+
+        def blocked(pos: float, delta: int, low: int, high: int) -> bool:
+            if delta == 0:
+                return True  # nothing was requested on this axis
+            return (delta < 0 and pos <= low) or (delta > 0 and pos >= high - 1)
+
+        return blocked(x, dx, min_x, max_x) and blocked(y, dy, min_y, max_y)
 
     def _cursor_position(self) -> Optional[tuple[float, float]]:
         """Current cursor position, or ``None`` when it can't be read.

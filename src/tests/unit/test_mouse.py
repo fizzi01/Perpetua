@@ -1176,6 +1176,125 @@ class TestClientMouseController:
             await c._check_edge()
             assert mock_stream_handler.send.called  # return-to-server fired
 
+    @pytest.mark.parametrize(
+        "position",
+        [(0, 500), (1919, 500), (500, 0), (500, 1079), (0, 0), (1919, 1079)],
+    )
+    def test_clamp_leaves_a_cursor_on_the_boundary_alone(
+        self, event_bus, mock_stream_handler, mock_mouse_controller, position
+    ):
+        """The boundary pixel is inside the monitor, so nothing to correct.
+
+        The OS already holds the cursor there while the user pushes outward;
+        nudging it inward every tick is what made the cursor bounce off the
+        edge. All four sides, and the corners.
+        """
+        c = self._make_client(event_bus, mock_stream_handler, mock_mouse_controller)
+        monitor = MonitorLayout.from_bboxes([(0, 0, 1920, 1080)]).monitors[0]
+
+        with (
+            patch.object(c, "_cursor_position", return_value=position),
+            patch.object(c, "_warp_cursor") as warp,
+        ):
+            c._clamp_cursor_to_monitor(monitor)
+
+        warp.assert_not_called()
+
+    @pytest.mark.parametrize(
+        "position, expected",
+        [
+            ((-40, 500), (0, 500)),
+            ((2000, 500), (1919, 500)),
+            ((500, -40), (500, 0)),
+            ((500, 1200), (500, 1079)),
+            ((-40, 1200), (0, 1079)),
+        ],
+    )
+    def test_clamp_pulls_back_a_cursor_that_really_left(
+        self, event_bus, mock_stream_handler, mock_mouse_controller, position, expected
+    ):
+        """Drift onto another monitor (or a dead zone) still gets corrected.
+
+        Landing exactly on the nearest valid pixel, not pushed further in: the
+        two sides used to be asymmetric (min+1 against max-2).
+        """
+        c = self._make_client(event_bus, mock_stream_handler, mock_mouse_controller)
+        monitor = MonitorLayout.from_bboxes([(0, 0, 1920, 1080)]).monitors[0]
+
+        with (
+            patch.object(c, "_cursor_position", return_value=position),
+            patch.object(c, "_warp_cursor") as warp,
+        ):
+            c._clamp_cursor_to_monitor(monitor)
+
+        warp.assert_called_once_with(*expected)
+
+    @pytest.mark.anyio
+    async def test_pushing_at_a_void_edge_never_moves_the_cursor(
+        self, event_bus, mock_stream_handler, mock_mouse_controller
+    ):
+        """The reported bug, end to end: no warp at all while pushing outward.
+
+        The user pushes, the OS pins the cursor at the bound, and every tick we
+        used to warp it a pixel inward - at 125 Hz that is the visible bounce.
+        """
+        with _ScreenGeometry(1920, 1080):
+            c = self._make_client(event_bus, mock_stream_handler, mock_mouse_controller)
+            c._is_active = True
+            c._edge_bindings = []
+            c._intra_client_bindings = []
+            c._intra_by_src = {}
+            c._intra_pairs = set()
+            # Where the OS holds it while the user keeps pushing left.
+            mock_mouse_controller.position = (0, 500)
+
+            with patch.object(c, "_warp_cursor") as warp:
+                for _ in range(30):
+                    c._last_move_delta = (-8, 0)
+                    await c._check_edge()
+
+            warp.assert_not_called()
+            mock_stream_handler.send.assert_not_called()
+
+    def test_motion_bounds_follow_the_monitor_under_the_cursor(
+        self, event_bus, mock_stream_handler, mock_mouse_controller
+    ):
+        """Where the cursor can go is the monitor's box, not the desktop union.
+
+        With a taller monitor alongside, the union extends well below the short
+        one: judging against the union would call a cursor stuck at the bottom
+        of the small screen "free to move", and a backend that measures
+        displacement would then read the OS swallowing the delta as an app
+        holding the pointer.
+        """
+        c = self._make_client(event_bus, mock_stream_handler, mock_mouse_controller)
+        c._monitor_layout = MonitorLayout.from_bboxes(
+            [(0, 0, 1920, 1080), (1920, 0, 3840, 2160)]
+        )
+        c._cached_monitor = None
+        c._screen_bbox = (0, 0, 3840, 2160)
+
+        assert c._motion_bounds(500, 1000) == (0, 0, 1920, 1080)
+        # Bottom of the SHORT monitor, pushing down: the OS will swallow it.
+        assert c._motion_is_bounded(500, 1079, 0, 5) is True
+        # Same y on the tall monitor: there is room, so immobility would be real.
+        c._cached_monitor = None
+        assert c._motion_is_bounded(2500, 1079, 0, 5) is False
+
+    def test_motion_bounds_fall_back_to_the_desktop(
+        self, event_bus, mock_stream_handler, mock_mouse_controller
+    ):
+        """Off every monitor (L-shaped dead zone), the desktop union is the box."""
+        c = self._make_client(event_bus, mock_stream_handler, mock_mouse_controller)
+        c._screen_bbox = (0, 0, 1920, 1080)
+
+        with patch.object(c, "_find_monitor_for_cursor", return_value=None):
+            assert c._motion_bounds(10, 10) == (0, 0, 1920, 1080)
+            assert c._motion_is_bounded(0, 500, -5, 0) is True
+            assert c._motion_is_bounded(50, 500, -5, 0) is False
+            # A zero delta on an axis asks for nothing, so it cannot be unmet.
+            assert c._motion_is_bounded(0, 500, 0, 0) is True
+
     def test_intra_warp_rearms_return_lock(
         self, event_bus, mock_stream_handler, mock_mouse_controller
     ):
@@ -1645,7 +1764,12 @@ class TestClientMouseController:
         mock_stream_handler,
         mock_mouse_controller,
     ):
-        """Edge with no workspace binding clamps the cursor inside the monitor."""
+        """An edge with no binding keeps control here - without touching the cursor.
+
+        The cursor is sitting on the boundary pixel, which is where the OS holds
+        it while the user pushes outward. Nudging it inward to restate that is
+        what made the cursor visibly bounce off the edge.
+        """
         with patch(
             "input.mouse._base.MouseController", return_value=mock_mouse_controller
         ):
@@ -1666,10 +1790,11 @@ class TestClientMouseController:
                     controller._movement_history.append((x, 500))
                 mock_mouse_controller.position = (0, 500)
 
-                await controller._check_edge()
+                with patch.object(controller, "_warp_cursor") as warp:
+                    await controller._check_edge()
 
-                cx, cy = mock_mouse_controller.position
-                assert cx > 0
+                warp.assert_not_called()
+                assert mock_mouse_controller.position == (0, 500)
                 mock_stream_handler.send.assert_not_called()
 
     @pytest.mark.anyio
@@ -2220,6 +2345,70 @@ class TestDarwinClientMouseController:
             pos.side_effect = [(110.0, 95.0), (110.0, 95.0)]
             assert c._inject_relative(10, -5) == (0, 0)
             assert c._inject_relative(10, -5) == (0, 0)
+
+    def test_pushing_at_the_desktop_bound_is_not_a_held_pointer(
+        self, event_bus, mock_stream_handler, mock_mouse_controller
+    ):
+        """Geometric immobility must not suspend edge routing.
+
+        A cursor against the screen edge does not move when pushed further that
+        way - measured, the OS simply swallows the delta on the HID path. Read
+        as "an app is holding the pointer" it would stop ``_check_edge`` exactly
+        while the user pushes at the edge to hand control back to the server.
+        """
+        c = self._make_client(event_bus, mock_stream_handler, mock_mouse_controller)
+        c._screen_bbox = (0, 0, 1920, 1080)
+        ctx, _ = self._patch_hid(ok=True)
+
+        with (
+            ctx,
+            patch.object(c, "_find_monitor_for_cursor", return_value=None),
+            patch.object(c, "_cursor_position", return_value=(0.0, 500.0)),
+        ):
+            c._inject_relative(-10, 0)  # establishes the baseline
+            for _ in range(6):
+                c._inject_relative(-10, 0)  # pushing left, already at x=0
+                assert c._immobile_moves == 0
+
+            # Same immobility, but with room to move: that IS a held pointer.
+            with patch.object(c, "_cursor_position", return_value=(500.0, 500.0)):
+                c._inject_relative(-10, 0)  # new baseline
+                c._inject_relative(-10, 0)
+                assert c._immobile_moves == 1
+
+    def test_fallback_position_cannot_run_past_the_desktop(
+        self, event_bus, mock_stream_handler, mock_mouse_controller
+    ):
+        """The CGEvent fallback must not compound past the screen edge.
+
+        A CGEvent carries an absolute location and the read-back is the location
+        we posted, not where the cursor ended up: without a clamp, ``pos + delta``
+        compounds every event (measured: -600 px after 30 pushes at the left
+        edge, while the visible cursor sat still at 0).
+        """
+        c = self._make_client(event_bus, mock_stream_handler, mock_mouse_controller)
+        c._screen_bbox = (0, 0, 1920, 1080)
+        ctx, _ = self._patch_hid(ok=False)
+
+        # The read-back follows what we post, exactly as macOS does here.
+        posted = {"x": 300.0}
+
+        with (
+            ctx,
+            patch("input.mouse._darwin.CGEventCreateMouseEvent") as create,
+            patch("input.mouse._darwin.CGEventSetIntegerValueField"),
+            patch("input.mouse._darwin.CGEventPost"),
+            patch.object(c, "_find_monitor_for_cursor", return_value=None),
+            patch.object(
+                c, "_cursor_position", side_effect=lambda: (posted["x"], 500.0)
+            ),
+        ):
+            for _ in range(30):
+                c._inject_relative(-20, 0)
+                posted["x"] = create.call_args.args[2][0]
+
+        assert posted["x"] == 0.0, "position ran past the desktop bound"
+        assert all(call.args[2][0] >= 0 for call in create.call_args_list)
 
     def test_immobile_cursor_counts_up_and_resets(
         self, event_bus, mock_stream_handler, mock_mouse_controller
