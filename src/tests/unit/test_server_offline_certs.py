@@ -41,6 +41,10 @@ def offline(monkeypatch):
         )
 
     monkeypatch.setattr(server_module, "get_local_ip", _no_ip)
+    # Pin the hostname too: certificate generation feeds it into the cert, and
+    # letting the real machine name through makes these tests depend on
+    # whatever the CI runner happens to be called.
+    monkeypatch.setattr(server_module.socket, "gethostname", lambda: "test-host.local")
 
 
 def _make_server(app_config, server_config) -> Server:

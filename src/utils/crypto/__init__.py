@@ -43,6 +43,12 @@ _decoder = msgspec.json.Decoder()
 # public CAs do. Kept generous to tolerate manually mis-set clocks.
 CLOCK_SKEW_TOLERANCE = datetime.timedelta(hours=3)
 _DNS_LABEL_RE = re.compile(r"^(?!-)[A-Za-z0-9-]{1,63}(?<!-)$")
+# Maximum length of a fully qualified DNS name (RFC 1035).
+_DNS_NAME_MAX_LEN = 253
+# X.509 caps a Common Name at 64 characters; ``cryptography`` rejects anything
+# longer with a ValueError. SubjectAlternativeName has no such limit, so a long
+# FQDN stays intact in the SAN and only the CN is clamped.
+_COMMON_NAME_MAX_LEN = 64
 
 
 def _validity_window(
@@ -72,15 +78,38 @@ def _dns_name(value: str) -> Optional[str]:
         name = name.encode("idna").decode("ascii")
     except UnicodeError:
         return None
+    if len(name) > _DNS_NAME_MAX_LEN:
+        return None
     labels = name.split(".")
     if all(_DNS_LABEL_RE.match(label) for label in labels):
         return name
     return None
 
 
+def _fallback_hostname() -> str:
+    return f"{ApplicationConfig.service_name.lower()}.local"
+
+
 def _certificate_hostname(hostname: str) -> str:
-    """Sanitize the OS hostname before using it in certificate fields."""
-    return _dns_name(hostname) or f"{ApplicationConfig.service_name.lower()}.local"
+    """Sanitize the OS hostname before using it in certificate fields (SAN)."""
+    return _dns_name(hostname) or _fallback_hostname()
+
+
+def _common_name(cert_hostname: str) -> str:
+    """Clamp an already-sanitized DNS name to the 64-char Common Name limit.
+
+    A machine whose FQDN is long but whose labels are individually valid (common
+    on CI runners and corporate networks) would otherwise make certificate
+    generation fail outright. Prefer the first label — still a meaningful
+    identity — and only fall back to the generic name if that does not fit.
+    """
+    if len(cert_hostname) <= _COMMON_NAME_MAX_LEN:
+        return cert_hostname
+
+    first_label = _dns_name(cert_hostname.split(".", 1)[0])
+    if first_label is not None and len(first_label) <= _COMMON_NAME_MAX_LEN:
+        return first_label
+    return _fallback_hostname()
 
 
 class CertificateManager:
@@ -103,7 +132,10 @@ class CertificateManager:
 
     def generate_ca(self, force: bool = False) -> bool:
         """Generate CA certificate if it doesn't exist"""
-        if self.ca_cert_path.exists() and not force:
+        # Both halves must be present: signing a leaf needs the key, so a
+        # cert-only directory is not a usable CA and must be regenerated
+        # (otherwise generate_server_certificate fails opening ca.key).
+        if self.ca_cert_path.exists() and self.ca_key_path.exists() and not force:
             return True
 
         try:
@@ -213,7 +245,9 @@ class CertificateManager:
                     x509.NameAttribute(
                         NameOID.ORGANIZATION_NAME, ApplicationConfig.service_name
                     ),
-                    x509.NameAttribute(NameOID.COMMON_NAME, cert_hostname),
+                    x509.NameAttribute(
+                        NameOID.COMMON_NAME, _common_name(cert_hostname)
+                    ),
                 ]
             )
 
@@ -258,7 +292,11 @@ class CertificateManager:
 
             return True
         except Exception as e:
-            self._logger.error("Server certificate generation error", error=str(e))
+            self._logger.error(
+                "Server certificate generation error",
+                error=str(e),
+                hostname=hostname,
+            )
             return False
 
     # Placeholder CN used in the client CSR: the client does NOT choose its own
