@@ -1360,6 +1360,10 @@ class ClientMouseController(object):
                 await asyncio.sleep(0.01)
 
     async def _on_client_active(self, data: Optional[ClientActiveEvent]):
+        # Control just arrived: the one moment where retrying a degraded
+        # injection backend costs nothing and can recover the session.
+        self._on_relative_injection_degraded()
+
         if data is not None:
             self._current_screen = data.client_uid
             self._active_monitor_id = data.client_monitor_id
@@ -2175,6 +2179,16 @@ class ClientMouseController(object):
                 self._warp_cursor(x, y)
             except Exception as e:
                 self._logger.error("failed to position cursor", error=str(e))
+
+    def _on_relative_injection_degraded(self) -> None:
+        """Hook: give a degraded injection backend one chance to recover.
+
+        Called on activation only - never from the move path - so a backend
+        whose native injection failed transiently (at daemon start, at the login
+        window) isn't pinned to its fallback for the whole session. No-op by
+        default; macOS uses it to re-arm the HID path.
+        """
+        return None
 
     def _cursor_position(self) -> Optional[tuple[float, float]]:
         """Current cursor position, or ``None`` when it can't be read.

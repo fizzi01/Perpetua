@@ -24,8 +24,10 @@ import asyncio
 import atexit
 import ctypes
 import ctypes.util
+import os
 import sys
 import threading
+from time import monotonic, sleep
 from typing import Optional
 
 from Quartz import (
@@ -279,16 +281,44 @@ class _HIDRelativeInjector:
 
     ``available`` flips to False the first time anything fails, so the hot path
     never retries a broken connection (and never logs per event) - the caller
-    falls back to CGEvents from then on.
+    falls back to CGEvents from then on. Every disable records a reason, which
+    the caller drains exactly once through ``take_failure``.
+
+    ``IOHIDPostEvent`` is deprecated, so this deliberately does not trust its
+    return code alone: ``verify`` checks that the cursor really moved, which is
+    what would catch the API being turned into a silent no-op. Without that the
+    failure would be invisible - a motionless cursor reads exactly like an app
+    holding the pointer, and the CGEvent fallback would never engage.
     """
 
-    def __init__(self):
+    def __init__(self, forced_off: Optional[str] = None):
+        self._forced_off = forced_off
+        self._reset()
+
+    def _reset(self) -> None:
         self._iokit = None
         self._service = 0
         self._connect = 0
         self._opened = False
-        self.available = sys.platform == "darwin"
-        self.failure: Optional[str] = None
+        self.available = sys.platform == "darwin" and self._forced_off is None
+        self.failure: Optional[str] = self._forced_off
+
+    # How long the self-test waits for the injected pixel to show up in the
+    # cursor position. Generous on purpose: the read lags the injection by a few
+    # milliseconds, and failing a healthy path would silently cost the game
+    # fidelity the HID route exists for.
+    SELF_TEST_TIMEOUT = 0.05
+
+    def take_failure(self) -> Optional[str]:
+        """Return the pending failure reason, once."""
+        failure, self.failure = self.failure, None
+        return failure
+
+    def _disable(self, reason: str) -> bool:
+        """Record why the HID path is out and hand over to the fallback."""
+        self.available = False
+        self.failure = reason
+        return False
 
     def _open(self) -> bool:
         self._opened = True
@@ -325,15 +355,11 @@ class _HIDRelativeInjector:
 
             matching = iokit.IOServiceMatching(b"IOHIDSystem")
             if not matching:
-                self.failure = "IOServiceMatching(IOHIDSystem) returned NULL"
-                self.available = False
-                return False
+                return self._disable("IOServiceMatching(IOHIDSystem) returned NULL")
             # IOServiceGetMatchingService consumes the matching dictionary.
             service = iokit.IOServiceGetMatchingService(0, matching)
             if not service:
-                self.failure = "IOHIDSystem service not found"
-                self.available = False
-                return False
+                return self._disable("IOHIDSystem service not found")
 
             # mach_task_self() is a macro over the mach_task_self_ global.
             libsystem = ctypes.CDLL("/usr/lib/libSystem.B.dylib")
@@ -345,18 +371,14 @@ class _HIDRelativeInjector:
             )
             if rc != _kIOReturnSuccess or not connect.value:
                 iokit.IOObjectRelease(service)
-                self.failure = f"IOServiceOpen returned 0x{rc & 0xFFFFFFFF:08X}"
-                self.available = False
-                return False
+                return self._disable(f"IOServiceOpen returned 0x{rc & 0xFFFFFFFF:08X}")
 
             self._iokit = iokit
             self._service = service
             self._connect = connect.value
             return True
         except Exception as e:
-            self.failure = f"{type(e).__name__}: {e}"
-            self.available = False
-            return False
+            return self._disable(f"IOServiceOpen failed - {type(e).__name__}: {e}")
 
     def post(self, dx: int, dy: int, event_type: int = _NX_MOUSEMOVED) -> bool:
         """Post one relative motion event. False means "use the fallback".
@@ -368,8 +390,9 @@ class _HIDRelativeInjector:
         if not self._opened and not self._open():
             return False
         if self._iokit is None:
-            self.available = False
-            return False
+            # Reachable only if the connection was closed under us; without a
+            # reason here the degradation would be silent.
+            return self._disable("IOKit connection is not open")
         try:
             buf = (ctypes.c_uint8 * _NXEVENTDATA_SIZE)()
             move = ctypes.cast(buf, ctypes.POINTER(_NXMouseMove)).contents
@@ -385,30 +408,100 @@ class _HIDRelativeInjector:
                 _kIOHIDSetRelativeCursorPosition,
             )
         except Exception as e:
-            self.failure = f"{type(e).__name__}: {e}"
-            self.available = False
-            return False
+            return self._disable(f"IOHIDPostEvent failed - {type(e).__name__}: {e}")
         if rc != _kIOReturnSuccess:
-            self.failure = f"IOHIDPostEvent returned 0x{rc & 0xFFFFFFFF:08X}"
-            self.available = False
-            return False
+            return self._disable(f"IOHIDPostEvent returned 0x{rc & 0xFFFFFFFF:08X}")
         return True
 
+    def verify(self, read_position) -> bool:
+        """Check that a posted delta actually moves the cursor.
+
+        ``IOHIDPostEvent`` is deprecated: the failure mode to fear is not an
+        error code but a silent no-op, and that one is invisible from here - a
+        cursor that never moves is indistinguishable from an app holding the
+        pointer, so the fallback would never engage and the cursor would simply
+        stay dead. One pixel out and back settles it. A failure here is not
+        fatal: it just means the CGEvent path takes over.
+
+        ``read_position`` is injected rather than imported so this stays a
+        property of the caller's coordinate source.
+        """
+        if not self.available:
+            return False
+        before = read_position()
+        if before is None:
+            return self._disable("cannot read the cursor position to self-test")
+        if not self.post(1, 0):
+            return False
+
+        # The position takes a few milliseconds to reflect an injected delta
+        # (measured: unchanged at 2 ms, changed by 10 ms), so a single immediate
+        # read would fail a perfectly good path. Poll instead, and leave as soon
+        # as it moves - the healthy case costs a few milliseconds, the broken
+        # one the whole window, and only at init or on activation.
+        deadline = monotonic() + self.SELF_TEST_TIMEOUT
+        moved = False
+        while not moved and monotonic() < deadline:
+            after = read_position()
+            if after is None:
+                self.post(-1, 0)
+                return self._disable("cannot read the cursor position to self-test")
+            moved = after != before
+            if not moved:
+                sleep(0.002)
+
+        # Put it back before judging: the probe must not leave the cursor moved
+        # even when it worked.
+        self.post(-1, 0)
+        if not moved:
+            return self._disable("IOHIDPostEvent succeeded but the cursor did not move")
+        return True
+
+    def retry(self, read_position) -> bool:
+        """Re-attempt a disabled HID path. Never called from the hot path.
+
+        A failure at daemon start (login window, fast user switching) must not
+        pin the whole session to the fallback, so activation re-arms it once.
+        """
+        if self.available:
+            return True
+        if self._forced_off is not None:
+            return False
+        self.close()
+        self._reset()
+        return self.verify(read_position)
+
     def close(self) -> None:
-        if self._iokit is None:
-            return
         try:
-            if self._connect:
-                self._iokit.IOServiceClose(self._connect)
-                self._connect = 0
-            if self._service:
-                self._iokit.IOObjectRelease(self._service)
-                self._service = 0
+            if self._iokit is not None:
+                if self._connect:
+                    self._iokit.IOServiceClose(self._connect)
+                if self._service:
+                    self._iokit.IOObjectRelease(self._service)
         except Exception:
             pass
+        finally:
+            self._connect = 0
+            self._service = 0
+            self._iokit = None
+            # Posting on a closed connection would target io_connect_t 0.
+            self.available = False
 
 
-_hid_injector = _HIDRelativeInjector()
+# Escape hatch: run the client on the CGEvent path as if IOKit were gone. It is
+# what makes the fallback verifiable end-to-end instead of a code path nobody
+# has ever exercised - and IOHIDPostEvent being deprecated makes that path a
+# question of when, not if.
+FORCE_CGEVENT_ENV_VAR = "PERPETUA_MOUSE_FORCE_CGEVENT"
+
+
+def _forced_cgevent_reason() -> Optional[str]:
+    if os.environ.get(FORCE_CGEVENT_ENV_VAR) == "1":
+        return f"forced by {FORCE_CGEVENT_ENV_VAR}=1"
+    return None
+
+
+_hid_injector = _HIDRelativeInjector(_forced_cgevent_reason())
 
 if sys.platform == "darwin":
     atexit.register(_hid_injector.close)
@@ -792,10 +885,33 @@ class ClientMouseController(_base.ClientMouseController):
 
     def __init__(self, *args, **kwargs):
         super().__init__(*args, **kwargs)
-        # Must happen before the first warp: see the function's docstring for
-        # why our own warps would otherwise freeze our own injected motion.
+        # Must happen before the first warp AND before the self-test below: see
+        # the function's docstring for why our own warps would otherwise freeze
+        # our own injected motion (and would make the self-test read a cursor
+        # that legitimately did not move).
         ok = _disable_local_events_suppression()
         self._logger.info("local events suppression disabled", ok=ok)
+        _hid_injector.verify(self._cursor_position)
+        self._log_injection_mode()
+
+    def _log_injection_mode(self) -> None:
+        """State the active injection path, and why, whenever it changes."""
+        failure = _hid_injector.take_failure()
+        if _hid_injector.available:
+            self._logger.info("mouse injection path", mode="hid")
+        else:
+            self._logger.warning(
+                "mouse injection degraded to CGEvent",
+                mode="cgevent",
+                reason=failure or "unknown",
+            )
+
+    def _on_relative_injection_degraded(self) -> None:
+        """Retry the HID path once per activation, never on the hot path."""
+        was_available = _hid_injector.available
+        _hid_injector.retry(self._cursor_position)
+        if _hid_injector.available != was_available or _hid_injector.failure:
+            self._log_injection_mode()
 
     def _cursor_position(self) -> Optional[tuple[float, float]]:
         """Cursor position according to the *event system*.
@@ -890,12 +1006,9 @@ class ClientMouseController(_base.ClientMouseController):
         if _hid_injector.post(dx, dy, hid_type):
             return applied
         if _hid_injector.failure is not None:
-            self._logger.warning(
-                "HID relative injection unavailable, falling back to CGEvent",
-                reason=_hid_injector.failure,
-            )
-            # Report once: ``available`` is already False, so we won't be back.
-            _hid_injector.failure = None
+            # Drains the reason, so this reports once per degradation rather
+            # than once per event.
+            self._log_injection_mode()
 
         try:
             if pos is None:

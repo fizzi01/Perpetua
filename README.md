@@ -505,6 +505,21 @@ If two clients share the exact same server edge, the server picks the first one 
 </details>
 
 <details>
+<summary><b>macOS client: mouse behaves oddly in a game</b></summary>
+
+On a macOS client, relative mouse motion is delivered through the HID system, which is what lets a game keep its own cursor lock: the game receives the movement while its pointer stays where it put it. The daemon self-tests that path at startup and logs which one is active (`mouse injection path mode=hid`).
+
+If it can't be used, the daemon logs `mouse injection degraded to CGEvent` with the reason and keeps working through a compatibility path. Everything behaves the same there except inside games that lock the cursor, where the pointer can drift out of the game window.
+
+You can force that compatibility path (to reproduce it, or to work around a system-level problem):
+
+```bash
+PERPETUA_MOUSE_FORCE_CGEVENT=1 Perpetua
+```
+
+</details>
+
+<details>
 <summary><b>"Port already in use" on server start</b></summary>
 
 The configured TCP `port` (default `55655`) is occupied by another process. Open `Server > Options` and pick a different value, then retry.

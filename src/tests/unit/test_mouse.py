@@ -23,6 +23,7 @@ from tests.unit import _MOCK_PYNPUT
 
 import asyncio
 import sys
+import time
 from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
@@ -2032,8 +2033,14 @@ class TestDarwinClientMouseController:
     def _make_client(self, event_bus, mock_stream_handler, mock_mouse_controller):
         from input.mouse import _darwin
 
-        with patch(
-            "input.mouse._base.MouseController", return_value=mock_mouse_controller
+        # The controller self-tests the HID path on init (see
+        # ``_HIDRelativeInjector.verify``); that must not post real events - nor
+        # disable the module-wide injector - during a test run.
+        with (
+            patch(
+                "input.mouse._base.MouseController", return_value=mock_mouse_controller
+            ),
+            patch("input.mouse._darwin._hid_injector", MagicMock()),
         ):
             return _darwin.ClientMouseController(
                 event_bus, mock_stream_handler, mock_stream_handler
@@ -2048,10 +2055,22 @@ class TestDarwinClientMouseController:
     # generations of that heuristic all froze the cursor while typing).
 
     def _patch_hid(self, *, ok: bool, failure=None):
-        """Stand in for the module-level HID injector."""
+        """Stand in for the module-level HID injector.
+
+        Mirrors the real contract: ``available`` tracks the path, and
+        ``take_failure`` drains the reason once so the caller reports a
+        degradation per degradation, not per event.
+        """
         injector = MagicMock()
         injector.post.return_value = ok
+        injector.available = ok
         injector.failure = failure
+
+        def take_failure():
+            reason, injector.failure = injector.failure, None
+            return reason
+
+        injector.take_failure.side_effect = take_failure
         return patch("input.mouse._darwin._hid_injector", injector), injector
 
     def test_relative_motion_goes_through_the_hid_system(
@@ -2309,6 +2328,29 @@ class TestDarwinClientMouseController:
             assert c._cursor_position() == (333.0, 444.0)
         get.assert_called_once_with("evt")
 
+    @pytest.mark.anyio
+    async def test_activation_retries_a_degraded_injection_path(
+        self, event_bus, mock_stream_handler, mock_mouse_controller
+    ):
+        """A transient HID failure must not pin the whole session to CGEvents.
+
+        Activation is the one moment where retrying costs nothing: it is not the
+        move path, and control has just arrived.
+        """
+        c = self._make_client(event_bus, mock_stream_handler, mock_mouse_controller)
+        ctx, injector = self._patch_hid(ok=False, failure="IOServiceOpen returned 0x…")
+
+        with ctx:
+            await c._on_client_active(ClientActiveEvent(client_uid="server"))
+            injector.retry.assert_called_once()
+
+            # ...and it must stay off the hot path.
+            injector.retry.reset_mock()
+            with patch.object(c, "_cursor_position", return_value=(1.0, 2.0)):
+                c._inject_relative(3, 0)
+            injector.retry.assert_not_called()
+        await c.stop()
+
     def test_no_pointer_lock_heuristic_remains(
         self, event_bus, mock_stream_handler, mock_mouse_controller
     ):
@@ -2349,3 +2391,283 @@ class TestDarwinClientMouseController:
         stamped = {call.args[1]: call.args[2] for call in stamp.call_args_list}
         assert stamped[_darwin.kCGMouseEventDeltaX] == 3
         assert stamped[_darwin.kCGMouseEventDeltaY] == -9
+
+    def test_fallback_posts_a_plain_move_to_the_hid_tap(
+        self, event_bus, mock_stream_handler, mock_mouse_controller
+    ):
+        """Completes the fallback matrix: type, tap and source of the position."""
+        from input.mouse import _darwin
+
+        c = self._make_client(event_bus, mock_stream_handler, mock_mouse_controller)
+        ctx, _ = self._patch_hid(ok=False)
+
+        with (
+            ctx,
+            patch(
+                "input.mouse._darwin.CGEventCreateMouseEvent", return_value="evt"
+            ) as create,
+            patch("input.mouse._darwin.CGEventSetIntegerValueField"),
+            patch("input.mouse._darwin.CGEventPost") as post,
+            patch.object(c, "_cursor_position", return_value=(10.0, 20.0)) as pos,
+        ):
+            c._inject_relative(3, -9)
+
+        assert create.call_args.args[1] == _darwin.kCGEventMouseMoved
+        assert create.call_args.args[2] == (13.0, 11.0)
+        post.assert_called_once_with(_darwin.kCGHIDEventTap, "evt")
+        assert pos.called, "the position must come from the event system"
+
+    @pytest.mark.parametrize("failing", ["read", "post"])
+    def test_fallback_of_the_fallback_is_pynput(
+        self, event_bus, mock_stream_handler, mock_mouse_controller, failing
+    ):
+        """When even the CGEvent path can't run, the cursor must still move."""
+        c = self._make_client(event_bus, mock_stream_handler, mock_mouse_controller)
+        ctx, _ = self._patch_hid(ok=False)
+        create = patch(
+            "input.mouse._darwin.CGEventCreateMouseEvent",
+            side_effect=RuntimeError("no event source"),
+        )
+        position = patch.object(
+            c,
+            "_cursor_position",
+            return_value=None if failing == "read" else (1.0, 2.0),
+        )
+
+        with ctx, create, position:
+            assert c._inject_relative(7, -5) == (7, -5)
+
+        mock_mouse_controller.move.assert_called_once_with(dx=7, dy=-5)
+
+
+# ============================================================================
+# macOS HID injector Tests
+# ============================================================================
+
+
+@pytest.mark.skipif(sys.platform != "darwin", reason="IOKit-backed HID injection")
+class TestDarwinHIDInjector:
+    """The HID path must degrade to CGEvents loudly, and never silently.
+
+    ``IOHIDPostEvent`` is deprecated, so every one of these failure modes is a
+    plausible future - and the pointer of the whole macOS client rides on it.
+    """
+
+    def _injector(self, **kwargs):
+        from input.mouse import _darwin
+
+        return _darwin._HIDRelativeInjector(**kwargs)
+
+    def test_forced_cgevent_mode_never_opens_iokit(self, monkeypatch):
+        """The escape hatch takes exactly the same path as a real failure."""
+        from input.mouse import _darwin
+
+        monkeypatch.setenv(_darwin.FORCE_CGEVENT_ENV_VAR, "1")
+        injector = self._injector(forced_off=_darwin._forced_cgevent_reason())
+
+        with patch("ctypes.CDLL") as cdll:
+            assert injector.post(5, 0) is False
+        cdll.assert_not_called()
+        assert injector.available is False
+        assert _darwin.FORCE_CGEVENT_ENV_VAR in (injector.take_failure() or "")
+        # Drained: a degradation is reported once, not once per event.
+        assert injector.take_failure() is None
+
+    def test_forced_mode_is_not_retried(self, monkeypatch):
+        """An explicit opt-out must survive activation retries."""
+        from input.mouse import _darwin
+
+        monkeypatch.setenv(_darwin.FORCE_CGEVENT_ENV_VAR, "1")
+        injector = self._injector(forced_off=_darwin._forced_cgevent_reason())
+
+        assert injector.retry(lambda: (0.0, 0.0)) is False
+        assert injector.available is False
+
+    def test_env_var_is_strict_about_its_value(self, monkeypatch):
+        """Same convention as PERPETUA_DAEMON_FORCE_EXIT: only "1" opts in."""
+        from input.mouse import _darwin
+
+        for value in ("0", "true", "yes", ""):
+            monkeypatch.setenv(_darwin.FORCE_CGEVENT_ENV_VAR, value)
+            assert _darwin._forced_cgevent_reason() is None, value
+        monkeypatch.setenv(_darwin.FORCE_CGEVENT_ENV_VAR, "1")
+        assert _darwin._forced_cgevent_reason() is not None
+
+    def test_self_test_disables_when_the_cursor_does_not_move(self):
+        """The failure mode a deprecated API really has: a silent no-op.
+
+        A motionless cursor is indistinguishable from an app holding the
+        pointer, so without this probe the fallback would never engage and the
+        cursor would just stay dead.
+        """
+        injector = self._injector()
+
+        with patch.object(injector, "post", return_value=True) as post:
+            assert injector.verify(lambda: (100.0, 100.0)) is False
+
+        assert injector.available is False
+        assert "did not move" in (injector.take_failure() or "")
+        # It still put the probe delta back before giving up.
+        assert [call.args for call in post.call_args_list] == [(1, 0), (-1, 0)]
+
+    def test_self_test_passes_and_restores_the_cursor(self):
+        """A working path stays available and leaves the cursor where it was."""
+        injector = self._injector()
+        positions = iter([(100.0, 100.0), (101.0, 100.0)])
+
+        with patch.object(injector, "post", return_value=True) as post:
+            assert injector.verify(lambda: next(positions)) is True
+
+        assert injector.available is True
+        assert injector.take_failure() is None
+        assert [call.args for call in post.call_args_list] == [(1, 0), (-1, 0)]
+
+    def test_self_test_waits_for_the_position_to_catch_up(self):
+        """The read lags the injection, so one immediate look is not enough.
+
+        Measured on Darwin 25.5: still unchanged 2 ms after the post, changed by
+        10 ms. Judging on the first read would disable a healthy HID path and
+        silently give up the game fidelity it exists for.
+        """
+        injector = self._injector()
+        # Stale, stale, stale, then the pixel finally lands.
+        positions = iter([(100.0, 100.0)] * 4 + [(101.0, 100.0)])
+
+        with patch.object(injector, "post", return_value=True):
+            assert injector.verify(lambda: next(positions)) is True
+        assert injector.available is True
+
+    def test_self_test_gives_up_after_its_timeout(self):
+        """The polling must be bounded - it runs on the loop at activation."""
+        injector = self._injector()
+
+        with patch.object(injector, "post", return_value=True):
+            started = time.perf_counter()
+            assert injector.verify(lambda: (100.0, 100.0)) is False
+            elapsed = time.perf_counter() - started
+
+        assert elapsed < injector.SELF_TEST_TIMEOUT * 4, "self-test must not hang"
+        assert "did not move" in (injector.take_failure() or "")
+
+    def test_self_test_needs_a_readable_position(self):
+        injector = self._injector()
+        assert injector.verify(lambda: None) is False
+        assert injector.available is False
+        assert "self-test" in (injector.take_failure() or "")
+
+    @pytest.mark.parametrize(
+        "break_at, expected",
+        [
+            ("matching", "IOServiceMatching"),
+            ("service", "service not found"),
+            ("open", "IOServiceOpen returned"),
+            ("raise", "IOServiceOpen failed"),
+        ],
+    )
+    def test_every_open_failure_records_a_reason(self, break_at, expected):
+        """No silent degradation: each way IOKit can fail names itself."""
+        injector = self._injector()
+        iokit = MagicMock()
+        iokit.IOServiceMatching.return_value = 0 if break_at == "matching" else 1234
+        iokit.IOServiceGetMatchingService.return_value = (
+            0 if break_at == "service" else 99
+        )
+        iokit.IOServiceOpen.return_value = 0xE00002C1 if break_at == "open" else 0
+        if break_at == "raise":
+            iokit.IOServiceOpen.side_effect = RuntimeError("boom")
+
+        # Only IOKit is faked: the libSystem lookup for mach_task_self_ is real,
+        # so the failure under test is the only thing that fails.
+        import ctypes as _ctypes
+
+        real_cdll = _ctypes.CDLL
+
+        def cdll(path, *args, **kwargs):
+            if "IOKit" in str(path):
+                return iokit
+            return real_cdll(path, *args, **kwargs)
+
+        with patch("ctypes.CDLL", side_effect=cdll):
+            assert injector.post(1, 0) is False
+
+        assert injector.available is False
+        reason = injector.take_failure()
+        assert reason and expected in reason
+        assert injector.take_failure() is None
+
+    def test_post_failure_records_a_reason(self):
+        """A non-zero IOReturn, or a raising call, hands over to the fallback."""
+        for setup, expected in (
+            (
+                lambda k: setattr(
+                    k, "IOHIDPostEvent", MagicMock(return_value=0xE00002C7)
+                ),
+                "returned 0x",
+            ),
+            (
+                lambda k: setattr(
+                    k, "IOHIDPostEvent", MagicMock(side_effect=OSError("x"))
+                ),
+                "failed - OSError",
+            ),
+        ):
+            injector = self._injector()
+            injector._iokit = MagicMock()
+            injector._opened = True
+            injector._connect = 7
+            setup(injector._iokit)
+
+            assert injector.post(1, 0) is False
+            assert injector.available is False
+            assert expected in (injector.take_failure() or "")
+
+    def test_missing_handle_degrades_with_a_reason(self):
+        """The one branch that used to degrade silently.
+
+        ``available`` was cleared without recording why, so the caller - which
+        only warns when there is a reason - stayed quiet about running on the
+        fallback.
+        """
+        injector = self._injector()
+        injector._opened = True  # "already opened" but no handle: never silent
+        injector._iokit = None
+
+        assert injector.post(1, 0) is False
+        assert injector.available is False
+        assert injector.take_failure(), "degradation must name itself"
+
+    def test_closed_connection_is_not_posted_to(self):
+        """After close() a post must degrade, not target io_connect_t 0."""
+        injector = self._injector()
+        injector._iokit = MagicMock()
+        injector._opened = True
+        injector._connect = 7
+
+        injector.close()
+
+        assert injector.available is False
+        assert injector._iokit is None
+        assert injector.post(1, 0) is False
+
+    def test_retry_reopens_a_degraded_path(self):
+        """A transient failure at daemon start must not pin the whole session."""
+        injector = self._injector()
+        injector._opened = True
+        injector._disable("IOServiceOpen returned 0xE00002C1")
+        assert injector.available is False
+
+        with patch.object(injector, "verify", return_value=True) as verify:
+            assert injector.retry(lambda: (0.0, 0.0)) is True
+
+        verify.assert_called_once()
+        assert injector._opened is False, "a retry must re-open, not reuse the handle"
+        assert injector.available is True
+
+    def test_retry_is_a_no_op_while_the_path_works(self):
+        """Nothing to recover: activation must not disturb a healthy path."""
+        injector = self._injector()
+
+        with patch.object(injector, "verify") as verify:
+            assert injector.retry(lambda: (0.0, 0.0)) is True
+
+        verify.assert_not_called()
