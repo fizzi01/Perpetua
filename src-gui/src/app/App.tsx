@@ -315,8 +315,10 @@ export function Main() {
                 {/* Scrollable Content */}
                 <ScrollArea extraPadding='pl-10' className={`flex-1 min-h-0 overflow-y-auto px-8 py-6 relative`}>
                     {/* Mode-switch failures and other app-level errors */}
-                    <InlineNotification notifications={notifications}
-                        as                onDismiss={(id) => setNotifications((prev) => prev.filter((n) => n.id !== id))}/>
+                    <InlineNotification
+                        notifications={notifications}
+                        onDismiss={(id) => setNotifications((prev) => prev.filter((n) => n.id !== id))}
+                    />
                     {/* Content */}
                     <motion.div
                         key={mode}
