@@ -80,10 +80,7 @@ def _dns_name(value: str) -> Optional[str]:
 
 def _certificate_hostname(hostname: str) -> str:
     """Sanitize the OS hostname before using it in certificate fields."""
-    return (
-        _dns_name(hostname)
-        or f"{ApplicationConfig.service_name.lower()}.local"
-    )
+    return _dns_name(hostname) or f"{ApplicationConfig.service_name.lower()}.local"
 
 
 class CertificateManager:

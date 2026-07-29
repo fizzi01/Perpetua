@@ -64,7 +64,9 @@ def test_server_constructs_without_local_ip(offline, app_config, server_config):
 
 
 @pytest.mark.anyio
-async def test_start_reports_missing_ip(offline, app_config, server_config, monkeypatch):
+async def test_start_reports_missing_ip(
+    offline, app_config, server_config, monkeypatch
+):
     """The failure surfaces where the user can act on it: starting the server."""
     server = _make_server(app_config, server_config)
     monkeypatch.setattr(Server, "_is_port_available", staticmethod(lambda *_: True))
