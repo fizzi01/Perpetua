@@ -108,3 +108,21 @@ def test_setup_certificates_recovers_when_network_returns(
 
     assert certfile and keyfile
     assert "192.168.1.10" in server._cert_manager.get_server_cert_san()[0]
+
+
+def test_setup_certificates_recovers_with_unusable_os_hostname(
+    offline, app_config, server_config, monkeypatch
+):
+    """Runner hostnames must not prevent deferred certificate setup."""
+    server = _make_server(app_config, server_config)
+    assert server.certfile is None
+
+    monkeypatch.setattr(server_module, "get_local_ip", lambda *_a, **_k: "192.168.1.10")
+    monkeypatch.setattr(server_module.socket, "gethostname", lambda: "bad host_name")
+
+    certfile, keyfile = server._setup_certificates()
+
+    assert certfile and keyfile
+    san_ips, san_dns = server._cert_manager.get_server_cert_san()
+    assert "192.168.1.10" in san_ips
+    assert "perpetua.local" in san_dns

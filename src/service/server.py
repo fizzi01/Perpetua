@@ -261,10 +261,12 @@ class Server:
                 hostname = socket.gethostname()
                 ip = get_local_ip()
 
-                self._cert_manager.generate_ca()
-                self._cert_manager.generate_server_certificate(
+                if not self._cert_manager.generate_ca():
+                    raise RuntimeError("Failed to generate CA certificate")
+                if not self._cert_manager.generate_server_certificate(
                     hostname, [ip, "localhost"]
-                )
+                ):
+                    raise RuntimeError("Failed to generate server SSL certificate")
 
                 certfile, keyfile = self._cert_manager.get_server_credentials()
                 if not certfile or not keyfile:

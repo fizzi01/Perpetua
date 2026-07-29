@@ -26,6 +26,7 @@ from cryptography.hazmat.primitives.asymmetric import rsa
 from cryptography.hazmat.backends import default_backend
 import datetime
 import ipaddress
+import re
 
 from config import ApplicationConfig
 from utils.fs import atomic_write_bytes
@@ -41,6 +42,7 @@ _decoder = msgspec.json.Decoder()
 # nothing security-wise (the certs live for 365+ days) and is exactly what
 # public CAs do. Kept generous to tolerate manually mis-set clocks.
 CLOCK_SKEW_TOLERANCE = datetime.timedelta(hours=3)
+_DNS_LABEL_RE = re.compile(r"^(?!-)[A-Za-z0-9-]{1,63}(?<!-)$")
 
 
 def _validity_window(
@@ -59,6 +61,29 @@ def _validity_window(
     """
     not_before = datetime.datetime.now(datetime.UTC) - CLOCK_SKEW_TOLERANCE
     return not_before, not_before + lifetime
+
+
+def _dns_name(value: str) -> Optional[str]:
+    """Return an ASCII DNS name suitable for x509, or ``None``."""
+    name = str(value).strip().strip(".")
+    if not name:
+        return None
+    try:
+        name = name.encode("idna").decode("ascii")
+    except UnicodeError:
+        return None
+    labels = name.split(".")
+    if all(_DNS_LABEL_RE.match(label) for label in labels):
+        return name
+    return None
+
+
+def _certificate_hostname(hostname: str) -> str:
+    """Sanitize the OS hostname before using it in certificate fields."""
+    return (
+        _dns_name(hostname)
+        or f"{ApplicationConfig.service_name.lower()}.local"
+    )
 
 
 class CertificateManager:
@@ -166,13 +191,23 @@ class CertificateManager:
                 public_exponent=65537, key_size=2048, backend=default_backend()
             )
 
+            cert_hostname = _certificate_hostname(hostname)
+
             # Create Subject Alternative Names (SAN)
-            san_list: list[DNSName | IPAddress] = [x509.DNSName(hostname)]
+            san_list: list[DNSName | IPAddress] = [x509.DNSName(cert_hostname)]
             for ip in ip_addresses:
                 try:
                     san_list.append(x509.IPAddress(ipaddress.ip_address(ip)))
                 except ValueError:
-                    san_list.append(x509.DNSName(ip))
+                    dns_name = _dns_name(ip)
+                    if dns_name is not None:
+                        san_list.append(x509.DNSName(dns_name))
+                    else:
+                        self._logger.warning(
+                            "Skipping invalid DNS SAN while generating "
+                            "server certificate",
+                            dns_name=ip,
+                        )
 
             # Create server certificate
             subject = x509.Name(
@@ -181,7 +216,7 @@ class CertificateManager:
                     x509.NameAttribute(
                         NameOID.ORGANIZATION_NAME, ApplicationConfig.service_name
                     ),
-                    x509.NameAttribute(NameOID.COMMON_NAME, hostname),
+                    x509.NameAttribute(NameOID.COMMON_NAME, cert_hostname),
                 ]
             )
 
