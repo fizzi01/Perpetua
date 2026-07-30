@@ -55,15 +55,6 @@ class ServerMouseListener(_base.ServerMouseListener):
         "top": ScreenEdge.TOP,
         "bottom": ScreenEdge.BOTTOM,
     }
-    # Client-space edge the cursor enters through, for the no-binding
-    # fallback. Crossing the server's left edge lands on the client's right.
-    _OPPOSITE_EDGE: dict[str, str] = {
-        "left": "right",
-        "right": "left",
-        "top": "bottom",
-        "bottom": "top",
-    }
-
     def __init__(self, *args, **kwargs):
         self._barrier_mode = is_wayland() and (is_gnome() or is_kde())
         super().__init__(*args, **kwargs)
@@ -71,28 +62,70 @@ class ServerMouseListener(_base.ServerMouseListener):
         if self._barrier_mode:
             # UID of the captured client; None while the server owns the cursor.
             self._active_client_barrier: Optional[str] = None
-            # Edge -> UID map rebuilt from _edge_bindings_by_client whenever
-            # bindings change; drives which barriers the backend arms, and is
-            # the fallback target when no binding covers an activation point.
-            self._edge_to_uid: dict[str, str] = {}
 
             self.event_bus.subscribe(
                 event_type=BusEventType.SCREEN_CHANGE_GUARD,
                 callback=self._on_screen_change_guard_wayland,
             )
 
-    def _refresh_edge_to_uid(self) -> dict[str, bool]:
-        """Rebuild edge -> UID map from _edge_bindings_by_client and return
-        the {edge: True} snapshot the barrier backend expects. First binding
-        wins on edge collisions; per-axis partitioning is X11-only."""
-        edge_to_uid: dict[str, str] = {}
-        for client_uid, bindings in self._edge_bindings_by_client.items():
-            for b in bindings:
-                edge = b.get("server_edge")
-                if edge and edge not in edge_to_uid:
-                    edge_to_uid[edge] = client_uid
-        self._edge_to_uid = edge_to_uid
-        return {edge: True for edge in edge_to_uid}
+    def _barrier_segments(self) -> list[tuple[str, int, int, int, int]]:
+        """Absolute barrier segments covering exactly the bound edge portions.
+
+        A binding does not necessarily span a whole server edge - a client
+        monitor may sit against only part of it (``server_axis_start/end``).
+        A barrier is a *line segment*, so it can say precisely that, and it
+        must: an armed barrier holds the pointer, so covering the unbound
+        remainder of an edge would stop the cursor short of the real border
+        exactly where there is nothing to cross to.
+
+        Returned in absolute desktop coordinates, ready for
+        ``portal.set_barriers``, as ``(edge, x1, y1, x2, y2)``.
+        """
+        by_id = {m.monitor_id: m for m in self._monitor_layout.monitors}
+        segments: list[tuple[str, int, int, int, int]] = []
+
+        for bindings in self._edge_bindings_by_client.values():
+            for binding in bindings:
+                edge = str(binding.get("server_edge") or "")
+                monitor = by_id.get(binding.get("server_monitor_id"))
+                if edge not in self._STRING_TO_SCREEN_EDGE or monitor is None:
+                    continue
+
+                start = max(0.0, min(1.0, float(binding.get("server_axis_start", 0.0))))
+                end = max(0.0, min(1.0, float(binding.get("server_axis_end", 1.0))))
+                if end <= start:
+                    continue
+
+                # A vertical edge is partitioned along y, a horizontal one
+                # along x - the same axis convention as the bindings. The end
+                # is inclusive, hence ``- 1`` on a half-open range.
+                if edge in ("left", "right"):
+                    span = monitor.max_y - monitor.min_y
+                    lo = int(round(monitor.min_y + start * span))
+                    hi = max(lo, int(round(monitor.min_y + end * span)) - 1)
+                    x = monitor.min_x if edge == "left" else monitor.max_x
+                    segments.append((edge, x, lo, x, hi))
+                else:
+                    span = monitor.max_x - monitor.min_x
+                    lo = int(round(monitor.min_x + start * span))
+                    hi = max(lo, int(round(monitor.min_x + end * span)) - 1)
+                    y = monitor.min_y if edge == "top" else monitor.max_y
+                    segments.append((edge, lo, y, hi, y))
+
+        return segments
+
+    def _refresh_edge_state(self) -> dict:
+        """Barrier state for the backend: which edges, and which parts of them.
+
+        ``edges`` keeps the coarse per-edge view, used when the installed
+        pyinputcapture predates segment support; ``segments`` is the precise
+        one and is what should normally take effect.
+        """
+        segments = self._barrier_segments()
+        return {
+            "edges": {edge: True for edge in sorted({s[0] for s in segments})},
+            "segments": segments,
+        }
 
     def _create_listener(self):
         if self._barrier_mode:
@@ -127,7 +160,7 @@ class ServerMouseListener(_base.ServerMouseListener):
             self._listener = self._create_listener()
 
         self._listener.start()
-        self._listener.update_clients(self._refresh_edge_to_uid())
+        self._listener.update_clients(self._refresh_edge_state())
 
         self._logger.debug("Wayland barrier mode started")
         return True
@@ -151,7 +184,7 @@ class ServerMouseListener(_base.ServerMouseListener):
     async def _on_client_connected(self, data: Optional[ClientConnectedEvent]):
         await super()._on_client_connected(data)
         if self._barrier_mode and data is not None and self._listener:
-            self._listener.update_clients(self._refresh_edge_to_uid())
+            self._listener.update_clients(self._refresh_edge_state())
 
     async def _on_client_disconnected(self, data: Optional[ClientDisconnectedEvent]):
         if self._barrier_mode and data is not None:
@@ -171,14 +204,14 @@ class ServerMouseListener(_base.ServerMouseListener):
         await super()._on_client_disconnected(data)
 
         if self._barrier_mode and data is not None and self._listener:
-            self._listener.update_clients(self._refresh_edge_to_uid())
+            self._listener.update_clients(self._refresh_edge_state())
 
     async def _on_client_layout_updated(self, data):
         # Refresh edge->UID and the barrier backend's edge set so the new
         # topology takes effect immediately (mirrors X11 hot-reload).
         await super()._on_client_layout_updated(data)
         if self._barrier_mode and data is not None and self._listener:
-            self._listener.update_clients(self._refresh_edge_to_uid())
+            self._listener.update_clients(self._refresh_edge_state())
 
     async def _on_screen_change_guard_wayland(self, data):
         """Handle SCREEN_CHANGE_GUARD on Wayland.
@@ -303,26 +336,31 @@ class ServerMouseListener(_base.ServerMouseListener):
             cursor_y=cursor_y,
         )
         if resolved is None:
-            # No binding covers this point on this edge. Fall back to the
-            # edge->UID map so a layout whose axis ranges disagree with the
-            # portal's zone geometry still crosses rather than dead-ending.
-            target_uid = self._edge_to_uid.get(edge)
-            if not target_uid or target_uid not in self._active_clients:
-                return
-            binding = None
-            server_axis_norm = 0.0
-        else:
-            target_uid, binding, server_axis_norm = resolved
+            # Nothing is placed at this point on this edge. Do NOT cross: a
+            # binding covers only the portion of the edge its client monitor
+            # abuts (``server_axis_start/end``), and honouring an activation
+            # outside that range would teleport the cursor to a client that
+            # isn't there. Segment barriers normally keep us out of this
+            # branch entirely; it still fires when the compositor rejected a
+            # segment and fell back to a whole-edge barrier.
+            self._logger.debug(
+                "[BARRIER_ACT] no binding at activation point; releasing",
+                edge=edge,
+                cx=cursor_x,
+                cy=cursor_y,
+            )
+            # The compositor is holding the pointer at the barrier right now -
+            # returning without releasing would strand it there.
+            if self._listener:
+                self._listener.disable_capture()
+            return
+
+        target_uid, binding, server_axis_norm = resolved
 
         mouse_event = MouseEvent(x=0, y=0, action=MouseEvent.POSITION_ACTION)
-        if binding is not None:
-            client_monitor_id, client_entry_edge = self._apply_landing_to_event(
-                mouse_event, screen_edge, binding, server_axis_norm
-            )
-        else:
-            client_monitor_id = None
-            client_entry_edge = self._OPPOSITE_EDGE.get(edge)
-            self._apply_fallback_landing(mouse_event, edge, cursor_x, cursor_y)
+        client_monitor_id, client_entry_edge = self._apply_landing_to_event(
+            mouse_event, screen_edge, binding, server_axis_norm
+        )
 
         self._active_client_barrier = target_uid
 
