@@ -536,6 +536,7 @@ class _CaptureSession:
         "last_activation_id",
         "ignore_next_activation",
         "armed_edges",
+        "armed_segments",
         "enabled",
         "dead",
     )
@@ -551,8 +552,10 @@ class _CaptureSession:
         self.scroll_accum_y: float = 0.0
         self.last_activation_id: int = 0
         self.ignore_next_activation: bool = False
-        # Edges the compositor currently holds barriers on.
+        # Edges the compositor currently holds barriers on, and the exact
+        # segments when they were armed that way.
         self.armed_edges: set[str] = set(armed_edges)
+        self.armed_segments: tuple = ()
         # Mirrors portal.enable()/disable(); ``create`` enables the session.
         self.enabled: bool = True
         # Set once the compositor has torn the session down: no further
@@ -592,44 +595,71 @@ class _CaptureSession:
                     pass
             return None
 
-    def apply_edges(self, edges, logger) -> None:
-        """Make the compositor hold the pointer on *edges* and nowhere else.
+    def apply_edges(self, edges, segments, logger) -> None:
+        """Make the compositor hold the pointer where a client is, and nowhere else.
 
-        An armed barrier stops the cursor at the screen edge, so an edge with
-        no client behind it must not have one - otherwise the pointer stalls
+        An armed barrier stops the cursor at the screen edge, so anywhere with
+        nothing to cross to must not have one - otherwise the pointer stalls
         short of the real border and we answer with a capture/release round
         trip for nothing.
 
-        Two mechanisms, in order of precision:
+        Three mechanisms, most precise first:
 
-        - ``portal.set_barriers`` re-arms the exact edge set on the *existing*
-          session (recreating the session hangs the GNOME portal). Absent on
-          older pyinputcapture builds, in which case activations on unbound
-          edges keep being filtered in Python - the border still stalls there,
-          but nothing worse than before.
-        - ``portal.disable()`` / ``enable()`` are all-or-nothing, and cover the
-          case the first mechanism can't help with: no clients at all, where
-          the whole border must be free.
+        - ``segments`` names the exact line segments to arm, so an edge a
+          client monitor only *partly* abuts is covered only along that part.
+        - ``edges`` is the whole-edge fallback for a build of pyinputcapture
+          that predates segment support: the unbound remainder of a partly
+          bound edge still stalls, and activations there get filtered in
+          Python, exactly as before this change.
+        - ``portal.disable()`` / ``enable()`` are all-or-nothing and cover
+          what neither of the above can: no clients at all, where the whole
+          border must be free.
         """
-        wanted = set(edges)
         if self.dead:
             return
 
-        if not wanted:
+        wanted_edges = set(edges)
+        if not wanted_edges:
             self._set_capture_enabled(False, logger)
             self.armed_edges = set()
+            self.armed_segments = ()
             return
 
-        if wanted != self.armed_edges and hasattr(self.portal, "set_barriers"):
+        self._arm(wanted_edges, tuple(segments or ()), logger)
+        self._set_capture_enabled(True, logger)
+
+    def _arm(self, wanted_edges: set, wanted_segments: tuple, logger) -> None:
+        if (
+            wanted_edges == self.armed_edges
+            and wanted_segments == self.armed_segments
+        ):
+            return
+        if not hasattr(self.portal, "set_barriers"):
+            return
+        try:
+            if wanted_segments:
+                bmap_list = self.portal.set_barriers(segments=list(wanted_segments))
+            else:
+                bmap_list = self.portal.set_barriers(sorted(wanted_edges))
+        except TypeError:
+            # Installed build has set_barriers but not the segments keyword.
             try:
-                bmap_list = self.portal.set_barriers(sorted(wanted))
-                self.barrier_map = {bid: edge for bid, edge in bmap_list}
-                self.armed_edges = wanted
-                logger.debug(f"Barriers re-armed: edges={sorted(wanted)}")
+                bmap_list = self.portal.set_barriers(sorted(wanted_edges))
             except Exception as exc:
                 logger.warning(f"set_barriers failed: {exc}")
+                return
+            wanted_segments = ()
+        except Exception as exc:
+            logger.warning(f"set_barriers failed: {exc}")
+            return
 
-        self._set_capture_enabled(True, logger)
+        self.barrier_map = {bid: edge for bid, edge in bmap_list}
+        self.armed_edges = wanted_edges
+        self.armed_segments = wanted_segments
+        logger.debug(
+            f"Barriers re-armed: edges={sorted(wanted_edges)} "
+            f"segments={len(wanted_segments)}"
+        )
 
     def _set_capture_enabled(self, enabled: bool, logger) -> None:
         if self.enabled == enabled:
@@ -811,6 +841,8 @@ class MouseListener:
         self._is_running = False
         self._clients_active = False
         self._active_edges: set[str] = set()
+        # Exact barrier segments for the bound portions of those edges.
+        self._active_segments: tuple = ()
         self._ready_event = threading.Event()
         self._cmd_queue: queue.Queue = queue.Queue()
         # Session health, read by ``is_alive`` so the service layer's
@@ -883,9 +915,21 @@ class MouseListener:
             time.sleep(min(self._SLEEP_SLICE, remaining))
         return False
 
-    def update_clients(self, clients):
-        """Update which edges have active clients."""
-        self._cmd_queue.put({"type": "update_clients", "clients": clients})
+    def update_clients(self, state):
+        """Update where clients are, so barriers can be armed to match.
+
+        ``state`` is ``{"edges": {edge: True, ...}, "segments": [...]}``. A
+        bare ``{edge: True}`` mapping is also accepted for callers that don't
+        compute segments.
+        """
+        if "edges" in state or "segments" in state:
+            edges = state.get("edges") or {}
+            segments = state.get("segments") or []
+        else:
+            edges, segments = state, []
+        self._cmd_queue.put(
+            {"type": "update_clients", "clients": edges, "segments": segments}
+        )
 
     def disable_capture(self, x=-1, y=-1):
         """Release capture (cursor returns to server)."""
@@ -965,6 +1009,7 @@ class MouseListener:
         if cmd_type == "update_clients":
             new_edges = set(k for k, v in cmd.get("clients", {}).items() if v)
             self._active_edges = new_edges
+            self._active_segments = tuple(cmd.get("segments") or ())
             if new_edges:
                 # A fresh client is a good reason to stop waiting out a
                 # backoff: the user is asking for capture right now.
@@ -999,6 +1044,9 @@ class MouseListener:
         if session is None:
             self._schedule_reconnect(logger, "capture session unavailable")
             return _NO_SESSION
+        # ``setup`` can only take whole edges; narrow them to the bound
+        # portions now that the session exists.
+        session.apply_edges(self._active_edges, self._active_segments, logger)
         self._backoff.reset()
         self._reconnect_pending = False
         self._has_session = True
@@ -1109,10 +1157,13 @@ class MouseListener:
             if cmd_type == "update_clients":
                 new_edges = set(k for k, v in cmd.get("clients", {}).items() if v)
                 self._active_edges = new_edges
+                self._active_segments = tuple(cmd.get("segments") or ())
                 self._clients_active = bool(new_edges)
-                # Re-arm the compositor's barriers to match, so edges without
-                # a client stop holding the pointer at the screen border.
-                session.apply_edges(new_edges, logger)
+                # Re-arm the compositor's barriers to match. This is the path
+                # a layout edit, a connect/disconnect or a monitor hotplug all
+                # come through, so a newly bound edge starts capturing (and an
+                # unbound one stops holding the pointer) without a reconnect.
+                session.apply_edges(new_edges, self._active_segments, logger)
 
             elif cmd_type == "disable_capture":
                 if session.captured:

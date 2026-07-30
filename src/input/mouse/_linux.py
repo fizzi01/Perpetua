@@ -390,34 +390,6 @@ class ServerMouseListener(_base.ServerMouseListener):
             self._logger.error("Error dispatching cross-screen event", error=str(e))
             self._active_client_barrier = None
 
-    def _apply_fallback_landing(
-        self, mouse_event: MouseEvent, edge: str, cursor_x: float, cursor_y: float
-    ):
-        """Landing for the no-binding fallback, over the server virtual bbox.
-
-        Normalising over ``_screen_bbox`` (not ``Screen.get_size()``, which on
-        Wayland is the first ``wl_output``'s mode cached forever) keeps this in
-        the same reference rectangle as the client's return-to-server maths.
-        The landing sits ON the entry edge; the client's arm/release hysteresis
-        is what prevents an immediate bounce back.
-        """
-        min_x, min_y, _max_x, _max_y, width, height = self._bbox_span()
-        axis_y = min(1.0, max(0.0, (cursor_y - min_y) / height))
-        axis_x = min(1.0, max(0.0, (cursor_x - min_x) / width))
-
-        if edge == "left":
-            mouse_event.x = 1.0
-            mouse_event.y = axis_y
-        elif edge == "right":
-            mouse_event.x = 0.0
-            mouse_event.y = axis_y
-        elif edge == "top":
-            mouse_event.x = axis_x
-            mouse_event.y = 1.0
-        elif edge == "bottom":
-            mouse_event.x = axis_x
-            mouse_event.y = 0.0
-
 
 class ServerMouseController(_base.ServerMouseController):
     """Linux server-side mouse controller."""
