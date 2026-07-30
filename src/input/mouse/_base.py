@@ -660,6 +660,113 @@ class ServerMouseListener(object):
                 )
         return first_match
 
+    def _apply_landing_to_event(
+        self,
+        mouse_event: MouseEvent,
+        edge: ScreenEdge,
+        binding: dict,
+        server_axis_norm: float,
+    ) -> tuple[Optional[int], Optional[str]]:
+        """Fill ``mouse_event`` with the client-space landing for a crossing.
+
+        Shared by every backend that resolves a crossing through an
+        EdgeBinding: the pynput ``on_move`` path and the Wayland
+        InputCapture barrier path. Returns
+        ``(client_monitor_id, client_entry_edge)`` for the activation packet.
+
+        Kept free of any import beyond what ``on_move`` already needs: it
+        runs on the pynput listener thread, which must stay off the
+        EdgeBinding import path.
+        """
+        target_monitor_id = binding.get("client_monitor_id")
+        if target_monitor_id is not None:
+            target_monitor_id = int(target_monitor_id)
+
+        # Linear map from server-edge axis_norm to client-edge axis_norm.
+        c_start = binding.get("client_axis_start", 0.0)
+        c_end = binding.get("client_axis_end", 0.0)
+        s_start = binding.get("server_axis_start", 0.0)
+        s_end = binding.get("server_axis_end", 0.0)
+        span = s_end - s_start
+        if span > 0:
+            local = (server_axis_norm - s_start) / span
+            if local < 0.0:
+                local = 0.0
+            elif local > 1.0:
+                local = 1.0
+            client_axis_norm = c_start + local * (c_end - c_start)
+        else:
+            client_axis_norm = c_start
+
+        # ``(x, y)`` is normalised over the destination client monitor's
+        # bbox, not the full client virtual desktop - the client
+        # denormalises against ``_active_target_bbox``. The landing sits
+        # exactly ON the entry edge (0 / 1): the client's arm/release
+        # hysteresis, not an inset, is what stops it bouncing straight
+        # back (see ``_accumulate_inward_travel``).
+        if edge == ScreenEdge.LEFT:
+            mouse_event.x = 1
+            mouse_event.y = client_axis_norm
+        elif edge == ScreenEdge.RIGHT:
+            mouse_event.x = 0
+            mouse_event.y = client_axis_norm
+        elif edge == ScreenEdge.TOP:
+            mouse_event.x = client_axis_norm
+            mouse_event.y = 1
+        elif edge == ScreenEdge.BOTTOM:
+            mouse_event.x = client_axis_norm
+            mouse_event.y = 0
+
+        # ``client_edge`` is the client-space edge the cursor enters
+        # through; forwarded to the client so it can lock return-to-server
+        # against that edge until the cursor moves inward.
+        return target_monitor_id, binding.get("client_edge")
+
+    async def _send_activation_packets(
+        self,
+        screen: str,
+        mouse_event: MouseEvent,
+        client_monitor_id: Optional[int] = None,
+        client_entry_edge: Optional[str] = None,
+    ):
+        """Send everything a client needs to become the active screen.
+
+        The topology push is NOT optional: without ``edge_bindings`` and
+        ``server_bbox`` the client's ``_lookup_return_to_server`` bails on
+        its first guard and the cursor can never come back to the server.
+        Every crossing path must go through here - the Wayland barrier path
+        used to hand-roll the two sends below and omit the topology, which
+        is exactly how it lost its return path.
+        """
+        bindings = self._edge_bindings_by_client.get(screen) or []
+        intra_bindings = self._intra_bindings_by_client.get(screen) or []
+        if bindings or intra_bindings:
+            await self.command_stream.send(
+                ClientTopologyCommandEvent(
+                    target=screen,
+                    edge_bindings=bindings,
+                    server_bbox=self._screen_bbox,
+                    intra_client_bindings=intra_bindings,
+                )
+            )
+
+        # Carry the landing coords on the activation packet itself: the
+        # mouse stream can outrun the command stream and a POSITION_ACTION
+        # delivered before ``_is_active`` flips True is silently dropped,
+        # leaving the cursor at screen centre. The parallel POSITION_ACTION
+        # below is kept for old clients that don't read ``position_x/_y``
+        # off CLIENT_ACTIVE - idempotent on new clients.
+        await self.command_stream.send(
+            CrossScreenCommandEvent(
+                target=screen,
+                client_monitor_id=client_monitor_id,
+                x=mouse_event.x,
+                y=mouse_event.y,
+                entry_edge=client_entry_edge,
+            )
+        )
+        await self.stream.send(mouse_event)
+
     def resolve_neighbour(
         self,
         edge: ScreenEdge,
@@ -733,44 +840,9 @@ class ServerMouseListener(object):
                 if resolved is None:
                     return True
                 target_screen, binding, server_axis_norm = resolved
-                target_monitor_id = binding.get("client_monitor_id")
-                if target_monitor_id is not None:
-                    target_monitor_id = int(target_monitor_id)
-
-                # Linear map from server-edge axis_norm to client-edge
-                # axis_norm. Inlined here to keep the pynput thread off
-                # the EdgeBinding import path.
-                c_start = binding.get("client_axis_start", 0.0)
-                c_end = binding.get("client_axis_end", 0.0)
-                s_start = binding.get("server_axis_start", 0.0)
-                s_end = binding.get("server_axis_end", 0.0)
-                span = s_end - s_start
-                if span > 0:
-                    local = (server_axis_norm - s_start) / span
-                    if local < 0.0:
-                        local = 0.0
-                    elif local > 1.0:
-                        local = 1.0
-                    client_axis_norm = c_start + local * (c_end - c_start)
-                else:
-                    client_axis_norm = c_start
-
-                # ``(x, y)`` is normalised over the destination
-                # client monitor's bbox, not the full client virtual
-                # desktop - the client denormalises against
-                # ``_active_target_bbox``.
-                if edge == ScreenEdge.LEFT:
-                    mouse_event.x = 1
-                    mouse_event.y = client_axis_norm
-                elif edge == ScreenEdge.RIGHT:
-                    mouse_event.x = 0
-                    mouse_event.y = client_axis_norm
-                elif edge == ScreenEdge.TOP:
-                    mouse_event.x = client_axis_norm
-                    mouse_event.y = 1
-                elif edge == ScreenEdge.BOTTOM:
-                    mouse_event.x = client_axis_norm
-                    mouse_event.y = 0
+                target_monitor_id, client_entry_edge = self._apply_landing_to_event(
+                    mouse_event, edge, binding, server_axis_norm
+                )
 
                 # Mark the crossing in-flight synchronously BEFORE
                 # scheduling: pynput fires ``on_move`` back to back, and
@@ -782,10 +854,6 @@ class ServerMouseListener(object):
                 # dead loop would leave the listener wedged.
                 with self._server_state_lock:
                     self._handling_cross_screen = True
-                # ``client_edge`` is the client-space edge the cursor enters
-                # through; forwarded to the client so it can lock return-to-
-                # server against that edge until the cursor moves inward.
-                client_entry_edge = binding.get("client_edge")
                 if not self._schedule_async(
                     self._handle_cross_screen(
                         edge,
@@ -859,38 +927,13 @@ class ServerMouseListener(object):
                     data=ActiveScreenChangedEvent(active_screen=screen),
                 )
 
-                # Push the topology to the activating client so it can
-                # resolve return-to-server crossings AND enforce the
-                # workspace topology over its OS-level monitor adjacency.
-                bindings = self._edge_bindings_by_client.get(screen) or []
-                intra_bindings = self._intra_bindings_by_client.get(screen) or []
-                if bindings or intra_bindings:
-                    await self.command_stream.send(
-                        ClientTopologyCommandEvent(
-                            target=screen,
-                            edge_bindings=bindings,
-                            server_bbox=self._screen_bbox,
-                            intra_client_bindings=intra_bindings,
-                        )
-                    )
-
-                # Carry the landing coords on the activation packet
-                # itself: the mouse stream can outrun the command stream
-                # and a POSITION_ACTION delivered before ``_is_active``
-                # flips True is silently dropped, leaving the cursor at
-                # screen centre. The parallel POSITION_ACTION below is
-                # kept for old clients that don't read ``position_x/_y``
-                # off CLIENT_ACTIVE - idempotent on new clients.
-                await self.command_stream.send(
-                    CrossScreenCommandEvent(
-                        target=screen,
-                        client_monitor_id=client_monitor_id,
-                        x=mouse_event.x,
-                        y=mouse_event.y,
-                        entry_edge=client_entry_edge,
-                    )
+                # Topology push + activation packet + landing position.
+                await self._send_activation_packets(
+                    screen,
+                    mouse_event,
+                    client_monitor_id,
+                    client_entry_edge,
                 )
-                await self.stream.send(mouse_event)
                 await asyncio.sleep(0)
 
         except Exception as e:
@@ -954,7 +997,7 @@ class ServerMouseController(object):
         # any of them when control returns from a client.
         self._screen_bbox: tuple[int, int, int, int] = Screen.get_virtual_bbox()
 
-        self._controller = MouseController()
+        self._controller = self._create_controller()
         self._logger = get_logger(self.__class__.__name__)
 
         self._logger.info(
@@ -970,6 +1013,16 @@ class ServerMouseController(object):
             event_type=BusEventType.LOCAL_MONITORS_UPDATED,
             callback=self._on_local_monitors_updated,
         )
+
+    def _create_controller(self):
+        """The controller used to place the server cursor on a return.
+
+        A hook so a backend that never positions the cursor itself can skip
+        building one - on Wayland that avoids opening a RemoteDesktop portal
+        session (and its dispatch thread) that would go completely unused.
+        Returning ``None`` is allowed; ``position_cursor`` no-ops then.
+        """
+        return MouseController()
 
     async def _on_local_monitors_updated(self, data):
         """Refresh the virtual-desktop bbox after a local monitor hotplug.
@@ -1008,6 +1061,8 @@ class ServerMouseController(object):
 
     def position_cursor(self, x: float | int, y: float | int):
         """Place the cursor from normalised ``(x, y)`` over the virtual desktop bbox."""
+        if self._controller is None:
+            return
         try:
             min_x, min_y, max_x, max_y = self._screen_bbox
             width = max_x - min_x

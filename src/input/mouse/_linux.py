@@ -27,27 +27,42 @@ import asyncio
 from typing import Optional
 
 from input._platform import is_wayland, is_gnome, is_kde
+from input.utils import ScreenEdge
 from . import _base
 
 from event import (
     BusEventType,
     MouseEvent,
     ActiveScreenChangedEvent,
-    CrossScreenCommandEvent,
     ClientConnectedEvent,
     ClientDisconnectedEvent,
 )
 from utils.logging import Logger
-from utils.screen import Screen
 
 
 class ServerMouseListener(_base.ServerMouseListener):
     """Linux mouse listener (Wayland barrier mode or X11 pynput)."""
 
-    # Offset from screen edge (normalized)
-    _EDGE_OFFSET = 0.02
     MOVEMENT_HISTORY_N_THRESHOLD = 4
     MOVEMENT_HISTORY_LEN = 5
+
+    # Barrier edge names as reported by the InputCapture portal, mapped to
+    # the shared ``ScreenEdge`` enum so the Wayland path can reuse the
+    # base spatial resolver.
+    _STRING_TO_SCREEN_EDGE: dict[str, ScreenEdge] = {
+        "left": ScreenEdge.LEFT,
+        "right": ScreenEdge.RIGHT,
+        "top": ScreenEdge.TOP,
+        "bottom": ScreenEdge.BOTTOM,
+    }
+    # Client-space edge the cursor enters through, for the no-binding
+    # fallback. Crossing the server's left edge lands on the client's right.
+    _OPPOSITE_EDGE: dict[str, str] = {
+        "left": "right",
+        "right": "left",
+        "top": "bottom",
+        "bottom": "top",
+    }
 
     def __init__(self, *args, **kwargs):
         self._barrier_mode = is_wayland() and (is_gnome() or is_kde())
@@ -56,9 +71,9 @@ class ServerMouseListener(_base.ServerMouseListener):
         if self._barrier_mode:
             # UID of the captured client; None while the server owns the cursor.
             self._active_client_barrier: Optional[str] = None
-            self._barrier_screen_size: tuple[int, int] = Screen.get_size()
             # Edge -> UID map rebuilt from _edge_bindings_by_client whenever
-            # bindings change; resolves the edge name from the backend.
+            # bindings change; drives which barriers the backend arms, and is
+            # the fallback target when no binding covers an activation point.
             self._edge_to_uid: dict[str, str] = {}
 
             self.event_bus.subscribe(
@@ -246,33 +261,53 @@ class ServerMouseListener(_base.ServerMouseListener):
         )
 
     async def _on_barrier_activated(self, edge: str, cursor_x: float, cursor_y: float):
-        """Dispatch cross-screen events when a barrier is hit. Resolves edge to
-        target UID via _edge_to_uid (Wayland-equivalent of the X11 spatial path)."""
-        target_uid = self._edge_to_uid.get(edge)
-        if not target_uid or target_uid not in self._active_clients:
-            return
+        """Dispatch cross-screen events when a barrier is hit.
 
+        ``cursor_x/cursor_y`` come from the InputCapture portal in absolute
+        desktop coordinates, which is exactly what
+        ``_resolve_cross_screen_target`` wants - so this path resolves the
+        target through the same spatial EdgeBinding lookup as every other
+        backend instead of the edge->UID collapse it used to do. That is
+        what makes the per-axis partitioning, the ``client_monitor_id`` and
+        the ``client_edge`` available here, and going through
+        ``_send_activation_packets`` is what gives the client the topology
+        it needs to route back to the server at all.
+        """
         if self._active_client_barrier is not None:
             return
 
-        self._active_client_barrier = target_uid
+        screen_edge = self._STRING_TO_SCREEN_EDGE.get(edge)
+        if screen_edge is None:
+            return
 
-        off = self._EDGE_OFFSET
-        sw, sh = self._barrier_screen_size
+        resolved = self._resolve_cross_screen_target(
+            edge=screen_edge,
+            cursor_x=cursor_x,
+            cursor_y=cursor_y,
+        )
+        if resolved is None:
+            # No binding covers this point on this edge. Fall back to the
+            # edge->UID map so a layout whose axis ranges disagree with the
+            # portal's zone geometry still crosses rather than dead-ending.
+            target_uid = self._edge_to_uid.get(edge)
+            if not target_uid or target_uid not in self._active_clients:
+                return
+            binding = None
+            server_axis_norm = 0.0
+        else:
+            target_uid, binding, server_axis_norm = resolved
+
         mouse_event = MouseEvent(x=0, y=0, action=MouseEvent.POSITION_ACTION)
+        if binding is not None:
+            client_monitor_id, client_entry_edge = self._apply_landing_to_event(
+                mouse_event, screen_edge, binding, server_axis_norm
+            )
+        else:
+            client_monitor_id = None
+            client_entry_edge = self._OPPOSITE_EDGE.get(edge)
+            self._apply_fallback_landing(mouse_event, edge, cursor_x, cursor_y)
 
-        if edge == "left":
-            mouse_event.x = 1.0 - off
-            mouse_event.y = cursor_y / sh if sh else 0.5
-        elif edge == "right":
-            mouse_event.x = off
-            mouse_event.y = cursor_y / sh if sh else 0.5
-        elif edge == "top":
-            mouse_event.x = cursor_x / sw if sw else 0.5
-            mouse_event.y = 1.0 - off
-        elif edge == "bottom":
-            mouse_event.x = cursor_x / sw if sw else 0.5
-            mouse_event.y = off
+        self._active_client_barrier = target_uid
 
         self._logger.debug(
             "[BARRIER_ACT] SENDING position",
@@ -280,6 +315,9 @@ class ServerMouseListener(_base.ServerMouseListener):
             y=round(mouse_event.y, 4),
             client_uid=target_uid,
             edge=edge,
+            entry_edge=client_entry_edge,
+            monitor=client_monitor_id,
+            resolved=binding is not None,
         )
 
         try:
@@ -287,28 +325,78 @@ class ServerMouseListener(_base.ServerMouseListener):
                 event_type=BusEventType.ACTIVE_SCREEN_CHANGED,
                 data=ActiveScreenChangedEvent(active_screen=target_uid),
             )
-            # Carry landing coords on the activation packet so POSITION_ACTION
-            # on the mouse stream can't race CLIENT_ACTIVE on the client.
-            await self.command_stream.send(
-                CrossScreenCommandEvent(
-                    target=target_uid,
-                    x=mouse_event.x,
-                    y=mouse_event.y,
-                )
+            await self._send_activation_packets(
+                target_uid,
+                mouse_event,
+                client_monitor_id,
+                client_entry_edge,
             )
-            await self.stream.send(mouse_event)
         except Exception as e:
             self._logger.error("Error dispatching cross-screen event", error=str(e))
             self._active_client_barrier = None
+
+    def _apply_fallback_landing(
+        self, mouse_event: MouseEvent, edge: str, cursor_x: float, cursor_y: float
+    ):
+        """Landing for the no-binding fallback, over the server virtual bbox.
+
+        Normalising over ``_screen_bbox`` (not ``Screen.get_size()``, which on
+        Wayland is the first ``wl_output``'s mode cached forever) keeps this in
+        the same reference rectangle as the client's return-to-server maths.
+        The landing sits ON the entry edge; the client's arm/release hysteresis
+        is what prevents an immediate bounce back.
+        """
+        min_x, min_y, _max_x, _max_y, width, height = self._bbox_span()
+        axis_y = min(1.0, max(0.0, (cursor_y - min_y) / height))
+        axis_x = min(1.0, max(0.0, (cursor_x - min_x) / width))
+
+        if edge == "left":
+            mouse_event.x = 1.0
+            mouse_event.y = axis_y
+        elif edge == "right":
+            mouse_event.x = 0.0
+            mouse_event.y = axis_y
+        elif edge == "top":
+            mouse_event.x = axis_x
+            mouse_event.y = 1.0
+        elif edge == "bottom":
+            mouse_event.x = axis_x
+            mouse_event.y = 0.0
 
 
 class ServerMouseController(_base.ServerMouseController):
     """Linux server-side mouse controller."""
 
+    def __init__(self, *args, **kwargs):
+        self._barrier_mode = is_wayland() and (is_gnome() or is_kde())
+        super().__init__(*args, **kwargs)
+
+    def _create_controller(self):
+        """No controller in barrier mode - the portal owns the placement.
+
+        Building one would open a RemoteDesktop portal session plus a libei
+        dispatch thread that nothing then uses, and leave them running past
+        ``Server.stop()``.
+        """
+        if self._barrier_mode:
+            return None
+        return super()._create_controller()
+
     async def _on_active_screen_changed(self, data: Optional[ActiveScreenChangedEvent]):
         """
         Activate only when the active screen becomes None.
         """
+        if self._barrier_mode:
+            # On Wayland the InputCapture portal is the ONLY authority for
+            # the return landing: ``portal.release(x, y)`` places the cursor
+            # while releasing the capture. Writing it again here would go
+            # through the libei RemoteDesktop controller, whose position is a
+            # virtual accumulator seeded at (0, 0) that nothing ever syncs to
+            # the real pointer on a server (the user's physical mouse moves
+            # the cursor without libei's knowledge). That second write
+            # therefore commands an arbitrary displacement and is what kept
+            # the cursor off the real monitor border after a return.
+            return
         if data is not None:
             active_screen = data.active_screen
             if active_screen is None:
