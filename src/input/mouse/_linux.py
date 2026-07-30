@@ -103,6 +103,7 @@ class ServerMouseListener(_base.ServerMouseListener):
                 on_click=self._on_barrier_click,
                 on_scroll=self._on_barrier_scroll,
                 on_barrier=self._on_barrier_hit,
+                on_state=self._on_barrier_state,
             )
         return super()._create_listener()
 
@@ -227,6 +228,22 @@ class ServerMouseListener(_base.ServerMouseListener):
             )
 
         await asyncio.sleep(0)
+
+    def _on_barrier_state(self, healthy: bool, reason):
+        """Capture-session health, reported from the backend thread.
+
+        Logged at warning level so a session that died and is being retried is
+        visible: it used to fail silently, leaving a server that looked healthy
+        while no edge could be crossed. ``is_alive()`` reflects the same state,
+        which is what lets the service layer restart the listener.
+        """
+        if healthy:
+            self._logger.info("Wayland capture session healthy")
+            return
+        self._logger.warning("Wayland capture session unavailable", reason=reason)
+        # The cursor can't be on a client if capture is gone; drop the local
+        # belief so a later activation isn't rejected by the in-flight guard.
+        self._active_client_barrier = None
 
     def _on_barrier_move(self, dx, dy):
         asyncio.run_coroutine_threadsafe(
@@ -413,4 +430,17 @@ class ClientMouseController(_base.ClientMouseController):
     MOVEMENT_HISTORY_N_THRESHOLD = 4
     MOVEMENT_HISTORY_LEN = 5
 
-    pass
+    async def stop(self):
+        await super().stop()
+        if not (is_wayland() and (is_gnome() or is_kde())):
+            return
+        # Close the RemoteDesktop portal session used for injection. It lives
+        # in a module-level singleton, so without this it outlives the client
+        # service and the next start is handed a connection whose compositor
+        # session is already gone.
+        try:
+            from .backend._libei import shutdown_connection
+
+            shutdown_connection()
+        except Exception as exc:
+            self._logger.debug("libei connection shutdown failed", error=str(exc))
