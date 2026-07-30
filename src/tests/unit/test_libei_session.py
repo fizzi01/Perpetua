@@ -190,7 +190,10 @@ class TestBarrierArming:
         # An older installed pyinputcapture: still better than nothing, the
         # unbound part of the edge just keeps stalling as it did before.
         portal = MagicMock()
-        portal.set_barriers.side_effect = [TypeError("unexpected keyword"), [(1, "right")]]
+        portal.set_barriers.side_effect = [
+            TypeError("unexpected keyword"),
+            [(1, "right")],
+        ]
         session = _session(libei, portal, armed=())
 
         session.apply_edges({"right"}, [("right", 1920, 0, 1920, 540)], logger)
@@ -251,7 +254,9 @@ class TestReleasePosition:
         portal = MagicMock()
         portal.zones = [(1920, 1080, 0, 0)]
 
-        assert libei._CaptureSession.compute_release_pos({"x": -1, "y": -1}, portal) == (
+        assert libei._CaptureSession.compute_release_pos(
+            {"x": -1, "y": -1}, portal
+        ) == (
             None,
             None,
         )
@@ -260,7 +265,9 @@ class TestReleasePosition:
         portal = MagicMock()
         portal.zones = []
 
-        assert libei._CaptureSession.compute_release_pos({"x": 0.5, "y": 0.5}, portal) == (
+        assert libei._CaptureSession.compute_release_pos(
+            {"x": 0.5, "y": 0.5}, portal
+        ) == (
             None,
             None,
         )

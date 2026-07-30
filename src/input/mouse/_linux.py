@@ -55,6 +55,7 @@ class ServerMouseListener(_base.ServerMouseListener):
         "top": ScreenEdge.TOP,
         "bottom": ScreenEdge.BOTTOM,
     }
+
     def __init__(self, *args, **kwargs):
         self._barrier_mode = is_wayland() and (is_gnome() or is_kde())
         super().__init__(*args, **kwargs)
