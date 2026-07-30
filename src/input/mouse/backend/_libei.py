@@ -752,11 +752,15 @@ class _CaptureSession:
 def _wait_for_seat(receiver, logger, keep_waiting=None):
     """Wait for the EIS seat and bind capabilities.
 
-    ``keep_waiting`` is polled every iteration so a ``stop()`` during this
-    10-second wait aborts it: otherwise the capture thread ignores the quit
-    request for long enough to blow through the join timeout and outlive the
-    service that owns it.
+    ``keep_waiting`` is polled before starting and on every iteration, so a
+    ``stop()`` during this 10-second wait aborts it: otherwise the capture
+    thread ignores the quit request for long enough to blow through the join
+    timeout and outlive the service that owns it.
     """
+    if keep_waiting is not None and not keep_waiting():
+        logger.debug("EIS seat wait skipped (stopping)")
+        return
+
     poller = _select.poll()
     poller.register(receiver.fd, _select.POLLIN)
 
