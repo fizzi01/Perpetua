@@ -463,13 +463,13 @@ class TestCapturedStderr:
 
 
 class TestUnauthorisedReset:
-    def test_a_later_unrelated_failure_clears_the_refusal(self, libei, logger, monkeypatch):
+    def test_a_later_unrelated_failure_clears_the_refusal(
+        self, libei, logger, monkeypatch
+    ):
         # Once set, _unauthorised was only cleared on success - so every later
         # failure of any kind reported itself as "not authorised" and waited out
         # the 30 s ceiling.
-        monkeypatch.setattr(
-            libei._CaptureSession, "create", lambda *a, **kw: None
-        )
+        monkeypatch.setattr(libei._CaptureSession, "create", lambda *a, **kw: None)
         listener = libei.MouseListener()
         listener._is_running = True
         listener._unauthorised = "access denied"

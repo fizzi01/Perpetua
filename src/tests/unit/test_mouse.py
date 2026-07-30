@@ -1348,6 +1348,90 @@ class TestClientMouseController:
         assert c._return_locked_edge == ScreenEdge.LEFT
         assert c._inward_travel == 0
 
+    def test_intra_warp_keeps_the_lock_on_an_unmapped_edge(
+        self, event_bus, mock_stream_handler, mock_mouse_controller
+    ):
+        """An unrecognised ``dst_edge`` must NOT clear the return lock.
+
+        ``None`` disables the entry gate entirely, so clearing it leaves the gate
+        unconditionally open: the return then fires on leftover motion from the
+        crossing instead of on the user's push, which is the bug the old
+        "walk to the unbound edge and back" workaround was riding on.
+        """
+        c = self._make_client(event_bus, mock_stream_handler, mock_mouse_controller)
+        c._return_locked_edge = ScreenEdge.TOP
+        c._resolve_intra_client_warp = lambda *a, **k: (1, 300, 400, "diagonal")
+        c._monitor_layout = MonitorLayout.from_bboxes([(0, 0, 1920, 1080)])
+
+        assert c._try_intra_client_warp_sync(ScreenEdge.RIGHT, 1919, 400, None)
+
+        assert c._return_locked_edge == ScreenEdge.TOP
+        assert c._inward_travel == 0
+
+    @pytest.mark.anyio
+    async def test_no_clamp_while_pushing_out_at_the_locked_edge(
+        self, event_bus, mock_stream_handler, mock_mouse_controller
+    ):
+        """The OS already holds the cursor there; correcting it fights the user.
+
+        On a Wayland client a warp is a real inward motion, so clamping every
+        tick physically cancels the outward push - and keeps ``_inward_travel``
+        from ever reaching the margin that opens the return gate.
+        ``input/mouse/CLAUDE.md``: never contend with the OS for the cursor at a
+        desktop bound, it shows.
+        """
+        with _ScreenGeometry(1920, 1080):
+            c = self._make_client(event_bus, mock_stream_handler, mock_mouse_controller)
+            self._activate_left_entry(c)
+            # No binding covers this edge, so the tick falls through to the clamp.
+            c._edge_bindings = []
+            for _ in range(20):
+                c._move_cursor(-1, -1, -40, 0)
+            assert c._inward_travel < 0
+
+            c._controller.position = (0, 500)
+            c._last_move_delta = (-3, 0)
+            with patch.object(c, "_clamp_cursor_to_monitor") as clamp:
+                await c._check_edge()
+
+            clamp.assert_not_called()
+            assert c._pushing_out_at_edge(ScreenEdge.LEFT) is True
+
+    @pytest.mark.anyio
+    async def test_clamp_still_runs_when_not_pushing_out(
+        self, event_bus, mock_stream_handler, mock_mouse_controller
+    ):
+        """The drift/dead-zone correction the clamp exists for must survive."""
+        with _ScreenGeometry(1920, 1080):
+            c = self._make_client(event_bus, mock_stream_handler, mock_mouse_controller)
+            self._activate_left_entry(c)
+            c._edge_bindings = []
+            c._return_locked_edge = ScreenEdge.LEFT
+            c._inward_travel = 400  # well inside, no outward push
+
+            c._controller.position = (1919, 500)
+            c._last_move_delta = (3, 0)
+            with patch.object(c, "_clamp_cursor_to_monitor") as clamp:
+                await c._check_edge()
+
+            clamp.assert_called_once()
+
+    def test_return_gate_diagnostic_is_rate_limited(
+        self, event_bus, mock_stream_handler, mock_mouse_controller
+    ):
+        """One line per interval, and none at all without a locked entry edge."""
+        c = self._make_client(event_bus, mock_stream_handler, mock_mouse_controller)
+        with patch.object(c, "_logger") as log:
+            c._return_locked_edge = None
+            c._log_return_gate(ScreenEdge.LEFT, 0, 500, True)
+            log.debug.assert_not_called()
+
+            c._return_locked_edge = ScreenEdge.LEFT
+            for _ in range(50):
+                c._log_return_gate(ScreenEdge.LEFT, 0, 500, True)
+            assert log.debug.call_count == 1
+            assert "[RETURN_GATE]" in str(log.debug.call_args)
+
     @pytest.mark.anyio
     async def test_mouse_event_callback_queues_event(
         self,
