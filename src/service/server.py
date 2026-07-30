@@ -1536,7 +1536,11 @@ class Server:
                     if asyncio.iscoroutinefunction(component.stop):
                         tasks.append(asyncio.create_task(component.stop()))
                     else:
-                        component.stop()
+                        tasks.append(
+                            asyncio.create_task(
+                                self._stop_sync_component(component_name, component)
+                            )
+                        )
             except Exception as e:
                 self._logger.error(
                     "Error stopping component",
@@ -1569,6 +1573,39 @@ class Server:
         self.cleanup()
         self._running = False
         self._logger.info("Server stopped")
+
+    # A synchronous component stop that blocks longer than this is treated as
+    # stuck: we log it and carry on with the rest of the shutdown rather than
+    # letting one component hold the whole service (and the daemon's command
+    # socket) hostage.
+    SYNC_STOP_TIMEOUT = 5.0
+
+    async def _stop_sync_component(self, component_name: str, component):
+        """Run a blocking ``component.stop()`` off the event-loop thread.
+
+        These used to be called inline, so anything slow in a stop path froze
+        the loop with it. The Wayland mouse listener is the motivating case: it
+        joins a thread that may be inside a blocking xdg-desktop-portal call,
+        which can take seconds - or never return at all.
+        """
+        loop = asyncio.get_running_loop()
+        try:
+            await asyncio.wait_for(
+                loop.run_in_executor(None, component.stop),
+                timeout=self.SYNC_STOP_TIMEOUT,
+            )
+        except asyncio.TimeoutError:
+            self._logger.warning(
+                "Component did not stop in time; continuing shutdown",
+                component=component_name,
+                timeout=self.SYNC_STOP_TIMEOUT,
+            )
+        except Exception as e:
+            self._logger.error(
+                "Error stopping component",
+                component=component_name,
+                error=str(e),
+            )
 
     def cleanup(self):
         self._logger.info("Cleaning up resources...")
