@@ -20,8 +20,9 @@
 which only exist on a configured Linux box - so the module under test is
 imported behind stubs. What is exercised here is the pure Python state machine:
 the reconnect schedule (an ``EIS disconnected`` used to dead-end permanently),
-the barrier arming, and the teardown guard that keeps a dead session from
-making another blocking portal call.
+the stand-down after repeated refusals, the promise that nothing ever re-arms a
+barrier, and the teardown guard that keeps a dead session from making another
+blocking portal call.
 """
 
 import os
@@ -113,124 +114,6 @@ def _session(libei, portal=None, armed=("right",)):
         poller=MagicMock(),
         armed_edges=armed,
     )
-
-
-def _portal_with_signature(signature, result=None, error=None):
-    """A portal whose ``set_barriers`` advertises an explicit text signature.
-
-    A ``MagicMock`` can't carry a dunder like ``__text_signature__``, and the
-    capability probe reads exactly that - so the signature-sensitive tests need a
-    real object.
-    """
-
-    class _SetBarriers:
-        __text_signature__ = signature
-
-        def __init__(self):
-            self.calls = []
-
-        def __call__(self, *args, **kwargs):
-            self.calls.append(args or kwargs)
-            if error is not None:
-                raise error
-            return result or []
-
-    class _Portal:
-        def __init__(self):
-            self.set_barriers = _SetBarriers()
-            self.zones = [(1920, 1080, 0, 0)]
-
-        @property
-        def calls(self):
-            return self.set_barriers.calls
-
-        def enable(self):
-            pass
-
-        def disable(self):
-            pass
-
-        def release(self, x, y):
-            pass
-
-        def close(self):
-            pass
-
-    return _Portal()
-
-
-class _ScriptedSetBarriers:
-    def __init__(self, portal, signature):
-        self._portal = portal
-        if signature is not None:
-            self.__text_signature__ = signature
-
-    def __call__(self, *args, **kwargs):
-        self._portal.calls.append(("set_barriers", args or kwargs))
-        replies = self._portal.replies
-        if replies is None:
-            return []
-        return replies.pop(0) if replies else []
-
-
-class _ScriptedPortal:
-    """A portal double with an ordered call log and scripted replies.
-
-    The *order* ``disable, set_barriers, enable`` is the whole substance of a
-    re-arm on GNOME, and the reply is the only thing that says how much of the
-    request the compositor accepted - neither is observable through a bare
-    ``MagicMock``.
-    """
-
-    def __init__(
-        self,
-        replies=None,
-        zones=((1920, 1080, 0, 0),),
-        signature="($self, edges=None, segments=None)",
-        enable_error=None,
-    ):
-        self.calls: list = []
-        self.replies = list(replies) if replies is not None else None
-        self.zones = list(zones)
-        self._enable_error = enable_error
-        self.set_barriers = _ScriptedSetBarriers(self, signature)
-
-    @property
-    def call_names(self):
-        return [c[0] for c in self.calls]
-
-    def enable(self):
-        self.calls.append(("enable",))
-        if self._enable_error is not None:
-            raise self._enable_error
-
-    def disable(self):
-        self.calls.append(("disable",))
-
-    def release(self, x, y):
-        self.calls.append(("release", x, y))
-
-    def close(self):
-        self.calls.append(("close",))
-
-
-def _session_as_created(libei, portal, edges=("bottom",)):
-    """A session in exactly the state ``create()`` leaves it in.
-
-    ``setup(edges)`` armed whole-edge barriers, so the session already knows
-    the lines the compositor holds - which is what lets a later request for the
-    same geometry be answered with no portal call at all.
-    """
-    session = libei._CaptureSession(
-        portal=portal,
-        receiver=MagicMock(),
-        barrier_map={i + 1: edge for i, edge in enumerate(edges)},
-        poller=MagicMock(),
-        armed_edges=edges,
-    )
-    session.armed_canonical = libei._canonical_barriers(portal, edges, ())
-    session.armed_request = (frozenset(edges), ())
-    return session
 
 
 def _active_listener(libei):
@@ -353,15 +236,15 @@ class TestPermissionFailure:
         """A denied dialog can't be fixed by retrying a second later."""
         attempts = []
 
-        def _create(edges, log, keep_waiting=None):
-            attempts.append(edges)
+        def _create(log, keep_waiting=None):
+            attempts.append(1)
             raise libei._PortalNotAuthorised("access denied")
 
         monkeypatch.setattr(libei._CaptureSession, "create", _create)
         listener = libei.MouseListener()
         listener._is_running = True
 
-        assert listener._create_session_once(["right"], logger) is None
+        assert listener._create_session_once(logger) is None
         assert len(attempts) == 1, "must not burn the retry budget on a refusal"
         assert listener._unauthorised == "access denied"
 
@@ -374,7 +257,7 @@ class TestPermissionFailure:
         monkeypatch.setattr(
             libei.MouseListener,
             "_create_session_once",
-            lambda self, edges, log: None,
+            lambda self, log: None,
         )
         listener = libei.MouseListener()
         listener._active_edges = {"right"}
@@ -386,90 +269,124 @@ class TestPermissionFailure:
         assert listener._reconnect_pending is True
 
 
-class TestSegmentCapabilityWarning:
-    def test_warns_once_when_set_barriers_is_missing(self, libei, logger):
-        # Silent degradation is how a whole-edge barrier across an unbound
-        # stretch of screen looked like a mystery rather than a missing rebuild.
-        portal = MagicMock(spec=["zones", "release", "close", "enable", "disable"])
-        session = _session(libei, portal, armed=())
+class TestRepeatedRefusal:
+    """Every attempt is another permission dialog; eventually, stop asking."""
 
-        session.apply_edges({"right"}, [("right", 1920, 0, 1920, 540)], logger)
-        session.apply_edges({"left"}, [("left", 0, 0, 0, 540)], logger)
+    def _refused_listener(self, libei, logger, monkeypatch):
+        attempts = []
 
-        warnings = [c for c in logger.warning.call_args_list if "maturin" in str(c)]
-        assert len(warnings) == 1
+        def _create(log, keep_waiting=None):
+            attempts.append(1)
+            raise libei._PortalNotAuthorised("access denied")
 
-    def test_no_warning_when_segments_are_supported(self, libei, logger):
-        portal = MagicMock()
-        portal.set_barriers.return_value = [(1, "right")]
-        session = _session(libei, portal, armed=())
+        monkeypatch.setattr(libei._CaptureSession, "create", _create)
+        listener = libei.MouseListener()
+        listener._is_running = True
+        listener._active_edges = {"right"}
+        for _ in range(libei.MouseListener._MAX_UNAUTHORISED_ATTEMPTS):
+            listener._reconnect_at = 0.0
+            listener._maybe_reconnect(logger)
+        return listener, attempts
 
-        session.apply_edges({"right"}, [("right", 1920, 0, 1920, 540)], logger)
+    def test_stops_asking_after_the_cap(self, libei, logger, monkeypatch):
+        listener, attempts = self._refused_listener(libei, logger, monkeypatch)
+        cap = libei.MouseListener._MAX_UNAUTHORISED_ATTEMPTS
 
-        assert not [c for c in logger.warning.call_args_list if "maturin" in str(c)]
+        assert listener._capture_blocked is True
+        assert len(attempts) == cap
 
+        # Any number of further ticks must not reach the portal again.
+        listener._reconnect_at = 0.0
+        for _ in range(5):
+            assert listener._maybe_reconnect(logger) is libei._NO_SESSION
+        assert len(attempts) == cap
 
-class TestSegmentCapabilityProbe:
-    """The capability is decided by inspection, never by catching TypeError.
+    def test_standing_down_arms_no_deadline(self, libei, logger, monkeypatch):
+        listener, _ = self._refused_listener(libei, logger, monkeypatch)
 
-    PyO3 raises ``TypeError`` for a failed argument extraction exactly as it does
-    for an unknown keyword, so inferring "this build can't do segments" from the
-    exception reported a malformed segment - a float where an ``i32`` is wanted -
-    as a missing rebuild. That is the warning the field report was seeing *with*
-    the new build installed.
-    """
+        assert listener._reconnect_pending is False
 
-    def test_absent_set_barriers_is_the_only_hard_no(self, libei):
-        portal = MagicMock(spec=["zones", "release", "close", "enable", "disable"])
+    def test_blocked_still_counts_as_alive(self, libei, logger, monkeypatch):
+        """Refused, not broken.
 
-        assert libei._segments_supported(portal) is False
+        ``Server._enable_mouse_stream`` restarts the listener whenever
+        ``is_alive()`` is False, which would re-open the dialog on a loop and
+        undo the stand-down entirely.
+        """
+        listener, _ = self._refused_listener(libei, logger, monkeypatch)
+        listener._thread = MagicMock(is_alive=lambda: True)
 
-    def test_signature_without_segments_reports_false(self, libei):
-        portal = _portal_with_signature("($self, edges)")
+        assert listener.is_alive() is True
 
-        assert libei._segments_supported(portal) is False
+    def test_a_new_edge_asks_once_more(self, libei, logger, monkeypatch):
+        listener, attempts = self._refused_listener(libei, logger, monkeypatch)
+        cap = libei.MouseListener._MAX_UNAUTHORISED_ATTEMPTS
 
-    def test_signature_with_segments_reports_true(self, libei):
-        portal = _portal_with_signature("($self, edges=None, segments=None)")
-
-        assert libei._segments_supported(portal) is True
-
-    def test_unreadable_signature_is_not_evidence_of_absence(self, libei):
-        # No ``__text_signature__`` at all: assume supported, so a genuine
-        # argument error can surface instead of being mislabelled.
-        portal = MagicMock()
-
-        assert libei._segments_supported(portal) is True
-
-    def test_a_float_coordinate_is_reported_as_a_bad_segment(self, libei, logger):
-        bad = ("right", 1920, 0.5, 1920, 540)
-        portal = _portal_with_signature(
-            "($self, edges=None, segments=None)",
-            error=TypeError("argument 'segments': failed to extract field"),
+        # Connecting a client is an explicit request for capture, so it is
+        # worth one more dialog.
+        listener._cmd_queue.put(
+            {"type": "update_clients", "clients": {"right": True, "left": True}}
         )
-        session = _session(libei, portal, armed=())
+        listener._idle_wait(logger)
 
-        session.apply_edges({"right"}, [bad], logger)
+        assert len(attempts) == cap + 1
 
-        errors = str(logger.error.call_args_list)
-        assert "0.5" in errors, "the offending segment must be named"
-        assert not [c for c in logger.warning.call_args_list if "maturin" in str(c)]
-        assert session.segments_supported is True
+    def test_the_same_edges_do_not_ask_again(self, libei, logger, monkeypatch):
+        listener, attempts = self._refused_listener(libei, logger, monkeypatch)
+        cap = libei.MouseListener._MAX_UNAUTHORISED_ATTEMPTS
 
-    def test_malformed_segments_picks_out_the_offenders(self, libei):
-        good = ("right", 1920, 0, 1920, 540)
-        floaty = ("right", 1920.0, 0, 1920, 540)
-        short = ("right", 1920, 0, 1920)
+        # A repeated update for an unchanged layout is not a user asking for
+        # anything - it is the bus being chatty.
+        listener._cmd_queue.put({"type": "update_clients", "clients": {"right": True}})
+        listener._idle_wait(logger)
 
-        assert libei._malformed_segments([good]) == []
-        assert libei._malformed_segments([good, floaty, short]) == [floaty, short]
+        assert len(attempts) == cap
+
+
+class TestSetupTimeout:
+    """An unanswered dialog must not hold the capture thread for two minutes."""
+
+    def test_timeout_is_passed_when_the_build_takes_it(self, libei):
+        class _Portal:
+            def __init__(self):
+                self.calls = []
+
+            def setup(self, edges, **kwargs):
+                self.calls.append((edges, kwargs))
+                return ([], 0, [])
+
+        _Portal.setup.__text_signature__ = "($self, edges=None, timeout=120.0)"
+        portal = _Portal()
+
+        libei._CaptureSession._setup(portal)
+
+        edges, kwargs = portal.calls[0]
+        assert edges == list(libei._ALL_EDGES)
+        assert kwargs == {"timeout": libei._SETUP_TIMEOUT}
+
+    def test_an_older_build_still_gets_called(self, libei):
+        class _Old:
+            def __init__(self):
+                self.calls = []
+
+            def setup(self, edges, **kwargs):
+                if kwargs:
+                    raise TypeError("setup() takes no keyword arguments")
+                self.calls.append(edges)
+                return ([], 0, [])
+
+        portal = _Old()
+
+        libei._CaptureSession._setup(portal)
+
+        assert portal.calls == [list(libei._ALL_EDGES)]
 
     def test_backend_info_survives_a_missing_extension(self, libei):
         # pyinputcapture is not installed off Linux; the startup line must still
         # be emittable.
         info = libei._capture_backend_info()
 
-        assert "segments" in info and "module" in info
+        assert "setup_timeout" in info and "module" in info
 
 
 class TestStartGuard:
@@ -548,8 +465,23 @@ class TestUnauthorisedReset:
         listener._is_running = True
         listener._unauthorised = "access denied"
 
-        assert listener._create_session_once(["right"], logger) is None
+        assert listener._create_session_once(logger) is None
         assert listener._unauthorised is None
+
+    def test_an_unrelated_failure_does_not_count_towards_the_cap(
+        self, libei, logger, monkeypatch
+    ):
+        # The stand-down is for refusals only: a compositor that is merely
+        # unavailable must keep being retried on the backoff.
+        monkeypatch.setattr(libei._CaptureSession, "create", lambda *a, **kw: None)
+        listener = libei.MouseListener()
+        listener._is_running = True
+        listener._unauthorised_attempts = 2
+
+        listener._create_session_once(logger)
+
+        assert listener._unauthorised_attempts == 0
+        assert listener._capture_blocked is False
 
     def test_one_attempt_per_cycle(self, libei, logger, monkeypatch):
         # Three CreateSession requests a second apart is the worst cadence for a
@@ -558,12 +490,12 @@ class TestUnauthorisedReset:
         monkeypatch.setattr(
             libei._CaptureSession,
             "create",
-            lambda edges, log, keep_waiting=None: attempts.append(edges),
+            lambda log, keep_waiting=None: attempts.append(1),
         )
         listener = libei.MouseListener()
         listener._is_running = True
 
-        listener._create_session_once(["right"], logger)
+        listener._create_session_once(logger)
 
         assert len(attempts) == 1
 
@@ -593,315 +525,63 @@ class TestTeardown:
         session.portal.close.assert_not_called()
 
 
-class TestBarrierArming:
-    def test_arms_only_the_requested_segments(self, libei, logger):
-        portal = MagicMock()
-        portal.set_barriers.return_value = [(1, "right")]
-        session = _session(libei, portal, armed=())
+class TestNoBarrierCalls:
+    """Barriers are armed once by ``setup()`` and never touched again.
 
-        segments = [("right", 1920, 0, 1920, 540)]
-        session.apply_edges({"right"}, segments, logger)
-
-        portal.set_barriers.assert_called_once_with(segments=segments)
-        assert session.armed_edges == {"right"}
-        assert session.barrier_map == {1: "right"}
-
-    def test_no_clients_disables_capture_entirely(self, libei, logger):
-        # Nothing to cross to anywhere: the whole border must be reachable.
-        portal = MagicMock()
-        session = _session(libei, portal)
-
-        session.apply_edges(set(), [], logger)
-
-        portal.disable.assert_called_once()
-        assert session.armed_edges == set()
-        assert session.enabled is False
-
-    def test_re_enables_when_a_client_comes_back(self, libei, logger):
-        portal = MagicMock()
-        portal.set_barriers.return_value = [(1, "left")]
-        session = _session(libei, portal)
-
-        session.apply_edges(set(), [], logger)
-        session.apply_edges({"left"}, [("left", 0, 0, 0, 1079)], logger)
-
-        portal.enable.assert_called_once()
-        assert session.enabled is True
-        assert session.armed_edges == {"left"}
-
-    def test_unchanged_request_does_not_re_issue(self, libei, logger):
-        portal = MagicMock()
-        portal.set_barriers.return_value = [(1, "right")]
-        session = _session(libei, portal, armed=())
-        segments = [("right", 1920, 0, 1920, 1079)]
-
-        session.apply_edges({"right"}, segments, logger)
-        session.apply_edges({"right"}, segments, logger)
-
-        assert portal.set_barriers.call_count == 1
-
-    def test_falls_back_to_whole_edges_without_segment_support(self, libei, logger):
-        # An older installed pyinputcapture: still better than nothing, the
-        # unbound part of the edge just keeps stalling as it did before. The
-        # capability is read off the signature, so the segments call is never
-        # even attempted.
-        portal = _portal_with_signature("($self, edges)", [(1, "right")])
-        session = _session(libei, portal, armed=())
-
-        session.apply_edges({"right"}, [("right", 1920, 0, 1920, 540)], logger)
-
-        assert portal.calls == [(["right"],)]
-        assert session.armed_edges == {"right"}
-        assert session.armed_segments == ()
-        assert [c for c in logger.warning.call_args_list if "maturin" in str(c)]
-
-    def test_set_barriers_failure_leaves_state_untouched(self, libei, logger):
-        portal = MagicMock()
-        portal.set_barriers.side_effect = RuntimeError("portal said no")
-        session = _session(libei, portal, armed=("top",))
-
-        session.apply_edges({"right"}, [("right", 1920, 0, 1920, 540)], logger)
-
-        assert session.armed_edges == {"top"}
-        logger.warning.assert_called_once()
-
-    def test_dead_session_is_not_re_armed(self, libei, logger):
-        portal = MagicMock()
-        session = _session(libei, portal)
-        session.dead = True
-
-        session.apply_edges({"left"}, [("left", 0, 0, 0, 100)], logger)
-
-        portal.set_barriers.assert_not_called()
-        portal.enable.assert_not_called()
-
-
-class TestWholeEdgeSegments:
-    """The port of the extension's own ``build_barriers``.
-
-    This is the test that pins the port: if the extension's formula drifts we
-    would think the compositor already holds what we want and skip a re-arm
-    that is genuinely needed - which is exactly the symptom this whole change
-    exists to fix, only inverted.
+    ``SetPointerBarriers`` is the only way to change them on a live session,
+    and GNOME 46 refuses it on an enabled session while being unable to
+    re-enable a disabled one - so the call deletes the working barrier set and
+    installs nothing. Not calling it is the whole design; these tests are what
+    stops it coming back.
     """
 
-    def test_matches_the_extension_formula_for_one_zone(self, libei):
-        # Hard-coded from pyinputcapture/src/lib.rs, in barrier-id order.
-        assert libei._whole_edge_segments(
-            [(1920, 1080, 0, 0)], ("top", "bottom", "left", "right")
-        ) == (
-            ("top", 0, 0, 1919, 0),
-            ("bottom", 0, 1080, 1919, 1080),
-            ("left", 0, 0, 0, 1079),
-            ("right", 1920, 0, 1920, 1079),
-        )
+    def test_setup_arms_every_edge(self, libei):
+        class _Portal:
+            def __init__(self):
+                self.calls = []
 
-    def test_only_included_edges_consume_an_id(self, libei):
-        lines = libei._whole_edge_segments([(1920, 1080, 0, 0)], ("bottom",))
+            def setup(self, edges, **kwargs):
+                self.calls.append(edges)
+                return ([], 0, [])
 
-        assert lines == (("bottom", 0, 1080, 1919, 1080),)
+        portal = _Portal()
 
-    def test_offset_two_zone_layout_keeps_zone_then_edge_order(self, libei):
-        zones = [(1920, 1080, 0, 0), (1280, 1024, 1920, 56)]
+        libei._CaptureSession._setup(portal)
 
-        lines = libei._whole_edge_segments(zones, ("bottom", "right"))
+        assert sorted(portal.calls[0]) == ["bottom", "left", "right", "top"]
 
-        # Zone order first, then the extension's top/bottom/left/right order:
-        # index i is barrier id i + 1.
-        assert lines == (
-            ("bottom", 0, 1080, 1919, 1080),
-            ("right", 1920, 0, 1920, 1079),
-            ("bottom", 1920, 1080, 3199, 1080),
-            ("right", 3200, 56, 3200, 1079),
-        )
+    def test_the_session_has_no_way_to_re_arm(self, libei):
+        for name in ("apply_edges", "_arm", "_rearm_cycle", "_set_capture_enabled"):
+            assert not hasattr(libei._CaptureSession, name), name
 
-    def test_unreadable_zones_are_unknown_not_empty(self, libei):
-        portal = MagicMock()  # zones is a MagicMock: not iterable as tuples
-
-        assert libei._canonical_barriers(portal, {"bottom"}, ()) is None
-
-    def test_segments_are_their_own_canonical_form(self, libei):
-        portal = _ScriptedPortal()
-        segments = [("bottom", 0, 1080, 959, 1080)]
-
-        assert libei._canonical_barriers(portal, {"bottom"}, segments) == frozenset(
-            {("bottom", 0, 1080, 959, 1080)}
-        )
-
-
-class TestGeometryShortCircuit:
-    """The cheapest re-arm is none.
-
-    ``SetPointerBarriers`` replaces the *whole* barrier set, and GNOME refuses
-    the replacement on an enabled session - so issuing it when the compositor
-    already holds the lines we want deletes a working barrier and installs
-    nothing.
-    """
-
-    def test_a_full_span_segment_over_a_whole_edge_touches_nothing(self, libei, logger):
-        # The reported case: setup(['bottom']) armed (bottom, 0, 1080, 1919,
-        # 1080), and the layout's full-span binding computes byte-identical
-        # coordinates. Two spellings, one geometry.
-        portal = _ScriptedPortal()
-        session = _session_as_created(libei, portal)
-
-        reason = session.apply_edges(
-            {"bottom"}, [("bottom", 0, 1080, 1919, 1080)], logger
-        )
-
-        assert reason is None
-        assert portal.calls == [], "no set_barriers, no disable, no enable"
-        assert session.barrier_map == {1: "bottom"}
-        assert session.armed_edges == {"bottom"}
-        assert "compositor untouched" in str(logger.debug.call_args_list)
-
-    def test_a_partial_span_still_re_arms(self, libei, logger):
-        portal = _ScriptedPortal(replies=[[(1, "bottom")]])
-        session = _session_as_created(libei, portal)
-
-        reason = session.apply_edges(
-            {"bottom"}, [("bottom", 0, 1080, 959, 1080)], logger
-        )
-
-        assert reason is None
-        # The enable is unconditional: the call suspends the session, so the
-        # cached ``enabled = True`` no longer describes it.
-        assert portal.call_names == ["disable", "set_barriers", "enable"]
-        assert session.enabled is True
-        assert session.armed_segments == (("bottom", 0, 1080, 959, 1080),)
-
-    def test_a_repeated_partial_span_is_not_re_issued(self, libei, logger):
-        portal = _ScriptedPortal(replies=[[(1, "bottom")], [(1, "bottom")]])
-        session = _session_as_created(libei, portal)
-        segments = [("bottom", 0, 1080, 959, 1080)]
-
-        session.apply_edges({"bottom"}, segments, logger)
-        session.apply_edges({"bottom"}, segments, logger)
-
-        assert portal.call_names.count("set_barriers") == 1
-
-
-class TestBarrierReplyVerification:
-    """``set_barriers`` silently drops what the compositor rejected.
-
-    The extension prints the failures to stderr - which is pointed at
-    /dev/null - and filters them out of the return value, so the reply's length
-    is the only signal. An empty one means *zero* barriers exist.
-    """
-
-    def test_an_empty_reply_is_an_error_not_a_re_arm(self, libei, logger):
-        portal = _ScriptedPortal(replies=[[]])
-        session = _session_as_created(libei, portal)
-        before = dict(session.barrier_map)
-
-        reason = session.apply_edges(
-            {"bottom"}, [("bottom", 0, 1080, 959, 1080)], logger
-        )
-
-        assert reason is not None
-        errors = str(logger.error.call_args_list)
-        assert "('bottom', 0, 1080, 959, 1080)" in errors, "name the rejected line"
-        assert "GNOME" in errors, "and say why it is likely to have happened"
-        assert "re-armed" not in str(logger.debug.call_args_list)
-        assert session.barrier_map == before, "the old map still describes reality"
-        assert session.armed_canonical is None
-
-    def test_a_partial_reply_keeps_only_the_accepted_entries(self, libei, logger):
-        accepted = ("bottom", 0, 1080, 959, 1080)
-        rejected = ("bottom", 1000, 1080, 1919, 1080)
-        portal = _ScriptedPortal(replies=[[(1, "bottom")]])
-        session = _session_as_created(libei, portal)
-
-        reason = session.apply_edges({"bottom"}, [accepted, rejected], logger)
-
-        assert reason is None, "something armed; a partial set is still usable"
-        warnings = str(logger.warning.call_args_list)
-        assert "(2," in warnings, "the rejected segment is named by its id"
-        assert "1000" in warnings
-        assert session.barrier_map == {1: "bottom"}
-        assert session.armed_segments == (accepted,)
-        assert session.armed_canonical == frozenset({accepted})
-
-    def test_a_diagonal_segment_is_dropped_before_the_call(self, libei, logger):
-        # The extension skips these *without* incrementing its barrier id, so
-        # one left in the request shifts every later id and the reply can no
-        # longer be matched back to what was asked for.
-        straight = ("bottom", 0, 1080, 959, 1080)
-        diagonal = ("bottom", 0, 1080, 959, 900)
-        portal = _ScriptedPortal(replies=[[(1, "bottom")]])
-        session = _session_as_created(libei, portal)
-
-        session.apply_edges({"bottom"}, [diagonal, straight], logger)
-
-        assert portal.calls[1] == ("set_barriers", {"segments": [straight]})
-        assert "non-axis-aligned" in str(logger.warning.call_args_list)
-
-    def test_a_failed_enable_reports_a_reason_and_forgets_the_state(
-        self, libei, logger
-    ):
-        portal = _ScriptedPortal(
-            replies=[[(1, "bottom")]], enable_error=RuntimeError("session is gone")
-        )
-        session = _session_as_created(libei, portal)
-
-        reason = session.apply_edges(
-            {"bottom"}, [("bottom", 0, 1080, 959, 1080)], logger
-        )
-
-        assert reason is not None and "re-enabled" in reason
-        assert session.enabled is None, "unknown, so the next call always issues"
-
-
-class TestWholeEdgeFallbackMode:
-    def test_the_env_var_opts_in_on_the_literal_one_only(self, libei, monkeypatch):
-        monkeypatch.setenv("PERPETUA_MOUSE_WHOLE_EDGE_BARRIERS", "1")
-        assert libei.MouseListener()._whole_edge_only is True
-
-        monkeypatch.setenv("PERPETUA_MOUSE_WHOLE_EDGE_BARRIERS", "true")
-        assert libei.MouseListener()._whole_edge_only is False
-
-        monkeypatch.delenv("PERPETUA_MOUSE_WHOLE_EDGE_BARRIERS")
-        assert libei.MouseListener()._whole_edge_only is False
-
-    def test_a_failed_re_arm_latches_the_mode_and_rebuilds_once(self, libei, logger):
-        portal = _ScriptedPortal(replies=[[]])
-        session = _session_as_created(libei, portal)
+    def test_an_edge_update_makes_no_portal_call(self, libei, logger):
+        # A connect/disconnect, a layout edit and a monitor hotplug all come
+        # through here. None of them may reach the compositor.
+        portal = MagicMock()
+        session = _session(libei, portal)
         listener = _active_listener(libei)
         listener._cmd_queue.put(
-            {
-                "type": "update_clients",
-                "clients": {"bottom": True},
-                "segments": [("bottom", 0, 1080, 959, 1080)],
-            }
+            {"type": "update_clients", "clients": {"left": True, "right": False}}
         )
 
-        action = listener._process_commands(session, logger)
+        assert listener._process_commands(session, logger) == "continue"
 
-        assert action == "disconnected", "the session holds nothing; rebuild it"
-        assert listener._whole_edge_only is True
+        assert listener._active_edges == {"left"}
+        assert portal.method_calls == []
 
-    def test_latched_mode_never_calls_set_barriers_again(self, libei, logger):
-        portal = _ScriptedPortal()
-        session = _session_as_created(libei, portal)
-        session.whole_edge_only = True
+    def test_losing_every_client_does_not_disable_capture(self, libei, logger):
+        # ``disable()`` is a one-way trip on GNOME 46. With no client the
+        # activation is simply released in Python.
+        portal = MagicMock()
+        session = _session(libei, portal)
+        listener = _active_listener(libei)
+        listener._cmd_queue.put({"type": "update_clients", "clients": {}})
 
-        reason = session.apply_edges(
-            {"bottom"}, [("bottom", 0, 1080, 959, 1080)], logger
-        )
+        listener._process_commands(session, logger)
 
-        assert reason is None
-        assert portal.calls == []
-        assert session.armed_edges == {"bottom"}
-
-    def test_latched_mode_rebuilds_for_an_edge_it_does_not_hold(self, libei, logger):
-        portal = _ScriptedPortal()
-        session = _session_as_created(libei, portal)
-        session.whole_edge_only = True
-
-        reason = session.apply_edges({"bottom", "left"}, [], logger)
-
-        assert reason is not None and "left" in reason
-        assert portal.calls == [], "only a new setup() can arm it"
+        assert listener._active_edges == set()
+        assert listener._clients_active is False
+        assert portal.method_calls == []
 
 
 class TestActivationDiagnostics:
@@ -1039,19 +719,10 @@ class TestReconnectSchedule:
         listener = libei.MouseListener()
         listener._active_edges = {"right"}
         listener._schedule_reconnect(logger, "EIS disconnected")
-        # apply_edges reports "the compositor holds what we asked for" as None.
-        listener._create_session_once = MagicMock(
-            return_value=MagicMock(apply_edges=MagicMock(return_value=None))
-        )
+        listener._create_session_once = MagicMock(return_value=MagicMock())
 
         listener._idle_wait = libei.MouseListener._idle_wait.__get__(listener)
-        listener._cmd_queue.put(
-            {
-                "type": "update_clients",
-                "clients": {"left": True},
-                "segments": [("left", 0, 0, 0, 100)],
-            }
-        )
+        listener._cmd_queue.put({"type": "update_clients", "clients": {"left": True}})
         listener._idle_wait(logger)
 
         assert listener._reconnect_at == 0.0
@@ -1129,15 +800,13 @@ class TestStopResponsiveness:
 
 
 class TestUpdateClientsPayload:
-    def test_accepts_the_edges_plus_segments_shape(self, libei):
+    def test_accepts_the_wrapped_edges_shape(self, libei):
         listener = libei.MouseListener()
-        segments = [("left", 0, 0, 0, 100)]
 
-        listener.update_clients({"edges": {"left": True}, "segments": segments})
+        listener.update_clients({"edges": {"left": True}})
 
         cmd = listener._cmd_queue.get_nowait()
         assert cmd["clients"] == {"left": True}
-        assert cmd["segments"] == segments
 
     def test_accepts_a_bare_edge_mapping(self, libei):
         listener = libei.MouseListener()
@@ -1146,4 +815,11 @@ class TestUpdateClientsPayload:
 
         cmd = listener._cmd_queue.get_nowait()
         assert cmd["clients"] == {"left": True}
-        assert cmd["segments"] == []
+
+    def test_an_empty_payload_means_no_edges(self, libei):
+        listener = libei.MouseListener()
+
+        listener.update_clients({"edges": {}})
+
+        cmd = listener._cmd_queue.get_nowait()
+        assert cmd["clients"] == {}
