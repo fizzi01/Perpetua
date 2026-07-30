@@ -296,87 +296,70 @@ class TestPartialEdgeActivation:
         assert wayland_listener._listener.disable_capture.call_count == 6
 
 
-class TestBarrierSegments:
-    """Which parts of which edges get an armed barrier."""
+class TestActiveEdges:
+    """Which edges the Python-side filter considers bound.
 
-    def test_full_edge_binding_spans_the_whole_edge(self, wayland_listener):
-        segments = wayland_listener._barrier_segments()
-        assert segments == [("right", SCREEN_W, 0, SCREEN_W, SCREEN_H - 1)]
+    Deliberately coarse - the compositor holds a whole-edge barrier on all four
+    sides regardless. The *portion* of an edge is enforced one step further in,
+    by ``_resolve_cross_screen_target`` (see ``TestPartialEdgeActivation``).
+    """
 
-    def test_partial_binding_spans_only_its_portion(self, wayland_listener):
-        binding = _binding(server_axis=(0.25, 0.75))
-        wayland_listener._edge_bindings_by_client = {CLIENT_UID: [binding]}
+    def test_a_binding_marks_its_edge_active(self, wayland_listener):
+        assert wayland_listener._refresh_edge_state() == {"edges": {"right": True}}
 
-        (edge, x1, y1, x2, y2) = wayland_listener._barrier_segments()[0]
-        assert edge == "right"
-        assert (x1, x2) == (SCREEN_W, SCREEN_W)
-        assert (y1, y2) == (270, 809)
+    def test_a_partial_binding_still_marks_the_whole_edge(self, wayland_listener):
+        wayland_listener._edge_bindings_by_client = {
+            CLIENT_UID: [_binding(server_axis=(0.25, 0.75))]
+        }
 
-    def test_full_span_bottom_matches_the_whole_edge_line(self, wayland_listener):
-        # Byte-for-byte what the extension's own whole-edge path computes for
-        # this zone. It has to be: that identity is what lets the backend skip
-        # a ``set_barriers`` the compositor would refuse, deleting the working
-        # barrier and installing nothing in its place.
-        binding = _binding(server_edge="bottom")
-        wayland_listener._edge_bindings_by_client = {CLIENT_UID: [binding]}
+        assert wayland_listener._refresh_edge_state() == {"edges": {"right": True}}
+
+    def test_several_edges_are_all_reported(self, wayland_listener):
+        wayland_listener._edge_bindings_by_client = {
+            CLIENT_UID: [_binding(), _binding(server_edge="top")]
+        }
 
         state = wayland_listener._refresh_edge_state()
 
-        assert state["segments"] == [("bottom", 0, SCREEN_H, SCREEN_W - 1, SCREEN_H)]
-        assert state["edges"] == {"bottom": True}
+        assert state["edges"] == {"right": True, "top": True}
 
-    def test_horizontal_edge_is_partitioned_along_x(self, wayland_listener):
-        binding = _binding(server_edge="top", server_axis=(0.0, 0.5))
-        wayland_listener._edge_bindings_by_client = {CLIENT_UID: [binding]}
-
-        assert wayland_listener._barrier_segments() == [("top", 0, 0, 959, 0)]
-
-    def test_disjoint_spans_on_one_edge_are_separate_segments(self, wayland_listener):
-        # Two clients against the same edge with a gap between them: the gap
-        # must stay barrier-free or the cursor stalls in it.
+    def test_two_clients_on_one_edge_collapse_to_one(self, wayland_listener):
         wayland_listener._edge_bindings_by_client = {
             "a": [_binding(server_axis=(0.0, 0.25))],
             "b": [_binding(server_axis=(0.75, 1.0))],
         }
 
-        segments = wayland_listener._barrier_segments()
-        assert len(segments) == 2
-        assert {s[0] for s in segments} == {"right"}
-        assert sorted((s[2], s[4]) for s in segments) == [(0, 269), (810, 1079)]
+        assert wayland_listener._refresh_edge_state() == {"edges": {"right": True}}
 
-    def test_no_bindings_means_no_segments_and_no_edges(self, wayland_listener):
+    def test_no_bindings_means_no_active_edges(self, wayland_listener):
         wayland_listener._edge_bindings_by_client = {}
 
-        state = wayland_listener._refresh_edge_state()
-        assert state["segments"] == []
-        assert state["edges"] == {}, "the whole border must stay reachable"
+        assert wayland_listener._refresh_edge_state() == {"edges": {}}
 
     def test_zero_width_span_is_skipped(self, wayland_listener):
         wayland_listener._edge_bindings_by_client = {
             CLIENT_UID: [_binding(server_axis=(0.5, 0.5))]
         }
-        assert wayland_listener._barrier_segments() == []
+
+        assert wayland_listener._active_edges() == set()
 
     def test_binding_for_an_unknown_monitor_is_skipped(self, wayland_listener):
         binding = _binding()
         binding["server_monitor_id"] = 99
         wayland_listener._edge_bindings_by_client = {CLIENT_UID: [binding]}
-        assert wayland_listener._barrier_segments() == []
 
-    def test_edge_state_reports_the_edges_covered_by_segments(self, wayland_listener):
-        wayland_listener._edge_bindings_by_client = {
-            CLIENT_UID: [_binding(), _binding(server_edge="top")]
-        }
-        state = wayland_listener._refresh_edge_state()
-        assert state["edges"] == {"right": True, "top": True}
-        assert len(state["segments"]) == 2
+        assert wayland_listener._active_edges() == set()
 
 
-class TestBarrierRearming:
-    """Every topology change must re-arm the barriers."""
+class TestEdgeStateRefresh:
+    """Every topology change must refresh the edge filter.
+
+    Nothing here reaches the compositor: the barriers were armed once at
+    session setup and are never touched again.
+    """
 
     @pytest.mark.anyio
-    async def test_layout_update_rearms(self, wayland_listener):
+    async def test_layout_update_refreshes(self, wayland_listener):
         with patch.object(
             type(wayland_listener).__mro__[1], "_on_client_layout_updated", AsyncMock()
         ):
@@ -384,9 +367,9 @@ class TestBarrierRearming:
         wayland_listener._listener.update_clients.assert_called_once()
 
     @pytest.mark.anyio
-    async def test_server_monitor_hotplug_rearms(self, wayland_listener):
-        # Segments are computed from the monitor layout, so stale ones would
-        # sit at the old monitor's coordinates.
+    async def test_server_monitor_hotplug_refreshes(self, wayland_listener):
+        # The active edges are derived from the monitor layout, so a binding
+        # whose server monitor is gone must stop contributing one.
         with patch.object(
             type(wayland_listener).__mro__[1], "_on_local_monitors_updated", AsyncMock()
         ):
@@ -394,15 +377,14 @@ class TestBarrierRearming:
         wayland_listener._listener.update_clients.assert_called_once()
 
     @pytest.mark.anyio
-    async def test_rearm_payload_carries_edges_and_segments(self, wayland_listener):
+    async def test_payload_carries_only_edges(self, wayland_listener):
         with patch.object(
             type(wayland_listener).__mro__[1], "_on_client_layout_updated", AsyncMock()
         ):
             await wayland_listener._on_client_layout_updated(MagicMock())
 
         state = wayland_listener._listener.update_clients.call_args.args[0]
-        assert state["edges"] == {"right": True}
-        assert state["segments"] == [("right", SCREEN_W, 0, SCREEN_W, SCREEN_H - 1)]
+        assert state == {"edges": {"right": True}}
 
 
 class TestServerControllerNoSecondWarp:

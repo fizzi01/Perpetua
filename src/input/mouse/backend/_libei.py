@@ -167,138 +167,37 @@ def _callable_signature(func) -> str:
     return value if isinstance(value, str) else ""
 
 
-def _segments_supported(portal) -> bool:
-    """Whether this build of pyinputcapture can arm barrier *segments*.
+#: Every session arms the whole edge of every zone, on all four sides.
+#:
+#: Not "the edges a client is behind": barriers are armed by ``portal.setup()``
+#: and never touched again, because the only way to change them on a live
+#: session is ``SetPointerBarriers``, which GNOME 46 refuses on an enabled
+#: session and cannot recover from (it deletes the working barrier set and
+#: installs nothing). Arming all four once removes every portal call after
+#: setup, and with it the whole class of failure.
+#:
+#: A coarse barrier is safe; a missing one is not. An edge with nothing behind
+#: it costs one capture/release round trip that Python filters immediately
+#: (``_dispatch_pending_activation``, then ``_resolve_cross_screen_target``
+#: for a partly bound edge); an edge left unarmed cannot be crossed at all.
+_ALL_EDGES = ("bottom", "left", "right", "top")
 
-    Decided by **inspection**, once, never by catching ``TypeError`` around the
-    call: PyO3 raises ``TypeError`` for a failed argument extraction exactly as
-    it does for an unknown keyword, so inferring the capability from the
-    exception reports a malformed segment - a float where ``i32`` is wanted -
-    as a missing rebuild.
 
-    An absent ``set_barriers``, or one whose signature demonstrably has no
-    ``segments`` keyword, is ``False``. A signature we cannot read at all is
-    *not* evidence of absence, so it is treated as supported and a genuine
-    argument error is allowed to surface with the offending segment named.
+#: How long to wait for an answer to the permission dialog before giving up on
+#: *this* attempt. The extension's own default (120 s) keeps the capture thread
+#: blocked long past the point where it is obvious nobody is going to answer,
+#: and ``stop()`` can do nothing but watch its join time out.
+_SETUP_TIMEOUT = 45.0
+
+
+def _setup_accepts_timeout(portal_cls) -> bool:
+    """Whether this build of ``InputCapturePortal.setup`` takes ``timeout``.
+
+    Decided by inspection: an unreadable signature is not evidence of absence,
+    so it is treated as supported and the call falls back on ``TypeError``.
     """
-    set_barriers = getattr(portal, "set_barriers", None)
-    if set_barriers is None:
-        return False
-    signature = _callable_signature(set_barriers)
-    if not signature:
-        return True
-    return "segments" in signature
-
-
-def _malformed_segments(segments) -> list:
-    """Segments that cannot be extracted into ``(String, i32, i32, i32, i32)``.
-
-    Used to name the offender when ``set_barriers`` refuses a segment list: PyO3
-    reports a failed extraction as ``TypeError``, which is indistinguishable from
-    an unknown keyword unless we check the payload ourselves.
-    """
-    bad = []
-    for segment in segments:
-        try:
-            edge, *coords = segment
-        except (TypeError, ValueError):
-            bad.append(segment)
-            continue
-        if not isinstance(edge, str) or len(coords) != 4:
-            bad.append(segment)
-            continue
-        if any(not isinstance(c, int) or isinstance(c, bool) for c in coords):
-            bad.append(segment)
-    return bad
-
-
-#: The order in which the extension emits whole-edge barriers for one zone
-#: (``pyinputcapture/src/lib.rs`` ``build_barriers``). Only *included* edges
-#: consume a barrier id, so this is also the id order.
-_WHOLE_EDGE_ORDER = ("top", "bottom", "left", "right")
-
-
-def _whole_edge_segments(zones, edges) -> tuple:
-    """The exact lines ``portal.setup(edges)`` / ``set_barriers(edges)`` arm.
-
-    A verbatim port of the extension's ``build_barriers``: per zone
-    ``(w, h, x, y)``, in ``top, bottom, left, right`` order,
-
-    ``top=(x, y, x+w-1, y)``, ``bottom=(x, y+h, x+w-1, y+h)``,
-    ``left=(x, y, x, y+h-1)``, ``right=(x+w, y, x+w, y+h-1)``.
-
-    Knowing these is what makes "the compositor already holds the lines we
-    want" answerable, and re-arming a barrier set that is already correct is
-    the one call that can leave us with *no* barrier at all (see
-    ``_rearm_cycle``). Zone order is ``portal.zones`` order, and only included
-    edges consume a barrier id, so index ``i`` of the result is barrier id
-    ``i + 1``.
-    """
-    wanted = set(edges)
-    lines: list[tuple] = []
-    for zone in zones:
-        w, h, x, y = (int(v) for v in tuple(zone)[:4])
-        by_edge = {
-            "top": (x, y, x + w - 1, y),
-            "bottom": (x, y + h, x + w - 1, y + h),
-            "left": (x, y, x, y + h - 1),
-            "right": (x + w, y, x + w, y + h - 1),
-        }
-        for edge in _WHOLE_EDGE_ORDER:
-            if edge in wanted:
-                lines.append((edge, *by_edge[edge]))
-    return tuple(lines)
-
-
-def _edge_form_request(portal, edges) -> tuple | None:
-    """Ordered lines the *edges* form of ``set_barriers`` will arm.
-
-    ``None`` means "unknown" - an unreadable or empty ``portal.zones``, which
-    is not evidence that nothing would be armed, only that we cannot say what.
-    """
-    try:
-        zones = portal.zones
-    except Exception:
-        return None
-    if not zones:
-        return None
-    try:
-        lines = _whole_edge_segments(zones, edges)
-    except Exception:
-        return None
-    return lines or None
-
-
-def _canonical_barriers(portal, edges, segments) -> frozenset | None:
-    """The set of lines a request stands for, or ``None`` when unknowable.
-
-    Comparing *geometry* rather than the request's spelling is the point: a
-    whole-edge request and a segment covering that whole edge are two
-    spellings of one barrier set, and treating them as different is what made
-    us replace a working barrier with a call the compositor then refused.
-    """
-    if segments:
-        return frozenset(tuple(s) for s in segments)
-    lines = _edge_form_request(portal, edges)
-    return None if lines is None else frozenset(lines)
-
-
-def _diagonal_segments(segments) -> list:
-    """Segments that are neither horizontal nor vertical.
-
-    The extension skips these *without* incrementing its barrier id, so one
-    left in the request shifts every later id and breaks the index-to-id
-    mapping the reply is verified against.
-    """
-    bad = []
-    for segment in segments:
-        try:
-            _, x1, y1, x2, y2 = segment
-        except (TypeError, ValueError):
-            continue
-        if x1 != x2 and y1 != y2:
-            bad.append(tuple(segment))
-    return bad
+    signature = _callable_signature(getattr(portal_cls, "setup", None))
+    return "timeout" in signature if signature else True
 
 
 def _capture_backend_info() -> dict:
@@ -312,7 +211,6 @@ def _capture_backend_info() -> dict:
     info: dict = {
         "module": None,
         "version": None,
-        "segments": False,
         "setup_timeout": "unknown",
     }
     try:
@@ -332,12 +230,11 @@ def _capture_backend_info() -> dict:
             except Exception:
                 version = None
         info["version"] = version
-        info["segments"] = _segments_supported(InputCapturePortal)
         setup_signature = _callable_signature(
             getattr(InputCapturePortal, "setup", None)
         )
         # No signature metadata is "can't tell", not "absent" - the same
-        # distinction ``_segments_supported`` makes.
+        # distinction ``_setup_accepts_timeout`` makes.
         info["setup_timeout"] = (
             ("timeout" in setup_signature) if setup_signature else "unknown"
         )
@@ -798,11 +695,9 @@ class _CaptureSession:
     """State of an active InputCapture portal session."""
 
     # Inset applied to a release point so the cursor doesn't land exactly on
-    # a barrier line. Only one pixel: an armed barrier now exists solely on
-    # edges that lead to a client (see ``set_barriers``), and
-    # ``ignore_next_activation`` already absorbs a spurious recapture. A
-    # bigger inset is directly visible as the cursor refusing to sit on the
-    # border it was pushed from.
+    # a barrier line. Only one pixel: ``ignore_next_activation`` already
+    # absorbs the spurious recapture, and a bigger inset is directly visible
+    # as the cursor refusing to sit on the border it was pushed from.
     _RELEASE_EDGE_MARGIN = 1.0
 
     __slots__ = (
@@ -817,14 +712,7 @@ class _CaptureSession:
         "last_activation_id",
         "ignore_next_activation",
         "armed_edges",
-        "armed_segments",
-        "armed_canonical",
-        "armed_request",
-        "whole_edge_only",
-        "enabled",
         "dead",
-        "segments_warned",
-        "segments_supported",
     )
 
     def __init__(self, portal, receiver, barrier_map, poller, armed_edges):
@@ -838,41 +726,21 @@ class _CaptureSession:
         self.scroll_accum_y: float = 0.0
         self.last_activation_id: int = 0
         self.ignore_next_activation: bool = False
-        # Edges the compositor currently holds barriers on, and the exact
-        # segments when they were armed that way.
+        # Edges ``setup()`` armed - always all four (see ``_ALL_EDGES``).
+        # Diagnostic only: nothing re-arms, so this never changes.
         self.armed_edges: set[str] = set(armed_edges)
-        self.armed_segments: tuple = ()
-        # The *geometry* the compositor holds, as a set of lines, or ``None``
-        # for "unknown". This is what a re-arm request is compared against:
-        # ``armed_edges``/``armed_segments`` are two spellings of the same
-        # thing, and comparing spellings is how we came to replace a working
-        # whole-edge barrier with a segment covering exactly the same line.
-        self.armed_canonical: frozenset | None = None
-        # The last request that was applied in full, as ``(edges, segments)``,
-        # so an unchanged request costs nothing at all.
-        self.armed_request: tuple | None = None
-        # Latched when precise barriers are unattainable on this compositor:
-        # only ``setup()`` arms them, so ``set_barriers`` is never called again
-        # and a changed topology is served by rebuilding the session.
-        self.whole_edge_only: bool = False
-        # Mirrors portal.enable()/disable(); ``create`` enables the session.
-        # ``None`` means "unknown" - a ``SetPointerBarriers`` suspends the
-        # session, so the cached flag stops describing it.
-        self.enabled: bool | None = True
         # Set once the compositor has torn the session down: no further
         # portal call can succeed, and calling one anyway is the most likely
         # way to wedge on a blocking D-Bus round trip.
         self.dead: bool = False
-        # One-shot guard for the "can't arm partial edges" warning.
-        self.segments_warned: bool = False
-        # Resolved once, by inspection of the installed extension.
-        self.segments_supported: bool = _segments_supported(portal)
 
     @classmethod
-    def create(
-        cls, active_edges, logger, keep_waiting=None
-    ) -> "_CaptureSession | None":
-        """Create a portal session with barriers only for *active_edges*."""
+    def create(cls, logger, keep_waiting=None) -> "_CaptureSession | None":
+        """Create a portal session with whole-edge barriers on all four sides.
+
+        This is the *only* place barriers are ever armed. There is deliberately
+        no way to change them afterwards: see ``_ALL_EDGES``.
+        """
         from pyinputcapture import InputCapturePortal
         from snegg.ei import Receiver
 
@@ -885,8 +753,8 @@ class _CaptureSession:
         try:
             portal = InputCapturePortal()
             with _captured_stderr(portal_stderr):
-                zones, eis_fd, bmap_list = portal.setup(list(active_edges))
-            logger.debug(f"Session created: zones={zones} edges={active_edges}")
+                zones, eis_fd, bmap_list = cls._setup(portal)
+            logger.debug(f"Session created: zones={zones} edges={list(_ALL_EDGES)}")
 
             receiver = _ei_from_fd(Receiver, eis_fd, "perpetua-cursor-capture")
 
@@ -897,18 +765,8 @@ class _CaptureSession:
             poller.register(receiver.fd, _select.POLLIN)
 
             barrier_map = {bid: edge for bid, edge in bmap_list}
-            session = cls(portal, receiver, barrier_map, poller, active_edges)
-            # Record what ``setup()`` just armed, in the same terms a later
-            # request is expressed in, so "the compositor already holds these
-            # lines" is answerable without touching it.
-            session.armed_canonical = _canonical_barriers(portal, active_edges, ())
-            session.armed_request = (frozenset(active_edges), ())
-            logger.debug(
-                "Barriers armed by setup(): "
-                f"edges={sorted(active_edges)} "
-                f"lines={sorted(session.armed_canonical) if session.armed_canonical else 'unknown'} "
-                f"barrier_map={barrier_map}"
-            )
+            session = cls(portal, receiver, barrier_map, poller, _ALL_EDGES)
+            logger.debug(f"Barriers armed by setup(): barrier_map={barrier_map}")
             return session
 
         except Exception as exc:
@@ -931,368 +789,22 @@ class _CaptureSession:
             logger.error(f"Session setup failed: {reason}")
             return None
 
-    def apply_edges(self, edges, segments, logger) -> str | None:
-        """Make the compositor hold the pointer where a client is, and nowhere else.
+    @staticmethod
+    def _setup(portal):
+        """``portal.setup`` with a bounded wait for the permission dialog.
 
-        An armed barrier stops the cursor at the screen edge, so anywhere with
-        nothing to cross to must not have one - otherwise the pointer stalls
-        short of the real border and we answer with a capture/release round
-        trip for nothing.
-
-        Three mechanisms, most precise first:
-
-        - ``segments`` names the exact line segments to arm, so an edge a
-          client monitor only *partly* abuts is covered only along that part.
-        - ``edges`` is the whole-edge fallback for a build of pyinputcapture
-          that predates segment support: the unbound remainder of a partly
-          bound edge still stalls, and activations there get filtered in
-          Python, exactly as before this change.
-        - ``portal.disable()`` / ``enable()`` are all-or-nothing and cover
-          what neither of the above can: no clients at all, where the whole
-          border must be free.
-
-        Returns ``None`` when the compositor ended up holding what was asked
-        for, or a reason string when it did not - the caller rebuilds the
-        session on that, because a session holding *no* barrier looks healthy
-        from every other angle.
+        ``timeout`` only exists from pyinputcapture 0.2.0 on, so an older build
+        falls back to the single-argument form; the capability is decided by
+        inspection first (``_setup_accepts_timeout``) and the ``TypeError``
+        catch is only there for a signature we could not read.
         """
-        if self.dead:
-            return None
-
-        wanted_edges = set(edges)
-        if not wanted_edges:
-            # A ``disable()`` suspends capture; it does not delete barriers, so
-            # ``armed_canonical`` still describes the compositor and a client
-            # coming back on the same geometry costs one ``enable()``.
-            self._set_capture_enabled(False, logger)
-            self.armed_edges = set()
-            self.armed_segments = ()
-            self.armed_request = (frozenset(), ())
-            return None
-
-        reason = self._arm(wanted_edges, tuple(segments or ()), logger)
-        if reason is not None:
-            return reason
-        return self._set_capture_enabled(True, logger)
-
-    _SEGMENTS_UNAVAILABLE = (
-        "pyinputcapture cannot arm partial-edge barriers (no set_barriers/segments "
-        "support in the installed build). Barriers cover whole edges, so the cursor "
-        "will stall on the parts of an edge with no client behind them. Rebuild the "
-        "extension with `maturin develop` to fix."
-    )
-
-    def _arm(self, wanted_edges: set, wanted_segments: tuple, logger) -> str | None:
-        """Arm exactly *wanted*, touching the compositor as little as possible.
-
-        The cheapest re-arm is none. ``SetPointerBarriers`` **replaces the whole
-        barrier set**, and GNOME refuses the replacement on a session that is
-        still enabled - which deletes the working barriers and installs
-        nothing. So the first question is never "is this a different request"
-        but "is this different *geometry*".
-        """
-        wanted_request = (frozenset(wanted_edges), wanted_segments)
-        if self.armed_request is not None and wanted_request == self.armed_request:
-            return None
-
-        wanted_canonical = _canonical_barriers(
-            self.portal, wanted_edges, wanted_segments
-        )
-        if (
-            wanted_canonical is not None
-            and self.armed_canonical is not None
-            and wanted_canonical == self.armed_canonical
-        ):
-            self.armed_edges = set(wanted_edges)
-            self.armed_segments = wanted_segments
-            self.armed_request = wanted_request
-            logger.debug(
-                "Barriers already cover the wanted spans; compositor untouched: "
-                f"edges={sorted(wanted_edges)} segments={len(wanted_segments)}"
-            )
-            return None
-
-        if self.whole_edge_only:
-            # Precise barriers are unattainable here: only ``setup()`` can arm
-            # any, so an edge this session does not hold needs a *new* session.
-            missing = sorted(set(wanted_edges) - self.armed_edges)
-            if missing:
-                return (
-                    "whole-edge barrier mode: this session holds no barrier on "
-                    f"{missing}; rebuilding it to arm one"
-                )
-            # ``armed_edges`` is left alone on purpose: it describes what the
-            # compositor holds, and narrowing it to the current request would
-            # make the edge look unarmed when its client comes back, forcing a
-            # session rebuild for barriers that were there all along.
-            self.armed_request = wanted_request
-            logger.debug(
-                "Whole-edge barrier mode: keeping the barriers setup() armed "
-                f"(wanted edges={sorted(wanted_edges)}); Python filters the "
-                "activations that fall outside a bound span"
-            )
-            return None
-
-        if not hasattr(self.portal, "set_barriers"):
-            self._warn_segments_unavailable(logger)
-            return None
-        if wanted_segments and not self.segments_supported:
-            # Decided by inspection (see ``_segments_supported``), never inferred
-            # from an exception around a call whose arguments we construct.
-            self._warn_segments_unavailable(logger)
-            wanted_segments = ()
-
-        if wanted_segments:
-            diagonal = _diagonal_segments(wanted_segments)
-            if diagonal:
-                # Dropped *before* the call: the extension skips these without
-                # incrementing its barrier id, so leaving one in shifts every
-                # later id and the reply can no longer be verified.
-                logger.warning(
-                    f"Dropping {len(diagonal)} non-axis-aligned barrier "
-                    f"segment(s) before arming: {diagonal}"
-                )
-                wanted_segments = tuple(
-                    s for s in wanted_segments if tuple(s) not in diagonal
-                )
-            if not wanted_segments:
-                return "every requested barrier segment was non-axis-aligned"
-
-        requested = (
-            tuple(tuple(s) for s in wanted_segments)
-            if wanted_segments
-            else _edge_form_request(self.portal, wanted_edges)
-        )
-        return self._rearm_cycle(
-            wanted_edges, wanted_segments, requested, wanted_request, logger
-        )
-
-    def _rearm_cycle(
-        self, wanted_edges, wanted_segments, requested, wanted_request, logger
-    ) -> str | None:
-        """``disable`` -> ``set_barriers`` -> ``enable``, in that exact order.
-
-        GNOME refuses ``SetPointerBarriers`` on an enabled session, and the
-        spec has the call suspend the session anyway - so the trailing
-        ``enable()`` is unconditional and must never be gated on the cached
-        flag. KDE does not need the ``disable()``, so a failure there is a
-        warning and the cycle continues.
-        """
-        mode = "segments" if wanted_segments else "edges"
-        logger.debug(
-            f"[REARM] begin mode={mode} edges={sorted(wanted_edges)} "
-            f"requested={len(requested) if requested is not None else 'unknown'} "
-            f"lines={list(requested) if requested is not None else 'unknown'}"
-        )
-
-        if self.captured:
-            # Don't strand the pointer on a barrier that is about to be deleted.
+        edges = list(_ALL_EDGES)
+        if _setup_accepts_timeout(type(portal)):
             try:
-                self.release_cursor(None, None)
-            except RuntimeError as exc:
-                logger.debug(f"[REARM] release before re-arm failed: {exc}")
-
-        self.enabled = None
-        try:
-            self.portal.disable()
-        except Exception as exc:
-            logger.warning(f"[REARM] portal.disable failed (continuing): {exc}")
-
-        bmap_list = None
-        try:
-            bmap_list = self._call_set_barriers(wanted_edges, wanted_segments)
-        except Exception as exc:
-            if not wanted_segments:
-                logger.warning(f"set_barriers failed: {exc}")
-            else:
-                # The capability is present, so this is an argument problem: say
-                # which segment, rather than blaming a missing rebuild.
-                malformed = _malformed_segments(wanted_segments)
-                logger.error(
-                    f"set_barriers(segments=...) rejected the segment list: {exc}; "
-                    f"offending={malformed or list(wanted_segments)}"
-                )
-                try:
-                    bmap_list = self._call_set_barriers(wanted_edges, ())
-                except Exception as fallback_exc:
-                    logger.warning(f"set_barriers failed: {fallback_exc}")
-                else:
-                    wanted_segments = ()
-                    requested = _edge_form_request(self.portal, wanted_edges)
-
-        if bmap_list is None:
-            # Whatever the compositor holds now, it is not what we asked for.
-            self.armed_canonical = None
-            self.armed_request = None
-            reason = "set_barriers failed; the barrier set is unknown"
-        else:
-            reason = self._accept_barriers(
-                bmap_list,
-                wanted_edges,
-                wanted_segments,
-                requested,
-                wanted_request,
-                logger,
-            )
-
-        enable_reason = self._enable_after_rearm(logger)
-        logger.debug(f"[REARM] done reason={reason or enable_reason}")
-        return reason or enable_reason
-
-    def _call_set_barriers(self, wanted_edges, wanted_segments):
-        if wanted_segments:
-            return self.portal.set_barriers(segments=list(wanted_segments))
-        return self.portal.set_barriers(sorted(wanted_edges))
-
-    def _accept_barriers(
-        self,
-        bmap_list,
-        wanted_edges,
-        wanted_segments,
-        requested,
-        wanted_request,
-        logger,
-    ) -> str | None:
-        """Believe the reply, not the request.
-
-        ``set_barriers`` silently drops the barriers the compositor rejected -
-        the extension prints them to stderr, which is pointed at /dev/null, and
-        filters them out of the return value. So the reply's *length* is the
-        only signal that anything armed at all, and an empty one means **zero**
-        barriers exist. Reporting that as "re-armed" is how a session with no
-        barriers whatsoever came to look perfectly healthy.
-        """
-        accepted = {int(bid): edge for bid, edge in bmap_list}
-
-        if requested is None:
-            # Geometry unknown (unreadable ``portal.zones``): "did anything
-            # arm" is all that can honestly be checked.
-            if not accepted:
-                self.armed_canonical = None
-                self.armed_request = None
-                logger.error(
-                    "set_barriers armed nothing: the compositor rejected every "
-                    f"barrier for edges={sorted(wanted_edges)}. "
-                    + self._GNOME_REARM_HINT
-                )
-                return "the compositor rejected every barrier"
-            self.barrier_map = accepted
-            self.armed_edges = set(wanted_edges)
-            self.armed_segments = wanted_segments
-            self.armed_canonical = _canonical_barriers(
-                self.portal, wanted_edges, wanted_segments
-            )
-            self.armed_request = wanted_request
-            logger.debug(
-                f"Barriers re-armed: edges={sorted(wanted_edges)} "
-                f"segments={len(wanted_segments)} accepted={len(accepted)}"
-            )
-            return None
-
-        # The extension assigns ids in request order, starting at 1.
-        rejected = [
-            (i + 1, requested[i])
-            for i in range(len(requested))
-            if i + 1 not in accepted
-        ]
-
-        if not accepted:
-            self.armed_canonical = None
-            self.armed_request = None
-            logger.error(
-                "set_barriers armed nothing: the compositor rejected every "
-                f"requested barrier ({len(requested)}): {list(requested)}. "
-                + self._GNOME_REARM_HINT
-            )
-            return "the compositor rejected every barrier"
-
-        accepted_lines = tuple(
-            requested[bid - 1] for bid in sorted(accepted) if 1 <= bid <= len(requested)
-        )
-
-        if rejected:
-            logger.warning(
-                "set_barriers armed only part of what was requested "
-                f"(requested={len(requested)} accepted={len(accepted)}); rejected="
-                + str([(bid, line[0], line[1:]) for bid, line in rejected])
-            )
-            # The state must describe the compositor, not the request.
-            self.barrier_map = accepted
-            self.armed_edges = {line[0] for line in accepted_lines}
-            self.armed_segments = accepted_lines if wanted_segments else ()
-            self.armed_canonical = frozenset(accepted_lines)
-            self.armed_request = None
-            return None
-
-        self.barrier_map = accepted
-        self.armed_edges = set(wanted_edges)
-        self.armed_segments = wanted_segments
-        self.armed_canonical = frozenset(requested)
-        self.armed_request = wanted_request
-        logger.debug(
-            f"Barriers re-armed: edges={sorted(wanted_edges)} "
-            f"segments={len(wanted_segments)} "
-            f"requested={len(requested)} accepted={len(accepted)}"
-        )
-        return None
-
-    _GNOME_REARM_HINT = (
-        "GNOME refuses SetPointerBarriers on an enabled session and 46.0 cannot "
-        "re-enable a disabled one; falling back to whole-edge barriers armed at "
-        "session setup (set PERPETUA_MOUSE_WHOLE_EDGE_BARRIERS=1 to skip the "
-        "attempt entirely)."
-    )
-
-    def _enable_after_rearm(self, logger) -> str | None:
-        """Re-enable unconditionally: the cached flag no longer describes it."""
-        try:
-            self.portal.enable()
-        except Exception as exc:
-            self.enabled = None
-            logger.error(f"[REARM] portal.enable failed after set_barriers: {exc}")
-            return f"capture could not be re-enabled after re-arming barriers: {exc}"
-        self.enabled = True
-        return None
-
-    def _warn_segments_unavailable(self, logger) -> None:
-        """Say once, loudly, that partial-edge barriers can't be armed.
-
-        This used to degrade silently, which is how a whole-edge barrier sitting
-        across an unbound stretch of screen looked like a mystery rather than a
-        missing rebuild.
-        """
-        if self.segments_warned:
-            return
-        self.segments_warned = True
-        logger.warning(self._SEGMENTS_UNAVAILABLE)
-
-    def _set_capture_enabled(self, enabled: bool, logger) -> str | None:
-        """Issue the call whenever the cached state isn't known to match.
-
-        ``self.enabled`` is ``bool | None`` and ``None`` means *unknown*, so it
-        always issues - which is what hardens the "last client disconnects ->
-        disable(), reconnects -> enable()" path against the same GNOME 46
-        re-enable hazard as a re-arm.
-        """
-        if self.enabled is enabled:
-            return None
-        try:
-            if enabled:
-                self.portal.enable()
-            else:
-                self.portal.disable()
-        except Exception as exc:
-            # Not the pre-call value: after a failure we no longer know.
-            self.enabled = None
-            logger.debug(f"portal.{'enable' if enabled else 'disable'} failed: {exc}")
-            return (
-                f"portal.{'enable' if enabled else 'disable'} failed: {exc}"
-                if enabled
-                else None
-            )
-        self.enabled = enabled
-        logger.debug(f"Capture {'enabled' if enabled else 'disabled'}")
-        return None
+                return portal.setup(edges, timeout=_SETUP_TIMEOUT)
+            except TypeError:
+                pass
+        return portal.setup(edges)
 
     def teardown(self):
         """Release capture and close the portal session.
@@ -1428,11 +940,9 @@ class MouseListener:
     on_barrier) called from the daemon thread.
 
     The session is created once and kept: re-running ``portal.setup()`` hangs
-    the GNOME portal. Barriers are then re-armed in place on the live session
-    (``_CaptureSession.set_armed_edges``) so only edges that lead to a client
-    ever hold the pointer - an armed barrier stops the cursor at the screen
-    border, so arming an edge with nothing behind it makes that border
-    unreachable.
+    the GNOME portal. It arms whole-edge barriers on all four sides and never
+    touches them again (see ``_ALL_EDGES``); which edges actually lead to a
+    client is a Python-side filter, kept in ``_active_edges``.
 
     ``on_state(healthy, reason)`` reports capture health so the service layer
     can see a session that died and never came back, instead of reading the
@@ -1447,6 +957,11 @@ class MouseListener:
     # Granularity of every interruptible sleep in the thread, so a stop()
     # issued mid-backoff is observed well inside the join timeout.
     _SLEEP_SLICE = 0.05
+    # Consecutive refusals after which the portal stops being asked. Each
+    # attempt puts a permission dialog in front of the user, and re-opening it
+    # every 30 s forever is not a retry policy, it is a nuisance. Capture stays
+    # off until the user asks for it again (see ``_idle_wait``).
+    _MAX_UNAUTHORISED_ATTEMPTS = 3
 
     def __init__(
         self,
@@ -1465,15 +980,20 @@ class MouseListener:
         self._thread: threading.Thread | None = None
         self._is_running = False
         self._clients_active = False
+        # Edges that currently lead to a client. Barriers are armed on all
+        # four regardless (see ``_ALL_EDGES``); this is the Python-side filter
+        # that decides which activations are worth acting on.
         self._active_edges: set[str] = set()
-        # Exact barrier segments for the bound portions of those edges.
-        self._active_segments: tuple = ()
         self._ready_event = threading.Event()
         self._cmd_queue: queue.Queue = queue.Queue()
         # Published for ``current_activation_id`` right before on_barrier fires.
         self._current_activation_id = 0
         # Reason string while capture is refused for lack of permission, else None.
         self._unauthorised: str | None = None
+        # Consecutive refusals, and the latch that stops asking once they hit
+        # ``_MAX_UNAUTHORISED_ATTEMPTS``.
+        self._unauthorised_attempts = 0
+        self._capture_blocked = False
         # Session health, read by ``is_alive`` so the service layer's
         # restart-on-dead check can actually fire.
         self._has_session = False
@@ -1484,13 +1004,6 @@ class MouseListener:
         )
         # Monotonic deadline for the next reconnect attempt, or 0.0 for "now".
         self._reconnect_at = 0.0
-        # Latched the first time a re-arm leaves the compositor holding nothing
-        # (GNOME 46), and pre-latchable so the risky call can be skipped
-        # outright. Only the literal "1" opts in, same convention as
-        # PERPETUA_DAEMON_FORCE_EXIT / PERPETUA_MOUSE_FORCE_CGEVENT.
-        self._whole_edge_only = (
-            os.environ.get("PERPETUA_MOUSE_WHOLE_EDGE_BARRIERS") == "1"
-        )
         self._logger = get_logger(self.__class__.__name__)
 
     def start(self):
@@ -1550,6 +1063,12 @@ class MouseListener:
         if not self._active_edges:
             # Nothing to capture yet - idle is the correct state.
             return True
+        if self._capture_blocked:
+            # Refused, not broken. ``Server._enable_mouse_stream`` restarts the
+            # listener whenever this reports False, which would re-open the
+            # permission dialog on a loop and undo the whole point of standing
+            # down. The refusal is already reported through ``on_state``.
+            return True
         return self._has_session or self._reconnect_pending
 
     def _notify_state(self, healthy: bool, reason: str | None = None):
@@ -1571,20 +1090,16 @@ class MouseListener:
         return False
 
     def update_clients(self, state):
-        """Update where clients are, so barriers can be armed to match.
+        """Update which edges lead to a client.
 
-        ``state`` is ``{"edges": {edge: True, ...}, "segments": [...]}``. A
-        bare ``{edge: True}`` mapping is also accepted for callers that don't
-        compute segments.
+        ``state`` is ``{"edges": {edge: True, ...}}``; a bare ``{edge: True}``
+        mapping is also accepted. This never touches the compositor - the
+        barriers were armed once at session setup and stay put. It updates the
+        Python-side filter, and it is what tells a stood-down listener that the
+        user is asking for capture again.
         """
-        if "edges" in state or "segments" in state:
-            edges = state.get("edges") or {}
-            segments = state.get("segments") or []
-        else:
-            edges, segments = state, []
-        self._cmd_queue.put(
-            {"type": "update_clients", "clients": edges, "segments": segments}
-        )
+        edges = state.get("edges") if "edges" in state else state
+        self._cmd_queue.put({"type": "update_clients", "clients": edges or {}})
 
     @property
     def current_activation_id(self) -> int:
@@ -1625,9 +1140,7 @@ class MouseListener:
         logger.info(
             "Wayland capture backend "
             f"module={info.get('module')} version={info.get('version')} "
-            f"segments={info.get('segments')} "
-            f"setup_timeout={info.get('setup_timeout')} "
-            f"whole_edge_only={self._whole_edge_only}"
+            f"setup_timeout={info.get('setup_timeout')}"
             + (f" probe_error={info['error']}" if info.get("error") else "")
         )
         saved_stderr = _suppress_libei_stderr()
@@ -1702,14 +1215,21 @@ class MouseListener:
         cmd_type = cmd.get("type")
 
         if cmd_type == "update_clients":
-            new_edges = set(k for k, v in cmd.get("clients", {}).items() if v)
+            previous = self._active_edges
+            new_edges = set(k for k, v in (cmd.get("clients") or {}).items() if v)
             self._active_edges = new_edges
-            self._active_segments = tuple(cmd.get("segments") or ())
             if new_edges:
                 # A fresh client is a good reason to stop waiting out a
-                # backoff: the user is asking for capture right now.
+                # backoff: the user is asking for capture right now. A *changed*
+                # edge set is also the only way back from having stood down on
+                # repeated refusals - connecting a client or editing the layout
+                # is an explicit request, so it is worth one more dialog.
+                if new_edges != previous:
+                    self._clear_refusal()
                 self._backoff.reset()
                 self._reconnect_at = 0.0
+                if self._capture_blocked:
+                    return _NO_SESSION
                 return self._open_session(logger)
             self._reconnect_pending = False
             self._notify_state(True, None)
@@ -1720,24 +1240,35 @@ class MouseListener:
 
         return _NO_SESSION
 
+    def _clear_refusal(self):
+        """Forget a standing refusal so the portal may be asked again."""
+        self._capture_blocked = False
+        self._unauthorised_attempts = 0
+        self._unauthorised = None
+
     def _maybe_reconnect(self, logger):
         """Retry session creation once the backoff deadline has passed."""
-        if not self._active_edges:
+        if not self._active_edges or self._capture_blocked:
             return _NO_SESSION
         if time.monotonic() < self._reconnect_at:
             return _NO_SESSION
         return self._open_session(logger)
 
     def _open_session(self, logger):
-        """Create a session for the current ``_active_edges``.
+        """Create a session, or arm the next retry.
 
-        Returns the session, or ``_NO_SESSION`` after arming the next retry -
-        never a bare failure, so capture keeps trying for as long as there is
-        a client to capture for.
+        Returns the session or ``_NO_SESSION`` - never a bare failure, so
+        capture keeps trying for as long as there is a client to capture for
+        and the user has not refused it outright.
         """
-        session = self._create_session_once(sorted(self._active_edges), logger)
+        session = self._create_session_once(logger)
         if session is None:
-            if self._unauthorised is not None:
+            if self._capture_blocked:
+                # Standing down: no deadline, nothing pending. Only an explicit
+                # user action gets us out of this (see ``_idle_wait``).
+                self._reconnect_pending = False
+                self._notify_state(False, self._unauthorised)
+            elif self._unauthorised is not None:
                 # Waiting out the full backoff is right here: only the user can
                 # change the answer, and re-asking every second would just queue
                 # portal requests behind an unanswered one.
@@ -1749,19 +1280,6 @@ class MouseListener:
             else:
                 self._schedule_reconnect(logger, "capture session unavailable")
             return _NO_SESSION
-        session.whole_edge_only = self._whole_edge_only
-        # ``setup`` can only take whole edges; narrow them to the bound
-        # portions now that the session exists.
-        reason = session.apply_edges(self._active_edges, self._active_segments, logger)
-        if reason is not None:
-            # A session holding no barriers must never be reported healthy.
-            # Latching whole-edge mode makes the rebuild converge after one
-            # reconnect instead of looping on the same refused call.
-            self._whole_edge_only = True
-            session.teardown()
-            self._has_session = False
-            self._schedule_reconnect(logger, reason)
-            return _NO_SESSION
         self._backoff.reset()
         self._reconnect_pending = False
         self._has_session = True
@@ -1769,7 +1287,7 @@ class MouseListener:
         self._notify_state(True, None)
         return session
 
-    def _create_session_once(self, active_edges, logger):
+    def _create_session_once(self, logger):
         """One attempt at creating a session. Retrying is the caller's job.
 
         Deliberately a single attempt: the inner fast-retry loop this replaced
@@ -1782,24 +1300,37 @@ class MouseListener:
             return None
         try:
             session = _CaptureSession.create(
-                active_edges, logger, keep_waiting=lambda: self._is_running
+                logger, keep_waiting=lambda: self._is_running
             )
         except _PortalNotAuthorised as exc:
             # No point retrying: the answer stays "no" until the user acts.
             self._unauthorised = str(exc)
-            logger.error(
-                "Wayland input capture was not authorised; grant access to "
-                "screen input in the system dialog and start sharing again "
-                f"({exc})"
-            )
+            self._unauthorised_attempts += 1
+            if self._unauthorised_attempts >= self._MAX_UNAUTHORISED_ATTEMPTS:
+                # Every attempt is another permission dialog in the user's
+                # face. Say so once and stop; connecting a client or editing
+                # the layout will ask again.
+                self._capture_blocked = True
+                logger.error(
+                    "Wayland input capture was refused "
+                    f"{self._unauthorised_attempts} times; no longer asking. "
+                    "Grant access to screen input in the system dialog, then "
+                    f"reconnect a client to try again ({exc})"
+                )
+            else:
+                logger.error(
+                    "Wayland input capture was not authorised; grant access to "
+                    "screen input in the system dialog and start sharing again "
+                    f"({exc})"
+                )
             return None
         if session is None:
             # Not a permission problem - clear any stale refusal, otherwise the
             # first denial makes every later unrelated failure report itself as
             # "not authorised" and wait out the 30 s ceiling forever.
-            self._unauthorised = None
+            self._clear_refusal()
             return None
-        self._unauthorised = None
+        self._clear_refusal()
         return session
 
     # active phase (session exists)
@@ -1889,24 +1420,15 @@ class MouseListener:
             cmd_type = cmd.get("type")
 
             if cmd_type == "update_clients":
-                new_edges = set(k for k, v in cmd.get("clients", {}).items() if v)
+                new_edges = set(k for k, v in (cmd.get("clients") or {}).items() if v)
                 self._active_edges = new_edges
-                self._active_segments = tuple(cmd.get("segments") or ())
                 self._clients_active = bool(new_edges)
-                # Re-arm the compositor's barriers to match. This is the path
-                # a layout edit, a connect/disconnect or a monitor hotplug all
-                # come through, so a newly bound edge starts capturing (and an
-                # unbound one stops holding the pointer) without a reconnect.
-                reason = session.apply_edges(new_edges, self._active_segments, logger)
-                if reason is not None:
-                    # The compositor is not holding what we asked for, so the
-                    # session is worthless: hand it to the reconnect path the
-                    # EIS-disconnect case already uses, with whole-edge mode
-                    # latched so the rebuild converges.
-                    self._notify_state(False, reason)
-                    self._whole_edge_only = True
-                    logger.warning(f"Barrier re-arm failed: {reason}")
-                    return "disconnected"
+                # No portal call. The barriers were armed on all four edges at
+                # setup and stay there; a connect/disconnect, a layout edit or a
+                # monitor hotplug only changes which activations are acted on
+                # (``_dispatch_pending_activation``, then the binding's axis
+                # range in ``_resolve_cross_screen_target``).
+                logger.debug(f"[EDGES] active={sorted(new_edges)}")
 
             elif cmd_type == "disable_capture":
                 if session.captured:

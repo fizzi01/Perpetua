@@ -71,71 +71,38 @@ class ServerMouseListener(_base.ServerMouseListener):
                 callback=self._on_screen_change_guard_wayland,
             )
 
-    def _barrier_segments(self) -> list[tuple[str, int, int, int, int]]:
-        """Absolute barrier segments covering exactly the bound edge portions.
+    def _active_edges(self) -> set[str]:
+        """Server edges that currently lead to a client.
 
-        A binding does not necessarily span a whole server edge - a client
-        monitor may sit against only part of it (``server_axis_start/end``).
-        A barrier is a *line segment*, so it can say precisely that, and it
-        must: an armed barrier holds the pointer, so covering the unbound
-        remainder of an edge would stop the cursor short of the real border
-        exactly where there is nothing to cross to.
-
-        Returned in absolute desktop coordinates, ready for
-        ``portal.set_barriers``, as ``(edge, x1, y1, x2, y2)``.
+        Deliberately coarse: the whole edge, not the portion the client monitor
+        abuts. The compositor holds a barrier on every edge regardless (the
+        backend arms all four once at session setup and never touches them
+        again), so this only says which activations are worth acting on. The
+        *portion* is enforced one step further in, by
+        ``_resolve_cross_screen_target``, against the binding's own
+        ``server_axis_start/end``.
         """
         by_id = {m.monitor_id: m for m in self._monitor_layout.monitors}
-        segments: list[tuple[str, int, int, int, int]] = []
+        edges: set[str] = set()
 
         for bindings in self._edge_bindings_by_client.values():
             for binding in bindings:
                 edge = str(binding.get("server_edge") or "")
-                monitor = by_id.get(binding.get("server_monitor_id"))
-                if edge not in self._STRING_TO_SCREEN_EDGE or monitor is None:
+                if edge not in self._STRING_TO_SCREEN_EDGE:
                     continue
-
+                if binding.get("server_monitor_id") not in by_id:
+                    continue
                 start = max(0.0, min(1.0, float(binding.get("server_axis_start", 0.0))))
                 end = max(0.0, min(1.0, float(binding.get("server_axis_end", 1.0))))
                 if end <= start:
                     continue
+                edges.add(edge)
 
-                # A vertical edge is partitioned along y, a horizontal one
-                # along x - the same axis convention as the bindings. The end
-                # is inclusive, hence ``- 1`` on a half-open range.
-                #
-                # Every coordinate is coerced with ``int()``: the extension takes
-                # ``Vec<(String, i32, i32, i32, i32)>``, and a float arriving from
-                # the layout math (a monitor bound read off a scaled display) is
-                # rejected by PyO3 as a ``TypeError`` - which is
-                # indistinguishable from "this build has no segments keyword" and
-                # used to be reported as a missing rebuild.
-                if edge in ("left", "right"):
-                    span = monitor.max_y - monitor.min_y
-                    lo = int(round(monitor.min_y + start * span))
-                    hi = max(lo, int(round(monitor.min_y + end * span)) - 1)
-                    x = int(monitor.min_x if edge == "left" else monitor.max_x)
-                    segments.append((edge, x, int(lo), x, int(hi)))
-                else:
-                    span = monitor.max_x - monitor.min_x
-                    lo = int(round(monitor.min_x + start * span))
-                    hi = max(lo, int(round(monitor.min_x + end * span)) - 1)
-                    y = int(monitor.min_y if edge == "top" else monitor.max_y)
-                    segments.append((edge, int(lo), y, int(hi), y))
-
-        return segments
+        return edges
 
     def _refresh_edge_state(self) -> dict:
-        """Barrier state for the backend: which edges, and which parts of them.
-
-        ``edges`` keeps the coarse per-edge view, used when the installed
-        pyinputcapture predates segment support; ``segments`` is the precise
-        one and is what should normally take effect.
-        """
-        segments = self._barrier_segments()
-        return {
-            "edges": {edge: True for edge in sorted({s[0] for s in segments})},
-            "segments": segments,
-        }
+        """Edge state for the backend: which edges lead to a client."""
+        return {"edges": {edge: True for edge in sorted(self._active_edges())}}
 
     def _create_listener(self):
         if self._barrier_mode:
@@ -217,20 +184,19 @@ class ServerMouseListener(_base.ServerMouseListener):
             self._listener.update_clients(self._refresh_edge_state())
 
     async def _on_client_layout_updated(self, data):
-        # Re-arm the barriers so a newly bound edge (or a resized/moved
-        # placement on an already-bound one) takes effect immediately, without
-        # waiting for a reconnect. Mirrors the X11 hot-reload.
+        # Refresh the edge filter so a newly bound edge takes effect
+        # immediately, without waiting for a reconnect. Mirrors the X11
+        # hot-reload.
         await super()._on_client_layout_updated(data)
         if self._barrier_mode and data is not None and self._listener:
             self._listener.update_clients(self._refresh_edge_state())
 
     async def _on_local_monitors_updated(self, data):
-        """Re-arm barriers after a *server* monitor hotplug.
+        """Refresh the edge filter after a *server* monitor hotplug.
 
-        The segments are computed from ``_monitor_layout``, which the base
-        handler has just replaced - stale segments would sit at the old
-        monitor's coordinates, arming barriers where no edge is any more and
-        leaving the real new edges free.
+        The active edges are derived from ``_monitor_layout``, which the base
+        handler has just replaced: a binding whose server monitor is gone no
+        longer contributes an edge, and one on a new monitor starts to.
         """
         await super()._on_local_monitors_updated(data)
         if self._barrier_mode and self._listener:
@@ -365,9 +331,9 @@ class ServerMouseListener(_base.ServerMouseListener):
             # binding covers only the portion of the edge its client monitor
             # abuts (``server_axis_start/end``), and honouring an activation
             # outside that range would teleport the cursor to a client that
-            # isn't there. Segment barriers normally keep us out of this
-            # branch entirely; it still fires when the compositor rejected a
-            # segment and fell back to a whole-edge barrier.
+            # isn't there. The compositor holds a whole-edge barrier on every
+            # edge, so this is a routine branch, not an error path - it is the
+            # only thing enforcing the bound portion of an edge.
             # One line per activation, not per tick: a user leaning on an
             # unbound stretch of edge re-triggers this continuously.
             activation_id = (
