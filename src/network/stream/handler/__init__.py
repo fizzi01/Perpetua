@@ -16,6 +16,7 @@
 #
 
 import asyncio
+from time import monotonic
 from typing import Any, Optional
 
 from event import (
@@ -66,6 +67,28 @@ class StreamHandler:
         self._waiting_time = 0  # Time to wait in loops to prevent busy waiting
 
         self._logger = get_logger(self.__class__.__name__)
+        # Monotonic timestamp of the last transport-loss warning, for the
+        # rate limit in ``_log_transport_loss``.
+        self._last_transport_warning = 0.0
+
+    # Minimum pause after an error in the sender loop. ``_waiting_time`` is 0
+    # for the happy path, and reusing it on error turned every failure into a
+    # zero-delay spin: the queue keeps being drained, each item fails the same
+    # way, and the loop burns a core while flooding the log. Small enough to
+    # stay responsive once the transport comes back.
+    _error_backoff = 0.05
+    # One transport-loss warning per this many seconds. The condition persists
+    # for as long as the peer is gone, and one line per queued event says
+    # nothing the first line didn't.
+    _TRANSPORT_WARNING_INTERVAL = 5.0
+
+    def _log_transport_loss(self, message: str):
+        """Warn about a lost transport, at most once per interval."""
+        now = monotonic()
+        if now - self._last_transport_warning < self._TRANSPORT_WARNING_INTERVAL:
+            return
+        self._last_transport_warning = now
+        self._logger.warning(message, stream_type=self.stream_type)
 
     def register_receive_callback(self, receive_callback, message_type: str):
         """
@@ -468,21 +491,29 @@ class _ServerStreamHandler(StreamHandler):
                 self._notify_send_not_ready()
                 await asyncio.sleep(0)  # yield control
             except MissingTransportError:
-                self._logger.warning("Missing transport")
-                await asyncio.sleep(0)  # yield control
+                # The active client's transport is gone. Treat it exactly like
+                # a connection error: standing down is what stops this loop
+                # spinning. Keeping ``_active_client`` set here meant every
+                # queued event re-raised immediately, at zero delay, logging a
+                # warning per iteration - a hot loop that pegged a core and
+                # buried the log while the service looked merely "noisy".
+                self._log_transport_loss("Missing transport")
+                self._active_client = None
+                self._notify_send_not_ready()
+                await asyncio.sleep(self._error_backoff)
             except RuntimeError as e:
                 # uv/winloop runtime error on closed tcp transport
                 if "closed=True" in str(e):
-                    self._logger.warning("Transport closed")
-                    await asyncio.sleep(0)  # yield control
+                    self._log_transport_loss("Transport closed")
+                    await asyncio.sleep(self._error_backoff)
                 else:
                     self._logger.error("Runtime error in core loop", error=str(e))
-                    await asyncio.sleep(self._waiting_time)
+                    await asyncio.sleep(self._error_backoff)
                 self._active_client = None
                 self._notify_send_not_ready()
             except Exception as e:
                 self._logger.error("Error in core loop", error=str(e))
-                await asyncio.sleep(self._waiting_time)
+                await asyncio.sleep(self._error_backoff)
 
     async def stop(self):
         self._send_ready.set()  # Unblock _core_sender so it can exit
@@ -674,22 +705,26 @@ class _ClientStreamHandler(StreamHandler):
                 await asyncio.sleep(self._waiting_time)
                 continue
             except MissingTransportError:
-                self._logger.warning("Missing transport")
-                await asyncio.sleep(0)  # yield control
+                # Same reasoning as the server handler: without a real pause
+                # this is a zero-delay spin for as long as the peer is gone.
+                # No ``_active_client`` to clear on this side - the client's
+                # own reconnect logic owns recovery.
+                self._log_transport_loss("Missing transport")
+                await asyncio.sleep(self._error_backoff)
             except (ConnectionResetError, BrokenPipeError) as e:
                 self._logger.error("Connection error", error=str(e))
                 # if connection lost error, close the stream
                 if "connection lost" in str(e).lower() or self._active_only:
                     await self._handle_disconnection()
-                await asyncio.sleep(self._waiting_time)
+                await asyncio.sleep(self._error_backoff)
             except RuntimeError as e:
                 # uv/winloop runtime error on closed tcp transport
                 if "closed=True" in str(e):
-                    self._logger.warning("Transport closed")
-                    await asyncio.sleep(0)  # yield control
+                    self._log_transport_loss("Transport closed")
+                    await asyncio.sleep(self._error_backoff)
                 else:
                     self._logger.error("Runtime error in core loop", error=str(e))
-                    await asyncio.sleep(self._waiting_time)
+                    await asyncio.sleep(self._error_backoff)
                 if self._active_only:
                     self._is_active = False
                     self._notify_send_not_ready()
