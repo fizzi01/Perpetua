@@ -426,8 +426,7 @@ class MouseController:
         now = time.monotonic()
         if now < self._reconnect_at:
             raise _PortalBackoff(
-                f"libei portal unavailable, retrying in "
-                f"{self._reconnect_at - now:.1f}s"
+                f"libei portal unavailable, retrying in {self._reconnect_at - now:.1f}s"
             )
         try:
             self._conn = _reconnect()
@@ -564,7 +563,9 @@ class _CaptureSession:
         self.dead: bool = False
 
     @classmethod
-    def create(cls, active_edges, logger, keep_waiting=None) -> "_CaptureSession | None":
+    def create(
+        cls, active_edges, logger, keep_waiting=None
+    ) -> "_CaptureSession | None":
         """Create a portal session with barriers only for *active_edges*."""
         from pyinputcapture import InputCapturePortal
         from snegg.ei import Receiver
@@ -629,10 +630,7 @@ class _CaptureSession:
         self._set_capture_enabled(True, logger)
 
     def _arm(self, wanted_edges: set, wanted_segments: tuple, logger) -> None:
-        if (
-            wanted_edges == self.armed_edges
-            and wanted_segments == self.armed_segments
-        ):
+        if wanted_edges == self.armed_edges and wanted_segments == self.armed_segments:
             return
         if not hasattr(self.portal, "set_barriers"):
             return
