@@ -642,7 +642,13 @@ class ServerMouseListener(object):
                     continue
                 s_start = b.get("server_axis_start", 0.0)
                 s_end = b.get("server_axis_end", 0.0)
-                if s_start <= axis_norm < s_end:
+                # ``axis_norm`` is clamped to [0, 1], so a binding spanning the
+                # whole edge (``s_end == 1.0``) must treat its end as
+                # inclusive: an activation reported at the far corner yields
+                # exactly 1.0 and a half-open test rejects it - releasing the
+                # cursor at the one point the user most obviously meant to
+                # cross.
+                if s_start <= axis_norm and (axis_norm < s_end or s_end >= 1.0):
                     matches.append(client_uid)
                     if first_match is None:
                         first_match = (client_uid, b, axis_norm)
