@@ -207,10 +207,23 @@ class ServerMouseListener(_base.ServerMouseListener):
             self._listener.update_clients(self._refresh_edge_state())
 
     async def _on_client_layout_updated(self, data):
-        # Refresh edge->UID and the barrier backend's edge set so the new
-        # topology takes effect immediately (mirrors X11 hot-reload).
+        # Re-arm the barriers so a newly bound edge (or a resized/moved
+        # placement on an already-bound one) takes effect immediately, without
+        # waiting for a reconnect. Mirrors the X11 hot-reload.
         await super()._on_client_layout_updated(data)
         if self._barrier_mode and data is not None and self._listener:
+            self._listener.update_clients(self._refresh_edge_state())
+
+    async def _on_local_monitors_updated(self, data):
+        """Re-arm barriers after a *server* monitor hotplug.
+
+        The segments are computed from ``_monitor_layout``, which the base
+        handler has just replaced - stale segments would sit at the old
+        monitor's coordinates, arming barriers where no edge is any more and
+        leaving the real new edges free.
+        """
+        await super()._on_local_monitors_updated(data)
+        if self._barrier_mode and self._listener:
             self._listener.update_clients(self._refresh_edge_state())
 
     async def _on_screen_change_guard_wayland(self, data):
