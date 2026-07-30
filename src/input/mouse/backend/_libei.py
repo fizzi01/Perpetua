@@ -112,6 +112,10 @@ _CONTROLLER_CAPABILITIES = (
 class _EiConnection:
     """RemoteDesktop portal session with libei Sender and dispatch thread."""
 
+    # The dispatch loop polls in 500 ms slices, so this is one slice plus
+    # slack - long enough to exit cleanly, short enough not to stall a stop.
+    _DISPATCH_JOIN_TIMEOUT = 1.0
+
     def __init__(self):
         self._reset()
 
@@ -142,8 +146,49 @@ class _EiConnection:
         return self._paused.is_set()
 
     def reconnect(self):
+        self.close()
         self._reset()
         self.connect()
+
+    def close(self):
+        """Tear the session down and stop the dispatch thread.
+
+        Without this every reconnect leaked a portal session plus a live
+        dispatch thread, and the module singleton outlived ``Server.stop()``
+        entirely - so a restarted service was handed back a connection whose
+        compositor session was already gone.
+
+        snegg's ``Sender``/``Receiver`` have no ``close()``: the libei context
+        is refcounted and destroyed when the last Python reference drops, and
+        dropping the ``Oeffis`` context is itself what disconnects the portal
+        session. So the teardown here is mostly about *ordering* - stop the
+        dispatch thread, close the device, then drop the sender before the
+        oeffis (whose destruction invalidates the EIS fd the sender uses).
+        """
+        self._closing = True
+
+        thread = self._dispatch_thread
+        if (
+            thread is not None
+            and thread.is_alive()
+            and thread is not threading.current_thread()
+        ):
+            thread.join(timeout=self._DISPATCH_JOIN_TIMEOUT)
+        self._dispatch_thread = None
+
+        device, self._device = self._device, None
+        if device is not None:
+            try:
+                device.stop_emulating()
+            except Exception:
+                pass
+            try:
+                device.close()
+            except Exception:
+                pass
+
+        self._sender = None
+        self._oeffis = None
 
     def connect(self):
         if self._device is not None:
@@ -220,7 +265,7 @@ class _EiConnection:
         poller.register(self._sender.fd, _select.POLLIN)
 
         try:
-            while self._error is None:
+            while self._error is None and not self._closing:
                 try:
                     ready = poller.poll(500)
                 except Exception:
@@ -292,10 +337,43 @@ def _get_connection() -> _EiConnection:
 def _reconnect() -> _EiConnection:
     global _conn
     with _conn_lock:
+        # Close the outgoing one first: a bare replacement leaked its portal
+        # session and its dispatch thread on every reconnect.
+        stale, _conn = _conn, None
+    if stale is not None:
+        try:
+            stale.close()
+        except Exception:
+            pass
+    with _conn_lock:
         conn = _EiConnection()
         conn.connect()
         _conn = conn
         return conn
+
+
+def shutdown_connection() -> None:
+    """Close the module-wide RemoteDesktop connection, if any.
+
+    The singleton used to survive ``Server.stop()``, so the next start was
+    handed a connection whose compositor session had already been torn down.
+    """
+    global _conn
+    with _conn_lock:
+        conn, _conn = _conn, None
+    if conn is not None:
+        try:
+            conn.close()
+        except Exception:
+            pass
+
+
+class _PortalBackoff(RuntimeError):
+    """The portal is known-unavailable and we are waiting out the retry delay.
+
+    Distinct from a real connection error so callers can drop the event
+    quietly instead of logging a failure per mouse move.
+    """
 
 
 def _scroll_discrete(device, dx: int, dy: int):
@@ -305,10 +383,21 @@ def _scroll_discrete(device, dx: int, dy: int):
 class MouseController:
     """Emulates pointer input through the RemoteDesktop portal via libei."""
 
+    # A failed connect() can spend up to ~20 s polling the portal. Without a
+    # floor between attempts that cost was paid on *every* mouse event, which
+    # freezes the injection path far worse than the missing portal itself.
+    _RECONNECT_MIN_INTERVAL = 1.0
+    _RECONNECT_MAX_INTERVAL = 30.0
+
     def __init__(self):
         self._x = 0
         self._y = 0
         self._logger = get_logger(self.__class__.__name__)
+        self._reconnect_backoff = ExponentialBackoff(
+            initial_delay=self._RECONNECT_MIN_INTERVAL,
+            max_delay=self._RECONNECT_MAX_INTERVAL,
+        )
+        self._reconnect_at = 0.0
         # Best-effort: if the RemoteDesktop portal isn't ready yet (common right
         # after enabling sharing), don't abort client startup. _ensure_conn
         # establishes the connection lazily on the first injection and keeps
@@ -324,14 +413,30 @@ class MouseController:
 
         Reconnects when there is no connection yet (deferred at startup), when
         the previous one errored, or when the compositor tore the device down.
-        Returns a non-None connection or raises the real underlying error.
+        Returns a non-None connection, or raises: either the real underlying
+        error, or ``_PortalBackoff`` while waiting out the retry interval.
         """
         if (
-            self._conn is None
-            or self._conn._error is not None
-            or self._conn._device is None
+            self._conn is not None
+            and self._conn._error is None
+            and self._conn._device is not None
         ):
+            return self._conn
+
+        now = time.monotonic()
+        if now < self._reconnect_at:
+            raise _PortalBackoff(
+                f"libei portal unavailable, retrying in "
+                f"{self._reconnect_at - now:.1f}s"
+            )
+        try:
             self._conn = _reconnect()
+        except Exception:
+            delay = self._reconnect_backoff.get_next_delay()
+            self._reconnect_at = time.monotonic() + delay
+            raise
+        self._reconnect_backoff.reset()
+        self._reconnect_at = 0.0
         return self._conn
 
     @property
