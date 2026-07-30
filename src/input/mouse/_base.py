@@ -1128,6 +1128,10 @@ class ClientMouseController(object):
     # outward push was invisible. Keeping the sign removes the latch, both
     # margins, and the failure.
     RETURN_PUSH_MARGIN = 12
+    # Minimum spacing between ``[RETURN_GATE]`` lines. The gate is evaluated on
+    # every cursor tick (>100 Hz), and the point of the line is the state, not
+    # the count.
+    RETURN_GATE_LOG_INTERVAL = 0.25
 
     def __init__(
         self,
@@ -1183,6 +1187,8 @@ class ClientMouseController(object):
         # gate in ``_check_edge``.
         self._return_locked_edge: Optional[ScreenEdge] = None
         self._inward_travel: int = 0
+        # Rate limit for the ``[RETURN_GATE]`` diagnostic.
+        self._last_return_gate_log: float = 0.0
         # Server's virtual desktop bbox - return-to-server (x, y) is
         # normalised over this.
         self._server_bbox: Optional[tuple[int, int, int, int]] = None
@@ -2045,13 +2051,14 @@ class ClientMouseController(object):
                     edge != self._return_locked_edge
                     or self._inward_travel <= -self.RETURN_PUSH_MARGIN
                 )
+                self._log_return_gate(edge, x, y, entry_gate_open)
                 if entry_gate_open and await self._try_return_to_server(edge, x, y):
                     return await asyncio.sleep(0)
 
                 if self._try_intra_client_warp_sync(edge, x, y, current_monitor):
                     return None
 
-                if current_monitor is not None:
+                if current_monitor is not None and not self._pushing_out_at_edge(edge):
                     self._clamp_cursor_to_monitor(current_monitor)
                     self._movement_history.clear()
                 return None
@@ -2060,6 +2067,65 @@ class ClientMouseController(object):
             self._logger.error("failed to dispatch screen event", error=str(e))
         finally:
             self._checking_edge = False
+
+    def _pushing_out_at_edge(self, edge: Optional[ScreenEdge]) -> bool:
+        """True while the user is pushing OUTWARD against the locked entry edge.
+
+        There is nothing to correct in that state and correcting it is actively
+        harmful: the OS is already holding the cursor at the desktop bound, and
+        ``_clamp_cursor_to_monitor`` warping it back inside emits - on libei,
+        where a warp is a real motion rather than a silent placement - an inward
+        move that physically cancels the user's outward push, every tick. Which
+        is exactly the rule ``input/mouse/CLAUDE.md`` states: never contend with
+        the OS for the cursor at a desktop bound, it shows.
+
+        On a Wayland client this is also the difference between a reachable and
+        an unreachable return gate: the position ``_check_edge`` reads there is
+        libei's virtual accumulator, so a clamp keeps undoing the very push
+        ``_inward_travel`` needs in order to reach the margin.
+        """
+        return (
+            edge is not None
+            and edge == self._return_locked_edge
+            and self._inward_travel < 0
+        )
+
+    def _log_return_gate(
+        self, edge: ScreenEdge, x: float, y: float, gate_open: bool
+    ) -> None:
+        """Emit the discriminating state of the return-to-server gate.
+
+        The gate decides from four values and used to log none of them, so a
+        return that never fires was indistinguishable from a return whose
+        binding lookup came back empty. Rate-limited, and only while an entry
+        edge is locked, so it can ship enabled at debug level.
+
+        Reading the line: ``travel`` stuck at 0 means
+        ``_accumulate_inward_travel`` is not being fed (the relative branch of
+        ``_move_cursor`` isn't running, or ``applied`` is ``(0, 0)``); ``travel``
+        at the margin with ``open=True`` but ``resolved=None`` means no edge
+        binding matched - typically the binding's ``client_monitor_id`` not
+        matching this client's real monitor id; ``edge`` never showing the entry
+        edge means the problem is edge detection, not the gate.
+        """
+        if self._return_locked_edge is None:
+            return
+        now = time()
+        if now - self._last_return_gate_log < self.RETURN_GATE_LOG_INTERVAL:
+            return
+        self._last_return_gate_log = now
+        try:
+            resolved = self._resolve_return_to_server(edge, x, y)
+        except Exception:
+            resolved = None
+        self._logger.debug(
+            "[RETURN_GATE] "
+            f"edge={edge} locked={self._return_locked_edge} "
+            f"travel={self._inward_travel} open={gate_open} "
+            f"resolved={resolved} pos=({int(x)}, {int(y)}) "
+            f"bindings={len(self._edge_bindings)} "
+            f"monitor={self._active_monitor_id}"
+        )
 
     async def _handle_os_drift(self, x: float, y: float, current_monitor) -> bool:
         """Detect/consume unauthorised OS-driven monitor transitions.
@@ -2185,7 +2251,21 @@ class ClientMouseController(object):
         # A warp parks the cursor just inside ``dst_edge`` - the same
         # on-the-edge situation as a fresh landing - so re-arm the
         # return lock against it until the cursor travels inward again.
-        self._return_locked_edge = self._STRING_TO_EDGE_CLIENT.get(dst_edge)
+        #
+        # An unmapped ``dst_edge`` must NOT clear the lock: ``None`` disables the
+        # entry gate entirely, so the gate would then be unconditionally open and
+        # the return would ride on a missing mapping rather than on the user's
+        # push. Keep the previous edge locked and say so.
+        mapped_dst_edge = self._STRING_TO_EDGE_CLIENT.get(dst_edge)
+        if mapped_dst_edge is None:
+            self._logger.debug(
+                "intra-client warp destination edge not recognised; "
+                "keeping the current return lock",
+                dst_edge=str(dst_edge),
+                locked_edge=str(self._return_locked_edge),
+            )
+        else:
+            self._return_locked_edge = mapped_dst_edge
         self._inward_travel = 0
         return True
 

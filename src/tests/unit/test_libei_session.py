@@ -24,6 +24,7 @@ the barrier arming, and the teardown guard that keeps a dead session from
 making another blocking portal call.
 """
 
+import os
 import sys
 import types
 from unittest.mock import MagicMock
@@ -112,6 +113,50 @@ def _session(libei, portal=None, armed=("right",)):
         poller=MagicMock(),
         armed_edges=armed,
     )
+
+
+def _portal_with_signature(signature, result=None, error=None):
+    """A portal whose ``set_barriers`` advertises an explicit text signature.
+
+    A ``MagicMock`` can't carry a dunder like ``__text_signature__``, and the
+    capability probe reads exactly that - so the signature-sensitive tests need a
+    real object.
+    """
+
+    class _SetBarriers:
+        __text_signature__ = signature
+
+        def __init__(self):
+            self.calls = []
+
+        def __call__(self, *args, **kwargs):
+            self.calls.append(args or kwargs)
+            if error is not None:
+                raise error
+            return result or []
+
+    class _Portal:
+        def __init__(self):
+            self.set_barriers = _SetBarriers()
+            self.zones = [(1920, 1080, 0, 0)]
+
+        @property
+        def calls(self):
+            return self.set_barriers.calls
+
+        def enable(self):
+            pass
+
+        def disable(self):
+            pass
+
+        def release(self, x, y):
+            pass
+
+        def close(self):
+            pass
+
+    return _Portal()
 
 
 def _active_listener(libei):
@@ -242,7 +287,7 @@ class TestPermissionFailure:
         listener = libei.MouseListener()
         listener._is_running = True
 
-        assert listener._create_session_with_retry(["right"], logger) is None
+        assert listener._create_session_once(["right"], logger) is None
         assert len(attempts) == 1, "must not burn the retry budget on a refusal"
         assert listener._unauthorised == "access denied"
 
@@ -254,7 +299,7 @@ class TestPermissionFailure:
     def test_unauthorised_waits_the_long_delay(self, libei, logger, monkeypatch):
         monkeypatch.setattr(
             libei.MouseListener,
-            "_create_session_with_retry",
+            "_create_session_once",
             lambda self, edges, log: None,
         )
         listener = libei.MouseListener()
@@ -288,6 +333,165 @@ class TestSegmentCapabilityWarning:
         session.apply_edges({"right"}, [("right", 1920, 0, 1920, 540)], logger)
 
         assert not [c for c in logger.warning.call_args_list if "maturin" in str(c)]
+
+
+class TestSegmentCapabilityProbe:
+    """The capability is decided by inspection, never by catching TypeError.
+
+    PyO3 raises ``TypeError`` for a failed argument extraction exactly as it does
+    for an unknown keyword, so inferring "this build can't do segments" from the
+    exception reported a malformed segment - a float where an ``i32`` is wanted -
+    as a missing rebuild. That is the warning the field report was seeing *with*
+    the new build installed.
+    """
+
+    def test_absent_set_barriers_is_the_only_hard_no(self, libei):
+        portal = MagicMock(spec=["zones", "release", "close", "enable", "disable"])
+
+        assert libei._segments_supported(portal) is False
+
+    def test_signature_without_segments_reports_false(self, libei):
+        portal = _portal_with_signature("($self, edges)")
+
+        assert libei._segments_supported(portal) is False
+
+    def test_signature_with_segments_reports_true(self, libei):
+        portal = _portal_with_signature("($self, edges=None, segments=None)")
+
+        assert libei._segments_supported(portal) is True
+
+    def test_unreadable_signature_is_not_evidence_of_absence(self, libei):
+        # No ``__text_signature__`` at all: assume supported, so a genuine
+        # argument error can surface instead of being mislabelled.
+        portal = MagicMock()
+
+        assert libei._segments_supported(portal) is True
+
+    def test_a_float_coordinate_is_reported_as_a_bad_segment(self, libei, logger):
+        bad = ("right", 1920, 0.5, 1920, 540)
+        portal = _portal_with_signature(
+            "($self, edges=None, segments=None)",
+            error=TypeError("argument 'segments': failed to extract field"),
+        )
+        session = _session(libei, portal, armed=())
+
+        session.apply_edges({"right"}, [bad], logger)
+
+        errors = str(logger.error.call_args_list)
+        assert "0.5" in errors, "the offending segment must be named"
+        assert not [c for c in logger.warning.call_args_list if "maturin" in str(c)]
+        assert session.segments_supported is True
+
+    def test_malformed_segments_picks_out_the_offenders(self, libei):
+        good = ("right", 1920, 0, 1920, 540)
+        floaty = ("right", 1920.0, 0, 1920, 540)
+        short = ("right", 1920, 0, 1920)
+
+        assert libei._malformed_segments([good]) == []
+        assert libei._malformed_segments([good, floaty, short]) == [floaty, short]
+
+    def test_backend_info_survives_a_missing_extension(self, libei):
+        # pyinputcapture is not installed off Linux; the startup line must still
+        # be emittable.
+        info = libei._capture_backend_info()
+
+        assert "segments" in info and "module" in info
+
+
+class TestStartGuard:
+    def test_start_refuses_while_the_previous_thread_lives(self, libei):
+        # stop()'s join times out precisely when the thread is wedged in
+        # portal.setup() on an unanswered dialog: _is_running is already False
+        # and is_alive() reports dead, so the service layer restarts us. Starting
+        # anyway opens a second portal session while the first still holds an
+        # unresolved CreateSession - two concurrent requests against GNOME is a
+        # reliable way to get one that never answers.
+        listener = libei.MouseListener()
+        listener._logger = MagicMock()
+        stale = MagicMock(is_alive=MagicMock(return_value=True))
+        listener._thread = stale
+
+        listener.start()
+
+        assert listener._is_running is False
+        assert listener._thread is stale, "no second capture thread"
+        assert listener._logger.warning.called, "the refusal must be reported"
+
+    def test_start_proceeds_once_the_previous_thread_is_dead(self, libei):
+        listener = libei.MouseListener()
+        dead = MagicMock(is_alive=MagicMock(return_value=False))
+        listener._thread = dead
+        listener._thread_main = MagicMock()
+
+        listener.start()
+        try:
+            assert listener._is_running is True
+            assert listener._thread is not dead
+        finally:
+            listener.stop()
+
+
+class TestCapturedStderr:
+    def test_captures_what_the_block_wrote_to_fd_2(self, libei):
+        # The previous version pointed fd 2 at /dev/tty, which from a terminal
+        # launch is a freeze mechanism: SIGTTOU stops the whole process, and a
+        # full tty buffer blocks write(2) while logging holds its handler lock.
+        captured: list = []
+
+        with libei._captured_stderr(captured):
+            os.write(2, b"portal said: not authorised\n")
+
+        assert captured == ["portal said: not authorised"]
+
+    def test_populates_before_an_exception_propagates(self, libei):
+        captured: list = []
+
+        with pytest.raises(RuntimeError):
+            with libei._captured_stderr(captured):
+                os.write(2, b"setup failed\n")
+                raise RuntimeError("boom")
+
+        assert captured == ["setup failed"]
+
+    def test_nothing_written_leaves_the_holder_empty(self, libei):
+        captured: list = []
+
+        with libei._captured_stderr(captured):
+            pass
+
+        assert captured == []
+
+
+class TestUnauthorisedReset:
+    def test_a_later_unrelated_failure_clears_the_refusal(self, libei, logger, monkeypatch):
+        # Once set, _unauthorised was only cleared on success - so every later
+        # failure of any kind reported itself as "not authorised" and waited out
+        # the 30 s ceiling.
+        monkeypatch.setattr(
+            libei._CaptureSession, "create", lambda *a, **kw: None
+        )
+        listener = libei.MouseListener()
+        listener._is_running = True
+        listener._unauthorised = "access denied"
+
+        assert listener._create_session_once(["right"], logger) is None
+        assert listener._unauthorised is None
+
+    def test_one_attempt_per_cycle(self, libei, logger, monkeypatch):
+        # Three CreateSession requests a second apart is the worst cadence for a
+        # request that needs a human to answer a dialog; the backoff owns it now.
+        attempts = []
+        monkeypatch.setattr(
+            libei._CaptureSession,
+            "create",
+            lambda edges, log, keep_waiting=None: attempts.append(edges),
+        )
+        listener = libei.MouseListener()
+        listener._is_running = True
+
+        listener._create_session_once(["right"], logger)
+
+        assert len(attempts) == 1
 
 
 class TestTeardown:
@@ -364,19 +568,18 @@ class TestBarrierArming:
 
     def test_falls_back_to_whole_edges_without_segment_support(self, libei, logger):
         # An older installed pyinputcapture: still better than nothing, the
-        # unbound part of the edge just keeps stalling as it did before.
-        portal = MagicMock()
-        portal.set_barriers.side_effect = [
-            TypeError("unexpected keyword"),
-            [(1, "right")],
-        ]
+        # unbound part of the edge just keeps stalling as it did before. The
+        # capability is read off the signature, so the segments call is never
+        # even attempted.
+        portal = _portal_with_signature("($self, edges)", [(1, "right")])
         session = _session(libei, portal, armed=())
 
         session.apply_edges({"right"}, [("right", 1920, 0, 1920, 540)], logger)
 
-        assert portal.set_barriers.call_args_list[-1].args == (["right"],)
+        assert portal.calls == [(["right"],)]
         assert session.armed_edges == {"right"}
         assert session.armed_segments == ()
+        assert [c for c in logger.warning.call_args_list if "maturin" in str(c)]
 
     def test_set_barriers_failure_leaves_state_untouched(self, libei, logger):
         portal = MagicMock()
@@ -504,7 +707,7 @@ class TestReconnectSchedule:
         # ever again, because only a *new* update_clients built a session.
         listener = libei.MouseListener()
         listener._active_edges = {"right"}
-        listener._create_session_with_retry = MagicMock(return_value=None)
+        listener._create_session_once = MagicMock(return_value=None)
 
         assert listener._open_session(logger) is libei._NO_SESSION
         assert listener._reconnect_pending is True
@@ -514,7 +717,7 @@ class TestReconnectSchedule:
         listener = libei.MouseListener()
         listener._active_edges = {"right"}
         listener._schedule_reconnect(logger, "EIS disconnected")
-        listener._create_session_with_retry = MagicMock(return_value=MagicMock())
+        listener._create_session_once = MagicMock(return_value=MagicMock())
 
         listener._idle_wait = libei.MouseListener._idle_wait.__get__(listener)
         listener._cmd_queue.put(

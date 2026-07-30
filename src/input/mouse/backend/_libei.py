@@ -74,31 +74,62 @@ def _restore_stderr(saved_fd):
             pass
 
 
-@contextmanager
-def _stderr_visible():
-    """Temporarily undo ``_suppress_libei_stderr`` for the enclosed block.
+#: Upper bound on what is read back out of the capture pipe. The payload of
+#: interest is the extension's one-line explanation of a failed setup.
+_STDERR_CAPTURE_LIMIT = 64 * 1024
 
-    The suppression exists for libei's per-event C-level chatter, but it is
-    installed for the whole capture thread - which also discarded the extension's
-    one-line explanation of a failed portal setup.
+
+@contextmanager
+def _captured_stderr(into: list):
+    """Capture fd-2 output for the enclosed block into ``into``.
+
+    ``_suppress_libei_stderr`` points fd 2 at /dev/null for the whole capture
+    thread, which also discards the extension's one-line explanation of a failed
+    portal setup. This makes that line available to the caller so it can be
+    logged through the structured logger.
+
+    It deliberately does **not** point fd 2 back at ``/dev/tty``, which the
+    previous version did: from a terminal launch that is a freeze mechanism -
+    a write from a background process group on a tty with ``TOSTOP`` raises
+    ``SIGTTOU`` (default action: stop the whole process), and a tty whose output
+    buffer fills with nobody draining it blocks ``write(2)`` forever while
+    ``logging`` holds its handler lock, taking every logging thread with it.
+
+    ``into`` receives at most one element - the captured text, stripped - and is
+    populated *before* the block's exception (if any) propagates, so a caller
+    can log it next to the failure.
     """
-    saved = None
     try:
-        saved = os.dup(2)
-        real_stderr = os.open("/dev/tty", os.O_WRONLY)
+        read_fd, write_fd = os.pipe()
     except OSError:
-        # No controlling terminal (a service, a redirected launch): nothing to
-        # restore to, so just run the block as-is.
-        if saved is not None:
-            os.close(saved)
         yield
         return
+
+    saved = None
     try:
-        os.dup2(real_stderr, 2)
-        os.close(real_stderr)
+        os.set_blocking(read_fd, False)
+        saved = os.dup(2)
+        os.dup2(write_fd, 2)
         yield
     finally:
-        _restore_stderr(saved)
+        # Restore first: fd 2 must not point at a pipe nobody reads any more.
+        if saved is not None:
+            _restore_stderr(saved)
+        try:
+            os.close(write_fd)
+        except OSError:
+            pass
+        try:
+            data = os.read(read_fd, _STDERR_CAPTURE_LIMIT)
+        except (BlockingIOError, OSError):
+            data = b""
+        try:
+            os.close(read_fd)
+        except OSError:
+            pass
+        text = data.decode("utf-8", "replace").strip()
+        if text:
+            into.append(text)
 
 
 # Portal failures that mean "the user has not granted access", where retrying
@@ -110,12 +141,107 @@ _PERMISSION_HINTS = (
     "cancelled",
     "canceled",
     "no such interface",
+    # ashpd's own wording for a dialog the user dismissed, typo included.
+    "didn't succed",
+    "didn't succeed",
 )
 
 
 def _is_permission_failure(reason: str) -> bool:
     lowered = reason.lower()
     return any(hint in lowered for hint in _PERMISSION_HINTS)
+
+
+def _callable_signature(func) -> str:
+    """Textual signature of a (possibly native) callable, or ``""``.
+
+    Only ``__text_signature__`` is consulted - the one attribute that actually
+    describes the accepted keywords. The docstring is deliberately *not* used as
+    a fallback: it is free text, so "the keyword isn't mentioned there" is not
+    evidence that the keyword doesn't exist.
+    """
+    try:
+        value = getattr(func, "__text_signature__", None)
+    except Exception:
+        value = None
+    return value if isinstance(value, str) else ""
+
+
+def _segments_supported(portal) -> bool:
+    """Whether this build of pyinputcapture can arm barrier *segments*.
+
+    Decided by **inspection**, once, never by catching ``TypeError`` around the
+    call: PyO3 raises ``TypeError`` for a failed argument extraction exactly as
+    it does for an unknown keyword, so inferring the capability from the
+    exception reports a malformed segment - a float where ``i32`` is wanted -
+    as a missing rebuild.
+
+    An absent ``set_barriers``, or one whose signature demonstrably has no
+    ``segments`` keyword, is ``False``. A signature we cannot read at all is
+    *not* evidence of absence, so it is treated as supported and a genuine
+    argument error is allowed to surface with the offending segment named.
+    """
+    set_barriers = getattr(portal, "set_barriers", None)
+    if set_barriers is None:
+        return False
+    signature = _callable_signature(set_barriers)
+    if not signature:
+        return True
+    return "segments" in signature
+
+
+def _malformed_segments(segments) -> list:
+    """Segments that cannot be extracted into ``(String, i32, i32, i32, i32)``.
+
+    Used to name the offender when ``set_barriers`` refuses a segment list: PyO3
+    reports a failed extraction as ``TypeError``, which is indistinguishable from
+    an unknown keyword unless we check the payload ourselves.
+    """
+    bad = []
+    for segment in segments:
+        try:
+            edge, *coords = segment
+        except (TypeError, ValueError):
+            bad.append(segment)
+            continue
+        if not isinstance(edge, str) or len(coords) != 4:
+            bad.append(segment)
+            continue
+        if any(not isinstance(c, int) or isinstance(c, bool) for c in coords):
+            bad.append(segment)
+    return bad
+
+
+def _capture_backend_info() -> dict:
+    """Which pyinputcapture is actually loaded, and what it can do.
+
+    Logged once at listener start so "I have the new build" is checkable from
+    the log instead of being inferred from a warning - a stale ``.so`` shadowing
+    the rebuilt one (a build for another Python version leaves both) is
+    otherwise invisible.
+    """
+    info: dict = {
+        "module": None,
+        "version": None,
+        "segments": False,
+        "setup_timeout": "unknown",
+    }
+    try:
+        import pyinputcapture
+        from pyinputcapture import InputCapturePortal
+
+        info["module"] = getattr(pyinputcapture, "__file__", None)
+        info["version"] = getattr(pyinputcapture, "__version__", None)
+        info["segments"] = _segments_supported(InputCapturePortal)
+        setup_signature = _callable_signature(getattr(InputCapturePortal, "setup", None))
+        # No signature metadata is "can't tell", not "absent" - the same
+        # distinction ``_segments_supported`` makes.
+        info["setup_timeout"] = (
+            ("timeout" in setup_signature) if setup_signature else "unknown"
+        )
+    except Exception as exc:
+        info["error"] = str(exc)
+    return info
 
 
 class _PortalNotAuthorised(RuntimeError):
@@ -593,6 +719,7 @@ class _CaptureSession:
         "enabled",
         "dead",
         "segments_warned",
+        "segments_supported",
     )
 
     def __init__(self, portal, receiver, barrier_map, poller, armed_edges):
@@ -618,6 +745,8 @@ class _CaptureSession:
         self.dead: bool = False
         # One-shot guard for the "can't arm partial edges" warning.
         self.segments_warned: bool = False
+        # Resolved once, by inspection of the installed extension.
+        self.segments_supported: bool = _segments_supported(portal)
 
     @classmethod
     def create(
@@ -628,13 +757,14 @@ class _CaptureSession:
         from snegg.ei import Receiver
 
         portal = None
+        # Filled by ``_captured_stderr`` with whatever the extension printed on
+        # fd 2 during setup - the caller has it pointed at /dev/null to silence
+        # libei's dispatch-loop spam, which also hid the one message that
+        # explains a failed session.
+        portal_stderr: list[str] = []
         try:
             portal = InputCapturePortal()
-            # Restore stderr for the duration of setup: the extension prints the
-            # underlying portal failure there, and the caller has fd 2 pointed at
-            # /dev/null to silence libei's dispatch-loop spam - which also hid the
-            # one message that explains a failed session.
-            with _stderr_visible():
+            with _captured_stderr(portal_stderr):
                 zones, eis_fd, bmap_list = portal.setup(list(active_edges))
             logger.debug(f"Session created: zones={zones} edges={active_edges}")
 
@@ -651,6 +781,11 @@ class _CaptureSession:
 
         except Exception as exc:
             reason = str(exc)
+            detail = portal_stderr[0] if portal_stderr else None
+            if detail:
+                # The portal's own explanation, through the structured logger:
+                # no tty involved, so it reaches the log on every launch mode.
+                reason = f"{reason} ({detail})"
             if portal is not None:
                 try:
                     portal.close()
@@ -710,23 +845,34 @@ class _CaptureSession:
         if not hasattr(self.portal, "set_barriers"):
             self._warn_segments_unavailable(logger)
             return
+        if wanted_segments and not self.segments_supported:
+            # Decided by inspection (see ``_segments_supported``), never inferred
+            # from an exception around a call whose arguments we construct.
+            self._warn_segments_unavailable(logger)
+            wanted_segments = ()
+
         try:
             if wanted_segments:
                 bmap_list = self.portal.set_barriers(segments=list(wanted_segments))
             else:
                 bmap_list = self.portal.set_barriers(sorted(wanted_edges))
-        except TypeError:
-            # Installed build has set_barriers but not the segments keyword.
-            self._warn_segments_unavailable(logger)
-            try:
-                bmap_list = self.portal.set_barriers(sorted(wanted_edges))
-            except Exception as exc:
+        except Exception as exc:
+            if not wanted_segments:
                 logger.warning(f"set_barriers failed: {exc}")
                 return
+            # The capability is present, so this is an argument problem: say
+            # which segment, rather than blaming a missing rebuild.
+            malformed = _malformed_segments(wanted_segments)
+            logger.error(
+                f"set_barriers(segments=...) rejected the segment list: {exc}; "
+                f"offending={malformed or list(wanted_segments)}"
+            )
+            try:
+                bmap_list = self.portal.set_barriers(sorted(wanted_edges))
+            except Exception as fallback_exc:
+                logger.warning(f"set_barriers failed: {fallback_exc}")
+                return
             wanted_segments = ()
-        except Exception as exc:
-            logger.warning(f"set_barriers failed: {exc}")
-            return
 
         self.barrier_map = {bid: edge for bid, edge in bmap_list}
         self.armed_edges = wanted_edges
@@ -907,7 +1053,9 @@ class MouseListener:
     thread as alive and assuming all is well.
     """
 
-    _MAX_SESSION_RETRIES = 3
+    # Initial delay of the reconnect backoff. There is no inner retry count any
+    # more: session creation is attempted once per scheduling cycle, and the
+    # backoff owns the cadence (see ``_create_session_once``).
     _SESSION_RETRY_DELAY = 1.0  # seconds
     _SESSION_RETRY_MAX_DELAY = 30.0  # backoff ceiling for reconnects
     # Granularity of every interruptible sleep in the thread, so a stop()
@@ -953,8 +1101,27 @@ class MouseListener:
         self._logger = get_logger(self.__class__.__name__)
 
     def start(self):
-        """Start the daemon thread."""
+        """Start the daemon thread.
+
+        Refuses while the *previous* capture thread is still alive. ``stop()``
+        joins with a timeout, and that join times out precisely when the thread
+        is wedged in ``portal.setup()`` waiting on an unanswered permission
+        dialog - at which point ``_is_running`` is already False and
+        ``is_alive()`` reports dead, so the service layer restarts us. Starting
+        anyway would open a second portal session while the first still holds an
+        unresolved ``CreateSession``, and two concurrent requests is a reliable
+        way to get one GNOME never answers.
+        """
         if self._is_running:
+            return
+        previous = self._thread
+        if previous is not None and previous.is_alive():
+            self._logger.warning(
+                "InputCapture listener not started: the previous capture thread "
+                "is still alive (most likely blocked in portal.setup() on an "
+                "unanswered permission dialog); refusing to open a second "
+                "portal session"
+            )
             return
         self._is_running = True
         self._ready_event.clear()
@@ -1061,6 +1228,14 @@ class MouseListener:
         logger = self._logger
         session: _CaptureSession | None = None
         first_session = True
+        info = _capture_backend_info()
+        logger.info(
+            "Wayland capture backend "
+            f"module={info.get('module')} version={info.get('version')} "
+            f"segments={info.get('segments')} "
+            f"setup_timeout={info.get('setup_timeout')}"
+            + (f" probe_error={info['error']}" if info.get("error") else "")
+        )
         saved_stderr = _suppress_libei_stderr()
 
         try:
@@ -1166,7 +1341,7 @@ class MouseListener:
         never a bare failure, so capture keeps trying for as long as there is
         a client to capture for.
         """
-        session = self._create_session_with_retry(sorted(self._active_edges), logger)
+        session = self._create_session_once(sorted(self._active_edges), logger)
         if session is None:
             if self._unauthorised is not None:
                 # Waiting out the full backoff is right here: only the user can
@@ -1190,33 +1365,38 @@ class MouseListener:
         self._notify_state(True, None)
         return session
 
-    def _create_session_with_retry(self, active_edges, logger):
-        """Try to create a session, retrying a few times on failure."""
-        for attempt in range(self._MAX_SESSION_RETRIES):
-            if not self._is_running:
-                return None
-            if attempt > 0:
-                logger.debug(f"Session retry {attempt}/{self._MAX_SESSION_RETRIES}")
-                if not self._interruptible_sleep(self._SESSION_RETRY_DELAY):
-                    return None
-            try:
-                session = _CaptureSession.create(
-                    active_edges, logger, keep_waiting=lambda: self._is_running
-                )
-            except _PortalNotAuthorised as exc:
-                # No point retrying: the answer stays "no" until the user acts.
-                self._unauthorised = str(exc)
-                logger.error(
-                    "Wayland input capture was not authorised; grant access to "
-                    "screen input in the system dialog and start sharing again "
-                    f"({exc})"
-                )
-                return None
-            if session is not None:
-                self._unauthorised = None
-                return session
-        logger.warning("Session creation failed after retries")
-        return None
+    def _create_session_once(self, active_edges, logger):
+        """One attempt at creating a session. Retrying is the caller's job.
+
+        Deliberately a single attempt: the inner fast-retry loop this replaced
+        predates the backoff schedule in ``_schedule_reconnect`` and duplicated
+        it, so a failure produced three ``CreateSession`` requests a second apart
+        - the worst possible cadence for a request that needs a human to answer a
+        dialog. One attempt per scheduling cycle, backoff between cycles.
+        """
+        if not self._is_running:
+            return None
+        try:
+            session = _CaptureSession.create(
+                active_edges, logger, keep_waiting=lambda: self._is_running
+            )
+        except _PortalNotAuthorised as exc:
+            # No point retrying: the answer stays "no" until the user acts.
+            self._unauthorised = str(exc)
+            logger.error(
+                "Wayland input capture was not authorised; grant access to "
+                "screen input in the system dialog and start sharing again "
+                f"({exc})"
+            )
+            return None
+        if session is None:
+            # Not a permission problem - clear any stale refusal, otherwise the
+            # first denial makes every later unrelated failure report itself as
+            # "not authorised" and wait out the 30 s ceiling forever.
+            self._unauthorised = None
+            return None
+        self._unauthorised = None
+        return session
 
     # active phase (session exists)
     def _active_tick(self, session, logger):
