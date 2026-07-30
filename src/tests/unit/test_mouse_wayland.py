@@ -222,6 +222,65 @@ class TestPartialEdgeActivation:
         # would strand it there.
         wayland_listener._listener.disable_capture.assert_called_once()
 
+    @pytest.mark.anyio
+    async def test_reject_release_does_not_suppress_the_next_crossing(
+        self, wayland_listener
+    ):
+        """The release that rejects must not ask to swallow a recapture.
+
+        Suppressing it made the following legitimate activation get eaten, whose
+        release triggered another capture - the ~5 ms capture/release ping-pong
+        that pinned the pointer to the barrier instead of letting it reach the
+        real screen border.
+        """
+        binding = _binding(server_axis=(0.0, 0.5))
+        wayland_listener._edge_bindings_by_client = {CLIENT_UID: [binding]}
+        wayland_listener._edge_bindings_snapshot = ((CLIENT_UID, (binding,)),)
+
+        await wayland_listener._on_barrier_activated("right", SCREEN_W - 1, 900)
+
+        _, kwargs = wayland_listener._listener.disable_capture.call_args
+        assert not kwargs.get("suppress_recapture", False)
+
+    @pytest.mark.anyio
+    async def test_return_release_does_suppress_the_recapture(self, wayland_listener):
+        from event import ActiveScreenChangedEvent
+
+        wayland_listener._active_client_barrier = CLIENT_UID
+        await wayland_listener._on_screen_change_guard_wayland(
+            ActiveScreenChangedEvent(
+                active_screen=None, source="server", position=(0.9, 0.5)
+            )
+        )
+
+        _, kwargs = wayland_listener._listener.disable_capture.call_args
+        assert kwargs.get("suppress_recapture") is True
+
+    @pytest.mark.anyio
+    async def test_repeated_rejects_log_once_per_activation(self, wayland_listener):
+        binding = _binding(server_axis=(0.0, 0.5))
+        wayland_listener._edge_bindings_by_client = {CLIENT_UID: [binding]}
+        wayland_listener._edge_bindings_snapshot = ((CLIENT_UID, (binding,)),)
+        wayland_listener._logger = MagicMock()
+        wayland_listener._logger.is_enabled_for = MagicMock(return_value=False)
+
+        # The user leans on an unbound stretch: one activation, many ticks.
+        wayland_listener._listener.current_activation_id = 11
+        for _ in range(5):
+            await wayland_listener._on_barrier_activated("right", SCREEN_W - 1, 900)
+        # Then the pointer moves along and a new activation arrives.
+        wayland_listener._listener.current_activation_id = 12
+        await wayland_listener._on_barrier_activated("right", SCREEN_W - 1, 950)
+
+        rejects = [
+            c
+            for c in wayland_listener._logger.debug.call_args_list
+            if "no binding" in str(c)
+        ]
+        assert len(rejects) == 2
+        # Every activation is still released, logged or not.
+        assert wayland_listener._listener.disable_capture.call_count == 6
+
 
 class TestBarrierSegments:
     """Which parts of which edges get an armed barrier."""

@@ -63,6 +63,8 @@ class ServerMouseListener(_base.ServerMouseListener):
         if self._barrier_mode:
             # UID of the captured client; None while the server owns the cursor.
             self._active_client_barrier: Optional[str] = None
+            # Last activation already logged as unroutable (log dedupe only).
+            self._last_rejected_activation: int = 0
 
             self.event_bus.subscribe(
                 event_type=BusEventType.SCREEN_CHANGE_GUARD,
@@ -267,7 +269,9 @@ class ServerMouseListener(_base.ServerMouseListener):
                 y=y,
             )
             if self._listener:
-                self._listener.disable_capture(x, y)
+                # This release repositions the cursor onto the server edge, so the
+                # recapture it provokes is spurious and must be swallowed.
+                self._listener.disable_capture(x, y, suppress_recapture=True)
             self._active_client_barrier = None
             await self.event_bus.dispatch(
                 event_type=BusEventType.ACTIVE_SCREEN_CHANGED,
@@ -357,14 +361,23 @@ class ServerMouseListener(_base.ServerMouseListener):
             # isn't there. Segment barriers normally keep us out of this
             # branch entirely; it still fires when the compositor rejected a
             # segment and fell back to a whole-edge barrier.
-            self._logger.debug(
-                "[BARRIER_ACT] no binding at activation point; releasing",
-                edge=edge,
-                cx=cursor_x,
-                cy=cursor_y,
+            # One line per activation, not per tick: a user leaning on an
+            # unbound stretch of edge re-triggers this continuously.
+            activation_id = (
+                self._listener.current_activation_id if self._listener else 0
             )
+            if activation_id != self._last_rejected_activation:
+                self._last_rejected_activation = activation_id
+                self._logger.debug(
+                    "[BARRIER_ACT] no binding at activation point; releasing",
+                    edge=edge,
+                    cx=cursor_x,
+                    cy=cursor_y,
+                )
             # The compositor is holding the pointer at the barrier right now -
-            # returning without releasing would strand it there.
+            # returning without releasing would strand it there. No recapture
+            # suppression: this release doesn't move the cursor, and swallowing
+            # the next activation would eat a legitimate crossing.
             if self._listener:
                 self._listener.disable_capture()
             return
