@@ -199,6 +199,20 @@ class TestPartialEdgeActivation:
         assert wayland_listener._active_client_barrier == CLIENT_UID
 
     @pytest.mark.anyio
+    async def test_the_far_corner_of_a_full_span_still_crosses(self, wayland_listener):
+        # ``axis_norm`` is clamped to [0, 1], so the last pixel of a full-span
+        # binding reports exactly 1.0 - which a half-open ``< s_end`` test
+        # rejects, releasing the cursor at the one point the user most
+        # obviously meant to cross.
+        binding = _binding(server_axis=(0.0, 1.0))
+        wayland_listener._edge_bindings_by_client = {CLIENT_UID: [binding]}
+        wayland_listener._edge_bindings_snapshot = ((CLIENT_UID, (binding,)),)
+
+        await wayland_listener._on_barrier_activated("right", SCREEN_W - 1, SCREEN_H)
+
+        assert wayland_listener._active_client_barrier == CLIENT_UID
+
+    @pytest.mark.anyio
     async def test_does_not_cross_outside_the_bound_span(self, wayland_listener):
         binding = _binding(server_axis=(0.0, 0.5))
         wayland_listener._edge_bindings_by_client = {CLIENT_UID: [binding]}
@@ -297,6 +311,19 @@ class TestBarrierSegments:
         assert edge == "right"
         assert (x1, x2) == (SCREEN_W, SCREEN_W)
         assert (y1, y2) == (270, 809)
+
+    def test_full_span_bottom_matches_the_whole_edge_line(self, wayland_listener):
+        # Byte-for-byte what the extension's own whole-edge path computes for
+        # this zone. It has to be: that identity is what lets the backend skip
+        # a ``set_barriers`` the compositor would refuse, deleting the working
+        # barrier and installing nothing in its place.
+        binding = _binding(server_edge="bottom")
+        wayland_listener._edge_bindings_by_client = {CLIENT_UID: [binding]}
+
+        state = wayland_listener._refresh_edge_state()
+
+        assert state["segments"] == [("bottom", 0, SCREEN_H, SCREEN_W - 1, SCREEN_H)]
+        assert state["edges"] == {"bottom": True}
 
     def test_horizontal_edge_is_partitioned_along_x(self, wayland_listener):
         binding = _binding(server_edge="top", server_axis=(0.0, 0.5))

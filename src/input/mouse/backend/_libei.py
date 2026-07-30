@@ -212,6 +212,95 @@ def _malformed_segments(segments) -> list:
     return bad
 
 
+#: The order in which the extension emits whole-edge barriers for one zone
+#: (``pyinputcapture/src/lib.rs`` ``build_barriers``). Only *included* edges
+#: consume a barrier id, so this is also the id order.
+_WHOLE_EDGE_ORDER = ("top", "bottom", "left", "right")
+
+
+def _whole_edge_segments(zones, edges) -> tuple:
+    """The exact lines ``portal.setup(edges)`` / ``set_barriers(edges)`` arm.
+
+    A verbatim port of the extension's ``build_barriers``: per zone
+    ``(w, h, x, y)``, in ``top, bottom, left, right`` order,
+
+    ``top=(x, y, x+w-1, y)``, ``bottom=(x, y+h, x+w-1, y+h)``,
+    ``left=(x, y, x, y+h-1)``, ``right=(x+w, y, x+w, y+h-1)``.
+
+    Knowing these is what makes "the compositor already holds the lines we
+    want" answerable, and re-arming a barrier set that is already correct is
+    the one call that can leave us with *no* barrier at all (see
+    ``_rearm_cycle``). Zone order is ``portal.zones`` order, and only included
+    edges consume a barrier id, so index ``i`` of the result is barrier id
+    ``i + 1``.
+    """
+    wanted = set(edges)
+    lines: list[tuple] = []
+    for zone in zones:
+        w, h, x, y = (int(v) for v in tuple(zone)[:4])
+        by_edge = {
+            "top": (x, y, x + w - 1, y),
+            "bottom": (x, y + h, x + w - 1, y + h),
+            "left": (x, y, x, y + h - 1),
+            "right": (x + w, y, x + w, y + h - 1),
+        }
+        for edge in _WHOLE_EDGE_ORDER:
+            if edge in wanted:
+                lines.append((edge, *by_edge[edge]))
+    return tuple(lines)
+
+
+def _edge_form_request(portal, edges) -> tuple | None:
+    """Ordered lines the *edges* form of ``set_barriers`` will arm.
+
+    ``None`` means "unknown" - an unreadable or empty ``portal.zones``, which
+    is not evidence that nothing would be armed, only that we cannot say what.
+    """
+    try:
+        zones = portal.zones
+    except Exception:
+        return None
+    if not zones:
+        return None
+    try:
+        lines = _whole_edge_segments(zones, edges)
+    except Exception:
+        return None
+    return lines or None
+
+
+def _canonical_barriers(portal, edges, segments) -> frozenset | None:
+    """The set of lines a request stands for, or ``None`` when unknowable.
+
+    Comparing *geometry* rather than the request's spelling is the point: a
+    whole-edge request and a segment covering that whole edge are two
+    spellings of one barrier set, and treating them as different is what made
+    us replace a working barrier with a call the compositor then refused.
+    """
+    if segments:
+        return frozenset(tuple(s) for s in segments)
+    lines = _edge_form_request(portal, edges)
+    return None if lines is None else frozenset(lines)
+
+
+def _diagonal_segments(segments) -> list:
+    """Segments that are neither horizontal nor vertical.
+
+    The extension skips these *without* incrementing its barrier id, so one
+    left in the request shifts every later id and breaks the index-to-id
+    mapping the reply is verified against.
+    """
+    bad = []
+    for segment in segments:
+        try:
+            _, x1, y1, x2, y2 = segment
+        except (TypeError, ValueError):
+            continue
+        if x1 != x2 and y1 != y2:
+            bad.append(tuple(segment))
+    return bad
+
+
 def _capture_backend_info() -> dict:
     """Which pyinputcapture is actually loaded, and what it can do.
 
@@ -231,7 +320,18 @@ def _capture_backend_info() -> dict:
         from pyinputcapture import InputCapturePortal
 
         info["module"] = getattr(pyinputcapture, "__file__", None)
-        info["version"] = getattr(pyinputcapture, "__version__", None)
+        # The Rust ``#[pymodule]`` defines no ``__version__``, so the module
+        # attribute is always None and the startup line could never confirm a
+        # rebuild. The installed distribution's metadata can.
+        version = getattr(pyinputcapture, "__version__", None)
+        if not version:
+            try:
+                from importlib.metadata import version as _distribution_version
+
+                version = _distribution_version("pyinputcapture")
+            except Exception:
+                version = None
+        info["version"] = version
         info["segments"] = _segments_supported(InputCapturePortal)
         setup_signature = _callable_signature(
             getattr(InputCapturePortal, "setup", None)
@@ -718,6 +818,9 @@ class _CaptureSession:
         "ignore_next_activation",
         "armed_edges",
         "armed_segments",
+        "armed_canonical",
+        "armed_request",
+        "whole_edge_only",
         "enabled",
         "dead",
         "segments_warned",
@@ -739,8 +842,23 @@ class _CaptureSession:
         # segments when they were armed that way.
         self.armed_edges: set[str] = set(armed_edges)
         self.armed_segments: tuple = ()
+        # The *geometry* the compositor holds, as a set of lines, or ``None``
+        # for "unknown". This is what a re-arm request is compared against:
+        # ``armed_edges``/``armed_segments`` are two spellings of the same
+        # thing, and comparing spellings is how we came to replace a working
+        # whole-edge barrier with a segment covering exactly the same line.
+        self.armed_canonical: frozenset | None = None
+        # The last request that was applied in full, as ``(edges, segments)``,
+        # so an unchanged request costs nothing at all.
+        self.armed_request: tuple | None = None
+        # Latched when precise barriers are unattainable on this compositor:
+        # only ``setup()`` arms them, so ``set_barriers`` is never called again
+        # and a changed topology is served by rebuilding the session.
+        self.whole_edge_only: bool = False
         # Mirrors portal.enable()/disable(); ``create`` enables the session.
-        self.enabled: bool = True
+        # ``None`` means "unknown" - a ``SetPointerBarriers`` suspends the
+        # session, so the cached flag stops describing it.
+        self.enabled: bool | None = True
         # Set once the compositor has torn the session down: no further
         # portal call can succeed, and calling one anyway is the most likely
         # way to wedge on a blocking D-Bus round trip.
@@ -779,7 +897,19 @@ class _CaptureSession:
             poller.register(receiver.fd, _select.POLLIN)
 
             barrier_map = {bid: edge for bid, edge in bmap_list}
-            return cls(portal, receiver, barrier_map, poller, active_edges)
+            session = cls(portal, receiver, barrier_map, poller, active_edges)
+            # Record what ``setup()`` just armed, in the same terms a later
+            # request is expressed in, so "the compositor already holds these
+            # lines" is answerable without touching it.
+            session.armed_canonical = _canonical_barriers(portal, active_edges, ())
+            session.armed_request = (frozenset(active_edges), ())
+            logger.debug(
+                "Barriers armed by setup(): "
+                f"edges={sorted(active_edges)} "
+                f"lines={sorted(session.armed_canonical) if session.armed_canonical else 'unknown'} "
+                f"barrier_map={barrier_map}"
+            )
+            return session
 
         except Exception as exc:
             reason = str(exc)
@@ -801,7 +931,7 @@ class _CaptureSession:
             logger.error(f"Session setup failed: {reason}")
             return None
 
-    def apply_edges(self, edges, segments, logger) -> None:
+    def apply_edges(self, edges, segments, logger) -> str | None:
         """Make the compositor hold the pointer where a client is, and nowhere else.
 
         An armed barrier stops the cursor at the screen edge, so anywhere with
@@ -820,19 +950,30 @@ class _CaptureSession:
         - ``portal.disable()`` / ``enable()`` are all-or-nothing and cover
           what neither of the above can: no clients at all, where the whole
           border must be free.
+
+        Returns ``None`` when the compositor ended up holding what was asked
+        for, or a reason string when it did not - the caller rebuilds the
+        session on that, because a session holding *no* barrier looks healthy
+        from every other angle.
         """
         if self.dead:
-            return
+            return None
 
         wanted_edges = set(edges)
         if not wanted_edges:
+            # A ``disable()`` suspends capture; it does not delete barriers, so
+            # ``armed_canonical`` still describes the compositor and a client
+            # coming back on the same geometry costs one ``enable()``.
             self._set_capture_enabled(False, logger)
             self.armed_edges = set()
             self.armed_segments = ()
-            return
+            self.armed_request = (frozenset(), ())
+            return None
 
-        self._arm(wanted_edges, tuple(segments or ()), logger)
-        self._set_capture_enabled(True, logger)
+        reason = self._arm(wanted_edges, tuple(segments or ()), logger)
+        if reason is not None:
+            return reason
+        return self._set_capture_enabled(True, logger)
 
     _SEGMENTS_UNAVAILABLE = (
         "pyinputcapture cannot arm partial-edge barriers (no set_barriers/segments "
@@ -841,48 +982,277 @@ class _CaptureSession:
         "extension with `maturin develop` to fix."
     )
 
-    def _arm(self, wanted_edges: set, wanted_segments: tuple, logger) -> None:
-        if wanted_edges == self.armed_edges and wanted_segments == self.armed_segments:
-            return
+    def _arm(self, wanted_edges: set, wanted_segments: tuple, logger) -> str | None:
+        """Arm exactly *wanted*, touching the compositor as little as possible.
+
+        The cheapest re-arm is none. ``SetPointerBarriers`` **replaces the whole
+        barrier set**, and GNOME refuses the replacement on a session that is
+        still enabled - which deletes the working barriers and installs
+        nothing. So the first question is never "is this a different request"
+        but "is this different *geometry*".
+        """
+        wanted_request = (frozenset(wanted_edges), wanted_segments)
+        if self.armed_request is not None and wanted_request == self.armed_request:
+            return None
+
+        wanted_canonical = _canonical_barriers(
+            self.portal, wanted_edges, wanted_segments
+        )
+        if (
+            wanted_canonical is not None
+            and self.armed_canonical is not None
+            and wanted_canonical == self.armed_canonical
+        ):
+            self.armed_edges = set(wanted_edges)
+            self.armed_segments = wanted_segments
+            self.armed_request = wanted_request
+            logger.debug(
+                "Barriers already cover the wanted spans; compositor untouched: "
+                f"edges={sorted(wanted_edges)} segments={len(wanted_segments)}"
+            )
+            return None
+
+        if self.whole_edge_only:
+            # Precise barriers are unattainable here: only ``setup()`` can arm
+            # any, so an edge this session does not hold needs a *new* session.
+            missing = sorted(set(wanted_edges) - self.armed_edges)
+            if missing:
+                return (
+                    "whole-edge barrier mode: this session holds no barrier on "
+                    f"{missing}; rebuilding it to arm one"
+                )
+            # ``armed_edges`` is left alone on purpose: it describes what the
+            # compositor holds, and narrowing it to the current request would
+            # make the edge look unarmed when its client comes back, forcing a
+            # session rebuild for barriers that were there all along.
+            self.armed_request = wanted_request
+            logger.debug(
+                "Whole-edge barrier mode: keeping the barriers setup() armed "
+                f"(wanted edges={sorted(wanted_edges)}); Python filters the "
+                "activations that fall outside a bound span"
+            )
+            return None
+
         if not hasattr(self.portal, "set_barriers"):
             self._warn_segments_unavailable(logger)
-            return
+            return None
         if wanted_segments and not self.segments_supported:
             # Decided by inspection (see ``_segments_supported``), never inferred
             # from an exception around a call whose arguments we construct.
             self._warn_segments_unavailable(logger)
             wanted_segments = ()
 
+        if wanted_segments:
+            diagonal = _diagonal_segments(wanted_segments)
+            if diagonal:
+                # Dropped *before* the call: the extension skips these without
+                # incrementing its barrier id, so leaving one in shifts every
+                # later id and the reply can no longer be verified.
+                logger.warning(
+                    f"Dropping {len(diagonal)} non-axis-aligned barrier "
+                    f"segment(s) before arming: {diagonal}"
+                )
+                wanted_segments = tuple(
+                    s for s in wanted_segments if tuple(s) not in diagonal
+                )
+            if not wanted_segments:
+                return "every requested barrier segment was non-axis-aligned"
+
+        requested = (
+            tuple(tuple(s) for s in wanted_segments)
+            if wanted_segments
+            else _edge_form_request(self.portal, wanted_edges)
+        )
+        return self._rearm_cycle(
+            wanted_edges, wanted_segments, requested, wanted_request, logger
+        )
+
+    def _rearm_cycle(
+        self, wanted_edges, wanted_segments, requested, wanted_request, logger
+    ) -> str | None:
+        """``disable`` -> ``set_barriers`` -> ``enable``, in that exact order.
+
+        GNOME refuses ``SetPointerBarriers`` on an enabled session, and the
+        spec has the call suspend the session anyway - so the trailing
+        ``enable()`` is unconditional and must never be gated on the cached
+        flag. KDE does not need the ``disable()``, so a failure there is a
+        warning and the cycle continues.
+        """
+        mode = "segments" if wanted_segments else "edges"
+        logger.debug(
+            f"[REARM] begin mode={mode} edges={sorted(wanted_edges)} "
+            f"requested={len(requested) if requested is not None else 'unknown'} "
+            f"lines={list(requested) if requested is not None else 'unknown'}"
+        )
+
+        if self.captured:
+            # Don't strand the pointer on a barrier that is about to be deleted.
+            try:
+                self.release_cursor(None, None)
+            except RuntimeError as exc:
+                logger.debug(f"[REARM] release before re-arm failed: {exc}")
+
+        self.enabled = None
         try:
-            if wanted_segments:
-                bmap_list = self.portal.set_barriers(segments=list(wanted_segments))
-            else:
-                bmap_list = self.portal.set_barriers(sorted(wanted_edges))
+            self.portal.disable()
+        except Exception as exc:
+            logger.warning(f"[REARM] portal.disable failed (continuing): {exc}")
+
+        bmap_list = None
+        try:
+            bmap_list = self._call_set_barriers(wanted_edges, wanted_segments)
         except Exception as exc:
             if not wanted_segments:
                 logger.warning(f"set_barriers failed: {exc}")
-                return
-            # The capability is present, so this is an argument problem: say
-            # which segment, rather than blaming a missing rebuild.
-            malformed = _malformed_segments(wanted_segments)
-            logger.error(
-                f"set_barriers(segments=...) rejected the segment list: {exc}; "
-                f"offending={malformed or list(wanted_segments)}"
-            )
-            try:
-                bmap_list = self.portal.set_barriers(sorted(wanted_edges))
-            except Exception as fallback_exc:
-                logger.warning(f"set_barriers failed: {fallback_exc}")
-                return
-            wanted_segments = ()
+            else:
+                # The capability is present, so this is an argument problem: say
+                # which segment, rather than blaming a missing rebuild.
+                malformed = _malformed_segments(wanted_segments)
+                logger.error(
+                    f"set_barriers(segments=...) rejected the segment list: {exc}; "
+                    f"offending={malformed or list(wanted_segments)}"
+                )
+                try:
+                    bmap_list = self._call_set_barriers(wanted_edges, ())
+                except Exception as fallback_exc:
+                    logger.warning(f"set_barriers failed: {fallback_exc}")
+                else:
+                    wanted_segments = ()
+                    requested = _edge_form_request(self.portal, wanted_edges)
 
-        self.barrier_map = {bid: edge for bid, edge in bmap_list}
-        self.armed_edges = wanted_edges
+        if bmap_list is None:
+            # Whatever the compositor holds now, it is not what we asked for.
+            self.armed_canonical = None
+            self.armed_request = None
+            reason = "set_barriers failed; the barrier set is unknown"
+        else:
+            reason = self._accept_barriers(
+                bmap_list,
+                wanted_edges,
+                wanted_segments,
+                requested,
+                wanted_request,
+                logger,
+            )
+
+        enable_reason = self._enable_after_rearm(logger)
+        logger.debug(f"[REARM] done reason={reason or enable_reason}")
+        return reason or enable_reason
+
+    def _call_set_barriers(self, wanted_edges, wanted_segments):
+        if wanted_segments:
+            return self.portal.set_barriers(segments=list(wanted_segments))
+        return self.portal.set_barriers(sorted(wanted_edges))
+
+    def _accept_barriers(
+        self,
+        bmap_list,
+        wanted_edges,
+        wanted_segments,
+        requested,
+        wanted_request,
+        logger,
+    ) -> str | None:
+        """Believe the reply, not the request.
+
+        ``set_barriers`` silently drops the barriers the compositor rejected -
+        the extension prints them to stderr, which is pointed at /dev/null, and
+        filters them out of the return value. So the reply's *length* is the
+        only signal that anything armed at all, and an empty one means **zero**
+        barriers exist. Reporting that as "re-armed" is how a session with no
+        barriers whatsoever came to look perfectly healthy.
+        """
+        accepted = {int(bid): edge for bid, edge in bmap_list}
+
+        if requested is None:
+            # Geometry unknown (unreadable ``portal.zones``): "did anything
+            # arm" is all that can honestly be checked.
+            if not accepted:
+                self.armed_canonical = None
+                self.armed_request = None
+                logger.error(
+                    "set_barriers armed nothing: the compositor rejected every "
+                    f"barrier for edges={sorted(wanted_edges)}. "
+                    + self._GNOME_REARM_HINT
+                )
+                return "the compositor rejected every barrier"
+            self.barrier_map = accepted
+            self.armed_edges = set(wanted_edges)
+            self.armed_segments = wanted_segments
+            self.armed_canonical = _canonical_barriers(
+                self.portal, wanted_edges, wanted_segments
+            )
+            self.armed_request = wanted_request
+            logger.debug(
+                f"Barriers re-armed: edges={sorted(wanted_edges)} "
+                f"segments={len(wanted_segments)} accepted={len(accepted)}"
+            )
+            return None
+
+        # The extension assigns ids in request order, starting at 1.
+        rejected = [
+            (i + 1, requested[i])
+            for i in range(len(requested))
+            if i + 1 not in accepted
+        ]
+
+        if not accepted:
+            self.armed_canonical = None
+            self.armed_request = None
+            logger.error(
+                "set_barriers armed nothing: the compositor rejected every "
+                f"requested barrier ({len(requested)}): {list(requested)}. "
+                + self._GNOME_REARM_HINT
+            )
+            return "the compositor rejected every barrier"
+
+        accepted_lines = tuple(
+            requested[bid - 1] for bid in sorted(accepted) if 1 <= bid <= len(requested)
+        )
+
+        if rejected:
+            logger.warning(
+                "set_barriers armed only part of what was requested "
+                f"(requested={len(requested)} accepted={len(accepted)}); rejected="
+                + str([(bid, line[0], line[1:]) for bid, line in rejected])
+            )
+            # The state must describe the compositor, not the request.
+            self.barrier_map = accepted
+            self.armed_edges = {line[0] for line in accepted_lines}
+            self.armed_segments = accepted_lines if wanted_segments else ()
+            self.armed_canonical = frozenset(accepted_lines)
+            self.armed_request = None
+            return None
+
+        self.barrier_map = accepted
+        self.armed_edges = set(wanted_edges)
         self.armed_segments = wanted_segments
+        self.armed_canonical = frozenset(requested)
+        self.armed_request = wanted_request
         logger.debug(
             f"Barriers re-armed: edges={sorted(wanted_edges)} "
-            f"segments={len(wanted_segments)}"
+            f"segments={len(wanted_segments)} "
+            f"requested={len(requested)} accepted={len(accepted)}"
         )
+        return None
+
+    _GNOME_REARM_HINT = (
+        "GNOME refuses SetPointerBarriers on an enabled session and 46.0 cannot "
+        "re-enable a disabled one; falling back to whole-edge barriers armed at "
+        "session setup (set PERPETUA_MOUSE_WHOLE_EDGE_BARRIERS=1 to skip the "
+        "attempt entirely)."
+    )
+
+    def _enable_after_rearm(self, logger) -> str | None:
+        """Re-enable unconditionally: the cached flag no longer describes it."""
+        try:
+            self.portal.enable()
+        except Exception as exc:
+            self.enabled = None
+            logger.error(f"[REARM] portal.enable failed after set_barriers: {exc}")
+            return f"capture could not be re-enabled after re-arming barriers: {exc}"
+        self.enabled = True
+        return None
 
     def _warn_segments_unavailable(self, logger) -> None:
         """Say once, loudly, that partial-edge barriers can't be armed.
@@ -896,19 +1266,33 @@ class _CaptureSession:
         self.segments_warned = True
         logger.warning(self._SEGMENTS_UNAVAILABLE)
 
-    def _set_capture_enabled(self, enabled: bool, logger) -> None:
-        if self.enabled == enabled:
-            return
+    def _set_capture_enabled(self, enabled: bool, logger) -> str | None:
+        """Issue the call whenever the cached state isn't known to match.
+
+        ``self.enabled`` is ``bool | None`` and ``None`` means *unknown*, so it
+        always issues - which is what hardens the "last client disconnects ->
+        disable(), reconnects -> enable()" path against the same GNOME 46
+        re-enable hazard as a re-arm.
+        """
+        if self.enabled is enabled:
+            return None
         try:
             if enabled:
                 self.portal.enable()
             else:
                 self.portal.disable()
         except Exception as exc:
+            # Not the pre-call value: after a failure we no longer know.
+            self.enabled = None
             logger.debug(f"portal.{'enable' if enabled else 'disable'} failed: {exc}")
-            return
+            return (
+                f"portal.{'enable' if enabled else 'disable'} failed: {exc}"
+                if enabled
+                else None
+            )
         self.enabled = enabled
         logger.debug(f"Capture {'enabled' if enabled else 'disabled'}")
+        return None
 
     def teardown(self):
         """Release capture and close the portal session.
@@ -1100,6 +1484,13 @@ class MouseListener:
         )
         # Monotonic deadline for the next reconnect attempt, or 0.0 for "now".
         self._reconnect_at = 0.0
+        # Latched the first time a re-arm leaves the compositor holding nothing
+        # (GNOME 46), and pre-latchable so the risky call can be skipped
+        # outright. Only the literal "1" opts in, same convention as
+        # PERPETUA_DAEMON_FORCE_EXIT / PERPETUA_MOUSE_FORCE_CGEVENT.
+        self._whole_edge_only = (
+            os.environ.get("PERPETUA_MOUSE_WHOLE_EDGE_BARRIERS") == "1"
+        )
         self._logger = get_logger(self.__class__.__name__)
 
     def start(self):
@@ -1235,7 +1626,8 @@ class MouseListener:
             "Wayland capture backend "
             f"module={info.get('module')} version={info.get('version')} "
             f"segments={info.get('segments')} "
-            f"setup_timeout={info.get('setup_timeout')}"
+            f"setup_timeout={info.get('setup_timeout')} "
+            f"whole_edge_only={self._whole_edge_only}"
             + (f" probe_error={info['error']}" if info.get("error") else "")
         )
         saved_stderr = _suppress_libei_stderr()
@@ -1357,9 +1749,19 @@ class MouseListener:
             else:
                 self._schedule_reconnect(logger, "capture session unavailable")
             return _NO_SESSION
+        session.whole_edge_only = self._whole_edge_only
         # ``setup`` can only take whole edges; narrow them to the bound
         # portions now that the session exists.
-        session.apply_edges(self._active_edges, self._active_segments, logger)
+        reason = session.apply_edges(self._active_edges, self._active_segments, logger)
+        if reason is not None:
+            # A session holding no barriers must never be reported healthy.
+            # Latching whole-edge mode makes the rebuild converge after one
+            # reconnect instead of looping on the same refused call.
+            self._whole_edge_only = True
+            session.teardown()
+            self._has_session = False
+            self._schedule_reconnect(logger, reason)
+            return _NO_SESSION
         self._backoff.reset()
         self._reconnect_pending = False
         self._has_session = True
@@ -1458,8 +1860,10 @@ class MouseListener:
 
             if not self._clients_active or edge not in self._active_edges:
                 self._logger.debug(
-                    f"[PENDING_ACTIVATION] REJECTED clients_active={self._clients_active} "
-                    f"edge={edge} active_edges={self._active_edges}"
+                    f"[PENDING_ACTIVATION] REJECTED bid={bid} "
+                    f"clients_active={self._clients_active} edge={edge} "
+                    f"active_edges={self._active_edges} "
+                    f"barrier_map={sorted(session.barrier_map)}"
                 )
                 try:
                     session.release_cursor(None, None)
@@ -1493,7 +1897,16 @@ class MouseListener:
                 # a layout edit, a connect/disconnect or a monitor hotplug all
                 # come through, so a newly bound edge starts capturing (and an
                 # unbound one stops holding the pointer) without a reconnect.
-                session.apply_edges(new_edges, self._active_segments, logger)
+                reason = session.apply_edges(new_edges, self._active_segments, logger)
+                if reason is not None:
+                    # The compositor is not holding what we asked for, so the
+                    # session is worthless: hand it to the reconnect path the
+                    # EIS-disconnect case already uses, with whole-edge mode
+                    # latched so the rebuild converges.
+                    self._notify_state(False, reason)
+                    self._whole_edge_only = True
+                    logger.warning(f"Barrier re-arm failed: {reason}")
+                    return "disconnected"
 
             elif cmd_type == "disable_capture":
                 if session.captured:
@@ -1644,6 +2057,15 @@ class MouseListener:
             bid, cx, cy = activation
             edge = session.barrier_map.get(bid)
             if not self._clients_active or edge not in self._active_edges:
+                # This branch used to release with no log output at all, so a
+                # barrier id the map doesn't know - the signature of a barrier
+                # set that was replaced behind our back - was invisible.
+                logger.debug(
+                    f"[START_EMUL] REJECTED bid={bid} edge={edge} "
+                    f"clients_active={self._clients_active} "
+                    f"active_edges={self._active_edges} "
+                    f"barrier_map={sorted(session.barrier_map)}"
+                )
                 try:
                     session.release_cursor(None, None)
                 except RuntimeError as exc:
