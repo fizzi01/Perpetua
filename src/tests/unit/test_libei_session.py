@@ -114,6 +114,182 @@ def _session(libei, portal=None, armed=("right",)):
     )
 
 
+def _active_listener(libei):
+    """A listener that considers the "right" edge bound, for one-tick drives."""
+    listener = libei.MouseListener()
+    listener._active_edges = {"right"}
+    listener._clients_active = True
+    return listener
+
+
+class TestReleaseIntent:
+    """A release that repositions differs from one that merely lets go."""
+
+    def test_return_release_suppresses_the_recapture(self, libei, logger):
+        # The landing sits 1 px off the barrier, so the recapture that follows is
+        # spurious and must be swallowed.
+        session = _session(libei)
+        session.captured = True
+        session.portal.zones = [(1920, 1080, 0, 0)]
+        listener = _active_listener(libei)
+
+        listener.disable_capture(0.5, 0.5, suppress_recapture=True)
+        listener._process_commands(session, logger)
+
+        assert session.ignore_next_activation is True
+
+    def test_reject_release_does_not_suppress(self, libei, logger):
+        # The ping-pong: a reject armed the token, the next legitimate crossing
+        # got swallowed, its release triggered another capture, and round again
+        # every few milliseconds - so the pointer never reached the border.
+        session = _session(libei)
+        session.captured = True
+        session.portal.zones = [(1920, 1080, 0, 0)]
+        listener = _active_listener(libei)
+
+        listener.disable_capture()
+        listener._process_commands(session, logger)
+
+        assert session.ignore_next_activation is False
+        session.portal.release.assert_called_once()
+
+    def test_reject_then_crossing_is_not_swallowed(self, libei, logger):
+        """A reject must leave the next real activation alone."""
+        session = _session(libei)
+        session.captured = True
+        session.portal.zones = [(1920, 1080, 0, 0)]
+        session.portal.activation_id = 5
+        session.portal.barrier_id = 1
+        session.portal.cursor_position = (1920.0, 400.0)
+        listener = _active_listener(libei)
+        crossings = []
+        listener._on_barrier = lambda edge, cx, cy: crossings.append((edge, cx, cy))
+
+        # Reject on an unbound portion, then a genuine activation.
+        listener.disable_capture()
+        listener._process_commands(session, logger)
+        listener._handle_start_emulating(session, logger)
+
+        assert crossings == [("right", 1920.0, 400.0)]
+
+
+class TestActivationIdConsumption:
+    def test_ignored_activation_is_still_consumed(self, libei, logger):
+        """Ignoring an event must not leave the activation id behind.
+
+        Returning before ``poll_activated`` left ``last_activation_id`` stale, so
+        the next resolution replayed the skipped activation's coordinates - seen
+        in the field as a cursor position frozen across dozens of capture/release
+        cycles while the user was really moving, with every routing decision made
+        against that stale point.
+        """
+        session = _session(libei)
+        session.ignore_next_activation = True
+        session.portal.activation_id = 42
+        session.portal.barrier_id = 1
+        session.portal.cursor_position = (1920.0, 100.0)
+        listener = _active_listener(libei)
+
+        listener._handle_start_emulating(session, logger)
+
+        assert session.last_activation_id == 42
+        assert session.ignore_next_activation is False
+
+    def test_next_activation_uses_fresh_coordinates(self, libei, logger):
+        session = _session(libei)
+        session.ignore_next_activation = True
+        session.portal.activation_id = 42
+        session.portal.barrier_id = 1
+        session.portal.cursor_position = (1920.0, 100.0)
+        listener = _active_listener(libei)
+        seen = []
+        listener._on_barrier = lambda edge, cx, cy: seen.append((cx, cy))
+
+        listener._handle_start_emulating(session, logger)  # swallowed
+
+        # The user has moved on; a new activation arrives.
+        session.portal.activation_id = 43
+        session.portal.cursor_position = (1920.0, 800.0)
+        listener._handle_start_emulating(session, logger)
+
+        assert seen == [(1920.0, 800.0)], "the stale point must not be replayed"
+
+    def test_activation_id_is_published_for_callbacks(self, libei, logger):
+        session = _session(libei)
+        session.portal.activation_id = 7
+        session.portal.barrier_id = 1
+        session.portal.cursor_position = (1920.0, 200.0)
+        listener = _active_listener(libei)
+        listener._on_barrier = lambda *a: None
+
+        listener._handle_start_emulating(session, logger)
+
+        assert listener.current_activation_id == 7
+
+
+class TestPermissionFailure:
+    def test_unauthorised_setup_stops_the_fast_retries(
+        self, libei, logger, monkeypatch
+    ):
+        """A denied dialog can't be fixed by retrying a second later."""
+        attempts = []
+
+        def _create(edges, log, keep_waiting=None):
+            attempts.append(edges)
+            raise libei._PortalNotAuthorised("access denied")
+
+        monkeypatch.setattr(libei._CaptureSession, "create", _create)
+        listener = libei.MouseListener()
+        listener._is_running = True
+
+        assert listener._create_session_with_retry(["right"], logger) is None
+        assert len(attempts) == 1, "must not burn the retry budget on a refusal"
+        assert listener._unauthorised == "access denied"
+
+    def test_permission_hints_are_recognised(self, libei):
+        assert libei._is_permission_failure("create_session: Access denied")
+        assert libei._is_permission_failure("request cancelled by user")
+        assert not libei._is_permission_failure("zones request: timed out")
+
+    def test_unauthorised_waits_the_long_delay(self, libei, logger, monkeypatch):
+        monkeypatch.setattr(
+            libei.MouseListener,
+            "_create_session_with_retry",
+            lambda self, edges, log: None,
+        )
+        listener = libei.MouseListener()
+        listener._active_edges = {"right"}
+        listener._unauthorised = "access denied"
+
+        assert listener._open_session(logger) is libei._NO_SESSION
+        # Backing off to the ceiling, not re-asking every second.
+        assert listener._reconnect_at > 0
+        assert listener._reconnect_pending is True
+
+
+class TestSegmentCapabilityWarning:
+    def test_warns_once_when_set_barriers_is_missing(self, libei, logger):
+        # Silent degradation is how a whole-edge barrier across an unbound
+        # stretch of screen looked like a mystery rather than a missing rebuild.
+        portal = MagicMock(spec=["zones", "release", "close", "enable", "disable"])
+        session = _session(libei, portal, armed=())
+
+        session.apply_edges({"right"}, [("right", 1920, 0, 1920, 540)], logger)
+        session.apply_edges({"left"}, [("left", 0, 0, 0, 540)], logger)
+
+        warnings = [c for c in logger.warning.call_args_list if "maturin" in str(c)]
+        assert len(warnings) == 1
+
+    def test_no_warning_when_segments_are_supported(self, libei, logger):
+        portal = MagicMock()
+        portal.set_barriers.return_value = [(1, "right")]
+        session = _session(libei, portal, armed=())
+
+        session.apply_edges({"right"}, [("right", 1920, 0, 1920, 540)], logger)
+
+        assert not [c for c in logger.warning.call_args_list if "maturin" in str(c)]
+
+
 class TestTeardown:
     def test_releases_and_closes_a_live_session(self, libei, logger):
         session = _session(libei)

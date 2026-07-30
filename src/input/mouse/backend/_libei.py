@@ -31,6 +31,7 @@ import time
 import threading
 import enum
 import select as _select
+from contextlib import contextmanager
 
 from evdev import ecodes
 from snegg.ei import Sender, EventType, DeviceCapability
@@ -71,6 +72,59 @@ def _restore_stderr(saved_fd):
             os.close(saved_fd)
         except OSError:
             pass
+
+
+@contextmanager
+def _stderr_visible():
+    """Temporarily undo ``_suppress_libei_stderr`` for the enclosed block.
+
+    The suppression exists for libei's per-event C-level chatter, but it is
+    installed for the whole capture thread - which also discarded the extension's
+    one-line explanation of a failed portal setup.
+    """
+    saved = None
+    try:
+        saved = os.dup(2)
+        real_stderr = os.open("/dev/tty", os.O_WRONLY)
+    except OSError:
+        # No controlling terminal (a service, a redirected launch): nothing to
+        # restore to, so just run the block as-is.
+        if saved is not None:
+            os.close(saved)
+        yield
+        return
+    try:
+        os.dup2(real_stderr, 2)
+        os.close(real_stderr)
+        yield
+    finally:
+        _restore_stderr(saved)
+
+
+# Portal failures that mean "the user has not granted access", where retrying
+# changes nothing until they do.
+_PERMISSION_HINTS = (
+    "not authorized",
+    "not authorised",
+    "denied",
+    "cancelled",
+    "canceled",
+    "no such interface",
+)
+
+
+def _is_permission_failure(reason: str) -> bool:
+    lowered = reason.lower()
+    return any(hint in lowered for hint in _PERMISSION_HINTS)
+
+
+class _PortalNotAuthorised(RuntimeError):
+    """Capture was refused, not merely unavailable.
+
+    Retrying in a second cannot help - the user has to grant access - so this is
+    raised instead of a plain failure to keep the fast retry loop from spinning
+    on a dialog and to let the caller report something actionable.
+    """
 
 
 Button = enum.Enum(
@@ -538,6 +592,7 @@ class _CaptureSession:
         "armed_segments",
         "enabled",
         "dead",
+        "segments_warned",
     )
 
     def __init__(self, portal, receiver, barrier_map, poller, armed_edges):
@@ -561,6 +616,8 @@ class _CaptureSession:
         # portal call can succeed, and calling one anyway is the most likely
         # way to wedge on a blocking D-Bus round trip.
         self.dead: bool = False
+        # One-shot guard for the "can't arm partial edges" warning.
+        self.segments_warned: bool = False
 
     @classmethod
     def create(
@@ -573,7 +630,12 @@ class _CaptureSession:
         portal = None
         try:
             portal = InputCapturePortal()
-            zones, eis_fd, bmap_list = portal.setup(list(active_edges))
+            # Restore stderr for the duration of setup: the extension prints the
+            # underlying portal failure there, and the caller has fd 2 pointed at
+            # /dev/null to silence libei's dispatch-loop spam - which also hid the
+            # one message that explains a failed session.
+            with _stderr_visible():
+                zones, eis_fd, bmap_list = portal.setup(list(active_edges))
             logger.debug(f"Session created: zones={zones} edges={active_edges}")
 
             receiver = _ei_from_fd(Receiver, eis_fd, "perpetua-cursor-capture")
@@ -588,12 +650,18 @@ class _CaptureSession:
             return cls(portal, receiver, barrier_map, poller, active_edges)
 
         except Exception as exc:
-            logger.error(f"Session setup failed: {exc}")
+            reason = str(exc)
             if portal is not None:
                 try:
                     portal.close()
                 except Exception:
                     pass
+            if _is_permission_failure(reason):
+                # Not a transient fault: nothing changes until the user grants
+                # access, so say so and let the caller stop retrying instead of
+                # burning attempts as if the next one could differ.
+                raise _PortalNotAuthorised(reason) from exc
+            logger.error(f"Session setup failed: {reason}")
             return None
 
     def apply_edges(self, edges, segments, logger) -> None:
@@ -629,10 +697,18 @@ class _CaptureSession:
         self._arm(wanted_edges, tuple(segments or ()), logger)
         self._set_capture_enabled(True, logger)
 
+    _SEGMENTS_UNAVAILABLE = (
+        "pyinputcapture cannot arm partial-edge barriers (no set_barriers/segments "
+        "support in the installed build). Barriers cover whole edges, so the cursor "
+        "will stall on the parts of an edge with no client behind them. Rebuild the "
+        "extension with `maturin develop` to fix."
+    )
+
     def _arm(self, wanted_edges: set, wanted_segments: tuple, logger) -> None:
         if wanted_edges == self.armed_edges and wanted_segments == self.armed_segments:
             return
         if not hasattr(self.portal, "set_barriers"):
+            self._warn_segments_unavailable(logger)
             return
         try:
             if wanted_segments:
@@ -641,6 +717,7 @@ class _CaptureSession:
                 bmap_list = self.portal.set_barriers(sorted(wanted_edges))
         except TypeError:
             # Installed build has set_barriers but not the segments keyword.
+            self._warn_segments_unavailable(logger)
             try:
                 bmap_list = self.portal.set_barriers(sorted(wanted_edges))
             except Exception as exc:
@@ -658,6 +735,18 @@ class _CaptureSession:
             f"Barriers re-armed: edges={sorted(wanted_edges)} "
             f"segments={len(wanted_segments)}"
         )
+
+    def _warn_segments_unavailable(self, logger) -> None:
+        """Say once, loudly, that partial-edge barriers can't be armed.
+
+        This used to degrade silently, which is how a whole-edge barrier sitting
+        across an unbound stretch of screen looked like a mystery rather than a
+        missing rebuild.
+        """
+        if self.segments_warned:
+            return
+        self.segments_warned = True
+        logger.warning(self._SEGMENTS_UNAVAILABLE)
 
     def _set_capture_enabled(self, enabled: bool, logger) -> None:
         if self.enabled == enabled:
@@ -847,6 +936,10 @@ class MouseListener:
         self._active_segments: tuple = ()
         self._ready_event = threading.Event()
         self._cmd_queue: queue.Queue = queue.Queue()
+        # Published for ``current_activation_id`` right before on_barrier fires.
+        self._current_activation_id = 0
+        # Reason string while capture is refused for lack of permission, else None.
+        self._unauthorised: str | None = None
         # Session health, read by ``is_alive`` so the service layer's
         # restart-on-dead check can actually fire.
         self._has_session = False
@@ -933,9 +1026,35 @@ class MouseListener:
             {"type": "update_clients", "clients": edges, "segments": segments}
         )
 
-    def disable_capture(self, x=-1, y=-1):
-        """Release capture (cursor returns to server)."""
-        self._cmd_queue.put({"type": "disable_capture", "x": x, "y": y})
+    @property
+    def current_activation_id(self) -> int:
+        """Id of the activation last handed to ``on_barrier``, or 0.
+
+        Published just before the callback fires and read cross-thread on purpose
+        (a plain int, atomic under the GIL): it lets the callback side key
+        per-activation state - notably "already logged this one" - without
+        threading the id through every callback signature.
+        """
+        return self._current_activation_id
+
+    def disable_capture(self, x=-1, y=-1, suppress_recapture: bool = False):
+        """Release capture.
+
+        ``suppress_recapture`` should be set only when the release *repositions*
+        the cursor (the client handing control back): the landing sits close to
+        the barrier, so the recapture that follows is spurious and must be
+        swallowed. For a plain release with no reposition - rejecting an
+        activation, or an active client disconnecting - swallowing the next
+        activation would eat a legitimate crossing instead.
+        """
+        self._cmd_queue.put(
+            {
+                "type": "disable_capture",
+                "x": x,
+                "y": y,
+                "suppress_recapture": suppress_recapture,
+            }
+        )
 
     def _thread_main(self):
         """Session lifecycle loop: idle (no session) or active (poll EIS)."""
@@ -986,13 +1105,18 @@ class MouseListener:
             _restore_stderr(saved_stderr)
             logger.debug("Thread exiting")
 
-    def _schedule_reconnect(self, logger, reason: str):
-        """Arm the next reconnect attempt, or stand down if nothing to capture."""
+    def _schedule_reconnect(self, logger, reason: str, delay: float | None = None):
+        """Arm the next reconnect attempt, or stand down if nothing to capture.
+
+        ``delay`` overrides the backoff for failures whose retry cadence is known
+        to be wrong to escalate from - see the unauthorised case.
+        """
         if not self._active_edges:
             self._reconnect_pending = False
             self._notify_state(True, None)
             return
-        delay = self._backoff.get_next_delay()
+        if delay is None:
+            delay = self._backoff.get_next_delay()
         self._reconnect_at = time.monotonic() + delay
         self._reconnect_pending = True
         logger.warning(f"{reason}; reconnecting in {delay:.1f}s")
@@ -1044,7 +1168,17 @@ class MouseListener:
         """
         session = self._create_session_with_retry(sorted(self._active_edges), logger)
         if session is None:
-            self._schedule_reconnect(logger, "capture session unavailable")
+            if self._unauthorised is not None:
+                # Waiting out the full backoff is right here: only the user can
+                # change the answer, and re-asking every second would just queue
+                # portal requests behind an unanswered one.
+                self._schedule_reconnect(
+                    logger,
+                    "Wayland input capture not authorised",
+                    delay=self._SESSION_RETRY_MAX_DELAY,
+                )
+            else:
+                self._schedule_reconnect(logger, "capture session unavailable")
             return _NO_SESSION
         # ``setup`` can only take whole edges; narrow them to the bound
         # portions now that the session exists.
@@ -1065,10 +1199,21 @@ class MouseListener:
                 logger.debug(f"Session retry {attempt}/{self._MAX_SESSION_RETRIES}")
                 if not self._interruptible_sleep(self._SESSION_RETRY_DELAY):
                     return None
-            session = _CaptureSession.create(
-                active_edges, logger, keep_waiting=lambda: self._is_running
-            )
+            try:
+                session = _CaptureSession.create(
+                    active_edges, logger, keep_waiting=lambda: self._is_running
+                )
+            except _PortalNotAuthorised as exc:
+                # No point retrying: the answer stays "no" until the user acts.
+                self._unauthorised = str(exc)
+                logger.error(
+                    "Wayland input capture was not authorised; grant access to "
+                    "screen input in the system dialog and start sharing again "
+                    f"({exc})"
+                )
+                return None
             if session is not None:
+                self._unauthorised = None
                 return session
         logger.warning("Session creation failed after retries")
         return None
@@ -1144,6 +1289,7 @@ class MouseListener:
                 self._logger.debug(
                     f"[PENDING_ACTIVATION] -> on_barrier({edge}, {cx}, {cy})"
                 )
+                self._current_activation_id = session.last_activation_id
                 self._on_barrier(edge, cx, cy)
 
     def _process_commands(self, session, logger):
@@ -1174,7 +1320,14 @@ class MouseListener:
                         session.portal,
                     )
                     logger.debug(f"[CMD] release_cursor abs=({cx}, {cy})")
-                    session.ignore_next_activation = True
+                    # Only a release that *repositions* the cursor near a barrier
+                    # can provoke a spurious recapture worth swallowing. Arming
+                    # this for every release let a plain reject eat the next
+                    # legitimate crossing, which then released and re-captured -
+                    # a capture/release ping-pong that kept the pointer pinned to
+                    # the barrier instead of letting it reach the border.
+                    if cmd.get("suppress_recapture"):
+                        session.ignore_next_activation = True
                     try:
                         session.release_cursor(cx, cy)
                     except RuntimeError as exc:
@@ -1287,6 +1440,15 @@ class MouseListener:
         session.captured = True
         logger.debug(f"[EIS] START_EMULATING last_aid={session.last_activation_id}")
 
+        # Consume the activation FIRST, even if we are about to ignore this event.
+        # Returning before this left ``last_activation_id`` behind the portal's
+        # counter, so the *next* resolution replayed the coordinates of the
+        # activation we skipped - observed as a cursor position frozen for dozens
+        # of capture/release cycles while the user was actually moving, and every
+        # routing decision taken against that stale point.
+        # ``_dispatch_pending_activation`` has always polled first; this matches it.
+        activation = session.poll_activated()
+
         if session.ignore_next_activation:
             session.ignore_next_activation = False
             logger.debug("[START_EMUL] IGNORED (spurious recapture after release)")
@@ -1296,7 +1458,6 @@ class MouseListener:
                 logger.error(str(exc))
             return
 
-        activation = session.poll_activated()
         if activation:
             bid, cx, cy = activation
             edge = session.barrier_map.get(bid)
@@ -1308,6 +1469,7 @@ class MouseListener:
                 return
 
             if edge and self._on_barrier:
+                self._current_activation_id = session.last_activation_id
                 self._on_barrier(edge, cx, cy)
         else:
             session.pending_activation = True
