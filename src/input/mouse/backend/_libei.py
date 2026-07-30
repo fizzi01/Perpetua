@@ -38,6 +38,7 @@ from snegg.c.libei import libei
 from snegg.oeffis import Oeffis, DeviceType, DisconnectedError, SessionClosedError
 
 from input.utils import ButtonMapping
+from utils import ExponentialBackoff
 from utils.logging import get_logger
 
 
@@ -123,6 +124,7 @@ class _EiConnection:
         self._dispatch_thread: threading.Thread | None = None
         self._has_pointer = False
         self._has_pointer_abs = False
+        self._closing = False
 
     @property
     def device(self):
@@ -409,7 +411,13 @@ _LISTENER_CAPABILITIES = (
 class _CaptureSession:
     """State of an active InputCapture portal session."""
 
-    _RELEASE_EDGE_MARGIN = 5.0
+    # Inset applied to a release point so the cursor doesn't land exactly on
+    # a barrier line. Only one pixel: an armed barrier now exists solely on
+    # edges that lead to a client (see ``set_barriers``), and
+    # ``ignore_next_activation`` already absorbs a spurious recapture. A
+    # bigger inset is directly visible as the cursor refusing to sit on the
+    # border it was pushed from.
+    _RELEASE_EDGE_MARGIN = 1.0
 
     __slots__ = (
         "portal",
@@ -422,9 +430,12 @@ class _CaptureSession:
         "scroll_accum_y",
         "last_activation_id",
         "ignore_next_activation",
+        "armed_edges",
+        "enabled",
+        "dead",
     )
 
-    def __init__(self, portal, receiver, barrier_map, poller):
+    def __init__(self, portal, receiver, barrier_map, poller, armed_edges):
         self.portal = portal
         self.receiver = receiver
         self.barrier_map: dict[int, str] = barrier_map
@@ -435,9 +446,17 @@ class _CaptureSession:
         self.scroll_accum_y: float = 0.0
         self.last_activation_id: int = 0
         self.ignore_next_activation: bool = False
+        # Edges the compositor currently holds barriers on.
+        self.armed_edges: set[str] = set(armed_edges)
+        # Mirrors portal.enable()/disable(); ``create`` enables the session.
+        self.enabled: bool = True
+        # Set once the compositor has torn the session down: no further
+        # portal call can succeed, and calling one anyway is the most likely
+        # way to wedge on a blocking D-Bus round trip.
+        self.dead: bool = False
 
     @classmethod
-    def create(cls, active_edges, logger) -> "_CaptureSession | None":
+    def create(cls, active_edges, logger, keep_waiting=None) -> "_CaptureSession | None":
         """Create a portal session with barriers only for *active_edges*."""
         from pyinputcapture import InputCapturePortal
         from snegg.ei import Receiver
@@ -445,19 +464,19 @@ class _CaptureSession:
         portal = None
         try:
             portal = InputCapturePortal()
-            zones, eis_fd, bmap_list = portal.setup(active_edges)
+            zones, eis_fd, bmap_list = portal.setup(list(active_edges))
             logger.debug(f"Session created: zones={zones} edges={active_edges}")
 
             receiver = _ei_from_fd(Receiver, eis_fd, "perpetua-cursor-capture")
 
             portal.enable()
-            _wait_for_seat(receiver, logger)
+            _wait_for_seat(receiver, logger, keep_waiting)
 
             poller = _select.poll()
             poller.register(receiver.fd, _select.POLLIN)
 
             barrier_map = {bid: edge for bid, edge in bmap_list}
-            return cls(portal, receiver, barrier_map, poller)
+            return cls(portal, receiver, barrier_map, poller, active_edges)
 
         except Exception as exc:
             logger.error(f"Session setup failed: {exc}")
@@ -468,8 +487,69 @@ class _CaptureSession:
                     pass
             return None
 
+    def apply_edges(self, edges, logger) -> None:
+        """Make the compositor hold the pointer on *edges* and nowhere else.
+
+        An armed barrier stops the cursor at the screen edge, so an edge with
+        no client behind it must not have one - otherwise the pointer stalls
+        short of the real border and we answer with a capture/release round
+        trip for nothing.
+
+        Two mechanisms, in order of precision:
+
+        - ``portal.set_barriers`` re-arms the exact edge set on the *existing*
+          session (recreating the session hangs the GNOME portal). Absent on
+          older pyinputcapture builds, in which case activations on unbound
+          edges keep being filtered in Python - the border still stalls there,
+          but nothing worse than before.
+        - ``portal.disable()`` / ``enable()`` are all-or-nothing, and cover the
+          case the first mechanism can't help with: no clients at all, where
+          the whole border must be free.
+        """
+        wanted = set(edges)
+        if self.dead:
+            return
+
+        if not wanted:
+            self._set_capture_enabled(False, logger)
+            self.armed_edges = set()
+            return
+
+        if wanted != self.armed_edges and hasattr(self.portal, "set_barriers"):
+            try:
+                bmap_list = self.portal.set_barriers(sorted(wanted))
+                self.barrier_map = {bid: edge for bid, edge in bmap_list}
+                self.armed_edges = wanted
+                logger.debug(f"Barriers re-armed: edges={sorted(wanted)}")
+            except Exception as exc:
+                logger.warning(f"set_barriers failed: {exc}")
+
+        self._set_capture_enabled(True, logger)
+
+    def _set_capture_enabled(self, enabled: bool, logger) -> None:
+        if self.enabled == enabled:
+            return
+        try:
+            if enabled:
+                self.portal.enable()
+            else:
+                self.portal.disable()
+        except Exception as exc:
+            logger.debug(f"portal.{'enable' if enabled else 'disable'} failed: {exc}")
+            return
+        self.enabled = enabled
+        logger.debug(f"Capture {'enabled' if enabled else 'disabled'}")
+
     def teardown(self):
-        """Release capture and close the portal session."""
+        """Release capture and close the portal session.
+
+        Skips every portal call once the session is ``dead``: the compositor
+        already dropped it, so ``release``/``close`` would only block on a
+        D-Bus reply that never comes - with the GIL held, which freezes the
+        whole daemon rather than just this thread.
+        """
+        if self.dead:
+            return
         if self.captured:
             try:
                 self.portal.release(None, None)
@@ -507,25 +587,41 @@ class _CaptureSession:
     def compute_release_pos(cmd, portal):
         """Compute absolute cursor position for release.
 
-        Clamps the result at least _RELEASE_EDGE_MARGIN pixels away from
-        screen edges to prevent the cursor from landing on a barrier line
-        and triggering an immediate recapture.
+        The incoming ``(x, y)`` is normalised over the server's *virtual
+        desktop*, so it must be denormalised over the union of every portal
+        zone - not over ``zones[0]``, which on a multi-monitor server is just
+        one output and lands the cursor on the wrong screen.
+
+        Clamps the result at least ``_RELEASE_EDGE_MARGIN`` px inside the
+        union so the cursor doesn't land exactly on a barrier line and
+        trigger an immediate recapture.
         """
         x = cmd.get("x", -1)
         y = cmd.get("y", -1)
-        if x != -1 and y != -1 and portal.zones:
-            w, h, x_off, y_off = portal.zones[0]
-            margin = _CaptureSession._RELEASE_EDGE_MARGIN
-            abs_x = float(x_off + x * w)
-            abs_y = float(y_off + y * h)
-            abs_x = max(x_off + margin, min(x_off + w - margin, abs_x))
-            abs_y = max(y_off + margin, min(y_off + h - margin, abs_y))
-            return abs_x, abs_y
-        return None, None
+        if x == -1 or y == -1 or not portal.zones:
+            return None, None
+
+        min_x = min(z[2] for z in portal.zones)
+        min_y = min(z[3] for z in portal.zones)
+        max_x = max(z[2] + z[0] for z in portal.zones)
+        max_y = max(z[3] + z[1] for z in portal.zones)
+        width = max(1, max_x - min_x)
+        height = max(1, max_y - min_y)
+
+        margin = _CaptureSession._RELEASE_EDGE_MARGIN
+        abs_x = max(min_x + margin, min(max_x - margin, float(min_x + x * width)))
+        abs_y = max(min_y + margin, min(max_y - margin, float(min_y + y * height)))
+        return abs_x, abs_y
 
 
-def _wait_for_seat(receiver, logger):
-    """Wait for the EIS seat and bind capabilities."""
+def _wait_for_seat(receiver, logger, keep_waiting=None):
+    """Wait for the EIS seat and bind capabilities.
+
+    ``keep_waiting`` is polled every iteration so a ``stop()`` during this
+    10-second wait aborts it: otherwise the capture thread ignores the quit
+    request for long enough to blow through the join timeout and outlive the
+    service that owns it.
+    """
     poller = _select.poll()
     poller.register(receiver.fd, _select.POLLIN)
 
@@ -533,6 +629,9 @@ def _wait_for_seat(receiver, logger):
     device_ready = False
 
     for _ in range(100):  # 10 seconds max
+        if keep_waiting is not None and not keep_waiting():
+            logger.debug("EIS seat wait aborted (stopping)")
+            return
         if poller.poll(100):
             receiver.dispatch()
 
@@ -561,7 +660,6 @@ def _wait_for_seat(receiver, logger):
         logger.warning("EIS seat bound but no DEVICE_RESUMED (continuing)")
 
 
-_ALL_EDGES = ["bottom", "left", "right", "top"]
 _NO_SESSION = object()  # sentinel: no session yet (distinct from None = quit)
 
 
@@ -571,24 +669,55 @@ class MouseListener:
     Events are delivered via callbacks (on_move, on_click, on_scroll,
     on_barrier) called from the daemon thread.
 
-    The session is created once with barriers on all four edges.
-    Active edges are tracked separately so the session never needs
-    to be torn down and recreated (avoids GNOME portal hang).
+    The session is created once and kept: re-running ``portal.setup()`` hangs
+    the GNOME portal. Barriers are then re-armed in place on the live session
+    (``_CaptureSession.set_armed_edges``) so only edges that lead to a client
+    ever hold the pointer - an armed barrier stops the cursor at the screen
+    border, so arming an edge with nothing behind it makes that border
+    unreachable.
+
+    ``on_state(healthy, reason)`` reports capture health so the service layer
+    can see a session that died and never came back, instead of reading the
+    thread as alive and assuming all is well.
     """
 
+    _MAX_SESSION_RETRIES = 3
+    _SESSION_RETRY_DELAY = 1.0  # seconds
+    _SESSION_RETRY_MAX_DELAY = 30.0  # backoff ceiling for reconnects
+    # Granularity of every interruptible sleep in the thread, so a stop()
+    # issued mid-backoff is observed well inside the join timeout.
+    _SLEEP_SLICE = 0.05
+
     def __init__(
-        self, on_move=None, on_click=None, on_scroll=None, on_barrier=None, **kwargs
+        self,
+        on_move=None,
+        on_click=None,
+        on_scroll=None,
+        on_barrier=None,
+        on_state=None,
+        **kwargs,
     ):
         self._on_move = on_move
         self._on_click = on_click
         self._on_scroll = on_scroll
         self._on_barrier = on_barrier
+        self._on_state = on_state
         self._thread: threading.Thread | None = None
         self._is_running = False
         self._clients_active = False
         self._active_edges: set[str] = set()
         self._ready_event = threading.Event()
         self._cmd_queue: queue.Queue = queue.Queue()
+        # Session health, read by ``is_alive`` so the service layer's
+        # restart-on-dead check can actually fire.
+        self._has_session = False
+        self._reconnect_pending = False
+        self._backoff = ExponentialBackoff(
+            initial_delay=self._SESSION_RETRY_DELAY,
+            max_delay=self._SESSION_RETRY_MAX_DELAY,
+        )
+        # Monotonic deadline for the next reconnect attempt, or 0.0 for "now".
+        self._reconnect_at = 0.0
         self._logger = get_logger(self.__class__.__name__)
 
     def start(self):
@@ -615,7 +744,39 @@ class MouseListener:
         self._logger.debug("InputCapture listener stopped")
 
     def is_alive(self):
-        return self._is_running and self._thread is not None and self._thread.is_alive()
+        """Whether capture is working, or at least still trying to.
+
+        Deliberately more than "the thread exists": a thread idling with a
+        dead session and no reconnect pending is not capturing anything, and
+        reporting it alive is what stopped the service layer from ever
+        restarting a listener whose portal session had gone.
+        """
+        if not (
+            self._is_running and self._thread is not None and self._thread.is_alive()
+        ):
+            return False
+        if not self._active_edges:
+            # Nothing to capture yet - idle is the correct state.
+            return True
+        return self._has_session or self._reconnect_pending
+
+    def _notify_state(self, healthy: bool, reason: str | None = None):
+        if self._on_state is None:
+            return
+        try:
+            self._on_state(healthy, reason)
+        except Exception as exc:
+            self._logger.debug(f"on_state callback failed: {exc}")
+
+    def _interruptible_sleep(self, seconds: float) -> bool:
+        """Sleep in slices, aborting on stop(). ``False`` means "stop now"."""
+        deadline = time.monotonic() + seconds
+        while self._is_running:
+            remaining = deadline - time.monotonic()
+            if remaining <= 0:
+                return True
+            time.sleep(min(self._SLEEP_SLICE, remaining))
+        return False
 
     def update_clients(self, clients):
         """Update which edges have active clients."""
@@ -651,51 +812,94 @@ class MouseListener:
                     session.teardown()
                     break
                 elif action == "disconnected":
+                    session.teardown()  # no-op when the session is dead
                     session = None
+                    self._has_session = False
                     self._clients_active = False
-                    # Auto-reconnect if there are active edges
-                    if self._active_edges:
-                        time.sleep(1.0)
-                        session = self._create_session_with_retry(_ALL_EDGES, logger)
-                        if session is not None:
-                            self._clients_active = True
+                    # Hand back to the idle phase, which owns the retry
+                    # schedule. Reconnecting inline is what used to dead-end:
+                    # three quick attempts and then nothing, forever, because
+                    # only a *new* update_clients could build a session.
+                    self._schedule_reconnect(logger, "EIS disconnected")
 
         except Exception as exc:
             logger.error(f"InputCapture thread fatal: {exc}")
             self._ready_event.set()
+            self._has_session = False
+            self._reconnect_pending = False
+            self._notify_state(False, f"capture thread died: {exc}")
         finally:
             if session is not None:
                 session.teardown()
+            self._has_session = False
             _restore_stderr(saved_stderr)
             logger.debug("Thread exiting")
 
-    _MAX_SESSION_RETRIES = 3
-    _SESSION_RETRY_DELAY = 1.0  # seconds
+    def _schedule_reconnect(self, logger, reason: str):
+        """Arm the next reconnect attempt, or stand down if nothing to capture."""
+        if not self._active_edges:
+            self._reconnect_pending = False
+            self._notify_state(True, None)
+            return
+        delay = self._backoff.get_next_delay()
+        self._reconnect_at = time.monotonic() + delay
+        self._reconnect_pending = True
+        logger.warning(f"{reason}; reconnecting in {delay:.1f}s")
+        self._notify_state(False, reason)
 
     # idle phase (no session)
     def _idle_wait(self, logger):
-        """Wait for commands while no session exists."""
+        """Wait for commands, or retry the session, while none exists."""
         try:
             cmd = self._cmd_queue.get(timeout=0.1)
         except queue.Empty:
-            return _NO_SESSION
+            return self._maybe_reconnect(logger)
 
         cmd_type = cmd.get("type")
 
         if cmd_type == "update_clients":
             new_edges = set(k for k, v in cmd.get("clients", {}).items() if v)
+            self._active_edges = new_edges
             if new_edges:
-                self._active_edges = new_edges
-                session = self._create_session_with_retry(_ALL_EDGES, logger)
-                if session is not None:
-                    self._clients_active = True
-                return session
+                # A fresh client is a good reason to stop waiting out a
+                # backoff: the user is asking for capture right now.
+                self._backoff.reset()
+                self._reconnect_at = 0.0
+                return self._open_session(logger)
+            self._reconnect_pending = False
+            self._notify_state(True, None)
             return _NO_SESSION
 
         if cmd_type == "quit":
             return None
 
         return _NO_SESSION
+
+    def _maybe_reconnect(self, logger):
+        """Retry session creation once the backoff deadline has passed."""
+        if not self._active_edges:
+            return _NO_SESSION
+        if time.monotonic() < self._reconnect_at:
+            return _NO_SESSION
+        return self._open_session(logger)
+
+    def _open_session(self, logger):
+        """Create a session for the current ``_active_edges``.
+
+        Returns the session, or ``_NO_SESSION`` after arming the next retry -
+        never a bare failure, so capture keeps trying for as long as there is
+        a client to capture for.
+        """
+        session = self._create_session_with_retry(sorted(self._active_edges), logger)
+        if session is None:
+            self._schedule_reconnect(logger, "capture session unavailable")
+            return _NO_SESSION
+        self._backoff.reset()
+        self._reconnect_pending = False
+        self._has_session = True
+        self._clients_active = True
+        self._notify_state(True, None)
+        return session
 
     def _create_session_with_retry(self, active_edges, logger):
         """Try to create a session, retrying a few times on failure."""
@@ -704,8 +908,11 @@ class MouseListener:
                 return None
             if attempt > 0:
                 logger.debug(f"Session retry {attempt}/{self._MAX_SESSION_RETRIES}")
-                time.sleep(self._SESSION_RETRY_DELAY)
-            session = _CaptureSession.create(active_edges, logger)
+                if not self._interruptible_sleep(self._SESSION_RETRY_DELAY):
+                    return None
+            session = _CaptureSession.create(
+                active_edges, logger, keep_waiting=lambda: self._is_running
+            )
             if session is not None:
                 return session
         logger.warning("Session creation failed after retries")
@@ -798,6 +1005,9 @@ class MouseListener:
                 new_edges = set(k for k, v in cmd.get("clients", {}).items() if v)
                 self._active_edges = new_edges
                 self._clients_active = bool(new_edges)
+                # Re-arm the compositor's barriers to match, so edges without
+                # a client stop holding the pointer at the screen border.
+                session.apply_edges(new_edges, logger)
 
             elif cmd_type == "disable_capture":
                 if session.captured:
@@ -879,10 +1089,15 @@ class MouseListener:
 
             elif etype == EventType.DISCONNECT:
                 logger.warning("EIS disconnected")
+                session.captured = False
+                session.pending_activation = False
                 try:
                     session.portal.close()
                 except Exception:
                     pass
+                # Past this point every portal call would block on a reply
+                # that can't come - and it blocks holding the GIL.
+                session.dead = True
                 return "disconnected"
 
         except Exception as exc:
