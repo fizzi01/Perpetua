@@ -233,7 +233,9 @@ def _capture_backend_info() -> dict:
         info["module"] = getattr(pyinputcapture, "__file__", None)
         info["version"] = getattr(pyinputcapture, "__version__", None)
         info["segments"] = _segments_supported(InputCapturePortal)
-        setup_signature = _callable_signature(getattr(InputCapturePortal, "setup", None))
+        setup_signature = _callable_signature(
+            getattr(InputCapturePortal, "setup", None)
+        )
         # No signature metadata is "can't tell", not "absent" - the same
         # distinction ``_segments_supported`` makes.
         info["setup_timeout"] = (
