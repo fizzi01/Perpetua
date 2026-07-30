@@ -102,18 +102,25 @@ class ServerMouseListener(_base.ServerMouseListener):
                 # A vertical edge is partitioned along y, a horizontal one
                 # along x - the same axis convention as the bindings. The end
                 # is inclusive, hence ``- 1`` on a half-open range.
+                #
+                # Every coordinate is coerced with ``int()``: the extension takes
+                # ``Vec<(String, i32, i32, i32, i32)>``, and a float arriving from
+                # the layout math (a monitor bound read off a scaled display) is
+                # rejected by PyO3 as a ``TypeError`` - which is
+                # indistinguishable from "this build has no segments keyword" and
+                # used to be reported as a missing rebuild.
                 if edge in ("left", "right"):
                     span = monitor.max_y - monitor.min_y
                     lo = int(round(monitor.min_y + start * span))
                     hi = max(lo, int(round(monitor.min_y + end * span)) - 1)
-                    x = monitor.min_x if edge == "left" else monitor.max_x
-                    segments.append((edge, x, lo, x, hi))
+                    x = int(monitor.min_x if edge == "left" else monitor.max_x)
+                    segments.append((edge, x, int(lo), x, int(hi)))
                 else:
                     span = monitor.max_x - monitor.min_x
                     lo = int(round(monitor.min_x + start * span))
                     hi = max(lo, int(round(monitor.min_x + end * span)) - 1)
-                    y = monitor.min_y if edge == "top" else monitor.max_y
-                    segments.append((edge, lo, y, hi, y))
+                    y = int(monitor.min_y if edge == "top" else monitor.max_y)
+                    segments.append((edge, int(lo), y, int(hi), y))
 
         return segments
 
