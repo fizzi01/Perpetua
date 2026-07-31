@@ -138,6 +138,11 @@ class ServerMouseListener(_base.ServerMouseListener):
 
         self._listener.start()
         self._listener.update_clients(self._refresh_edge_state())
+        # Starting the listener is an explicit request for capture, so it also
+        # clears a stand-down from earlier refused/unanswered dialogs - the
+        # listener object survives a stop/start cycle and would otherwise stay
+        # latched off for the rest of the process's life.
+        self._listener.request_capture()
 
         self._logger.debug("Wayland barrier mode started")
         return True
@@ -162,6 +167,11 @@ class ServerMouseListener(_base.ServerMouseListener):
         await super()._on_client_connected(data)
         if self._barrier_mode and data is not None and self._listener:
             self._listener.update_clients(self._refresh_edge_state())
+            # A client connecting is the user asking for capture. ``update_clients``
+            # only forgives a refusal when the edge *set* changed, so reconnecting
+            # the same client onto the same edge - the obvious thing to try after
+            # cancelling the dialog by mistake - would otherwise leave capture off.
+            self._listener.request_capture()
 
     async def _on_client_disconnected(self, data: Optional[ClientDisconnectedEvent]):
         if self._barrier_mode and data is not None:
@@ -264,7 +274,16 @@ class ServerMouseListener(_base.ServerMouseListener):
         if healthy:
             self._logger.info("Wayland capture session healthy")
             return
-        self._logger.warning("Wayland capture session unavailable", reason=reason)
+        if getattr(self._listener, "capture_blocked", False):
+            # Stood down waiting on the user: nothing is being retried, so this
+            # is not "unavailable for a moment" and must not read as one.
+            self._logger.error(
+                "Wayland capture stopped asking for permission; allow input "
+                "capture in the system dialog, then reconnect a client",
+                reason=reason,
+            )
+        else:
+            self._logger.warning("Wayland capture session unavailable", reason=reason)
         # The cursor can't be on a client if capture is gone; drop the local
         # belief so a later activation isn't rejected by the in-flight guard.
         self._active_client_barrier = None

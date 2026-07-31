@@ -152,6 +152,27 @@ def _is_permission_failure(reason: str) -> bool:
     return any(hint in lowered for hint in _PERMISSION_HINTS)
 
 
+#: The extension's wording for "the deadline passed with the dialog unanswered"
+#: (``wait_for_setup`` in pyinputcapture). Deliberately this exact phrase and not
+#: "timed out": a ``zones``/``set_pointer_barriers`` timeout happens *after* the
+#: dialog was answered and is a genuinely transient fault, so widening this to
+#: any timeout would put ordinary failures on the human-cadence schedule.
+_SETUP_TIMEOUT_HINT = "portal setup timed out"
+
+#: The extension refusing a second ``setup()`` while the previous one's task is
+#: still finishing (a late answer to a dialog we already gave up on). No dialog
+#: is raised, so this must not count as an attempt.
+_SETUP_PENDING_HINT = "previous setup is still winding down"
+
+
+def _is_setup_timeout(reason: str) -> bool:
+    return _SETUP_TIMEOUT_HINT in reason.lower()
+
+
+def _is_setup_pending(reason: str) -> bool:
+    return _SETUP_PENDING_HINT in reason.lower()
+
+
 def _callable_signature(func) -> str:
     """Textual signature of a (possibly native) callable, or ``""``.
 
@@ -243,12 +264,39 @@ def _capture_backend_info() -> dict:
     return info
 
 
-class _PortalNotAuthorised(RuntimeError):
-    """Capture was refused, not merely unavailable.
+class _PortalNeedsUser(RuntimeError):
+    """A failure only the user can resolve, by answering the portal dialog.
 
-    Retrying in a second cannot help - the user has to grant access - so this is
-    raised instead of a plain failure to keep the fast retry loop from spinning
-    on a dialog and to let the caller report something actionable.
+    Retrying in a second cannot help, so these are raised instead of a plain
+    failure: the caller puts them on a human-paced schedule and stands down
+    rather than spinning on a dialog.
+
+    ``portal`` carries the portal object of the failed attempt when it is still
+    worth reusing (see ``_PortalDialogUnanswered``), else None.
+    """
+
+    def __init__(self, *args, portal=None):
+        super().__init__(*args)
+        self.portal = portal
+
+
+class _PortalNotAuthorised(_PortalNeedsUser):
+    """Capture was refused: the user denied or dismissed the dialog.
+
+    The answer stays "no" until they act, so nothing but an explicit request
+    for capture is worth another attempt.
+    """
+
+
+class _PortalDialogUnanswered(_PortalNeedsUser):
+    """``setup()`` gave up waiting for an answer to the permission dialog.
+
+    Not a transient fault, and *not* the same as a refusal: the request may well
+    still be live on the portal side with the dialog on screen. Asking again
+    now means two concurrent ``CreateSession`` requests, which is how GNOME ends
+    up answering neither - so the portal object of this attempt is carried along
+    (``portal``) and the next attempt reuses it, letting the extension's own
+    "still winding down" guard serialise us.
     """
 
 
@@ -735,23 +783,28 @@ class _CaptureSession:
         self.dead: bool = False
 
     @classmethod
-    def create(cls, logger, keep_waiting=None) -> "_CaptureSession | None":
+    def create(cls, logger, keep_waiting=None, portal=None) -> "_CaptureSession | None":
         """Create a portal session with whole-edge barriers on all four sides.
 
         This is the *only* place barriers are ever armed. There is deliberately
         no way to change them afterwards: see ``_ALL_EDGES``.
+
+        ``portal`` reuses the object of a previous attempt that timed out with
+        its request possibly still live (see ``_PortalDialogUnanswered``); a
+        fresh object per attempt is what lets two ``CreateSession`` requests
+        overlap, because the extension can only serialise attempts it can see.
         """
         from pyinputcapture import InputCapturePortal
         from snegg.ei import Receiver
 
-        portal = None
         # Filled by ``_captured_stderr`` with whatever the extension printed on
         # fd 2 during setup - the caller has it pointed at /dev/null to silence
         # libei's dispatch-loop spam, which also hid the one message that
         # explains a failed session.
         portal_stderr: list[str] = []
         try:
-            portal = InputCapturePortal()
+            if portal is None:
+                portal = InputCapturePortal()
             with _captured_stderr(portal_stderr):
                 zones, eis_fd, bmap_list = cls._setup(portal)
             logger.debug(f"Session created: zones={zones} edges={list(_ALL_EDGES)}")
@@ -776,7 +829,8 @@ class _CaptureSession:
                 # The portal's own explanation, through the structured logger:
                 # no tty involved, so it reaches the log on every launch mode.
                 reason = f"{reason} ({detail})"
-            if portal is not None:
+            keep_portal = _is_setup_timeout(reason) or _is_setup_pending(reason)
+            if portal is not None and not keep_portal:
                 try:
                     portal.close()
                 except Exception:
@@ -786,6 +840,12 @@ class _CaptureSession:
                 # access, so say so and let the caller stop retrying instead of
                 # burning attempts as if the next one could differ.
                 raise _PortalNotAuthorised(reason) from exc
+            if keep_portal:
+                # The request may still be live with the dialog on screen. Hand
+                # the portal back so the *next* attempt goes through the same
+                # object: dropping it is what lets a second CreateSession
+                # overlap the first, and neither then gets answered.
+                raise _PortalDialogUnanswered(reason, portal=portal) from exc
             logger.error(f"Session setup failed: {reason}")
             return None
 
@@ -957,11 +1017,21 @@ class MouseListener:
     # Granularity of every interruptible sleep in the thread, so a stop()
     # issued mid-backoff is observed well inside the join timeout.
     _SLEEP_SLICE = 0.05
-    # Consecutive refusals after which the portal stops being asked. Each
-    # attempt puts a permission dialog in front of the user, and re-opening it
-    # every 30 s forever is not a retry policy, it is a nuisance. Capture stays
-    # off until the user asks for it again (see ``_idle_wait``).
-    _MAX_UNAUTHORISED_ATTEMPTS = 3
+    # Consecutive dialog-class failures (refused, or left unanswered) after
+    # which the portal stops being asked. Each attempt puts a permission dialog
+    # in front of the user, and re-opening it forever is not a retry policy, it
+    # is a nuisance. Capture stays off until the user asks for it again (see
+    # ``_idle_wait`` and ``request_capture``).
+    _MAX_NEEDS_USER_ATTEMPTS = 3
+    # Cadence for that class. Deliberately not the backoff's opening delay: a
+    # request the user has not answered yet is still live on the portal side,
+    # and a second CreateSession a second later is how GNOME ends up answering
+    # neither of them.
+    _DIALOG_RETRY_DELAY = 30.0
+    # How long a deferred start waits for the previous capture thread to leave a
+    # wedged ``portal.setup()`` before giving up on it. Its own wait is bounded
+    # by ``_SETUP_TIMEOUT``, plus room for the teardown that follows.
+    _PREVIOUS_THREAD_WAIT = _SETUP_TIMEOUT + 15.0
 
     def __init__(
         self,
@@ -988,12 +1058,23 @@ class MouseListener:
         self._cmd_queue: queue.Queue = queue.Queue()
         # Published for ``current_activation_id`` right before on_barrier fires.
         self._current_activation_id = 0
-        # Reason string while capture is refused for lack of permission, else None.
+        # Reason string while capture is waiting on the user (refused, or a
+        # dialog nobody answered), else None.
         self._unauthorised: str | None = None
-        # Consecutive refusals, and the latch that stops asking once they hit
-        # ``_MAX_UNAUTHORISED_ATTEMPTS``.
-        self._unauthorised_attempts = 0
+        # Consecutive dialog-class failures, and the latch that stops asking
+        # once they hit ``_MAX_NEEDS_USER_ATTEMPTS``.
+        self._needs_user_attempts = 0
         self._capture_blocked = False
+        # Portal object of an attempt that timed out with its request possibly
+        # still live. The next attempt reuses it so the extension can serialise
+        # the two instead of leaving both outstanding.
+        self._pending_portal = None
+        # Set while a start is waiting for the previous capture thread to exit,
+        # so only one waiter can ever exist.
+        self._deferred_start = False
+        # Whether capture is wanted at all, so a stop can cancel a deferred
+        # start instead of being undone by it.
+        self._start_wanted = False
         # Session health, read by ``is_alive`` so the service layer's
         # restart-on-dead check can actually fire.
         self._has_session = False
@@ -1017,26 +1098,66 @@ class MouseListener:
         anyway would open a second portal session while the first still holds an
         unresolved ``CreateSession``, and two concurrent requests is a reliable
         way to get one GNOME never answers.
+
+        Refusing is not the end of it: the start is *deferred* onto a waiter
+        that starts the thread as soon as the old one exits. Only logging it -
+        as this used to - left capture dead for the rest of the process's life,
+        because nothing ever asked again.
+
+        Returns whether capture is now running or scheduled to.
         """
         if self._is_running:
-            return
+            return True
+        self._start_wanted = True
         previous = self._thread
         if previous is not None and previous.is_alive():
-            self._logger.warning(
-                "InputCapture listener not started: the previous capture thread "
-                "is still alive (most likely blocked in portal.setup() on an "
-                "unanswered permission dialog); refusing to open a second "
-                "portal session"
-            )
-            return
+            self._defer_start(previous)
+            return True
         self._is_running = True
         self._ready_event.clear()
         self._thread = threading.Thread(target=self._thread_main, daemon=True)
         self._thread.start()
         self._logger.debug("InputCapture listener started")
+        return True
+
+    def _defer_start(self, previous: threading.Thread):
+        """Start once ``previous`` exits, on a one-shot waiter thread."""
+        if self._deferred_start:
+            return
+        self._deferred_start = True
+        self._logger.warning(
+            "InputCapture listener start deferred: the previous capture thread "
+            "is still alive (most likely blocked in portal.setup() on an "
+            "unanswered permission dialog); starting as soon as it exits "
+            "rather than opening a second portal session"
+        )
+
+        def _wait_and_start():
+            try:
+                previous.join(timeout=self._PREVIOUS_THREAD_WAIT)
+                if previous.is_alive():
+                    self._logger.error(
+                        "InputCapture listener not started: the previous capture "
+                        "thread is still blocked after "
+                        f"{self._PREVIOUS_THREAD_WAIT:.0f}s"
+                    )
+                    return
+            finally:
+                self._deferred_start = False
+            if not self._start_wanted:
+                # Stopped while we waited. Starting now would resurrect capture
+                # after an explicit stop - and raise a dialog for it.
+                self._logger.debug("Deferred start dropped: a stop came first")
+                return
+            self.start()
+
+        threading.Thread(target=_wait_and_start, daemon=True).start()
 
     def stop(self):
         """Stop the daemon thread."""
+        # Before the early return: a stop must also cancel a start that is still
+        # waiting for a wedged thread to exit, even though nothing runs yet.
+        self._start_wanted = False
         if not self._is_running:
             return
         self._is_running = False
@@ -1100,6 +1221,26 @@ class MouseListener:
         """
         edges = state.get("edges") if "edges" in state else state
         self._cmd_queue.put({"type": "update_clients", "clients": edges or {}})
+
+    @property
+    def capture_blocked(self) -> bool:
+        """Whether the listener has stood down waiting on the user.
+
+        Distinct from "unhealthy": nothing is being retried, so a reporter that
+        treats it as a transient outage says the wrong thing.
+        """
+        return self._capture_blocked
+
+    def request_capture(self):
+        """Ask for capture again, forgetting any standing refusal.
+
+        The explicit way back from the stand-down. ``update_clients`` only
+        clears a refusal when the edge set actually *changed*, so reconnecting
+        the same client onto the same edge - the obvious thing to try after
+        cancelling the dialog by mistake - left capture off with no way back
+        short of restarting the daemon.
+        """
+        self._cmd_queue.put({"type": "retry_capture"})
 
     @property
     def current_activation_id(self) -> int:
@@ -1235,6 +1376,16 @@ class MouseListener:
             self._notify_state(True, None)
             return _NO_SESSION
 
+        if cmd_type == "retry_capture":
+            # An explicit request for capture: worth one more dialog whatever
+            # the standing state is.
+            self._clear_refusal()
+            self._backoff.reset()
+            self._reconnect_at = 0.0
+            if not self._active_edges:
+                return _NO_SESSION
+            return self._open_session(logger)
+
         if cmd_type == "quit":
             return None
 
@@ -1243,7 +1394,7 @@ class MouseListener:
     def _clear_refusal(self):
         """Forget a standing refusal so the portal may be asked again."""
         self._capture_blocked = False
-        self._unauthorised_attempts = 0
+        self._needs_user_attempts = 0
         self._unauthorised = None
 
     def _maybe_reconnect(self, logger):
@@ -1269,13 +1420,13 @@ class MouseListener:
                 self._reconnect_pending = False
                 self._notify_state(False, self._unauthorised)
             elif self._unauthorised is not None:
-                # Waiting out the full backoff is right here: only the user can
-                # change the answer, and re-asking every second would just queue
-                # portal requests behind an unanswered one.
+                # The long delay is right here: only the user can change the
+                # answer, and re-asking sooner would just queue portal requests
+                # behind one that is still unanswered.
                 self._schedule_reconnect(
                     logger,
-                    "Wayland input capture not authorised",
-                    delay=self._SESSION_RETRY_MAX_DELAY,
+                    self._unauthorised,
+                    delay=self._DIALOG_RETRY_DELAY,
                 )
             else:
                 self._schedule_reconnect(logger, "capture session unavailable")
@@ -1300,30 +1451,38 @@ class MouseListener:
             return None
         try:
             session = _CaptureSession.create(
-                logger, keep_waiting=lambda: self._is_running
+                logger,
+                keep_waiting=lambda: self._is_running,
+                portal=self._pending_portal,
             )
+        except _PortalDialogUnanswered as exc:
+            # The dialog is (or was) on screen and unanswered. Keep the portal
+            # object: the next attempt goes through it, so the extension can
+            # refuse a second request instead of letting both sit unanswered.
+            self._pending_portal = exc.portal
+            reason = str(exc)
+            if _is_setup_pending(reason):
+                # No dialog was raised - the extension refused before asking
+                # anything - so this is not an attempt and must not burn one.
+                logger.debug(
+                    f"Portal still winding down the previous request: {reason}"
+                )
+                self._unauthorised = (
+                    "waiting for the portal to finish the previous request"
+                )
+                return None
+            self._unauthorised = (
+                "no answer to the Wayland input capture permission dialog"
+            )
+            self._count_needs_user(logger, reason, refused=False)
+            return None
         except _PortalNotAuthorised as exc:
             # No point retrying: the answer stays "no" until the user acts.
-            self._unauthorised = str(exc)
-            self._unauthorised_attempts += 1
-            if self._unauthorised_attempts >= self._MAX_UNAUTHORISED_ATTEMPTS:
-                # Every attempt is another permission dialog in the user's
-                # face. Say so once and stop; connecting a client or editing
-                # the layout will ask again.
-                self._capture_blocked = True
-                logger.error(
-                    "Wayland input capture was refused "
-                    f"{self._unauthorised_attempts} times; no longer asking. "
-                    "Grant access to screen input in the system dialog, then "
-                    f"reconnect a client to try again ({exc})"
-                )
-            else:
-                logger.error(
-                    "Wayland input capture was not authorised; grant access to "
-                    "screen input in the system dialog and start sharing again "
-                    f"({exc})"
-                )
+            self._pending_portal = None
+            self._unauthorised = "Wayland input capture was refused"
+            self._count_needs_user(logger, str(exc), refused=True)
             return None
+        self._pending_portal = None
         if session is None:
             # Not a permission problem - clear any stale refusal, otherwise the
             # first denial makes every later unrelated failure report itself as
@@ -1332,6 +1491,26 @@ class MouseListener:
             return None
         self._clear_refusal()
         return session
+
+    def _count_needs_user(self, logger, detail: str, refused: bool):
+        """Count one dialog-class failure and latch the stand-down at the cap."""
+        self._needs_user_attempts += 1
+        what = "was refused" if refused else "got no answer to its permission dialog"
+        if self._needs_user_attempts >= self._MAX_NEEDS_USER_ATTEMPTS:
+            # Every attempt is another permission dialog in the user's face. Say
+            # so once and stop; connecting a client, editing the layout or
+            # re-enabling the mouse stream will ask again.
+            self._capture_blocked = True
+            logger.error(
+                f"Wayland input capture {what} {self._needs_user_attempts} times; "
+                "no longer asking. Allow input capture in the system dialog, then "
+                f"reconnect a client to try again ({detail})"
+            )
+        else:
+            logger.error(
+                f"Wayland input capture {what}; allow input capture in the system "
+                f"dialog to share input with a client ({detail})"
+            )
 
     # active phase (session exists)
     def _active_tick(self, session, logger):

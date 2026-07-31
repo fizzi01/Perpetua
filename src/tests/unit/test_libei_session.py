@@ -27,6 +27,7 @@ blocking portal call.
 
 import os
 import sys
+import time
 import types
 from unittest.mock import MagicMock
 
@@ -236,7 +237,7 @@ class TestPermissionFailure:
         """A denied dialog can't be fixed by retrying a second later."""
         attempts = []
 
-        def _create(log, keep_waiting=None):
+        def _create(log, keep_waiting=None, portal=None):
             attempts.append(1)
             raise libei._PortalNotAuthorised("access denied")
 
@@ -246,7 +247,7 @@ class TestPermissionFailure:
 
         assert listener._create_session_once(logger) is None
         assert len(attempts) == 1, "must not burn the retry budget on a refusal"
-        assert listener._unauthorised == "access denied"
+        assert listener._unauthorised is not None
 
     def test_permission_hints_are_recognised(self, libei):
         assert libei._is_permission_failure("create_session: Access denied")
@@ -275,7 +276,7 @@ class TestRepeatedRefusal:
     def _refused_listener(self, libei, logger, monkeypatch):
         attempts = []
 
-        def _create(log, keep_waiting=None):
+        def _create(log, keep_waiting=None, portal=None):
             attempts.append(1)
             raise libei._PortalNotAuthorised("access denied")
 
@@ -283,14 +284,14 @@ class TestRepeatedRefusal:
         listener = libei.MouseListener()
         listener._is_running = True
         listener._active_edges = {"right"}
-        for _ in range(libei.MouseListener._MAX_UNAUTHORISED_ATTEMPTS):
+        for _ in range(libei.MouseListener._MAX_NEEDS_USER_ATTEMPTS):
             listener._reconnect_at = 0.0
             listener._maybe_reconnect(logger)
         return listener, attempts
 
     def test_stops_asking_after_the_cap(self, libei, logger, monkeypatch):
         listener, attempts = self._refused_listener(libei, logger, monkeypatch)
-        cap = libei.MouseListener._MAX_UNAUTHORISED_ATTEMPTS
+        cap = libei.MouseListener._MAX_NEEDS_USER_ATTEMPTS
 
         assert listener._capture_blocked is True
         assert len(attempts) == cap
@@ -320,7 +321,7 @@ class TestRepeatedRefusal:
 
     def test_a_new_edge_asks_once_more(self, libei, logger, monkeypatch):
         listener, attempts = self._refused_listener(libei, logger, monkeypatch)
-        cap = libei.MouseListener._MAX_UNAUTHORISED_ATTEMPTS
+        cap = libei.MouseListener._MAX_NEEDS_USER_ATTEMPTS
 
         # Connecting a client is an explicit request for capture, so it is
         # worth one more dialog.
@@ -333,7 +334,7 @@ class TestRepeatedRefusal:
 
     def test_the_same_edges_do_not_ask_again(self, libei, logger, monkeypatch):
         listener, attempts = self._refused_listener(libei, logger, monkeypatch)
-        cap = libei.MouseListener._MAX_UNAUTHORISED_ATTEMPTS
+        cap = libei.MouseListener._MAX_NEEDS_USER_ATTEMPTS
 
         # A repeated update for an unchanged layout is not a user asking for
         # anything - it is the bus being chatty.
@@ -389,6 +390,159 @@ class TestSetupTimeout:
         assert "setup_timeout" in info and "module" in info
 
 
+class TestUnansweredDialog:
+    """A dialog nobody answered is not a transient fault.
+
+    It used to fall through to the 1 s backoff, so an ignored dialog was
+    re-requested every couple of seconds forever - and because each attempt
+    built a *new* portal object, several ``CreateSession`` requests ended up
+    outstanding at once, which is how GNOME stops showing the dialog at all.
+    """
+
+    _TIMEOUT = "portal setup timed out after 45s (permission dialog unanswered?)"
+
+    def test_the_setup_timeout_is_recognised(self, libei):
+        assert libei._is_setup_timeout(self._TIMEOUT)
+        # A zones/barriers timeout happens *after* the dialog was answered and
+        # is genuinely transient - it must keep the ordinary backoff.
+        assert not libei._is_setup_timeout("zones request: timed out")
+        assert not libei._is_permission_failure(self._TIMEOUT)
+
+    def test_create_raises_and_keeps_the_portal(self, libei, logger, monkeypatch):
+        pyinputcapture = types.ModuleType("pyinputcapture")
+        pyinputcapture.InputCapturePortal = MagicMock()
+        monkeypatch.setitem(sys.modules, "pyinputcapture", pyinputcapture)
+        portal = MagicMock()
+
+        def _boom(_portal):
+            raise RuntimeError(self._TIMEOUT)
+
+        monkeypatch.setattr(libei._CaptureSession, "_setup", staticmethod(_boom))
+
+        with pytest.raises(libei._PortalDialogUnanswered) as caught:
+            libei._CaptureSession.create(logger, portal=portal)
+
+        assert caught.value.portal is portal
+        # Closing it would drop a request that may still be live, with the
+        # dialog on screen - and the next attempt could then overlap it.
+        portal.close.assert_not_called()
+
+    def test_the_next_attempt_reuses_the_same_portal(self, libei, logger, monkeypatch):
+        kept = MagicMock()
+        seen = []
+
+        def _create(log, keep_waiting=None, portal=None):
+            seen.append(portal)
+            raise libei._PortalDialogUnanswered(self._TIMEOUT, portal=kept)
+
+        monkeypatch.setattr(libei._CaptureSession, "create", _create)
+        listener = libei.MouseListener()
+        listener._is_running = True
+
+        listener._create_session_once(logger)
+        listener._create_session_once(logger)
+
+        assert seen == [None, kept], "a fresh portal per attempt lets two overlap"
+
+    def test_it_counts_towards_the_stand_down(self, libei, logger, monkeypatch):
+        monkeypatch.setattr(
+            libei._CaptureSession,
+            "create",
+            lambda log, keep_waiting=None, portal=None: (_ for _ in ()).throw(
+                libei._PortalDialogUnanswered(self._TIMEOUT, portal=MagicMock())
+            ),
+        )
+        listener = libei.MouseListener()
+        listener._is_running = True
+        listener._active_edges = {"right"}
+
+        for _ in range(libei.MouseListener._MAX_NEEDS_USER_ATTEMPTS):
+            listener._reconnect_at = 0.0
+            listener._maybe_reconnect(logger)
+
+        assert listener._capture_blocked is True
+        assert listener.capture_blocked is True
+
+    def test_still_winding_down_is_not_an_attempt(self, libei, logger, monkeypatch):
+        # The extension refused before asking the portal anything, so no dialog
+        # was raised - counting it would spend the budget on our own throttling.
+        pending = "a previous setup is still winding down (the portal has not answered)"
+        monkeypatch.setattr(
+            libei._CaptureSession,
+            "create",
+            lambda log, keep_waiting=None, portal=None: (_ for _ in ()).throw(
+                libei._PortalDialogUnanswered(pending, portal=MagicMock())
+            ),
+        )
+        listener = libei.MouseListener()
+        listener._is_running = True
+
+        for _ in range(5):
+            listener._create_session_once(logger)
+
+        assert listener._needs_user_attempts == 0
+        assert listener._capture_blocked is False
+
+    def test_the_retry_waits_the_dialog_delay(self, libei, logger, monkeypatch):
+        monkeypatch.setattr(
+            libei.MouseListener, "_create_session_once", lambda self, log: None
+        )
+        listener = libei.MouseListener()
+        listener._active_edges = {"right"}
+        listener._unauthorised = "no answer to the dialog"
+
+        before = time.monotonic()
+        listener._open_session(logger)
+
+        # Not the backoff's opening delay: a request still on screen must not be
+        # joined by a second one seconds later.
+        assert listener._reconnect_at - before >= listener._DIALOG_RETRY_DELAY * 0.9
+
+
+class TestRequestCapture:
+    def test_it_clears_the_stand_down_and_asks_once(self, libei, logger, monkeypatch):
+        attempts = []
+
+        def _create(log, keep_waiting=None, portal=None):
+            attempts.append(1)
+            raise libei._PortalNotAuthorised("access denied")
+
+        monkeypatch.setattr(libei._CaptureSession, "create", _create)
+        listener = libei.MouseListener()
+        listener._is_running = True
+        listener._active_edges = {"right"}
+        for _ in range(libei.MouseListener._MAX_NEEDS_USER_ATTEMPTS):
+            listener._reconnect_at = 0.0
+            listener._maybe_reconnect(logger)
+        cap = len(attempts)
+
+        # Reconnecting the same client onto the same edge is an explicit request
+        # for capture, but leaves the edge set unchanged - so update_clients
+        # alone would not forgive the refusal.
+        listener.request_capture()
+        listener._idle_wait(logger)
+
+        assert len(attempts) == cap + 1
+        listener._capture_blocked = False  # asked and refused again; state is fresh
+
+    def test_it_does_not_ask_without_a_client(self, libei, logger, monkeypatch):
+        attempts = []
+        monkeypatch.setattr(
+            libei._CaptureSession,
+            "create",
+            lambda log, keep_waiting=None, portal=None: attempts.append(1),
+        )
+        listener = libei.MouseListener()
+        listener._is_running = True
+        listener._active_edges = set()
+
+        listener.request_capture()
+        listener._idle_wait(logger)
+
+        assert attempts == [], "no client, no dialog"
+        assert listener._capture_blocked is False
+
+
 class TestStartGuard:
     def test_start_refuses_while_the_previous_thread_lives(self, libei):
         # stop()'s join times out precisely when the thread is wedged in
@@ -399,6 +553,7 @@ class TestStartGuard:
         # reliable way to get one that never answers.
         listener = libei.MouseListener()
         listener._logger = MagicMock()
+        listener._PREVIOUS_THREAD_WAIT = 0.05
         stale = MagicMock(is_alive=MagicMock(return_value=True))
         listener._thread = stale
 
@@ -406,7 +561,61 @@ class TestStartGuard:
 
         assert listener._is_running is False
         assert listener._thread is stale, "no second capture thread"
-        assert listener._logger.warning.called, "the refusal must be reported"
+        assert listener._logger.warning.called, "the deferral must be reported"
+
+    def test_a_refused_start_is_deferred_not_dropped(self, libei):
+        # Only logging the refusal left capture dead for the rest of the
+        # process's life: nothing ever asked again once the wedged thread went.
+        import threading
+
+        listener = libei.MouseListener()
+        listener._logger = MagicMock()
+        listener._PREVIOUS_THREAD_WAIT = 2.0
+        listener._thread_main = MagicMock()
+        gate = threading.Event()
+        wedged = threading.Thread(target=gate.wait, daemon=True)
+        wedged.start()
+        listener._thread = wedged
+
+        listener.start()
+        assert listener._is_running is False, (
+            "not while the old thread holds the portal"
+        )
+
+        gate.set()
+        wedged.join(timeout=2)
+        try:
+            for _ in range(100):
+                if listener._is_running:
+                    break
+                time.sleep(0.02)
+            assert listener._is_running is True, "the deferred start never fired"
+            assert listener._thread is not wedged
+        finally:
+            listener.stop()
+
+    def test_a_stop_cancels_a_deferred_start(self, libei):
+        # Otherwise the waiter resurrects capture after an explicit stop - and
+        # raises a permission dialog for it.
+        import threading
+
+        listener = libei.MouseListener()
+        listener._logger = MagicMock()
+        listener._PREVIOUS_THREAD_WAIT = 2.0
+        listener._thread_main = MagicMock()
+        gate = threading.Event()
+        wedged = threading.Thread(target=gate.wait, daemon=True)
+        wedged.start()
+        listener._thread = wedged
+
+        listener.start()
+        listener.stop()
+        gate.set()
+        wedged.join(timeout=2)
+
+        time.sleep(0.2)
+        assert listener._is_running is False
+        assert listener._thread is wedged, "no capture thread after a stop"
 
     def test_start_proceeds_once_the_previous_thread_is_dead(self, libei):
         listener = libei.MouseListener()
@@ -476,11 +685,11 @@ class TestUnauthorisedReset:
         monkeypatch.setattr(libei._CaptureSession, "create", lambda *a, **kw: None)
         listener = libei.MouseListener()
         listener._is_running = True
-        listener._unauthorised_attempts = 2
+        listener._needs_user_attempts = 2
 
         listener._create_session_once(logger)
 
-        assert listener._unauthorised_attempts == 0
+        assert listener._needs_user_attempts == 0
         assert listener._capture_blocked is False
 
     def test_one_attempt_per_cycle(self, libei, logger, monkeypatch):
@@ -490,7 +699,7 @@ class TestUnauthorisedReset:
         monkeypatch.setattr(
             libei._CaptureSession,
             "create",
-            lambda log, keep_waiting=None: attempts.append(1),
+            lambda log, keep_waiting=None, portal=None: attempts.append(1),
         )
         listener = libei.MouseListener()
         listener._is_running = True
