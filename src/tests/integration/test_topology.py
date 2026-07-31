@@ -484,7 +484,7 @@ async def test_return_to_server_from_placed_secondary_client_monitor():
         # locked against that edge until the user pushes back out through it
         # (inward is +X, so an outward push is -X).
         assert ctrl._return_locked_edge == ScreenEdge.LEFT
-        ctrl._accumulate_inward_travel(-ctrl.RETURN_PUSH_MARGIN, 0)
+        ctrl._accumulate_outward_push(-ctrl.RETURN_PUSH_MARGIN, 0)
 
         # Push toward monitor 1's LEFT edge (bound back to the server RIGHT).
         for x in range(1932, 1920, -2):

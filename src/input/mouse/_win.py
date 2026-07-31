@@ -892,7 +892,7 @@ class ClientMouseController(_base.ClientMouseController):
         ]
         self._user32.SendInput.restype = wintypes.UINT
 
-    def _inject_relative(self, dx: int, dy: int) -> tuple[int, int]:
+    def _inject_relative(self, dx: int, dy: int) -> None:
         """Send a relative mouse motion via ``SendInput``.
 
         pynput's ``Controller.move`` sets an absolute cursor position, which
@@ -900,9 +900,6 @@ class ClientMouseController(_base.ClientMouseController):
         ``MOUSEEVENTF_MOVE`` event (without ``MOUSEEVENTF_ABSOLUTE``) delivers
         genuine dx/dy deltas that DirectInput and the standard input pipeline
         consume.
-
-        The delta always moves the visible cursor here - Windows never pins it
-        on our behalf - so the applied displacement is the delta itself.
         """
         try:
             inp = _INPUT(type=_INPUT_MOUSE)
@@ -915,7 +912,6 @@ class ClientMouseController(_base.ClientMouseController):
                 dwExtraInfo=0,
             )
             self._user32.SendInput(1, ctypes.byref(inp), ctypes.sizeof(_INPUT))
-            return (int(dx), int(dy))
         except Exception as e:
             self._logger.error("relative SendInput injection failed", error=str(e))
-            return super()._inject_relative(dx, dy)
+            super()._inject_relative(dx, dy)

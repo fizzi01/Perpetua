@@ -801,7 +801,7 @@ class TestClientMouseController:
             assert controller._running is True
             # No explicit landing / entry edge -> nothing locked.
             assert controller._return_locked_edge is None
-            assert controller._inward_travel == 0
+            assert controller._outward_push == 0
 
             await controller.stop()
 
@@ -831,7 +831,7 @@ class TestClientMouseController:
             await controller._on_client_active(event)
 
             assert controller._return_locked_edge == ScreenEdge.LEFT
-            assert controller._inward_travel == 0
+            assert controller._outward_push == 0
 
             await controller.stop()
 
@@ -854,7 +854,7 @@ class TestClientMouseController:
             controller._is_active = True
             controller._movement_history.append((100, 200))
             controller._return_locked_edge = ScreenEdge.LEFT
-            controller._inward_travel = 5
+            controller._outward_push = 5
 
             event = ClientActiveEvent(client_uid="server")
 
@@ -863,7 +863,7 @@ class TestClientMouseController:
             assert controller._is_active is False
             assert len(controller._movement_history) == 0
             assert controller._return_locked_edge is None
-            assert controller._inward_travel == 0
+            assert controller._outward_push == 0
 
     def _make_client(self, event_bus, mock_stream_handler, mock_mouse_controller):
         with patch(
@@ -873,214 +873,144 @@ class TestClientMouseController:
                 event_bus, mock_stream_handler, mock_stream_handler
             )
 
-    def test_inward_travel_tracks_applied_displacement(
+    def test_the_push_follows_the_request_not_the_backend(
         self, event_bus, mock_stream_handler, mock_mouse_controller
     ):
-        """``_inward_travel`` follows the cursor, not the delta we were sent.
+        """The gate signal must not depend on what the backend reports.
 
-        A backend reports what the OS really applied: on macOS the deltas go
-        through the HID system, so an app holding the pointer keeps the cursor
-        still and no travel happens. Crediting the raw delta instead would move
-        the offset for motion the cursor never made - in either direction.
+        Measured at a held edge, the same physical outcome (the cursor moves
+        0 px) is reported as 0 by macOS and as the full raw delta by Windows.
+        A signal with two meanings is no signal, so the accumulator reads the
+        REQUESTED delta and ``_inject_relative``'s answer cannot change it -
+        which is exactly what this asserts, by making that answer absurd.
         """
         c = self._make_client(event_bus, mock_stream_handler, mock_mouse_controller)
-        c._active_target_bbox = (0, 0, 1920, 1080)
         c._return_locked_edge = ScreenEdge.LEFT
 
-        with patch.object(c, "_inject_relative", return_value=(0, 0)):
-            for _ in range(200):
-                c._move_cursor(-1, -1, 40, 0)
-        assert c._inward_travel == 0
-        # The raw delta is still cached — it is a direction hint for
+        for reported in ((0, 0), (-40, 0), (9999, 9999), None):
+            c._outward_push = 0
+            with patch.object(c, "_inject_relative", return_value=reported):
+                c._move_cursor(-1, -1, -4, 0)  # -X is outward for a LEFT lock
+            assert c._outward_push == 4, f"backend reported {reported!r}"
+
+        # The raw delta is still cached - it is a direction hint for
         # ``_detect_edge_via_delta``, not a displacement.
-        assert c._last_move_delta == (40, 0)
+        assert c._last_move_delta == (-4, 0)
 
-        # Nor may a held pointer fake an OUTWARD push, which would hand control
-        # back while the cursor sits still.
-        with patch.object(c, "_inject_relative", return_value=(0, 0)):
-            for _ in range(200):
-                c._move_cursor(-1, -1, -40, 0)
-        assert c._inward_travel == 0
-
-        with patch.object(c, "_inject_relative", return_value=(40, 0)):
-            for _ in range(3):
-                c._move_cursor(-1, -1, 40, 0)
-        assert c._inward_travel == 120
-        assert c._last_move_delta == (40, 0)
-
-    @pytest.mark.anyio
-    async def test_return_to_server_survives_an_immobile_burst(
+    def test_only_the_outward_component_counts(
         self, event_bus, mock_stream_handler, mock_mouse_controller
     ):
-        """After a burst that moved nothing, the entry edge must still return.
-
-        A pointer held by a foreground app used to saturate ``_inward_travel``
-        from the raw deltas, closing the return gate for good, so every later
-        tick fell through to ``_clamp_cursor_to_monitor`` — dead movement.
-        """
-        with _ScreenGeometry(1920, 1080):
-            c = self._make_client(event_bus, mock_stream_handler, mock_mouse_controller)
-            self._activate_left_entry(c)
-
-            # The app holds the pointer: deltas arrive, nothing moves.
-            with patch.object(c, "_inject_relative", return_value=(0, 0)):
-                for _ in range(200):
-                    c._move_cursor(-1, -1, 40, 0)
-            assert c._inward_travel == 0
-
-            # Pointer released: real movement resumes - enter, then push back out.
-            for _ in range(10):
-                c._move_cursor(-1, -1, 40, 0)
-            assert c._inward_travel > 0
-            for _ in range(20):
-                c._move_cursor(-1, -1, -40, 0)
-            assert c._inward_travel == -c.RETURN_PUSH_MARGIN
-
-            c._controller.position = (0, 500)
-            c._last_move_delta = (-3, 0)
-            with patch.object(c, "_clamp_cursor_to_monitor") as clamp:
-                await c._check_edge()
-
-            assert mock_stream_handler.send.called, "return-to-server never fired"
-            clamp.assert_not_called()
-
-    def test_accumulate_inward_travel_keeps_the_outward_sign(
-        self, event_bus, mock_stream_handler, mock_mouse_controller
-    ):
-        """Outward push goes NEGATIVE - that sign is the return signal.
-
-        Flooring the offset at 0 (the old behaviour) discarded it, so a cursor
-        that landed on the entry edge could never be pushed back out.
-        """
+        """Perpendicular and outward, or it does not count."""
         c = self._make_client(event_bus, mock_stream_handler, mock_mouse_controller)
-        c._active_target_bbox = (0, 0, 1920, 1080)  # deterministic clamp span
         c._return_locked_edge = ScreenEdge.LEFT
-        c._inward_travel = 0
 
-        # Inward for a LEFT lock is +X; the edge stays locked either way.
-        c._accumulate_inward_travel(5, 0)
-        assert c._inward_travel == 5
-        assert c._return_locked_edge == ScreenEdge.LEFT
+        # Pure motion along the edge asks for nothing either way.
+        c._accumulate_outward_push(0, 999)
+        assert c._outward_push == 0
 
-        # Straight back out from the landing: negative, bounded at the margin.
-        c._inward_travel = 0
-        c._accumulate_inward_travel(-3, 0)
-        assert c._inward_travel == -3
-        c._accumulate_inward_travel(-999, 0)
-        assert c._inward_travel == -ClientMouseController.RETURN_PUSH_MARGIN
-        assert c._return_locked_edge == ScreenEdge.LEFT
+        # A diagonal counts only its outward part, however steep.
+        for _ in range(3):
+            c._accumulate_outward_push(-3, -50)
+        assert c._outward_push == 9
 
-    def test_accumulate_inward_travel_is_angle_agnostic(
+    def test_an_inward_move_starts_the_gesture_over(
         self, event_bus, mock_stream_handler, mock_mouse_controller
     ):
-        """Only the component perpendicular to the locked edge counts."""
+        """Changing your mind resets it - there is no decay to wait out."""
         c = self._make_client(event_bus, mock_stream_handler, mock_mouse_controller)
-        c._active_target_bbox = (0, 0, 1920, 1080)  # deterministic clamp span
-        c._return_locked_edge = ScreenEdge.LEFT
-        c._inward_travel = 0
+        c._return_locked_edge = ScreenEdge.RIGHT  # outward is +X
 
-        # Pure parallel motion (along Y) contributes nothing.
-        c._accumulate_inward_travel(0, 999)
-        assert c._inward_travel == 0
+        c._accumulate_outward_push(8, 0)
+        assert c._outward_push == 8
+        c._accumulate_outward_push(-1, 0)
+        assert c._outward_push == 0
 
-        # Diagonal moves count only their +X (perpendicular) component; a
-        # steep angle still accumulates the small inward part.
-        for _ in range(6):
-            c._accumulate_inward_travel(3, -50)  # +3 inward each, large parallel
-        assert c._inward_travel == 18
-
-    def test_accumulate_inward_travel_edge_ward_jitter_reduces_offset(
+    def test_the_push_is_capped_at_the_margin(
         self, event_bus, mock_stream_handler, mock_mouse_controller
     ):
-        """An edge-ward jitter reduces the net offset back toward the edge."""
+        """A gesture detector, not an odometer."""
         c = self._make_client(event_bus, mock_stream_handler, mock_mouse_controller)
-        c._active_target_bbox = (0, 0, 1920, 1080)  # deterministic clamp span
-        c._return_locked_edge = ScreenEdge.RIGHT  # inward is -X
-        c._inward_travel = 0
+        c._return_locked_edge = ScreenEdge.TOP  # outward is -Y
 
-        c._accumulate_inward_travel(-8, 0)  # inward +8
-        c._accumulate_inward_travel(8, 0)  # edge-ward, net back to 0
-        assert c._inward_travel == 0
-        assert c._return_locked_edge == ScreenEdge.RIGHT
+        c._accumulate_outward_push(0, -999999)
+        assert c._outward_push == ClientMouseController.RETURN_PUSH_MARGIN
 
-    def test_accumulate_inward_travel_noop_when_unlocked(
+    def test_accumulate_outward_push_noop_when_unlocked(
         self, event_bus, mock_stream_handler, mock_mouse_controller
     ):
         """No lock -> accumulation is a no-op."""
         c = self._make_client(event_bus, mock_stream_handler, mock_mouse_controller)
         c._return_locked_edge = None
-        c._accumulate_inward_travel(100, 100)
-        assert c._inward_travel == 0
-
-    def test_accumulate_inward_travel_clamps_to_monitor_span(
-        self, event_bus, mock_stream_handler, mock_mouse_controller
-    ):
-        """Bounded both ways: the monitor span inward, the push margin outward.
-
-        The OS pins the cursor at a screen edge while deltas keep arriving, so an
-        unbounded offset would drift away from reality and no real sweep could
-        bring it back across the threshold.
-        """
-        c = self._make_client(event_bus, mock_stream_handler, mock_mouse_controller)
-        c._active_target_bbox = (0, 0, 1920, 1080)
-        c._return_locked_edge = ScreenEdge.LEFT  # perpendicular axis = width
-        c._inward_travel = 0
-        # Overshoot far past the right edge -> capped at the 1920 width.
-        c._accumulate_inward_travel(999999, 0)
-        assert c._inward_travel == 1920
-        # Sustained outward push -> floored at the push margin, not unbounded.
-        c._accumulate_inward_travel(-999999, 0)
-        assert c._inward_travel == -ClientMouseController.RETURN_PUSH_MARGIN
-
-    def test_accumulate_inward_travel_clamp_uses_perp_axis(
-        self, event_bus, mock_stream_handler, mock_mouse_controller
-    ):
-        """A TOP/BOTTOM lock clamps to the monitor HEIGHT, not width."""
-        c = self._make_client(event_bus, mock_stream_handler, mock_mouse_controller)
-        c._active_target_bbox = (0, 0, 1920, 1080)
-        c._return_locked_edge = ScreenEdge.TOP  # perpendicular axis = height
-        c._inward_travel = 0
-        c._accumulate_inward_travel(0, 999999)
-        assert c._inward_travel == 1080
-
-    def test_accumulate_inward_travel_skips_clamp_on_degenerate_bbox(
-        self, event_bus, mock_stream_handler, mock_mouse_controller
-    ):
-        """A zero-width bbox must skip the inward ceiling, which would otherwise
-        pin the offset at 0; the outward floor still applies."""
-        c = self._make_client(event_bus, mock_stream_handler, mock_mouse_controller)
-        c._active_target_bbox = (0, 0, 0, 1080)  # zero width
-        c._return_locked_edge = ScreenEdge.LEFT
-        c._inward_travel = 0
-        c._accumulate_inward_travel(ClientMouseController.RETURN_PUSH_MARGIN, 0)
-        assert c._inward_travel == ClientMouseController.RETURN_PUSH_MARGIN
-        # The gate is still reachable from a degenerate bbox.
-        c._inward_travel = 0
-        c._accumulate_inward_travel(-999, 0)
-        assert c._inward_travel == -ClientMouseController.RETURN_PUSH_MARGIN
+        c._accumulate_outward_push(-100, -100)
+        assert c._outward_push == 0
 
     @pytest.mark.anyio
-    async def test_overshoot_then_return_reaches_release_band(
+    async def test_leaving_the_edge_resets_the_push(
         self, event_bus, mock_stream_handler, mock_mouse_controller
     ):
-        """Regression: after overshooting a far edge, a full return sweep still
-        gets the offset across the threshold and the return fires."""
+        """The push only survives while the cursor is still held at the edge.
+
+        This is the whole reset rule, and it is what keeps the accumulator from
+        describing anything other than one continuous gesture: a tick that
+        reports another edge - or none - starts it over.
+        """
         with _ScreenGeometry(1920, 1080):
             c = self._make_client(event_bus, mock_stream_handler, mock_mouse_controller)
             self._activate_left_entry(c)
-            # Enter and overshoot the far (RIGHT) edge many times over.
-            for _ in range(200):
-                c._move_cursor(-1, -1, 40, 0)  # +X inward for a LEFT lock
-            assert c._inward_travel == 1920  # capped at the width, not 8000
-            # One full return sweep back to the LEFT edge, then keep pushing.
-            for _ in range(200):
-                c._move_cursor(-1, -1, -40, 0)
-            assert c._inward_travel == -c.RETURN_PUSH_MARGIN
-            # Deliberate push onto the edge now hands control back.
-            c._controller.position = (0, 500)
+            c._outward_push = c.RETURN_PUSH_MARGIN - 1
+
+            # Cursor mid-screen: no edge at all.
+            c._controller.position = (900, 500)
             c._last_move_delta = (-3, 0)
             await c._check_edge()
-            assert mock_stream_handler.send.called
+
+            assert c._outward_push == 0
+
+    @pytest.mark.anyio
+    async def test_a_pinned_cursor_can_still_hand_control_back(
+        self, event_bus, mock_stream_handler, mock_mouse_controller
+    ):
+        """The case the old design could not express at all.
+
+        The cursor sits ON the entry edge and the OS refuses to move it any
+        further, so every backend-reported displacement is zero (macOS) or a
+        lie (Windows). The user pushes outward and must get control back.
+        """
+        with _ScreenGeometry(1920, 1080):
+            c = self._make_client(event_bus, mock_stream_handler, mock_mouse_controller)
+            self._activate_left_entry(c)
+            c._controller.position = (0, 500)  # pinned at the LEFT bound
+
+            with patch.object(c, "_inject_relative", return_value=(0, 0)):
+                for _ in range(c.RETURN_PUSH_MARGIN // 3):
+                    c._move_cursor(-1, -1, -3, 0)
+                    await c._check_edge()
+
+            assert mock_stream_handler.send.called, "return-to-server never fired"
+
+    @pytest.mark.anyio
+    async def test_a_held_pointer_does_not_hand_control_back(
+        self, event_bus, mock_stream_handler, mock_mouse_controller
+    ):
+        """A grabbed pointer mid-screen is not a push at the edge.
+
+        Same zero displacement as the test above, but the cursor is nowhere
+        near the entry edge - so every tick resets the gesture and nothing
+        fires. This is the discrimination the applied displacement was
+        supposed to provide and could not.
+        """
+        with _ScreenGeometry(1920, 1080):
+            c = self._make_client(event_bus, mock_stream_handler, mock_mouse_controller)
+            self._activate_left_entry(c)
+            c._controller.position = (900, 500)
+
+            with patch.object(c, "_inject_relative", return_value=(0, 0)):
+                for _ in range(50):
+                    c._move_cursor(-1, -1, -3, 0)
+                    await c._check_edge()
+
+            assert not mock_stream_handler.send.called
+            assert c._outward_push == 0
 
     def test_resolve_entry_edge_prefers_server_value(
         self, event_bus, mock_stream_handler, mock_mouse_controller
@@ -1124,19 +1054,18 @@ class TestClientMouseController:
         c._edge_bindings = [self._RETURN_BINDING]
         c._server_bbox = (0, 0, 1920, 1080)
         c._return_locked_edge = ScreenEdge.LEFT
-        c._inward_travel = 0
+        c._outward_push = 0
 
     @pytest.mark.anyio
     async def test_return_straight_back_from_the_landing(
         self, event_bus, mock_stream_handler, mock_mouse_controller
     ):
-        """Push back out immediately after landing, with ZERO inward travel.
+        """Push back out immediately after landing, having never gone inside.
 
-        The reported bug: the old arm/release latch could only be armed by a
-        >=12 px *inward* trip first, and the offset was floored at 0, so the
-        outward push was invisible and this return never fired. The only
-        workaround was walking to the far edge of the client and back purely to
-        satisfy the arming margin.
+        Two separate designs broke this. An arm/release latch needed a >=12 px
+        *inward* trip before the return could fire at all; then an accumulator
+        fed from the applied displacement made it unreachable on macOS, where
+        a cursor held at the bound reports zero however hard it is pushed.
         """
         with _ScreenGeometry(1920, 1080):
             c = self._make_client(event_bus, mock_stream_handler, mock_mouse_controller)
@@ -1145,7 +1074,7 @@ class TestClientMouseController:
             # Straight back out through the entry edge, never having gone in.
             for _ in range(c.RETURN_PUSH_MARGIN):
                 c._move_cursor(-1, -1, -1, 0)
-            assert c._inward_travel == -c.RETURN_PUSH_MARGIN
+            assert c._outward_push == c.RETURN_PUSH_MARGIN
 
             c._controller.position = (0, 500)
             c._last_move_delta = (-1, 0)
@@ -1174,16 +1103,18 @@ class TestClientMouseController:
     async def test_entry_gate_blocks_fast_motion_false_return(
         self, event_bus, mock_stream_handler, mock_mouse_controller
     ):
-        """Fast-motion regression: cursor far inside (offset high and positive),
-        while the laggy OS read-back still reports the entry edge -> no return.
-        The lag-free ``_inward_travel``, not the read-back, gates the return."""
+        """Fast-motion regression: an inward flick must never hand control back.
+
+        The laggy OS read-back still reports the entry edge afterwards, and a
+        single reverse delta arrives on top of it. Only a sustained outward
+        push opens the gate, and an inward move has already zeroed it."""
         with _ScreenGeometry(1920, 1080):
             c = self._make_client(event_bus, mock_stream_handler, mock_mouse_controller)
             self._activate_left_entry(c)
             # Fast inward flick: the offset is far from the outward threshold.
             for _ in range(10):
                 c._move_cursor(-1, -1, 40, 0)  # +X inward for a LEFT lock
-            assert c._inward_travel > 0
+            assert c._outward_push == 0
             # Laggy read-back still says the edge; a reverse delta arrives.
             c._controller.position = (0, 500)
             c._last_move_delta = (-3, 0)
@@ -1202,10 +1133,10 @@ class TestClientMouseController:
             # Enter, then travel back out through the LEFT edge.
             for _ in range(10):
                 c._move_cursor(-1, -1, 40, 0)
-            assert c._inward_travel > 0
+            assert c._outward_push == 0
             for _ in range(20):
                 c._move_cursor(-1, -1, -40, 0)  # back out through the LEFT edge
-            assert c._inward_travel == -c.RETURN_PUSH_MARGIN
+            assert c._outward_push == c.RETURN_PUSH_MARGIN
             # Deliberate push onto the edge.
             c._controller.position = (0, 500)
             c._last_move_delta = (-3, 0)
@@ -1341,12 +1272,12 @@ class TestClientMouseController:
         an outward push has to be made again before that edge can return.
         """
         c = self._make_client(event_bus, mock_stream_handler, mock_mouse_controller)
-        c._inward_travel = 99
+        c._outward_push = 99
         c._resolve_intra_client_warp = lambda *a, **k: (1, 300, 400, "left")
         c._monitor_layout = MonitorLayout.from_bboxes([(0, 0, 1920, 1080)])
         assert c._try_intra_client_warp_sync(ScreenEdge.RIGHT, 1919, 400, None)
         assert c._return_locked_edge == ScreenEdge.LEFT
-        assert c._inward_travel == 0
+        assert c._outward_push == 0
 
     def test_intra_warp_keeps_the_lock_on_an_unmapped_edge(
         self, event_bus, mock_stream_handler, mock_mouse_controller
@@ -1366,7 +1297,7 @@ class TestClientMouseController:
         assert c._try_intra_client_warp_sync(ScreenEdge.RIGHT, 1919, 400, None)
 
         assert c._return_locked_edge == ScreenEdge.TOP
-        assert c._inward_travel == 0
+        assert c._outward_push == 0
 
     @pytest.mark.anyio
     async def test_no_clamp_while_pushing_out_at_the_locked_edge(
@@ -1375,7 +1306,7 @@ class TestClientMouseController:
         """The OS already holds the cursor there; correcting it fights the user.
 
         On a Wayland client a warp is a real inward motion, so clamping every
-        tick physically cancels the outward push - and keeps ``_inward_travel``
+        tick physically cancels the outward push - and keeps ``_outward_push``
         from ever reaching the margin that opens the return gate.
         ``input/mouse/CLAUDE.md``: never contend with the OS for the cursor at a
         desktop bound, it shows.
@@ -1387,7 +1318,7 @@ class TestClientMouseController:
             c._edge_bindings = []
             for _ in range(20):
                 c._move_cursor(-1, -1, -40, 0)
-            assert c._inward_travel < 0
+            assert c._outward_push > 0
 
             c._controller.position = (0, 500)
             c._last_move_delta = (-3, 0)
@@ -1407,7 +1338,7 @@ class TestClientMouseController:
             self._activate_left_entry(c)
             c._edge_bindings = []
             c._return_locked_edge = ScreenEdge.LEFT
-            c._inward_travel = 400  # well inside, no outward push
+            c._outward_push = 0  # nothing pushed at the locked edge
 
             c._controller.position = (1919, 500)
             c._last_move_delta = (3, 0)
@@ -2447,27 +2378,32 @@ class TestDarwinClientMouseController:
         ):
             self._make_client(event_bus, mock_stream_handler, mock_mouse_controller)
 
-    def test_applied_displacement_is_measured_not_assumed(
+    def test_the_injection_reports_no_displacement_to_shared_code(
         self, event_bus, mock_stream_handler, mock_mouse_controller
     ):
-        """The reported displacement is what the cursor did, per the OS.
+        """No path may hand an applied displacement back to the base class.
 
-        Under the HID path the OS may apply the delta or withhold it entirely
-        (an app holding the pointer), so it is read back rather than assumed.
+        It used to, and the value meant two different things: pushing into a
+        bound where the cursor provably moves 0 px, this backend reported 0
+        while Windows reported the full raw delta. Shared code that decided
+        anything from it was therefore right on at most one platform - which
+        is how the return gate became unreachable here. The displacement is
+        still measured, but it stays local (``_immobile_moves``).
         """
         c = self._make_client(event_bus, mock_stream_handler, mock_mouse_controller)
-        ctx, _ = self._patch_hid(ok=True)
 
-        with ctx, patch.object(c, "_cursor_position") as pos:
-            # First call has no baseline yet, then the cursor follows...
-            pos.side_effect = [(100.0, 100.0), (110.0, 95.0)]
-            assert c._inject_relative(10, -5) == (0, 0)
-            assert c._inject_relative(10, -5) == (10, -5)
-
-            # ...and here it does not move at all: no travel to report.
-            pos.side_effect = [(110.0, 95.0), (110.0, 95.0)]
-            assert c._inject_relative(10, -5) == (0, 0)
-            assert c._inject_relative(10, -5) == (0, 0)
+        for hid_ok in (True, False):
+            ctx, _ = self._patch_hid(ok=hid_ok)
+            with (
+                ctx,
+                patch("input.mouse._darwin.CGEventCreateMouseEvent"),
+                patch("input.mouse._darwin.CGEventSetIntegerValueField"),
+                patch("input.mouse._darwin.CGEventPost"),
+                patch.object(c, "_find_monitor_for_cursor", return_value=None),
+                patch.object(c, "_cursor_position", return_value=(100.0, 100.0)),
+            ):
+                assert c._inject_relative(10, -5) is None, f"hid_ok={hid_ok}"
+                assert c._inject_relative(10, -5) is None, f"hid_ok={hid_ok}"
 
     def test_pushing_at_the_desktop_bound_is_not_a_held_pointer(
         self, event_bus, mock_stream_handler, mock_mouse_controller
@@ -2747,7 +2683,7 @@ class TestDarwinClientMouseController:
         )
 
         with ctx, create, position:
-            assert c._inject_relative(7, -5) == (7, -5)
+            assert c._inject_relative(7, -5) is None
 
         mock_mouse_controller.move.assert_called_once_with(dx=7, dy=-5)
 
