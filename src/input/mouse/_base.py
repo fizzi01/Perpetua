@@ -707,9 +707,9 @@ class ServerMouseListener(object):
         # ``(x, y)`` is normalised over the destination client monitor's
         # bbox, not the full client virtual desktop - the client
         # denormalises against ``_active_target_bbox``. The landing sits
-        # exactly ON the entry edge (0 / 1): the client's arm/release
-        # hysteresis, not an inset, is what stops it bouncing straight
-        # back (see ``_accumulate_inward_travel``).
+        # exactly ON the entry edge (0 / 1): the client's outward-push
+        # gate, not an inset, is what stops it bouncing straight back
+        # (see ``_accumulate_outward_push``).
         if edge == ScreenEdge.LEFT:
             mouse_event.x = 1
             mouse_event.y = client_axis_norm
@@ -1112,27 +1112,14 @@ class ClientMouseController(object):
     # resumes the moment the cursor moves again. Backends that always apply
     # the delta (Windows, Linux, the macOS CGEvent fallback) never reach this.
     IMMOBILE_MOVES_BEFORE_HOLD = 3
-    # Return-to-server through the ENTRY edge is gated on the LAG-FREE
-    # ``_inward_travel``: the signed perpendicular offset from that edge,
-    # accumulated from the displacement actually applied to the cursor - never
-    # the async, laggy read-back that misleads edge detection on fast motion.
+    # Pixels of outward push, REQUESTED while the cursor is already held against
+    # the entry edge, that hand control back to the server. It is a physical
+    # quantity: how hard the user has to lean into the wall, in the units the
+    # server speaks. At a typical 6 px per move that is two deliberate ticks -
+    # far more than the single stray reverse delta a landing can produce.
     #
-    # Positive = inside the client. Negative = the user is pushing OUTWARD while
-    # the OS holds the cursor against the edge, which is the whole signal: it is
-    # how "I want to go back" is expressed, and it is the only thing that can
-    # open the gate. The return fires once that outward push reaches
-    # ``RETURN_PUSH_MARGIN``, which
-    #   - ignores an at-landing jitter (one stray reverse delta is nowhere near
-    #     the margin), and
-    #   - ignores a stray reverse delta while the cursor sits far inside (the
-    #     offset is large and positive, so a single delta cannot reach the
-    #     threshold) - without consulting the read-back at all.
-    #
-    # This deliberately replaced an arm/release latch pair: arming required a
-    # >=12 px INWARD trip first, so a user who landed on the edge and pushed
-    # straight back could never return - the offset was floored at 0, so the
-    # outward push was invisible. Keeping the sign removes the latch, both
-    # margins, and the failure.
+    # See ``_accumulate_outward_push`` for why the *requested* delta is the
+    # signal and the applied one cannot be.
     RETURN_PUSH_MARGIN = 12
     # Minimum spacing between ``[RETURN_GATE]`` lines. The gate is evaluated on
     # every cursor tick (>100 Hz), and the point of the line is the state, not
@@ -1185,14 +1172,13 @@ class ClientMouseController(object):
         # return-to-server crossing.
         self._last_move_delta: tuple[int, int] = (0, 0)
         # Return-to-server lockout. After a crossing the cursor lands ON the
-        # entry edge, which is also the edge used to return to the server.
-        # ``_return_locked_edge`` names that edge; ``_inward_travel`` is the
-        # lag-free SIGNED perpendicular offset from it (accumulated from the
-        # applied displacement, never the async cursor read-back), negative once
-        # the user pushes back out - see ``_accumulate_inward_travel`` and the
-        # gate in ``_check_edge``.
+        # entry edge, which is also the edge used to return to the server, so
+        # the two have to be told apart. ``_return_locked_edge`` names that
+        # edge; ``_outward_push`` is how far the user has asked to go past it
+        # while the cursor was already held there - never negative, reset the
+        # moment the cursor is anywhere else. See ``_accumulate_outward_push``.
         self._return_locked_edge: Optional[ScreenEdge] = None
-        self._inward_travel: int = 0
+        self._outward_push: int = 0
         # Rate limit for the ``[RETURN_GATE]`` diagnostic.
         self._last_return_gate_log: float = 0.0
         # Server's virtual desktop bbox - return-to-server (x, y) is
@@ -1455,8 +1441,8 @@ class ClientMouseController(object):
         self._immobile_moves = 0
 
         # Lock return-to-server against the edge the cursor entered through
-        # (server-supplied, else inferred from the landing coords) until it
-        # travels inward - see ``_accumulate_inward_travel``.
+        # (server-supplied, else inferred from the landing coords) until the
+        # user pushes back out through it - see ``_accumulate_outward_push``.
         self._return_locked_edge = (
             self._resolve_entry_edge(
                 getattr(data, "entry_edge", None),
@@ -1466,7 +1452,7 @@ class ClientMouseController(object):
             if data is not None
             else None
         )
-        self._inward_travel = 0
+        self._outward_push = 0
 
         self._is_active = True
         self._cross_screen_event.clear()
@@ -1494,7 +1480,7 @@ class ClientMouseController(object):
         self._last_known_monitor_id = None
         self._last_move_delta = (0, 0)
         self._return_locked_edge = None
-        self._inward_travel = 0
+        self._outward_push = 0
         self._last_move_ts = 0.0
         self._last_seen_pos = None
         self._immobile_moves = 0
@@ -1533,53 +1519,43 @@ class ClientMouseController(object):
             return ScreenEdge.BOTTOM
         return None
 
-    def _accumulate_inward_travel(self, dx: int, dy: int) -> None:
-        """Track the cursor's signed offset from the entry edge, lag-free.
+    #: Outward unit vector per entry edge, in screen coordinates. Only the
+    #: perpendicular component of a move can express "further out through this
+    #: edge"; motion along the edge is irrelevant to the question.
+    _OUTWARD_AXIS = {
+        ScreenEdge.LEFT: ("x", -1),
+        ScreenEdge.RIGHT: ("x", 1),
+        ScreenEdge.TOP: ("y", -1),
+        ScreenEdge.BOTTOM: ("y", 1),
+    }
 
-        Maintains ``_inward_travel`` = net signed displacement along the axis
-        perpendicular to ``_return_locked_edge`` (direction/angle-agnostic: a
-        diagonal move contributes only its perpendicular component, movement
-        parallel to the edge contributes nothing). The landing sits on the edge,
-        so this IS the cursor's perpendicular offset from it.
+    def _accumulate_outward_push(self, dx: int, dy: int) -> None:
+        """Record how hard the user is asking to leave through the entry edge.
 
-        **The sign is the point.** Positive is inside the client; negative means
-        the user is pushing outward while the OS holds the cursor at the edge,
-        and that is what opens the return gate in ``_check_edge``. Flooring this
-        at 0 - as it used to - discarded the outward push entirely, so a cursor
-        that landed on the edge could never be pushed back out.
-
-        Bounded on both sides, for the same reason in each direction: the OS pins
-        the cursor at a screen edge while the server keeps forwarding deltas, so
-        an unbounded accumulator would drift arbitrarily far from the truth and a
-        real sweep could never bring it back across the threshold. Backends that
-        credit the RAW delta (Windows, Linux) need this; where the applied
-        displacement is MEASURED (macOS) the offset stops moving on its own,
-        because the OS swallows the delta and ``applied`` is (0, 0).
+        ``_check_edge`` only lets it survive while the
+        cursor is actually held against ``_return_locked_edge``. A move that
+        points back inside is the user changing their mind and zeroes it, as
+        does leaving the edge at all.
         """
         edge = self._return_locked_edge
         if edge is None:
             return
-        min_x, min_y, max_x, max_y = self._active_target_bbox
-        if edge == ScreenEdge.LEFT:
-            self._inward_travel += dx
-            span = max_x - min_x
-        elif edge == ScreenEdge.RIGHT:
-            self._inward_travel -= dx
-            span = max_x - min_x
-        elif edge == ScreenEdge.TOP:
-            self._inward_travel += dy
-            span = max_y - min_y
-        elif edge == ScreenEdge.BOTTOM:
-            self._inward_travel -= dy
-            span = max_y - min_y
-        else:
+        axis = self._OUTWARD_AXIS.get(edge)
+        if axis is None:
             return
-        # Skip the inward ceiling on a degenerate bbox (it would pin the offset
-        # at 0); the outward floor still applies, so the gate stays reachable.
-        ceiling = span if span > 0 else self._inward_travel
-        self._inward_travel = max(
-            -self.RETURN_PUSH_MARGIN, min(ceiling, self._inward_travel)
-        )
+        name, sign = axis
+        outward = (dx if name == "x" else dy) * sign
+        if outward < 0:
+            self._outward_push = 0  # pushing back inside: changed their mind
+        elif outward > 0:
+            # Capped at the margin: this is a gesture detector.
+            # Nothing is served by remembering a push bigger than the
+            # one that already fires the return.
+            self._outward_push = min(
+                self._outward_push + outward, self.RETURN_PUSH_MARGIN
+            )
+        # outward == 0 is motion purely along the edge: it neither asks to leave
+        # nor takes it back, so the gesture continues unchanged.
 
     async def _on_client_topology_updated(
         self, data: Optional[ClientTopologyUpdatedEvent]
@@ -2038,24 +2014,29 @@ class ClientMouseController(object):
                 if edge is None:
                     edge = self._detect_edge_via_delta(x, y, current_monitor)
 
+                # The push only counts while the cursor is still held against
+                # the edge it was asked to leave through. ``edge`` says exactly
+                # that - both detectors report an edge only for a cursor at the
+                # bound moving that way - so anywhere else (mid-screen, or a
+                # different edge) the gesture is over and starts from zero.
+                # This is the whole reset rule: no decay, no threshold.
+                if edge != self._return_locked_edge:
+                    self._outward_push = 0
+
                 if edge is None or self._is_dragging:
                     return None
 
-                # Gate return-to-server through the entry edge on the lag-free
-                # signed ``_inward_travel`` (see ``_accumulate_inward_travel``),
-                # NOT the laggy OS read-back that drives ``edge``: it opens only
-                # once the user has pushed ``RETURN_PUSH_MARGIN`` OUTWARD against
-                # the edge. That one test covers both the at-landing jitter (a
-                # stray reverse delta is far from the margin) and the fast-motion
-                # bounce (a cursor far inside has a large positive offset, which
-                # no single delta can cross). Returns through any OTHER edge fire
-                # immediately. The OS-drift path (``_handle_os_drift`` above) and
-                # intra-client warps below are intentionally NOT gated - drift is
-                # a real OS transition and warps route within this client, not
-                # back to the server.
+                # Returning through the ENTRY edge needs a deliberate push
+                # against it, because the crossing left the cursor sitting on
+                # that same edge and the leftover motion must not read as an
+                # attempt to leave. Returns through any OTHER edge fire
+                # immediately - the user walked there, which is deliberate
+                # enough. The OS-drift path (``_handle_os_drift`` above) and
+                # intra-client warps below are intentionally NOT gated: drift is
+                # a real OS transition and warps route within this client.
                 entry_gate_open = (
                     edge != self._return_locked_edge
-                    or self._inward_travel <= -self.RETURN_PUSH_MARGIN
+                    or self._outward_push >= self.RETURN_PUSH_MARGIN
                 )
                 self._log_return_gate(edge, x, y, entry_gate_open)
                 if entry_gate_open and await self._try_return_to_server(edge, x, y):
@@ -2088,12 +2069,12 @@ class ClientMouseController(object):
         On a Wayland client this is also the difference between a reachable and
         an unreachable return gate: the position ``_check_edge`` reads there is
         libei's virtual accumulator, so a clamp keeps undoing the very push
-        ``_inward_travel`` needs in order to reach the margin.
+        ``_outward_push`` needs in order to reach the margin.
         """
         return (
             edge is not None
             and edge == self._return_locked_edge
-            and self._inward_travel < 0
+            and self._outward_push > 0
         )
 
     def _log_return_gate(
@@ -2106,13 +2087,18 @@ class ClientMouseController(object):
         binding lookup came back empty. Rate-limited, and only while an entry
         edge is locked, so it can ship enabled at debug level.
 
-        Reading the line: ``travel`` stuck at 0 means
-        ``_accumulate_inward_travel`` is not being fed (the relative branch of
-        ``_move_cursor`` isn't running, or ``applied`` is ``(0, 0)``); ``travel``
-        at the margin with ``open=True`` but ``resolved=None`` means no edge
-        binding matched - typically the binding's ``client_monitor_id`` not
-        matching this client's real monitor id; ``edge`` never showing the entry
-        edge means the problem is edge detection, not the gate.
+        Reading the line, in the order the values fail:
+
+        - ``edge`` never showing the locked edge while the user pushes at it -
+          the problem is edge detection, not the gate, and ``push`` staying 0
+          is a *symptom* of that (it resets on every tick that reports another
+          edge or none).
+        - ``edge`` correct but ``push`` not climbing - the relative branch of
+          ``_move_cursor`` isn't running, or the server is sending no outward
+          component on the perpendicular axis.
+        - ``push`` at the margin with ``open=True`` but ``resolved=None`` - no
+          edge binding matched, typically the binding's ``client_monitor_id``
+          not matching this client's real ``monitor``.
         """
         if self._return_locked_edge is None:
             return
@@ -2127,7 +2113,8 @@ class ClientMouseController(object):
         self._logger.debug(
             "[RETURN_GATE] "
             f"edge={edge} locked={self._return_locked_edge} "
-            f"travel={self._inward_travel} open={gate_open} "
+            f"push={self._outward_push}/{self.RETURN_PUSH_MARGIN} "
+            f"open={gate_open} "
             f"resolved={resolved} pos=({int(x)}, {int(y)}) "
             f"bindings={len(self._edge_bindings)} "
             f"monitor={self._active_monitor_id}"
@@ -2272,7 +2259,7 @@ class ClientMouseController(object):
             )
         else:
             self._return_locked_edge = mapped_dst_edge
-        self._inward_travel = 0
+        self._outward_push = 0
         return True
 
     async def _position_cursor(self, x: float | int, y: float | int):
@@ -2312,13 +2299,8 @@ class ClientMouseController(object):
             # RAW delta: it is a direction hint for ``_detect_edge_via_delta``,
             # not a measure of displacement.
             self._last_move_delta = (dx, dy)
-            # Inject first, then advance the return lockout from what the
-            # backend actually applied to the cursor - under a pointer lock
-            # macOS pins the event, so the raw delta would credit travel the
-            # cursor never made and move ``_inward_travel`` for motion that
-            # never happened (see ``_accumulate_inward_travel``).
-            applied = self._inject_relative(dx, dy)
-            self._accumulate_inward_travel(*applied)
+            self._inject_relative(dx, dy)
+            self._accumulate_outward_push(dx, dy)
         else:
             try:
                 min_x, min_y, max_x, max_y = self._active_target_bbox
@@ -2406,14 +2388,8 @@ class ClientMouseController(object):
         self._immobile_moves = 0
         self._controller.position = (x, y)
 
-    def _inject_relative(self, dx: int, dy: int) -> tuple[int, int]:
+    def _inject_relative(self, dx: int, dy: int) -> None:
         """Inject a relative pointer motion of ``(dx, dy)``.
-
-        Returns the displacement actually applied to the visible cursor,
-        which is what ``_move_cursor`` feeds to ``_accumulate_inward_travel``
-        - a backend whose motion the OS may withhold (macOS under a game's
-        cursor grab) must report what really happened, or the return-lock
-        offset drifts away from the real cursor position.
 
         The default implementation delegates to pynput's ``Controller.move``.
         On macOS and Windows pynput implements this as an *absolute* warp
@@ -2426,7 +2402,6 @@ class ClientMouseController(object):
         (libei) already moves relatively and uses this default.
         """
         self._controller.move(dx=dx, dy=dy)
-        return (dx, dy)
 
     def _click(self, button: int | None, is_pressed: bool):
         """Forward press/release to the OS, tagging multi-click sequences.
