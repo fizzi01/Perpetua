@@ -42,7 +42,7 @@ from event.bus import EventBus
 from network.stream import StreamType
 from network.stream.handler import StreamHandler
 
-from utils.logging import get_logger
+from utils.logging import Logger, get_logger
 from utils.screen import Screen
 from input.utils import ScreenEdge, EdgeDetector, ButtonMapping
 
@@ -60,6 +60,10 @@ class ServerMouseListener(object):
     # (px) the server cursor must move inward off the just-returned edge
     # before a crossing through it is allowed again.
     RECROSS_UNLOCK_MARGIN = 12
+    # Minimum spacing between the recurring ``[RECROSS_GATE]`` lines. The lock
+    # is evaluated on every cursor tick (>100 Hz); the transitions (armed,
+    # released, blocked) are logged regardless of it.
+    RECROSS_GATE_LOG_INTERVAL = 0.25
 
     def __init__(
         self,
@@ -143,6 +147,8 @@ class ServerMouseListener(object):
         # the inward check uses the right bbox on multi-monitor servers.
         self._recross_locked_edge: Optional[ScreenEdge] = None
         self._recross_locked_monitor = None
+        # Rate limit for the recurring ``[RECROSS_GATE]`` diagnostic.
+        self._last_recross_gate_log: float = 0.0
 
         self._logger = get_logger(self.__class__.__name__)
 
@@ -562,6 +568,42 @@ class ServerMouseListener(object):
             edge = ScreenEdge.BOTTOM
         self._recross_locked_edge = edge
         self._recross_locked_monitor = monitor if edge is not None else None
+        self._log_recross_gate("ARMED" if edge else "not armed", x, y, throttle=False)
+
+    def _log_recross_gate(
+        self, state: str, x: float, y: float, *, throttle: bool = True
+    ) -> None:
+        """Emit the discriminating state of the re-cross lock.
+
+        The lock decides from the locked edge, the locked monitor and the
+        cursor position, and logged none of them - so an edge that had gone
+        uncrossable was indistinguishable from one with no binding behind it.
+        The counterpart of ``[RETURN_GATE]`` on the client.
+
+        Reading the line, in the order the values fail:
+
+        - ``ARMED`` naming an edge the cursor did not return through - the
+          landing coords are wrong (they arrive normalised; see
+          ``_absolute_landing``) or the wrong monitor was resolved.
+        - ``BLOCKED`` repeating while the user pushes at the locked edge with
+          no ``RELEASED`` in between - the cursor never went ``margin`` px
+          inward, which is the only thing that clears the lock.
+        - no line at all while a crossing does not fire - the lock is not the
+          reason; look at edge detection and the binding lookup.
+        """
+        if not self._logger.is_enabled_for(Logger.DEBUG):
+            return
+        if throttle:
+            now = time()
+            if now - self._last_recross_gate_log < self.RECROSS_GATE_LOG_INTERVAL:
+                return
+            self._last_recross_gate_log = now
+        monitor = self._recross_locked_monitor
+        self._logger.debug(
+            f"[RECROSS_GATE] {state} locked={self._recross_locked_edge} "
+            f"pos=({int(x)}, {int(y)}) margin={self.RECROSS_UNLOCK_MARGIN} "
+            f"monitor={getattr(monitor, 'monitor_id', None)}"
+        )
 
     def _release_recross_lock(self, x: float, y: float) -> None:
         """Clear the lock once the cursor has moved inward off the locked edge.
@@ -586,9 +628,13 @@ class ServerMouseListener(object):
             moved_inward = y > monitor.min_y + m
         else:  # BOTTOM
             moved_inward = y < monitor.max_y - 1 - m
-        if moved_inward:
-            self._recross_locked_edge = None
-            self._recross_locked_monitor = None
+        if not moved_inward:
+            self._log_recross_gate("still locked", x, y)
+            return
+        # Log before clearing, so the line still names the edge it released.
+        self._log_recross_gate("RELEASED", x, y, throttle=False)
+        self._recross_locked_edge = None
+        self._recross_locked_monitor = None
 
     def _recross_lock_blocks(self, edge: ScreenEdge) -> bool:
         """Whether a crossing through ``edge`` is currently suppressed."""
@@ -845,6 +891,7 @@ class ServerMouseListener(object):
                 # Suppress an immediate re-cross through the edge the cursor
                 # just returned to: the retained history is still edge-ward.
                 if self._recross_lock_blocks(edge):
+                    self._log_recross_gate(f"BLOCKED edge={edge}", x, y)
                     return True
 
                 mouse_event = MouseEvent(x=x, y=y, action=MouseEvent.POSITION_ACTION)
