@@ -571,14 +571,77 @@ class TestServerMouseListener:
 
                 # Still near the edge -> a RIGHT crossing is suppressed, while a
                 # crossing through a different edge is not (and leaves the lock).
-                assert listener._recross_lock_blocks(ScreenEdge.RIGHT, 1913, 500)
-                assert not listener._recross_lock_blocks(ScreenEdge.LEFT, 1913, 500)
+                listener._release_recross_lock(1913, 500)
+                assert listener._recross_lock_blocks(ScreenEdge.RIGHT)
+                assert not listener._recross_lock_blocks(ScreenEdge.LEFT)
                 assert listener._recross_locked_edge == ScreenEdge.RIGHT
 
                 # Cursor moves inward past the margin -> lock clears, RIGHT
                 # crossings are allowed again.
-                assert not listener._recross_lock_blocks(ScreenEdge.RIGHT, 1900, 500)
+                listener._release_recross_lock(1900, 500)
+                assert not listener._recross_lock_blocks(ScreenEdge.RIGHT)
                 assert listener._recross_locked_edge is None
+
+    async def _returned_through_the_top_edge(
+        self, event_bus, mock_stream_handler, mock_mouse_listener
+    ):
+        """A listener whose re-cross lock was armed by a real return upward."""
+        with patch("input.mouse._base.MouseListener", return_value=mock_mouse_listener):
+            with _ScreenGeometry(1920, 1080):
+                listener = ServerMouseListener(
+                    event_bus,
+                    mock_stream_handler,
+                    mock_stream_handler,
+                    filtering=False,
+                )
+        # 6px inside the top edge, the margin ``_lookup_return_to_server`` uses.
+        await listener._on_active_screen_changed(
+            ActiveScreenChangedEvent(
+                active_screen=None, source="server", position=(0.5, 6 / 1080)
+            )
+        )
+        assert listener._recross_locked_edge == ScreenEdge.TOP
+        return listener
+
+    @pytest.mark.anyio
+    async def test_a_move_off_the_edge_releases_the_recross_lock(
+        self,
+        event_bus,
+        mock_stream_handler,
+        mock_mouse_listener,
+    ):
+        """Moving inward is what clears it - and that happens at no edge at all.
+
+        Released only on an edge-detected tick, the edge the cursor returned
+        through stayed uncrossable until some *other* edge was touched.
+        """
+        listener = await self._returned_through_the_top_edge(
+            event_bus, mock_stream_handler, mock_mouse_listener
+        )
+
+        with _ScreenGeometry(1920, 1080):
+            listener.on_move(960, 540)
+
+        assert listener._recross_locked_edge is None
+        assert not listener._recross_lock_blocks(ScreenEdge.TOP)
+
+    @pytest.mark.anyio
+    async def test_a_move_still_at_the_edge_keeps_the_recross_lock(
+        self,
+        event_bus,
+        mock_stream_handler,
+        mock_mouse_listener,
+    ):
+        """The guard still does the job it exists for."""
+        listener = await self._returned_through_the_top_edge(
+            event_bus, mock_stream_handler, mock_mouse_listener
+        )
+
+        with _ScreenGeometry(1920, 1080):
+            listener.on_move(960, 3)
+
+        assert listener._recross_locked_edge == ScreenEdge.TOP
+        assert listener._recross_lock_blocks(ScreenEdge.TOP)
 
     @pytest.mark.anyio
     async def test_the_return_landing_updates_the_cursor_anchor(
