@@ -563,20 +563,19 @@ class ServerMouseListener(object):
         self._recross_locked_edge = edge
         self._recross_locked_monitor = monitor if edge is not None else None
 
-    def _recross_lock_blocks(self, edge: ScreenEdge, x: float, y: float) -> bool:
-        """Whether a crossing through ``edge`` is currently suppressed.
+    def _release_recross_lock(self, x: float, y: float) -> None:
+        """Clear the lock once the cursor has moved inward off the locked edge.
 
-        Clears the lock once the cursor has moved inward past
-        ``RECROSS_UNLOCK_MARGIN`` from the locked edge (so a later
-        deliberate re-cross through the same edge works), then reports
-        whether the pending crossing is the still-locked edge.
+        Evaluated on every move, not only at an edge: mid-screen is where
+        "moved inward" first becomes true, and mid-screen is not an edge.
+        Releasing it only on an edge-detected tick made the edge the cursor
+        returned through uncrossable until some *other* edge was touched.
         """
         locked = self._recross_locked_edge
         if locked is None:
-            return False
+            return
         monitor = self._recross_locked_monitor
         m = self.RECROSS_UNLOCK_MARGIN
-        moved_inward = False
         if monitor is None:
             moved_inward = True
         elif locked == ScreenEdge.LEFT:
@@ -585,13 +584,15 @@ class ServerMouseListener(object):
             moved_inward = x < monitor.max_x - 1 - m
         elif locked == ScreenEdge.TOP:
             moved_inward = y > monitor.min_y + m
-        elif locked == ScreenEdge.BOTTOM:
+        else:  # BOTTOM
             moved_inward = y < monitor.max_y - 1 - m
         if moved_inward:
             self._recross_locked_edge = None
             self._recross_locked_monitor = None
-            return False
-        return edge == locked
+
+    def _recross_lock_blocks(self, edge: ScreenEdge) -> bool:
+        """Whether a crossing through ``edge`` is currently suppressed."""
+        return edge is not None and edge == self._recross_locked_edge
 
     def _screen_size_valid(self) -> bool:
         return self._screen_size[0] > 0 and self._screen_size[1] > 0
@@ -827,6 +828,9 @@ class ServerMouseListener(object):
             )
 
         if not self._listening:
+            # Unconditionally, and before the edge test: the lock is released by
+            # moving inward, which happens where no edge is detected.
+            self._release_recross_lock(x, y)
             if history_ready:
                 edge = EdgeDetector.is_at_edge(
                     movement_history=self._movement_history,
@@ -839,9 +843,8 @@ class ServerMouseListener(object):
                     return True
 
                 # Suppress an immediate re-cross through the edge the cursor
-                # just returned to (the retained history is still edge-ward);
-                # the lock clears once the cursor has moved inward off it.
-                if self._recross_lock_blocks(edge, x, y):
+                # just returned to: the retained history is still edge-ward.
+                if self._recross_lock_blocks(edge):
                     return True
 
                 mouse_event = MouseEvent(x=x, y=y, action=MouseEvent.POSITION_ACTION)
