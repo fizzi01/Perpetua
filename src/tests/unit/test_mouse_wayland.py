@@ -412,3 +412,58 @@ class TestServerControllerNoSecondWarp:
                 )
             )
             controller.position_cursor.assert_not_called()
+
+
+class TestDirectionalHotkeyRaisesNoDialog:
+    """The hotkey resolver must not touch a ``MouseController`` in barrier mode.
+
+    It used to build one just to read ``.position``. In barrier mode that is the
+    libei controller, and merely constructing it goes
+    ``_get_connection()`` -> ``Oeffis.create(...)`` -> a **RemoteDesktop
+    CreateSession with its own permission dialog**, on the event loop - for a
+    position the capture path already reported. Barrier mode deliberately builds
+    no server controller at all.
+    """
+
+    @pytest.mark.anyio
+    async def test_no_controller_is_constructed(self, wayland_listener):
+        from input.utils import ScreenEdge
+        from event import ScreenSwitchDirectionalRequestEvent
+
+        wayland_listener._listening = True
+        wayland_listener._last_server_cursor_pos = (SCREEN_W - 1.0, 540.0)
+
+        with patch("input.mouse.backend.MouseController") as controller_cls:
+            await wayland_listener._on_hotkey_directional(
+                ScreenSwitchDirectionalRequestEvent(edge=ScreenEdge.RIGHT)
+            )
+
+        controller_cls.assert_not_called()
+        # And it still resolved: the cached anchor is a usable "from" point.
+        sent = [c.args[0] for c in wayland_listener.command_stream.send.call_args_list]
+        assert any(isinstance(e, CrossScreenCommandEvent) for e in sent)
+
+    @pytest.mark.anyio
+    async def test_the_activation_keeps_the_anchor_fresh(self, wayland_listener):
+        # There is no pynput move path in barrier mode, so the barrier activation
+        # is the only place the server's cursor position is ever observed. Without
+        # this the anchor stays at the seeded desktop centre forever.
+        await wayland_listener._on_barrier_activated("right", SCREEN_W - 1.0, 300.0)
+
+        assert wayland_listener._last_server_cursor_pos == (SCREEN_W - 1.0, 300.0)
+
+
+class TestServerStopClosesTheLibeiConnection:
+    def test_stop_shuts_the_remote_desktop_connection_down(self, wayland_listener):
+        # It is a portal session plus a libei dispatch thread in a module-level
+        # singleton; only the *client* stop path ever closed it, so one opened on
+        # the server for any reason outlived the service.
+        import sys
+        import types
+
+        stub = types.ModuleType("input.mouse.backend._libei")
+        stub.shutdown_connection = MagicMock()
+        with patch.dict(sys.modules, {"input.mouse.backend._libei": stub}):
+            assert wayland_listener.stop() is True
+
+        stub.shutdown_connection.assert_called_once()

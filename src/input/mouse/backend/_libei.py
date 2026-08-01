@@ -31,7 +31,6 @@ import time
 import threading
 import enum
 import select as _select
-from contextlib import contextmanager
 
 from evdev import ecodes
 from snegg.ei import Sender, EventType, DeviceCapability
@@ -74,64 +73,6 @@ def _restore_stderr(saved_fd):
             pass
 
 
-#: Upper bound on what is read back out of the capture pipe. The payload of
-#: interest is the extension's one-line explanation of a failed setup.
-_STDERR_CAPTURE_LIMIT = 64 * 1024
-
-
-@contextmanager
-def _captured_stderr(into: list):
-    """Capture fd-2 output for the enclosed block into ``into``.
-
-    ``_suppress_libei_stderr`` points fd 2 at /dev/null for the whole capture
-    thread, which also discards the extension's one-line explanation of a failed
-    portal setup. This makes that line available to the caller so it can be
-    logged through the structured logger.
-
-    It deliberately does **not** point fd 2 back at ``/dev/tty``, which the
-    previous version did: from a terminal launch that is a freeze mechanism -
-    a write from a background process group on a tty with ``TOSTOP`` raises
-    ``SIGTTOU`` (default action: stop the whole process), and a tty whose output
-    buffer fills with nobody draining it blocks ``write(2)`` forever while
-    ``logging`` holds its handler lock, taking every logging thread with it.
-
-    ``into`` receives at most one element - the captured text, stripped - and is
-    populated *before* the block's exception (if any) propagates, so a caller
-    can log it next to the failure.
-    """
-    try:
-        read_fd, write_fd = os.pipe()
-    except OSError:
-        yield
-        return
-
-    saved = None
-    try:
-        os.set_blocking(read_fd, False)
-        saved = os.dup(2)
-        os.dup2(write_fd, 2)
-        yield
-    finally:
-        # Restore first: fd 2 must not point at a pipe nobody reads any more.
-        if saved is not None:
-            _restore_stderr(saved)
-        try:
-            os.close(write_fd)
-        except OSError:
-            pass
-        try:
-            data = os.read(read_fd, _STDERR_CAPTURE_LIMIT)
-        except (BlockingIOError, OSError):
-            data = b""
-        try:
-            os.close(read_fd)
-        except OSError:
-            pass
-        text = data.decode("utf-8", "replace").strip()
-        if text:
-            into.append(text)
-
-
 # Portal failures that mean "the user has not granted access", where retrying
 # changes nothing until they do.
 _PERMISSION_HINTS = (
@@ -159,33 +100,20 @@ def _is_permission_failure(reason: str) -> bool:
 #: any timeout would put ordinary failures on the human-cadence schedule.
 _SETUP_TIMEOUT_HINT = "portal setup timed out"
 
-#: The extension refusing a second ``setup()`` while the previous one's task is
-#: still finishing (a late answer to a dialog we already gave up on). No dialog
-#: is raised, so this must not count as an attempt.
-_SETUP_PENDING_HINT = "previous setup is still winding down"
-
 
 def _is_setup_timeout(reason: str) -> bool:
     return _SETUP_TIMEOUT_HINT in reason.lower()
 
 
-def _is_setup_pending(reason: str) -> bool:
-    return _SETUP_PENDING_HINT in reason.lower()
-
-
-def _callable_signature(func) -> str:
-    """Textual signature of a (possibly native) callable, or ``""``.
-
-    Only ``__text_signature__`` is consulted - the one attribute that actually
-    describes the accepted keywords. The docstring is deliberately *not* used as
-    a fallback: it is free text, so "the keyword isn't mentioned there" is not
-    evidence that the keyword doesn't exist.
-    """
+def _portal_last_error(portal) -> str | None:
+    if portal is None:
+        return None
     try:
-        value = getattr(func, "__text_signature__", None)
+        detail = portal.last_error
     except Exception:
-        value = None
-    return value if isinstance(value, str) else ""
+        return None
+    detail = str(detail).strip() if detail else ""
+    return detail or None
 
 
 #: Every session arms the whole edge of every zone, on all four sides.
@@ -211,14 +139,17 @@ _ALL_EDGES = ("bottom", "left", "right", "top")
 _SETUP_TIMEOUT = 45.0
 
 
-def _setup_accepts_timeout(portal_cls) -> bool:
-    """Whether this build of ``InputCapturePortal.setup`` takes ``timeout``.
-
-    Decided by inspection: an unreadable signature is not evidence of absence,
-    so it is treated as supported and the call falls back on ``TypeError``.
-    """
-    signature = _callable_signature(getattr(portal_cls, "setup", None))
-    return "timeout" in signature if signature else True
+#: Marker attribute of pyinputcapture >= 0.3.0, the first build whose tokio
+#: runtime is process-global.
+#:
+#: Anything older shuts that runtime down when a portal object is dropped, which
+#: kills the zbus tasks of ashpd's *process-global* D-Bus connection: from then
+#: on every portal request in the process is accepted and never answered, so a
+#: cancelled dialog never comes back. There is no working around that from here,
+#: only reporting it - and a stale ``.so`` shadowing a rebuilt one has happened
+#: on this box before.
+_REQUIRED_EXTENSION_ATTR = "last_error"
+_REQUIRED_EXTENSION_VERSION = "0.3.0"
 
 
 def _capture_backend_info() -> dict:
@@ -232,7 +163,9 @@ def _capture_backend_info() -> dict:
     info: dict = {
         "module": None,
         "version": None,
-        "setup_timeout": "unknown",
+        # Tri-state on purpose: True/False once the class was importable,
+        # "unknown" when it was not - a missing extension is not a stale one.
+        "shared_runtime": "unknown",
     }
     try:
         import pyinputcapture
@@ -251,14 +184,9 @@ def _capture_backend_info() -> dict:
             except Exception:
                 version = None
         info["version"] = version
-        setup_signature = _callable_signature(
-            getattr(InputCapturePortal, "setup", None)
-        )
-        # No signature metadata is "can't tell", not "absent" - the same
-        # distinction ``_setup_accepts_timeout`` makes.
-        info["setup_timeout"] = (
-            ("timeout" in setup_signature) if setup_signature else "unknown"
-        )
+        # The capability, not the version string: metadata can name 0.3.0 while
+        # the loaded ``.so`` is an older build sitting earlier on the path.
+        info["shared_runtime"] = hasattr(InputCapturePortal, _REQUIRED_EXTENSION_ATTR)
     except Exception as exc:
         info["error"] = str(exc)
     return info
@@ -270,14 +198,7 @@ class _PortalNeedsUser(RuntimeError):
     Retrying in a second cannot help, so these are raised instead of a plain
     failure: the caller puts them on a human-paced schedule and stands down
     rather than spinning on a dialog.
-
-    ``portal`` carries the portal object of the failed attempt when it is still
-    worth reusing (see ``_PortalDialogUnanswered``), else None.
     """
-
-    def __init__(self, *args, portal=None):
-        super().__init__(*args)
-        self.portal = portal
 
 
 class _PortalNotAuthorised(_PortalNeedsUser):
@@ -292,11 +213,7 @@ class _PortalDialogUnanswered(_PortalNeedsUser):
     """``setup()`` gave up waiting for an answer to the permission dialog.
 
     Not a transient fault, and *not* the same as a refusal: the request may well
-    still be live on the portal side with the dialog on screen. Asking again
-    now means two concurrent ``CreateSession`` requests, which is how GNOME ends
-    up answering neither - so the portal object of this attempt is carried along
-    (``portal``) and the next attempt reuses it, letting the extension's own
-    "still winding down" guard serialise us.
+    still be live on the portal side with the dialog on screen.
     """
 
 
@@ -783,30 +700,24 @@ class _CaptureSession:
         self.dead: bool = False
 
     @classmethod
-    def create(cls, logger, keep_waiting=None, portal=None) -> "_CaptureSession | None":
+    def create(cls, logger, keep_waiting=None) -> "_CaptureSession | None":
         """Create a portal session with whole-edge barriers on all four sides.
 
         This is the *only* place barriers are ever armed. There is deliberately
         no way to change them afterwards: see ``_ALL_EDGES``.
 
-        ``portal`` reuses the object of a previous attempt that timed out with
-        its request possibly still live (see ``_PortalDialogUnanswered``); a
-        fresh object per attempt is what lets two ``CreateSession`` requests
-        overlap, because the extension can only serialise attempts it can see.
+        A fresh portal object per attempt, always: the object is cheap and the
+        D-Bus connection carrying the request is process-global in the extension,
+        so it outlives any one of them. Reusing the object of a timed-out attempt
+        (an earlier design) could only wedge on that attempt's own task.
         """
         from pyinputcapture import InputCapturePortal
         from snegg.ei import Receiver
 
-        # Filled by ``_captured_stderr`` with whatever the extension printed on
-        # fd 2 during setup - the caller has it pointed at /dev/null to silence
-        # libei's dispatch-loop spam, which also hid the one message that
-        # explains a failed session.
-        portal_stderr: list[str] = []
+        portal = None
         try:
-            if portal is None:
-                portal = InputCapturePortal()
-            with _captured_stderr(portal_stderr):
-                zones, eis_fd, bmap_list = cls._setup(portal)
+            portal = InputCapturePortal()
+            zones, eis_fd, bmap_list = cls._setup(portal)
             logger.debug(f"Session created: zones={zones} edges={list(_ALL_EDGES)}")
 
             receiver = _ei_from_fd(Receiver, eis_fd, "perpetua-cursor-capture")
@@ -824,13 +735,14 @@ class _CaptureSession:
 
         except Exception as exc:
             reason = str(exc)
-            detail = portal_stderr[0] if portal_stderr else None
-            if detail:
-                # The portal's own explanation, through the structured logger:
-                # no tty involved, so it reaches the log on every launch mode.
+            detail = _portal_last_error(portal)
+            if detail and detail not in reason:
+                # The extension's own explanation of the failure, through the
+                # structured logger. The capture thread has fd 2 pointed at
+                # /dev/null (libei's dispatch spam is real), so what the portal
+                # task printed there used to be unrecoverable.
                 reason = f"{reason} ({detail})"
-            keep_portal = _is_setup_timeout(reason) or _is_setup_pending(reason)
-            if portal is not None and not keep_portal:
+            if portal is not None:
                 try:
                     portal.close()
                 except Exception:
@@ -840,31 +752,17 @@ class _CaptureSession:
                 # access, so say so and let the caller stop retrying instead of
                 # burning attempts as if the next one could differ.
                 raise _PortalNotAuthorised(reason) from exc
-            if keep_portal:
-                # The request may still be live with the dialog on screen. Hand
-                # the portal back so the *next* attempt goes through the same
-                # object: dropping it is what lets a second CreateSession
-                # overlap the first, and neither then gets answered.
-                raise _PortalDialogUnanswered(reason, portal=portal) from exc
+            if _is_setup_timeout(reason):
+                # The dialog may still be on screen, unanswered. Not transient,
+                # so it goes on the human-paced schedule rather than the backoff.
+                raise _PortalDialogUnanswered(reason) from exc
             logger.error(f"Session setup failed: {reason}")
             return None
 
     @staticmethod
     def _setup(portal):
-        """``portal.setup`` with a bounded wait for the permission dialog.
-
-        ``timeout`` only exists from pyinputcapture 0.2.0 on, so an older build
-        falls back to the single-argument form; the capability is decided by
-        inspection first (``_setup_accepts_timeout``) and the ``TypeError``
-        catch is only there for a signature we could not read.
-        """
-        edges = list(_ALL_EDGES)
-        if _setup_accepts_timeout(type(portal)):
-            try:
-                return portal.setup(edges, timeout=_SETUP_TIMEOUT)
-            except TypeError:
-                pass
-        return portal.setup(edges)
+        """``portal.setup`` with a bounded wait for the permission dialog."""
+        return portal.setup(list(_ALL_EDGES), timeout=_SETUP_TIMEOUT)
 
     def teardown(self):
         """Release capture and close the portal session.
@@ -993,6 +891,17 @@ def _wait_for_seat(receiver, logger, keep_waiting=None):
 _NO_SESSION = object()  # sentinel: no session yet (distinct from None = quit)
 
 
+#: Held for the duration of one ``_CaptureSession.create``, process-wide.
+#:
+#: Two dialogs must never be on screen at once, and the schedule alone cannot
+#: promise that: a *new* listener object built after ``Server.cleanup()`` cleared
+#: ``_components`` knows nothing about the old thread still sitting inside
+#: ``setup()``. Module-level for exactly that case. It is not a time floor -
+#: measurement says a retry at delay 0 is answered normally - so an attempt that
+#: cannot take the lock is simply dropped and rescheduled.
+_CREATE_LOCK = threading.Lock()
+
+
 class MouseListener:
     """InputCapture portal listener (daemon thread).
 
@@ -1065,10 +974,12 @@ class MouseListener:
         # once they hit ``_MAX_NEEDS_USER_ATTEMPTS``.
         self._needs_user_attempts = 0
         self._capture_blocked = False
-        # Portal object of an attempt that timed out with its request possibly
-        # still live. The next attempt reuses it so the extension can serialise
-        # the two instead of leaving both outstanding.
-        self._pending_portal = None
+        # Attempt counter and the time of the last one, for the per-attempt
+        # diagnostic line. The daemon log's "reconnecting in 30.0s" was
+        # contradicted by its own timestamps for a whole round of debugging, and
+        # nothing said how many dialogs had actually been asked for.
+        self._attempts = 0
+        self._last_attempt_at = 0.0
         # Set while a start is waiting for the previous capture thread to exit,
         # so only one waiter can ever exist.
         self._deferred_start = False
@@ -1090,14 +1001,13 @@ class MouseListener:
     def start(self):
         """Start the daemon thread.
 
-        Refuses while the *previous* capture thread is still alive. ``stop()``
+        Waits out the *previous* capture thread rather than running two. ``stop()``
         joins with a timeout, and that join times out precisely when the thread
-        is wedged in ``portal.setup()`` waiting on an unanswered permission
-        dialog - at which point ``_is_running`` is already False and
-        ``is_alive()`` reports dead, so the service layer restarts us. Starting
-        anyway would open a second portal session while the first still holds an
-        unresolved ``CreateSession``, and two concurrent requests is a reliable
-        way to get one GNOME never answers.
+        is still inside ``portal.setup()`` on an unanswered permission dialog -
+        at which point ``_is_running`` is already False and ``is_alive()`` reports
+        dead, so the service layer restarts us. Two capture threads polling one
+        EIS receiver is nothing anyone wants; that two of them cannot raise two
+        dialogs is ``_CREATE_LOCK``'s job, not this one's.
 
         Refusing is not the end of it: the start is *deferred* onto a waiter
         that starts the thread as soon as the old one exits. Only logging it -
@@ -1129,7 +1039,7 @@ class MouseListener:
             "InputCapture listener start deferred: the previous capture thread "
             "is still alive (most likely blocked in portal.setup() on an "
             "unanswered permission dialog); starting as soon as it exits "
-            "rather than opening a second portal session"
+            "rather than running two capture threads"
         )
 
         def _wait_and_start():
@@ -1281,9 +1191,24 @@ class MouseListener:
         logger.info(
             "Wayland capture backend "
             f"module={info.get('module')} version={info.get('version')} "
-            f"setup_timeout={info.get('setup_timeout')}"
+            f"shared_runtime={info.get('shared_runtime')}"
             + (f" probe_error={info['error']}" if info.get("error") else "")
         )
+        if info.get("shared_runtime") is False:
+            # Not a nicety: with this build the permission dialog does not come
+            # back after the user cancels it once, and no amount of scheduling on
+            # this side changes that. Say so where the failure will be looked for.
+            logger.error(
+                "Wayland capture is running on a pyinputcapture older than "
+                f"{_REQUIRED_EXTENSION_VERSION} (no "
+                f"{_REQUIRED_EXTENSION_ATTR!r} on InputCapturePortal): it shuts "
+                "its tokio runtime down with every portal object, which kills "
+                "ashpd's process-global D-Bus connection - so once the input "
+                "capture permission dialog is cancelled or ignored, no later "
+                "request is ever answered and the dialog never reappears. "
+                f"Rebuild and reinstall pyinputcapture (loaded from "
+                f"{info.get('module')}, reported version {info.get('version')})"
+            )
         saved_stderr = _suppress_libei_stderr()
 
         try:
@@ -1340,9 +1265,16 @@ class MouseListener:
             return
         if delay is None:
             delay = self._backoff.get_next_delay()
-        self._reconnect_at = time.monotonic() + delay
+        now = time.monotonic()
+        self._reconnect_at = now + delay
         self._reconnect_pending = True
-        logger.warning(f"{reason}; reconnecting in {delay:.1f}s")
+        # The deadline, not just the delay: "reconnecting in 30.0s" followed by a
+        # retry two seconds later is what hid the real cadence for a whole round
+        # of debugging, and from the delay alone the two are indistinguishable.
+        logger.warning(
+            f"{reason}; reconnecting in {delay:.1f}s "
+            f"(at monotonic {self._reconnect_at:.1f}, now {now:.1f})"
+        )
         self._notify_state(False, reason)
 
     # idle phase (no session)
@@ -1371,7 +1303,7 @@ class MouseListener:
                 self._reconnect_at = 0.0
                 if self._capture_blocked:
                     return _NO_SESSION
-                return self._open_session(logger)
+                return self._open_session(logger, trigger="update_clients")
             self._reconnect_pending = False
             self._notify_state(True, None)
             return _NO_SESSION
@@ -1384,7 +1316,7 @@ class MouseListener:
             self._reconnect_at = 0.0
             if not self._active_edges:
                 return _NO_SESSION
-            return self._open_session(logger)
+            return self._open_session(logger, trigger="request_capture")
 
         if cmd_type == "quit":
             return None
@@ -1403,16 +1335,16 @@ class MouseListener:
             return _NO_SESSION
         if time.monotonic() < self._reconnect_at:
             return _NO_SESSION
-        return self._open_session(logger)
+        return self._open_session(logger, trigger="schedule")
 
-    def _open_session(self, logger):
+    def _open_session(self, logger, trigger: str = "unknown"):
         """Create a session, or arm the next retry.
 
         Returns the session or ``_NO_SESSION`` - never a bare failure, so
         capture keeps trying for as long as there is a client to capture for
         and the user has not refused it outright.
         """
-        session = self._create_session_once(logger)
+        session = self._create_session_once(logger, trigger=trigger)
         if session is None:
             if self._capture_blocked:
                 # Standing down: no deadline, nothing pending. Only an explicit
@@ -1438,7 +1370,7 @@ class MouseListener:
         self._notify_state(True, None)
         return session
 
-    def _create_session_once(self, logger):
+    def _create_session_once(self, logger, trigger: str = "unknown"):
         """One attempt at creating a session. Retrying is the caller's job.
 
         Deliberately a single attempt: the inner fast-retry loop this replaced
@@ -1446,43 +1378,56 @@ class MouseListener:
         it, so a failure produced three ``CreateSession`` requests a second apart
         - the worst possible cadence for a request that needs a human to answer a
         dialog. One attempt per scheduling cycle, backoff between cycles.
+
+        The whole attempt runs under ``_CREATE_LOCK``, and an attempt that cannot
+        take it is dropped rather than queued: two dialogs on screen at once is
+        the one outcome no schedule can be allowed to produce.
         """
         if not self._is_running:
             return None
+        if not _CREATE_LOCK.acquire(blocking=False):
+            # Another attempt is inside setup() right now - possibly the previous
+            # capture thread of a restarted service, which this object knows
+            # nothing about. Returning without touching the refusal state or the
+            # attempt count: nothing was asked of the user.
+            logger.debug(
+                f"[PORTAL_ATTEMPT] skipped trigger={trigger} "
+                "(a capture session request is already in flight)"
+            )
+            return None
+        try:
+            now = time.monotonic()
+            self._attempts += 1
+            since_last = (
+                f"{now - self._last_attempt_at:.1f}" if self._last_attempt_at else "-"
+            )
+            self._last_attempt_at = now
+            logger.debug(
+                f"[PORTAL_ATTEMPT] n={self._attempts} since_last={since_last}s "
+                f"trigger={trigger}"
+            )
+            return self._attempt_create(logger)
+        finally:
+            _CREATE_LOCK.release()
+
+    def _attempt_create(self, logger):
+        """The attempt itself, already counted and serialised by the caller."""
         try:
             session = _CaptureSession.create(
                 logger,
                 keep_waiting=lambda: self._is_running,
-                portal=self._pending_portal,
             )
         except _PortalDialogUnanswered as exc:
-            # The dialog is (or was) on screen and unanswered. Keep the portal
-            # object: the next attempt goes through it, so the extension can
-            # refuse a second request instead of letting both sit unanswered.
-            self._pending_portal = exc.portal
-            reason = str(exc)
-            if _is_setup_pending(reason):
-                # No dialog was raised - the extension refused before asking
-                # anything - so this is not an attempt and must not burn one.
-                logger.debug(
-                    f"Portal still winding down the previous request: {reason}"
-                )
-                self._unauthorised = (
-                    "waiting for the portal to finish the previous request"
-                )
-                return None
             self._unauthorised = (
                 "no answer to the Wayland input capture permission dialog"
             )
-            self._count_needs_user(logger, reason, refused=False)
+            self._count_needs_user(logger, str(exc), refused=False)
             return None
         except _PortalNotAuthorised as exc:
             # No point retrying: the answer stays "no" until the user acts.
-            self._pending_portal = None
             self._unauthorised = "Wayland input capture was refused"
             self._count_needs_user(logger, str(exc), refused=True)
             return None
-        self._pending_portal = None
         if session is None:
             # Not a permission problem - clear any stale refusal, otherwise the
             # first denial makes every later unrelated failure report itself as

@@ -25,8 +25,8 @@ barrier, and the teardown guard that keeps a dead session from making another
 blocking portal call.
 """
 
-import os
 import sys
+import threading
 import time
 import types
 from unittest.mock import MagicMock
@@ -237,7 +237,7 @@ class TestPermissionFailure:
         """A denied dialog can't be fixed by retrying a second later."""
         attempts = []
 
-        def _create(log, keep_waiting=None, portal=None):
+        def _create(log, keep_waiting=None):
             attempts.append(1)
             raise libei._PortalNotAuthorised("access denied")
 
@@ -258,7 +258,7 @@ class TestPermissionFailure:
         monkeypatch.setattr(
             libei.MouseListener,
             "_create_session_once",
-            lambda self, log: None,
+            lambda self, log, trigger="test": None,
         )
         listener = libei.MouseListener()
         listener._active_edges = {"right"}
@@ -276,7 +276,7 @@ class TestRepeatedRefusal:
     def _refused_listener(self, libei, logger, monkeypatch):
         attempts = []
 
-        def _create(log, keep_waiting=None, portal=None):
+        def _create(log, keep_waiting=None):
             attempts.append(1)
             raise libei._PortalNotAuthorised("access denied")
 
@@ -347,7 +347,7 @@ class TestRepeatedRefusal:
 class TestSetupTimeout:
     """An unanswered dialog must not hold the capture thread for two minutes."""
 
-    def test_timeout_is_passed_when_the_build_takes_it(self, libei):
+    def test_the_dialog_wait_is_bounded(self, libei):
         class _Portal:
             def __init__(self):
                 self.calls = []
@@ -356,7 +356,6 @@ class TestSetupTimeout:
                 self.calls.append((edges, kwargs))
                 return ([], 0, [])
 
-        _Portal.setup.__text_signature__ = "($self, edges=None, timeout=120.0)"
         portal = _Portal()
 
         libei._CaptureSession._setup(portal)
@@ -365,38 +364,79 @@ class TestSetupTimeout:
         assert edges == list(libei._ALL_EDGES)
         assert kwargs == {"timeout": libei._SETUP_TIMEOUT}
 
-    def test_an_older_build_still_gets_called(self, libei):
-        class _Old:
-            def __init__(self):
-                self.calls = []
+    def test_backend_info_survives_a_missing_extension(self, libei, monkeypatch):
+        # pyinputcapture may not be installed at all (it needs a configured Linux
+        # box); the startup line must still be emittable.
+        monkeypatch.setitem(sys.modules, "pyinputcapture", None)
 
-            def setup(self, edges, **kwargs):
-                if kwargs:
-                    raise TypeError("setup() takes no keyword arguments")
-                self.calls.append(edges)
-                return ([], 0, [])
-
-        portal = _Old()
-
-        libei._CaptureSession._setup(portal)
-
-        assert portal.calls == [list(libei._ALL_EDGES)]
-
-    def test_backend_info_survives_a_missing_extension(self, libei):
-        # pyinputcapture is not installed off Linux; the startup line must still
-        # be emittable.
         info = libei._capture_backend_info()
 
-        assert "setup_timeout" in info and "module" in info
+        assert "shared_runtime" in info and "module" in info
+        # Not importable is "can't tell", not "stale": reporting False here would
+        # print the rebuild-the-extension error where there is nothing to rebuild.
+        assert info["shared_runtime"] == "unknown"
+        assert info.get("error")
+
+
+class TestStaleExtension:
+    """An extension older than 0.3.0 cannot be worked around, only reported.
+
+    Its per-object tokio runtime kills ashpd's process-global D-Bus connection
+    when a portal object is dropped, after which no portal request in the process
+    is ever answered - so a cancelled dialog never comes back. A stale ``.so``
+    shadowing a rebuilt one has already happened on the dev box.
+    """
+
+    def _portal_module(self, monkeypatch, portal_cls):
+        pyinputcapture = types.ModuleType("pyinputcapture")
+        pyinputcapture.InputCapturePortal = portal_cls
+        pyinputcapture.__version__ = "0.3.0"
+        monkeypatch.setitem(sys.modules, "pyinputcapture", pyinputcapture)
+
+    def test_the_capability_is_probed_not_the_version(self, libei, monkeypatch):
+        # Distribution metadata can say 0.3.0 while the loaded .so is older.
+        class _Old:
+            def setup(self, edges, **kwargs): ...
+
+        self._portal_module(monkeypatch, _Old)
+
+        assert libei._capture_backend_info()["shared_runtime"] is False
+
+    def test_a_current_build_reports_the_capability(self, libei, monkeypatch):
+        class _Current:
+            last_error = None
+
+            def setup(self, edges, **kwargs): ...
+
+        self._portal_module(monkeypatch, _Current)
+
+        assert libei._capture_backend_info()["shared_runtime"] is True
+
+    def test_a_stale_extension_is_reported_at_start(self, libei, monkeypatch):
+        class _Old:
+            def setup(self, edges, **kwargs): ...
+
+        self._portal_module(monkeypatch, _Old)
+        listener = libei.MouseListener()
+        listener._logger = MagicMock()
+        listener._is_running = False  # one pass through the preamble, no loop
+
+        listener._thread_main()
+
+        assert listener._logger.error.called, "a stale build must not be silent"
+        reported = str(listener._logger.error.call_args)
+        assert "pyinputcapture" in reported
+        assert libei._REQUIRED_EXTENSION_VERSION in reported
 
 
 class TestUnansweredDialog:
     """A dialog nobody answered is not a transient fault.
 
     It used to fall through to the 1 s backoff, so an ignored dialog was
-    re-requested every couple of seconds forever - and because each attempt
-    built a *new* portal object, several ``CreateSession`` requests ended up
-    outstanding at once, which is how GNOME stops showing the dialog at all.
+    re-requested every couple of seconds forever. The cadence for it is the
+    human-paced one; the *object* of the failed attempt is not kept, because
+    the D-Bus connection carrying the request is process-global in the
+    extension and outlives every portal object.
     """
 
     _TIMEOUT = "portal setup timed out after 45s (permission dialog unanswered?)"
@@ -408,48 +448,66 @@ class TestUnansweredDialog:
         assert not libei._is_setup_timeout("zones request: timed out")
         assert not libei._is_permission_failure(self._TIMEOUT)
 
-    def test_create_raises_and_keeps_the_portal(self, libei, logger, monkeypatch):
-        pyinputcapture = types.ModuleType("pyinputcapture")
-        pyinputcapture.InputCapturePortal = MagicMock()
-        monkeypatch.setitem(sys.modules, "pyinputcapture", pyinputcapture)
+    def test_create_raises_and_closes_the_portal(self, libei, logger, monkeypatch):
         portal = MagicMock()
+        pyinputcapture = types.ModuleType("pyinputcapture")
+        pyinputcapture.InputCapturePortal = MagicMock(return_value=portal)
+        monkeypatch.setitem(sys.modules, "pyinputcapture", pyinputcapture)
 
         def _boom(_portal):
             raise RuntimeError(self._TIMEOUT)
 
         monkeypatch.setattr(libei._CaptureSession, "_setup", staticmethod(_boom))
 
-        with pytest.raises(libei._PortalDialogUnanswered) as caught:
-            libei._CaptureSession.create(logger, portal=portal)
+        with pytest.raises(libei._PortalDialogUnanswered):
+            libei._CaptureSession.create(logger)
 
-        assert caught.value.portal is portal
-        # Closing it would drop a request that may still be live, with the
-        # dialog on screen - and the next attempt could then overlap it.
-        portal.close.assert_not_called()
+        # Nothing is carried forward: keeping the object could only wedge the
+        # next attempt on this one's task, and the abandoned request does not
+        # stop the next dialog (measured).
+        portal.close.assert_called_once()
 
-    def test_the_next_attempt_reuses_the_same_portal(self, libei, logger, monkeypatch):
-        kept = MagicMock()
-        seen = []
+    def test_the_extensions_own_reason_reaches_the_log(self, libei, logger, monkeypatch):
+        # The capture thread has fd 2 pointed at /dev/null for its whole life, so
+        # ``last_error`` is the only place a late task error is recoverable from.
+        portal = MagicMock()
+        portal.last_error = "create_session: Access denied"
+        pyinputcapture = types.ModuleType("pyinputcapture")
+        pyinputcapture.InputCapturePortal = MagicMock(return_value=portal)
+        monkeypatch.setitem(sys.modules, "pyinputcapture", pyinputcapture)
+        monkeypatch.setattr(
+            libei._CaptureSession,
+            "_setup",
+            staticmethod(lambda _p: (_ for _ in ()).throw(RuntimeError("setup failed"))),
+        )
 
-        def _create(log, keep_waiting=None, portal=None):
-            seen.append(portal)
-            raise libei._PortalDialogUnanswered(self._TIMEOUT, portal=kept)
+        with pytest.raises(libei._PortalNotAuthorised) as caught:
+            libei._CaptureSession.create(logger)
 
-        monkeypatch.setattr(libei._CaptureSession, "create", _create)
-        listener = libei.MouseListener()
-        listener._is_running = True
+        # And it is what classifies the failure: "setup failed" alone says nothing.
+        assert "Access denied" in str(caught.value)
 
-        listener._create_session_once(logger)
-        listener._create_session_once(logger)
+    def test_a_build_without_last_error_still_reports(self, libei, logger, monkeypatch):
+        class _Old:
+            def setup(self, edges, **kwargs):
+                raise RuntimeError("create_session: Access denied")
 
-        assert seen == [None, kept], "a fresh portal per attempt lets two overlap"
+            def close(self):
+                pass
+
+        pyinputcapture = types.ModuleType("pyinputcapture")
+        pyinputcapture.InputCapturePortal = _Old
+        monkeypatch.setitem(sys.modules, "pyinputcapture", pyinputcapture)
+
+        with pytest.raises(libei._PortalNotAuthorised):
+            libei._CaptureSession.create(logger)
 
     def test_it_counts_towards_the_stand_down(self, libei, logger, monkeypatch):
         monkeypatch.setattr(
             libei._CaptureSession,
             "create",
-            lambda log, keep_waiting=None, portal=None: (_ for _ in ()).throw(
-                libei._PortalDialogUnanswered(self._TIMEOUT, portal=MagicMock())
+            lambda log, keep_waiting=None: (_ for _ in ()).throw(
+                libei._PortalDialogUnanswered(self._TIMEOUT)
             ),
         )
         listener = libei.MouseListener()
@@ -463,29 +521,9 @@ class TestUnansweredDialog:
         assert listener._capture_blocked is True
         assert listener.capture_blocked is True
 
-    def test_still_winding_down_is_not_an_attempt(self, libei, logger, monkeypatch):
-        # The extension refused before asking the portal anything, so no dialog
-        # was raised - counting it would spend the budget on our own throttling.
-        pending = "a previous setup is still winding down (the portal has not answered)"
-        monkeypatch.setattr(
-            libei._CaptureSession,
-            "create",
-            lambda log, keep_waiting=None, portal=None: (_ for _ in ()).throw(
-                libei._PortalDialogUnanswered(pending, portal=MagicMock())
-            ),
-        )
-        listener = libei.MouseListener()
-        listener._is_running = True
-
-        for _ in range(5):
-            listener._create_session_once(logger)
-
-        assert listener._needs_user_attempts == 0
-        assert listener._capture_blocked is False
-
     def test_the_retry_waits_the_dialog_delay(self, libei, logger, monkeypatch):
         monkeypatch.setattr(
-            libei.MouseListener, "_create_session_once", lambda self, log: None
+            libei.MouseListener, "_create_session_once", lambda self, log, trigger="test": None
         )
         listener = libei.MouseListener()
         listener._active_edges = {"right"}
@@ -503,7 +541,7 @@ class TestRequestCapture:
     def test_it_clears_the_stand_down_and_asks_once(self, libei, logger, monkeypatch):
         attempts = []
 
-        def _create(log, keep_waiting=None, portal=None):
+        def _create(log, keep_waiting=None):
             attempts.append(1)
             raise libei._PortalNotAuthorised("access denied")
 
@@ -530,7 +568,7 @@ class TestRequestCapture:
         monkeypatch.setattr(
             libei._CaptureSession,
             "create",
-            lambda log, keep_waiting=None, portal=None: attempts.append(1),
+            lambda log, keep_waiting=None: attempts.append(1),
         )
         listener = libei.MouseListener()
         listener._is_running = True
@@ -631,35 +669,109 @@ class TestStartGuard:
             listener.stop()
 
 
-class TestCapturedStderr:
-    def test_captures_what_the_block_wrote_to_fd_2(self, libei):
-        # The previous version pointed fd 2 at /dev/tty, which from a terminal
-        # launch is a freeze mechanism: SIGTTOU stops the whole process, and a
-        # full tty buffer blocks write(2) while logging holds its handler lock.
-        captured: list = []
+class TestInFlightGuard:
+    """Two permission dialogs must never be on screen at once.
 
-        with libei._captured_stderr(captured):
-            os.write(2, b"portal said: not authorised\n")
+    The schedule cannot promise that on its own: a *new* listener object built
+    after ``Server.cleanup()`` cleared ``_components`` knows nothing about the
+    previous capture thread still sitting inside ``setup()``. The guard is
+    module-level for exactly that case. It is not a time floor - a retry at
+    delay 0 is answered normally (measured).
+    """
 
-        assert captured == ["portal said: not authorised"]
+    def _blocking_create(self, libei, monkeypatch):
+        """A ``create`` that parks until released, counting its calls."""
+        entered = threading.Event()
+        release = threading.Event()
+        calls = []
 
-    def test_populates_before_an_exception_propagates(self, libei):
-        captured: list = []
+        def _create(log, keep_waiting=None):
+            calls.append(1)
+            entered.set()
+            release.wait(timeout=5)
+            return MagicMock()
 
-        with pytest.raises(RuntimeError):
-            with libei._captured_stderr(captured):
-                os.write(2, b"setup failed\n")
-                raise RuntimeError("boom")
+        monkeypatch.setattr(libei._CaptureSession, "create", _create)
+        return entered, release, calls
 
-        assert captured == ["setup failed"]
+    def test_two_queued_triggers_produce_one_dialog(self, libei, logger, monkeypatch):
+        entered, release, calls = self._blocking_create(libei, monkeypatch)
+        listener = libei.MouseListener()
+        listener._is_running = True
 
-    def test_nothing_written_leaves_the_holder_empty(self, libei):
-        captured: list = []
+        first = threading.Thread(
+            target=listener._create_session_once, args=(logger,), daemon=True
+        )
+        first.start()
+        assert entered.wait(timeout=5)
 
-        with libei._captured_stderr(captured):
-            pass
+        assert listener._create_session_once(logger) is None, "no second dialog"
+        assert len(calls) == 1
 
-        assert captured == []
+        release.set()
+        first.join(timeout=5)
+
+    def test_a_new_listener_cannot_ask_over_the_old_one(self, libei, logger, monkeypatch):
+        # The restarted-service case: Server.cleanup() dropped the listener while
+        # its thread was still blocked in setup(), so the guard has to be shared
+        # by objects that have never heard of each other.
+        entered, release, calls = self._blocking_create(libei, monkeypatch)
+        old = libei.MouseListener()
+        old._is_running = True
+        new = libei.MouseListener()
+        new._is_running = True
+
+        wedged = threading.Thread(
+            target=old._create_session_once, args=(logger,), daemon=True
+        )
+        wedged.start()
+        assert entered.wait(timeout=5)
+
+        assert new._create_session_once(logger) is None
+        assert len(calls) == 1
+
+        release.set()
+        wedged.join(timeout=5)
+
+    def test_a_skipped_attempt_costs_nothing(self, libei, logger, monkeypatch):
+        # Nothing was asked of the user, so it must not burn an attempt from the
+        # stand-down budget or invent a refusal.
+        entered, release, _ = self._blocking_create(libei, monkeypatch)
+        listener = libei.MouseListener()
+        listener._is_running = True
+        blocker = libei.MouseListener()
+        blocker._is_running = True
+
+        wedged = threading.Thread(
+            target=blocker._create_session_once, args=(logger,), daemon=True
+        )
+        wedged.start()
+        assert entered.wait(timeout=5)
+
+        listener._create_session_once(logger)
+
+        assert listener._needs_user_attempts == 0
+        assert listener._capture_blocked is False
+        assert listener._attempts == 0, "a skipped attempt is not an attempt"
+
+        release.set()
+        wedged.join(timeout=5)
+
+    def test_the_lock_is_released_when_create_raises(self, libei, logger, monkeypatch):
+        attempts = []
+
+        def _create(log, keep_waiting=None):
+            attempts.append(1)
+            raise libei._PortalNotAuthorised("access denied")
+
+        monkeypatch.setattr(libei._CaptureSession, "create", _create)
+        listener = libei.MouseListener()
+        listener._is_running = True
+
+        listener._create_session_once(logger)
+        listener._create_session_once(logger)
+
+        assert len(attempts) == 2, "a failed attempt must not wedge the guard"
 
 
 class TestUnauthorisedReset:
@@ -699,7 +811,7 @@ class TestUnauthorisedReset:
         monkeypatch.setattr(
             libei._CaptureSession,
             "create",
-            lambda log, keep_waiting=None, portal=None: attempts.append(1),
+            lambda log, keep_waiting=None: attempts.append(1),
         )
         listener = libei.MouseListener()
         listener._is_running = True
