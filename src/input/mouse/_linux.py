@@ -138,11 +138,8 @@ class ServerMouseListener(_base.ServerMouseListener):
 
         self._listener.start()
         # No ``request_capture()`` here: ``update_clients`` already asks for a
-        # session whenever an edge is bound, and the way back from a stand-down
-        # that matters is the one on client connect - the case where the user
-        # cancelled the dialog by mistake and reconnects the same client onto the
-        # same edge. A second escape hatch here only doubled the dialogs a start
-        # could produce.
+        # session once an edge is bound, and the stand-down that matters is
+        # forgiven on client connect. A second escape hatch only doubles dialogs.
         self._listener.update_clients(self._refresh_edge_state())
 
         self._logger.debug("Wayland barrier mode started")
@@ -349,12 +346,9 @@ class ServerMouseListener(_base.ServerMouseListener):
         if screen_edge is None:
             return
 
-        # The only place the server's cursor position is observed in barrier
-        # mode: there is no pynput move path here to keep the anchor fresh, and
-        # the directional hotkey resolves from it. Reading the position from a
-        # controller instead would open a RemoteDesktop session - another
-        # permission dialog - for a number the portal just handed us.
-        self._last_server_cursor_pos = (float(cursor_x), float(cursor_y))
+        # Barrier mode has no pynput move path, so the activation point is the
+        # only observation of the server cursor between returns.
+        self._note_server_cursor(cursor_x, cursor_y)
 
         resolved = self._resolve_cross_screen_target(
             edge=screen_edge,

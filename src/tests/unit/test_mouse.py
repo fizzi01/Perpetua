@@ -557,10 +557,14 @@ class TestServerMouseListener:
                 )
                 # Return landed ~6px inside the RIGHT edge (client was off the
                 # right). Arms the re-cross lock on the RIGHT edge.
+                #
+                # Normalised over the server bbox, which is what the client
+                # sends (``_lookup_return_to_server``) and what
+                # ``ServerMouseController.position_cursor`` denormalises.
                 event = ActiveScreenChangedEvent(
                     active_screen=None,
                     source="server",
-                    position=(1913, 500),
+                    position=(1913 / 1920, 500 / 1080),
                 )
                 await listener._on_active_screen_changed(event)
                 assert listener._recross_locked_edge == ScreenEdge.RIGHT
@@ -574,6 +578,60 @@ class TestServerMouseListener:
                 # Cursor moves inward past the margin -> lock clears, RIGHT
                 # crossings are allowed again.
                 assert not listener._recross_lock_blocks(ScreenEdge.RIGHT, 1900, 500)
+                assert listener._recross_locked_edge is None
+
+    @pytest.mark.anyio
+    async def test_the_return_landing_updates_the_cursor_anchor(
+        self,
+        event_bus,
+        mock_stream_handler,
+        mock_mouse_listener,
+    ):
+        """The landing is the freshest server position there is after a return."""
+        with patch("input.mouse._base.MouseListener", return_value=mock_mouse_listener):
+            with _ScreenGeometry(1920, 1080):
+                listener = ServerMouseListener(
+                    event_bus,
+                    mock_stream_handler,
+                    mock_stream_handler,
+                    filtering=False,
+                )
+
+                await listener._on_active_screen_changed(
+                    ActiveScreenChangedEvent(
+                        active_screen=None,
+                        source="server",
+                        position=(1913 / 1920, 500 / 1080),
+                    )
+                )
+
+                x, y = listener._last_server_cursor_pos
+                assert x == pytest.approx(1913, abs=1)
+                assert y == pytest.approx(500, abs=1)
+
+    @pytest.mark.anyio
+    async def test_a_return_without_a_landing_leaves_the_anchor(
+        self,
+        event_bus,
+        mock_stream_handler,
+        mock_mouse_listener,
+    ):
+        """``(-1, -1)`` means "leave the cursor where it is" - anchor included."""
+        with patch("input.mouse._base.MouseListener", return_value=mock_mouse_listener):
+            with _ScreenGeometry(1920, 1080):
+                listener = ServerMouseListener(
+                    event_bus,
+                    mock_stream_handler,
+                    mock_stream_handler,
+                    filtering=False,
+                )
+                listener._note_server_cursor(300, 400)
+
+                await listener._on_active_screen_changed(
+                    ActiveScreenChangedEvent(active_screen=None, source="server")
+                )
+
+                assert listener._last_server_cursor_pos == (300.0, 400.0)
                 assert listener._recross_locked_edge is None
 
     @pytest.mark.anyio
@@ -2919,3 +2977,81 @@ class TestDarwinHIDInjector:
             assert injector.retry(lambda: (0.0, 0.0)) is True
 
         verify.assert_not_called()
+
+
+class TestDirectionalHotkeyAnchor:
+    """The hotkey resolves from the cached anchor, never from a live read.
+
+    Constructing a ``MouseController`` to read ``.position`` was gated on a
+    client being active - i.e. on the OS position being stale - and on Wayland
+    it opens a RemoteDesktop portal session with its own permission dialog.
+    """
+
+    _BINDING = {
+        "server_monitor_id": 0,
+        "server_edge": "right",
+        "server_axis_start": 0.0,
+        "server_axis_end": 1.0,
+        "client_monitor_id": 7,
+        "client_edge": "left",
+        "client_axis_start": 0.0,
+        "client_axis_end": 1.0,
+    }
+
+    def _listener(self, event_bus, stream, mock_mouse_listener):
+        with patch("input.mouse._base.MouseListener", return_value=mock_mouse_listener):
+            with _ScreenGeometry(1920, 1080):
+                listener = ServerMouseListener(
+                    event_bus, stream, stream, filtering=False
+                )
+        listener._active_clients = {"c1": True}
+        listener._edge_bindings_by_client = {"c1": [self._BINDING]}
+        listener._rebuild_snapshots()
+        listener.event_bus.dispatch = AsyncMock()
+        return listener
+
+    @pytest.mark.anyio
+    async def test_no_controller_is_constructed(
+        self, event_bus, mock_stream_handler, mock_mouse_listener
+    ):
+        from event import ScreenSwitchDirectionalRequestEvent
+
+        listener = self._listener(event_bus, mock_stream_handler, mock_mouse_listener)
+        # A client is active: the branch that used to read the controller.
+        listener._listening = True
+        listener._note_server_cursor(1919, 540)
+
+        with patch("input.mouse.backend.MouseController") as controller_cls:
+            await listener._on_hotkey_directional(
+                ScreenSwitchDirectionalRequestEvent(edge=ScreenEdge.RIGHT)
+            )
+
+        controller_cls.assert_not_called()
+
+    @pytest.mark.anyio
+    async def test_the_anchor_is_what_resolves(
+        self, event_bus, mock_stream_handler, mock_mouse_listener
+    ):
+        from event import ScreenSwitchDirectionalRequestEvent
+
+        listener = self._listener(event_bus, mock_stream_handler, mock_mouse_listener)
+        listener._note_server_cursor(1919, 540)
+
+        await listener._on_hotkey_directional(
+            ScreenSwitchDirectionalRequestEvent(edge=ScreenEdge.RIGHT)
+        )
+
+        sent = [c.args[0] for c in mock_stream_handler.send.call_args_list]
+        crossings = [e for e in sent if isinstance(e, CrossScreenCommandEvent)]
+        assert [e.target for e in crossings] == ["c1"]
+
+    @pytest.mark.anyio
+    async def test_an_unobserved_anchor_falls_back_to_the_desktop_centre(
+        self, event_bus, mock_stream_handler, mock_mouse_listener
+    ):
+        # Before any observation the seed must still be a resolvable point, or
+        # the first press after start is a no-op.
+        listener = self._listener(event_bus, mock_stream_handler, mock_mouse_listener)
+
+        assert listener._last_server_cursor_pos == (960.0, 540.0)
+        assert listener.resolve_neighbour(ScreenEdge.RIGHT, 960.0, 540.0) == "c1"

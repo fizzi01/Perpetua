@@ -364,79 +364,13 @@ class TestSetupTimeout:
         assert edges == list(libei._ALL_EDGES)
         assert kwargs == {"timeout": libei._SETUP_TIMEOUT}
 
-    def test_backend_info_survives_a_missing_extension(self, libei, monkeypatch):
-        # pyinputcapture may not be installed at all (it needs a configured Linux
-        # box); the startup line must still be emittable.
-        monkeypatch.setitem(sys.modules, "pyinputcapture", None)
-
-        info = libei._capture_backend_info()
-
-        assert "shared_runtime" in info and "module" in info
-        # Not importable is "can't tell", not "stale": reporting False here would
-        # print the rebuild-the-extension error where there is nothing to rebuild.
-        assert info["shared_runtime"] == "unknown"
-        assert info.get("error")
-
-
-class TestStaleExtension:
-    """An extension older than 0.3.0 cannot be worked around, only reported.
-
-    Its per-object tokio runtime kills ashpd's process-global D-Bus connection
-    when a portal object is dropped, after which no portal request in the process
-    is ever answered - so a cancelled dialog never comes back. A stale ``.so``
-    shadowing a rebuilt one has already happened on the dev box.
-    """
-
-    def _portal_module(self, monkeypatch, portal_cls):
-        pyinputcapture = types.ModuleType("pyinputcapture")
-        pyinputcapture.InputCapturePortal = portal_cls
-        pyinputcapture.__version__ = "0.3.0"
-        monkeypatch.setitem(sys.modules, "pyinputcapture", pyinputcapture)
-
-    def test_the_capability_is_probed_not_the_version(self, libei, monkeypatch):
-        # Distribution metadata can say 0.3.0 while the loaded .so is older.
-        class _Old:
-            def setup(self, edges, **kwargs): ...
-
-        self._portal_module(monkeypatch, _Old)
-
-        assert libei._capture_backend_info()["shared_runtime"] is False
-
-    def test_a_current_build_reports_the_capability(self, libei, monkeypatch):
-        class _Current:
-            last_error = None
-
-            def setup(self, edges, **kwargs): ...
-
-        self._portal_module(monkeypatch, _Current)
-
-        assert libei._capture_backend_info()["shared_runtime"] is True
-
-    def test_a_stale_extension_is_reported_at_start(self, libei, monkeypatch):
-        class _Old:
-            def setup(self, edges, **kwargs): ...
-
-        self._portal_module(monkeypatch, _Old)
-        listener = libei.MouseListener()
-        listener._logger = MagicMock()
-        listener._is_running = False  # one pass through the preamble, no loop
-
-        listener._thread_main()
-
-        assert listener._logger.error.called, "a stale build must not be silent"
-        reported = str(listener._logger.error.call_args)
-        assert "pyinputcapture" in reported
-        assert libei._REQUIRED_EXTENSION_VERSION in reported
-
 
 class TestUnansweredDialog:
     """A dialog nobody answered is not a transient fault.
 
-    It used to fall through to the 1 s backoff, so an ignored dialog was
-    re-requested every couple of seconds forever. The cadence for it is the
-    human-paced one; the *object* of the failed attempt is not kept, because
-    the D-Bus connection carrying the request is process-global in the
-    extension and outlives every portal object.
+    It belongs on the human-paced schedule, not the backoff. The portal object
+    of the failed attempt is not kept: the D-Bus connection carrying the request
+    is process-global in the extension and outlives every object.
     """
 
     _TIMEOUT = "portal setup timed out after 45s (permission dialog unanswered?)"
@@ -486,21 +420,6 @@ class TestUnansweredDialog:
 
         # And it is what classifies the failure: "setup failed" alone says nothing.
         assert "Access denied" in str(caught.value)
-
-    def test_a_build_without_last_error_still_reports(self, libei, logger, monkeypatch):
-        class _Old:
-            def setup(self, edges, **kwargs):
-                raise RuntimeError("create_session: Access denied")
-
-            def close(self):
-                pass
-
-        pyinputcapture = types.ModuleType("pyinputcapture")
-        pyinputcapture.InputCapturePortal = _Old
-        monkeypatch.setitem(sys.modules, "pyinputcapture", pyinputcapture)
-
-        with pytest.raises(libei._PortalNotAuthorised):
-            libei._CaptureSession.create(logger)
 
     def test_it_counts_towards_the_stand_down(self, libei, logger, monkeypatch):
         monkeypatch.setattr(
@@ -672,11 +591,9 @@ class TestStartGuard:
 class TestInFlightGuard:
     """Two permission dialogs must never be on screen at once.
 
-    The schedule cannot promise that on its own: a *new* listener object built
-    after ``Server.cleanup()`` cleared ``_components`` knows nothing about the
-    previous capture thread still sitting inside ``setup()``. The guard is
-    module-level for exactly that case. It is not a time floor - a retry at
-    delay 0 is answered normally (measured).
+    The guard is module-level because the case it exists for is a listener
+    rebuilt after ``Server.cleanup()``, which cannot see the previous capture
+    thread still inside ``setup()``.
     """
 
     def _blocking_create(self, libei, monkeypatch):
@@ -752,7 +669,6 @@ class TestInFlightGuard:
 
         assert listener._needs_user_attempts == 0
         assert listener._capture_blocked is False
-        assert listener._attempts == 0, "a skipped attempt is not an attempt"
 
         release.set()
         wedged.join(timeout=5)

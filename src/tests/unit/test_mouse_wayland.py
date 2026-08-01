@@ -417,12 +417,8 @@ class TestServerControllerNoSecondWarp:
 class TestDirectionalHotkeyRaisesNoDialog:
     """The hotkey resolver must not touch a ``MouseController`` in barrier mode.
 
-    It used to build one just to read ``.position``. In barrier mode that is the
-    libei controller, and merely constructing it goes
-    ``_get_connection()`` -> ``Oeffis.create(...)`` -> a **RemoteDesktop
-    CreateSession with its own permission dialog**, on the event loop - for a
-    position the capture path already reported. Barrier mode deliberately builds
-    no server controller at all.
+    There it is the libei one, and constructing it opens a RemoteDesktop session
+    with its own permission dialog - for a position the capture path reported.
     """
 
     @pytest.mark.anyio
@@ -445,9 +441,8 @@ class TestDirectionalHotkeyRaisesNoDialog:
 
     @pytest.mark.anyio
     async def test_the_activation_keeps_the_anchor_fresh(self, wayland_listener):
-        # There is no pynput move path in barrier mode, so the barrier activation
-        # is the only place the server's cursor position is ever observed. Without
-        # this the anchor stays at the seeded desktop centre forever.
+        # No pynput move path here, so the activation is the only observation of
+        # the server cursor between returns.
         await wayland_listener._on_barrier_activated("right", SCREEN_W - 1.0, 300.0)
 
         assert wayland_listener._last_server_cursor_pos == (SCREEN_W - 1.0, 300.0)
@@ -455,9 +450,8 @@ class TestDirectionalHotkeyRaisesNoDialog:
 
 class TestServerStopClosesTheLibeiConnection:
     def test_stop_shuts_the_remote_desktop_connection_down(self, wayland_listener):
-        # It is a portal session plus a libei dispatch thread in a module-level
-        # singleton; only the *client* stop path ever closed it, so one opened on
-        # the server for any reason outlived the service.
+        # A portal session plus a dispatch thread in a module-level singleton:
+        # without this it outlives the service.
         import sys
         import types
 

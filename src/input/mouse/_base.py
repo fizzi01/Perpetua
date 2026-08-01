@@ -159,10 +159,9 @@ class ServerMouseListener(object):
         self._hotkey_cycle_index = -1
 
         self._active_client_uid: Optional[str] = None
-        # Fallback "from" anchor for the directional hotkey resolver when
-        # ``MouseController().position`` fails or the cursor is on a
-        # client (OS position is stale). Seeded to the virtual desktop
-        # centre so the first press has a plausible default.
+        # "From" anchor for the directional hotkey resolver (see
+        # ``_note_server_cursor``). Seeded to the virtual desktop centre so the
+        # first press, before any observation, has a plausible default.
         cx = (self._screen_bbox[0] + self._screen_bbox[2]) // 2
         cy = (self._screen_bbox[1] + self._screen_bbox[3]) // 2
         self._last_server_cursor_pos: tuple[float, float] = (float(cx), float(cy))
@@ -430,30 +429,10 @@ class ServerMouseListener(object):
         if data is None:
             return
 
-        # When a client is active the OS cursor position is stale (it
-        # holds the server's last position before the crossing); refresh
-        # from the controller only while the server still owns the cursor.
-        #
-        # Never in barrier mode: there ``MouseController`` is the libei one, and
-        # merely constructing it opens a RemoteDesktop portal session - a second
-        # permission dialog, on the event loop, for a position read. Barrier mode
-        # deliberately builds no server controller at all
-        # (``_linux.ServerMouseController._create_controller``), and the position
-        # the capture path last reported is the right answer there anyway.
+        # The anchor, never a live read: the controller this replaced was
+        # consulted only while a client was active, i.e. only while the OS
+        # position is stale. See ``_note_server_cursor``.
         x, y = self._last_server_cursor_pos
-        if self._listening and not getattr(self, "_barrier_mode", False):
-            try:
-                from input.mouse.backend import MouseController
-
-                pos = MouseController().position
-                if pos and len(pos) == 2:
-                    x, y = float(pos[0]), float(pos[1])
-                    self._last_server_cursor_pos = (x, y)
-            except Exception as e:
-                self._logger.debug(
-                    "hotkey resolver controller refresh failed",
-                    error=str(e),
-                )
 
         client_uid = self.resolve_neighbour(data.edge, x, y)
         if not client_uid:
@@ -524,9 +503,35 @@ class ServerMouseListener(object):
             # ...but that retained, edge-ward history means the very next
             # ``on_move`` could re-cross on the same edge. Lock re-crossing
             # through the returned-to edge until the cursor moves inward.
-            self._arm_recross_lock(data.x, data.y)
+            landing_x, landing_y = self._absolute_landing(data.x, data.y)
+            self._arm_recross_lock(landing_x, landing_y)
+            if landing_x >= 0:
+                self._note_server_cursor(landing_x, landing_y)
 
         await asyncio.sleep(0)
+
+    def _absolute_landing(self, x: float, y: float) -> tuple[float, float]:
+        """The client's return landing, in absolute desktop pixels.
+
+        It arrives normalised over the server's virtual desktop - the same value
+        ``ServerMouseController.position_cursor`` denormalises to place the
+        cursor. ``(-1, -1)`` means "no landing" and passes through.
+        """
+        if x < 0 or y < 0:
+            return -1.0, -1.0
+        min_x, min_y, max_x, max_y, width, height = self._bbox_span()
+        return (
+            max(min_x, min(max_x - 1, min_x + x * width)),
+            max(min_y, min(max_y - 1, min_y + y * height)),
+        )
+
+    def _note_server_cursor(self, x: float, y: float) -> None:
+        """Record the position the directional hotkey resolves from.
+
+        Only called while the server owns the cursor: on a client the local
+        position means nothing, and the pre-crossing point is the right anchor.
+        """
+        self._last_server_cursor_pos = (float(x), float(y))
 
     def _arm_recross_lock(self, x: float, y: float) -> None:
         """Lock re-crossing through the server edge the cursor returned to.
@@ -815,11 +820,7 @@ class ServerMouseListener(object):
                     self._movement_history.append((x, y))
                 except Exception:
                     pass
-                # Only update the cached anchor while NOT listening: when
-                # the cursor is on a client the OS position is the
-                # server's last-known-before-crossing position, not the
-                # client's live cursor.
-                self._last_server_cursor_pos = (float(x), float(y))
+                self._note_server_cursor(x, y)
             history_ready = (
                 should_buffer
                 and len(self._movement_history) >= self.MOVEMENT_HISTORY_N_THRESHOLD
