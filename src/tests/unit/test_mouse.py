@@ -626,6 +626,27 @@ class TestServerMouseListener:
         assert not listener._recross_lock_blocks(ScreenEdge.TOP)
 
     @pytest.mark.anyio
+    async def test_the_recross_gate_logs_arm_and_release(
+        self,
+        event_bus,
+        mock_stream_handler,
+        mock_mouse_listener,
+    ):
+        """Both transitions must be visible, unthrottled - they are one-offs."""
+        listener = await self._returned_through_the_top_edge(
+            event_bus, mock_stream_handler, mock_mouse_listener
+        )
+        listener._logger = MagicMock()
+        listener._logger.is_enabled_for.return_value = True
+
+        with _ScreenGeometry(1920, 1080):
+            listener.on_move(960, 540)
+
+        lines = [str(c) for c in listener._logger.debug.call_args_list]
+        assert any("[RECROSS_GATE] RELEASED" in line for line in lines), lines
+        assert any("locked=ScreenEdge.TOP" in line for line in lines), lines
+
+    @pytest.mark.anyio
     async def test_a_move_still_at_the_edge_keeps_the_recross_lock(
         self,
         event_bus,
