@@ -137,12 +137,13 @@ class ServerMouseListener(_base.ServerMouseListener):
             self._listener = self._create_listener()
 
         self._listener.start()
+        # No ``request_capture()`` here: ``update_clients`` already asks for a
+        # session whenever an edge is bound, and the way back from a stand-down
+        # that matters is the one on client connect - the case where the user
+        # cancelled the dialog by mistake and reconnects the same client onto the
+        # same edge. A second escape hatch here only doubled the dialogs a start
+        # could produce.
         self._listener.update_clients(self._refresh_edge_state())
-        # Starting the listener is an explicit request for capture, so it also
-        # clears a stand-down from earlier refused/unanswered dialogs - the
-        # listener object survives a stop/start cycle and would otherwise stay
-        # latched off for the rest of the process's life.
-        self._listener.request_capture()
 
         self._logger.debug("Wayland barrier mode started")
         return True
@@ -155,6 +156,14 @@ class ServerMouseListener(_base.ServerMouseListener):
     def _stop_barrier(self) -> bool:
         if self._listener:
             self._listener.stop()
+        # It is a portal session plus a libei dispatch thread 
+        # without this it outlives the service.
+        try:
+            from .backend._libei import shutdown_connection
+
+            shutdown_connection()
+        except Exception as exc:
+            self._logger.debug("libei connection shutdown failed", error=str(exc))
         self._logger.debug("Wayland barrier mode stopped")
         return True
 
@@ -339,6 +348,13 @@ class ServerMouseListener(_base.ServerMouseListener):
         screen_edge = self._STRING_TO_SCREEN_EDGE.get(edge)
         if screen_edge is None:
             return
+
+        # The only place the server's cursor position is observed in barrier
+        # mode: there is no pynput move path here to keep the anchor fresh, and
+        # the directional hotkey resolves from it. Reading the position from a
+        # controller instead would open a RemoteDesktop session - another
+        # permission dialog - for a number the portal just handed us.
+        self._last_server_cursor_pos = (float(cursor_x), float(cursor_y))
 
         resolved = self._resolve_cross_screen_target(
             edge=screen_edge,

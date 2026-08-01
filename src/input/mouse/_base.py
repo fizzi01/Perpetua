@@ -433,8 +433,15 @@ class ServerMouseListener(object):
         # When a client is active the OS cursor position is stale (it
         # holds the server's last position before the crossing); refresh
         # from the controller only while the server still owns the cursor.
+        #
+        # Never in barrier mode: there ``MouseController`` is the libei one, and
+        # merely constructing it opens a RemoteDesktop portal session - a second
+        # permission dialog, on the event loop, for a position read. Barrier mode
+        # deliberately builds no server controller at all
+        # (``_linux.ServerMouseController._create_controller``), and the position
+        # the capture path last reported is the right answer there anyway.
         x, y = self._last_server_cursor_pos
-        if self._listening:
+        if self._listening and not getattr(self, "_barrier_mode", False):
             try:
                 from input.mouse.backend import MouseController
 
