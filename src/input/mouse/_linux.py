@@ -153,7 +153,7 @@ class ServerMouseListener(_base.ServerMouseListener):
     def _stop_barrier(self) -> bool:
         if self._listener:
             self._listener.stop()
-        # It is a portal session plus a libei dispatch thread 
+        # It is a portal session plus a libei dispatch thread
         # without this it outlives the service.
         try:
             from .backend._libei import shutdown_connection

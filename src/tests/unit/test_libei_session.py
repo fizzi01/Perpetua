@@ -401,7 +401,9 @@ class TestUnansweredDialog:
         # stop the next dialog (measured).
         portal.close.assert_called_once()
 
-    def test_the_extensions_own_reason_reaches_the_log(self, libei, logger, monkeypatch):
+    def test_the_extensions_own_reason_reaches_the_log(
+        self, libei, logger, monkeypatch
+    ):
         # The capture thread has fd 2 pointed at /dev/null for its whole life, so
         # ``last_error`` is the only place a late task error is recoverable from.
         portal = MagicMock()
@@ -412,7 +414,9 @@ class TestUnansweredDialog:
         monkeypatch.setattr(
             libei._CaptureSession,
             "_setup",
-            staticmethod(lambda _p: (_ for _ in ()).throw(RuntimeError("setup failed"))),
+            staticmethod(
+                lambda _p: (_ for _ in ()).throw(RuntimeError("setup failed"))
+            ),
         )
 
         with pytest.raises(libei._PortalNotAuthorised) as caught:
@@ -442,7 +446,9 @@ class TestUnansweredDialog:
 
     def test_the_retry_waits_the_dialog_delay(self, libei, logger, monkeypatch):
         monkeypatch.setattr(
-            libei.MouseListener, "_create_session_once", lambda self, log, trigger="test": None
+            libei.MouseListener,
+            "_create_session_once",
+            lambda self, log, trigger="test": None,
         )
         listener = libei.MouseListener()
         listener._active_edges = {"right"}
@@ -628,7 +634,9 @@ class TestInFlightGuard:
         release.set()
         first.join(timeout=5)
 
-    def test_a_new_listener_cannot_ask_over_the_old_one(self, libei, logger, monkeypatch):
+    def test_a_new_listener_cannot_ask_over_the_old_one(
+        self, libei, logger, monkeypatch
+    ):
         # The restarted-service case: Server.cleanup() dropped the listener while
         # its thread was still blocked in setup(), so the guard has to be shared
         # by objects that have never heard of each other.
