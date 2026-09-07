@@ -49,6 +49,9 @@ from daemon import (  # noqa: E402
     DaemonAlreadyRunningException,
     IS_WINDOWS,
 )
+from config import ServerConfig  # noqa: E402
+from utils import net as net_module  # noqa: E402
+from utils.net._base import LocalInterface  # noqa: E402
 
 # Capture the real ``delayed_exit`` at import time, BEFORE the autouse fixture
 # that mocks it can run. Tests that want to exercise the real implementation
@@ -816,6 +819,166 @@ class TestConfigurationCommands:
 
         assert responses is not None
         assert responses[-1]["event_type"] == NotificationEventType.COMMAND_SUCCESS
+
+
+class TestAdvertiseConfigCommands:
+    """``host`` is an interface preference; the GUI must be able to read it back."""
+
+    @pytest.mark.anyio
+    async def test_get_server_config_exposes_the_advertise_fields(
+        self, daemon_client_connection
+    ):
+        """A field the daemon omits is one the GUI overwrites on the next save.
+
+        ``pairing_port`` was already missing here before this change.
+        """
+        reader, writer, _ = daemon_client_connection
+
+        responses = await send_command(reader, writer, DaemonCommand.GET_SERVER_CONFIG)
+
+        data = responses[-1]["data"]["result"]
+        assert "host_exclusive" in data
+        assert "pairing_port" in data
+
+    @pytest.mark.anyio
+    async def test_host_and_exclusive_round_trip(self, daemon_client_connection):
+        reader, writer, _ = daemon_client_connection
+
+        await send_command(
+            reader,
+            writer,
+            DaemonCommand.SET_SERVER_CONFIG,
+            {"host": "10.0.0.1", "host_exclusive": True},
+        )
+        responses = await send_command(reader, writer, DaemonCommand.GET_SERVER_CONFIG)
+
+        data = responses[-1]["data"]["result"]
+        assert data["host"] == "10.0.0.1"
+        assert data["host_exclusive"] is True
+
+    @pytest.mark.anyio
+    async def test_omitted_keys_leave_values_alone(self, daemon_client_connection):
+        """A partial save must not reset the fields it does not mention."""
+        reader, writer, _ = daemon_client_connection
+
+        await send_command(
+            reader,
+            writer,
+            DaemonCommand.SET_SERVER_CONFIG,
+            {"host": "10.0.0.1", "host_exclusive": True},
+        )
+        await send_command(
+            reader, writer, DaemonCommand.SET_SERVER_CONFIG, {"port": 7777}
+        )
+        responses = await send_command(reader, writer, DaemonCommand.GET_SERVER_CONFIG)
+
+        data = responses[-1]["data"]["result"]
+        assert data["host"] == "10.0.0.1"
+        assert data["host_exclusive"] is True
+        assert data["port"] == 7777
+
+    @pytest.mark.anyio
+    async def test_blank_uid_never_clears_the_stored_one(
+        self, daemon_client_connection
+    ):
+        """The uid keys the client certificate mapping.
+
+        Dropping it forces every paired client through OTP pairing again, so a
+        payload that merely omits or blanks it must be inert.
+        """
+        reader, writer, daemon = daemon_client_connection
+        daemon._server_config.uid = "keep-me"
+
+        await send_command(reader, writer, DaemonCommand.SET_SERVER_CONFIG, {"uid": ""})
+        await send_command(
+            reader, writer, DaemonCommand.SET_SERVER_CONFIG, {"uid": None}
+        )
+
+        assert daemon._server_config.uid == "keep-me"
+
+    @pytest.mark.anyio
+    async def test_save_persists_without_a_running_service(
+        self, daemon_client_connection
+    ):
+        """It used to report "Options saved" while writing nothing.
+
+        Persistence was gated on a Server instance existing, which it does not
+        before a service has been chosen.
+        """
+        reader, writer, daemon = daemon_client_connection
+        assert daemon._server is None
+
+        responses = await send_command(
+            reader, writer, DaemonCommand.SET_SERVER_CONFIG, {"host": "10.0.0.1"}
+        )
+        assert responses[-1]["event_type"] == NotificationEventType.COMMAND_SUCCESS
+
+        reloaded = ServerConfig(daemon.app_config)
+        await reloaded.load()
+        assert reloaded.host == "10.0.0.1"
+
+
+class TestListNetworkInterfaces:
+    @pytest.mark.anyio
+    async def test_returns_interfaces_selection_and_advertised(
+        self, daemon_client_connection, monkeypatch
+    ):
+        reader, writer, _ = daemon_client_connection
+        monkeypatch.setattr(
+            net_module,
+            "list_local_interfaces",
+            lambda *a, **k: [
+                LocalInterface("eth1", "Ethernet", "10.0.0.1", 24, "10.0.0.0/24", False)
+            ],
+        )
+
+        responses = await send_command(
+            reader, writer, DaemonCommand.LIST_NETWORK_INTERFACES
+        )
+
+        assert responses[-1]["event_type"] == NotificationEventType.COMMAND_SUCCESS
+        # listenCommand on the GUI side drops payloads without a message.
+        assert responses[-1]["message"]
+        data = responses[-1]["data"]["result"]
+        assert data["interfaces"][0]["ip"] == "10.0.0.1"
+        assert data["advertised"] == ["10.0.0.1"]
+        assert "selected" in data
+
+    @pytest.mark.anyio
+    async def test_enumeration_failure_is_reported_as_a_command_error(
+        self, daemon_client_connection, monkeypatch
+    ):
+        reader, writer, _ = daemon_client_connection
+
+        def _boom(*_a, **_k):
+            raise OSError("iphlpapi exploded")
+
+        monkeypatch.setattr(net_module, "list_local_interfaces", _boom)
+
+        responses = await send_command(
+            reader, writer, DaemonCommand.LIST_NETWORK_INTERFACES
+        )
+
+        assert responses[-1]["event_type"] == NotificationEventType.COMMAND_ERROR
+
+    @pytest.mark.anyio
+    async def test_legacy_bind_notice_is_reported_once(
+        self, daemon_client_connection, monkeypatch
+    ):
+        """The change in reachability must be declared, not silent - but once."""
+        reader, writer, daemon = daemon_client_connection
+        monkeypatch.setattr(net_module, "list_local_interfaces", lambda *a, **k: [])
+        daemon._server_config.legacy_bind_notice = "192.168.1.20"
+
+        first = await send_command(
+            reader, writer, DaemonCommand.LIST_NETWORK_INTERFACES
+        )
+        second = await send_command(
+            reader, writer, DaemonCommand.LIST_NETWORK_INTERFACES
+        )
+
+        assert first[-1]["data"]["result"]["legacy_bind_notice"] == "192.168.1.20"
+        assert second[-1]["data"]["result"]["legacy_bind_notice"] is None
 
 
 # ============================================================================

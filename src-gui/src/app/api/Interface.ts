@@ -254,6 +254,12 @@ export interface NetworkInterfacesResult {
     selected?: string | null;
     /** What clients will actually be told, resolved by the daemon. */
     advertised: string[];
+    /**
+     * Set once when a config predating the advertise preference is loaded:
+     * `host` used to restrict the listener and no longer does. Shown to the
+     * user so the change in reachability is not silent.
+     */
+    legacy_bind_notice?: string | null;
 }
 
 export enum StreamType {

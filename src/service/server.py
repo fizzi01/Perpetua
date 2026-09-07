@@ -1436,6 +1436,13 @@ class Server:
                 error_msg = f"Cannot set up TLS certificates: {e}"
                 self._logger.error(error_msg)
                 raise ServerStartError(error_msg, reason="ssl_setup_failed") from e
+        elif self.config.ssl_enabled:
+            # Certificates were loaded back in __init__, i.e. at SERVICE_CHOICE
+            # time. The address set can have changed since (a cable plugged in
+            # between choosing the service and pressing Start), and the guard
+            # above would skip the SAN check entirely - leaving us about to
+            # advertise an address the leaf does not cover.
+            self._reissue_server_cert_if_ip_changed()
 
         try:
             await self._initialize_streams()
@@ -1639,12 +1646,10 @@ class Server:
             await loop.run_in_executor(None, self._reissue_server_cert_if_ip_changed)
             if self.connection_handler is not None:
                 # The listener caches its SSLContext on file paths, which do
-                # not change when the leaf is rewritten in place.
-                invalidate = getattr(
-                    self.connection_handler, "invalidate_ssl_context", None
-                )
-                if callable(invalidate):
-                    invalidate()
+                # not change when the leaf is rewritten in place: without this
+                # the re-issued certificate would not reach the wire until the
+                # server was restarted.
+                self.connection_handler.invalidate_ssl_context()
 
         actual_pairing = self.get_pairing_actual_port()
         advertised_pairing = (

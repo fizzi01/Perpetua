@@ -200,6 +200,15 @@ export function ServerTab({onStatusChange, state}: ServerTabProps) {
                 setInterfaces(result.interfaces ?? []);
                 setAdvertised(result.advertised ?? []);
                 if (result.selected) setHost(result.selected);
+                if (result.legacy_bind_notice) {
+                    // The daemon clears this after reporting it once.
+                    addNotification(
+                        'warning',
+                        'Perpetua now listens on all interfaces',
+                        `It advertises ${result.legacy_bind_notice}. Previously this address also restricted which interface accepted connections. `
+                        + `Tick "Accept only on this interface" to restore that restriction.`,
+                    );
+                }
             }
             done();
         }).then(unlisten => listeners.addListenerOnce('list-network-interfaces', unlisten));
@@ -1089,15 +1098,16 @@ export function ServerTab({onStatusChange, state}: ServerTabProps) {
     const handleSaveOptions = (hostValue: string, portValue: string, sslEnabledValue: boolean, save_feedback: boolean = true, hostExclusiveValue: boolean = hostExclusive) => {
         console.log('Saving options:', {host: hostValue, port: portValue, sslEnabled: sslEnabledValue, hostExclusive: hostExclusiveValue});
 
-        if (save_feedback) {
-            listenCommand(EventType.CommandSuccess, CommandType.SetServerConfig, (event) => {
-                console.log(`Server config saved successfully: ${event.message}`);
-                addNotification('success', 'Options saved');
-                listeners.removeListener('set-server-config');
-            }).then(unlisten => {
-                listeners.addListenerOnce('set-server-config', unlisten);
-            });
-        }
+        listenCommand(EventType.CommandSuccess, CommandType.SetServerConfig, (event) => {
+            console.log(`Server config saved successfully: ${event.message}`);
+            if (save_feedback) addNotification('success', 'Options saved');
+            // Read back what the daemon actually stored instead of trusting
+            // the success event, and refresh the advertised-address line.
+            refreshInterfaces();
+            listeners.removeListener('set-server-config');
+        }).then(unlisten => {
+            listeners.addListenerOnce('set-server-config', unlisten);
+        });
 
         listenCommand(EventType.CommandError, CommandType.SetServerConfig, (event) => {
             addNotification('error', 'Failed to save options', event.data?.error || '');
@@ -1310,6 +1320,39 @@ export function ServerTab({onStatusChange, state}: ServerTabProps) {
                     </div>
                 </motion.div>
             </motion.div>
+
+            {/*
+              * Where clients will find this server. Without it the address is
+              * buried in Options, yet it is the one thing someone pairing a
+              * client needs - and on a multi-homed machine the "obvious" guess
+              * is usually the wrong interface.
+              */}
+            {advertised.length > 0 && (
+                <motion.div
+                    initial={{opacity: 0}}
+                    animate={{opacity: 1}}
+                    transition={{delay: 0.25}}
+                    className="flex items-center gap-2 flex-wrap px-1"
+                >
+                    <span className="text-xs" style={{color: 'var(--app-text-muted)'}}>
+                        {isRunning ? 'Reachable at' : 'Will advertise'}
+                    </span>
+                    {advertised.map((addr) => (
+                        <CopyableBadge
+                            key={addr}
+                            fullText={`${addr}:${port}`}
+                            displayText={`${addr}:${port}`}
+                            label=""
+                            titleText={`Click to copy ${addr}:${port}`}
+                        />
+                    ))}
+                    {host !== ADVERTISE_AUTO && (
+                        <span className="text-xs" style={{color: 'var(--app-text-muted)'}}>
+                            {hostExclusive ? '(this interface only)' : '(advertised)'}
+                        </span>
+                    )}
+                </motion.div>
+            )}
 
             {/* Active Permissions Panel - Always Visible */}
             <PermissionsPanel
@@ -1689,10 +1732,11 @@ export function ServerTab({onStatusChange, state}: ServerTabProps) {
                             </h3>
 
                             <div>
-                                <label className="block mb-2 font-semibold"
+                                <label htmlFor="advertiseOn" className="block mb-2 font-semibold"
                                        style={{color: 'var(--app-text-primary)'}}
                                 >Advertise on</label>
                                 <select
+                                    id="advertiseOn"
                                     value={host}
                                     onChange={(e) => {
                                         const newHost = e.target.value;
@@ -1704,7 +1748,11 @@ export function ServerTab({onStatusChange, state}: ServerTabProps) {
                                         scheduleOptionsSave({host: newHost, hostExclusive: nextExclusive});
                                     }}
                                     className="app-input"
-                                    disabled={isRunning}
+                                    // Editable while running: the daemon
+                                    // re-issues the certificate SAN and
+                                    // re-announces on the fly, so there is no
+                                    // reason to make the user stop the KVM to
+                                    // move it onto another link.
                                 >
                                     <option value={ADVERTISE_AUTO}>Auto (all interfaces)</option>
                                     {interfaces.map((iface) => (
@@ -1748,7 +1796,6 @@ export function ServerTab({onStatusChange, state}: ServerTabProps) {
                                     <Switch
                                         id="hostExclusive"
                                         checked={hostExclusive}
-                                        disabled={isRunning}
                                         onCheckedChange={(checked) => {
                                             setHostExclusive(checked);
                                             scheduleOptionsSave({hostExclusive: checked});
@@ -1758,10 +1805,11 @@ export function ServerTab({onStatusChange, state}: ServerTabProps) {
                             )}
 
                             <div>
-                                <label className="block mb-2 font-semibold"
+                                <label htmlFor="serverPort" className="block mb-2 font-semibold"
                                        style={{color: 'var(--app-text-primary)'}}
                                 >Port</label>
                                 <input
+                                    id="serverPort"
                                     ref={portInputRef}
                                     type="text"
                                     value={port}

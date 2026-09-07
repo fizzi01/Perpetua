@@ -483,6 +483,9 @@ class ServerConfig:
         # ``host`` names. Opt-in: restricting the *bind* instead would stop the
         # server from starting whenever that address is momentarily absent.
         self.host_exclusive: bool = False
+        # Set by from_dict when a pre-advertise-preference config is loaded;
+        # transient (never persisted), consumed once by the GUI.
+        self.legacy_bind_notice: Optional[str] = None
         self.port: int = self.DEFAULT_PORT
         self.heartbeat_interval: int = self.DEFAULT_HEARTBEAT_INTERVAL
         # Plaintext port the always-on pairing/cert-sharing listener binds to.
@@ -701,6 +704,18 @@ class ServerConfig:
         # Only a real bool restricts the listener; a botched manual edit must
         # never silently narrow what the server accepts.
         self.host_exclusive = data.get("host_exclusive", self.host_exclusive) is True
+
+        # A config written before ``host`` became an advertise preference had
+        # it as the *bind* address, so a concrete value there restricted the
+        # listener. It no longer does. Surface that once rather than changing
+        # reachability silently - and do not infer host_exclusive from it: the
+        # GUI used to write a concrete host on any options edit, so the value
+        # is not evidence of intent.
+        self.legacy_bind_notice: Optional[str] = None
+        if "host_exclusive" not in data:
+            legacy_host = data.get("host")
+            if legacy_host and legacy_host != self.DEFAULT_HOST:
+                self.legacy_bind_notice = legacy_host
         self.port = data.get("port", self.port)
         pp = data.get("pairing_port", self.pairing_port)
         # Accept either an integer or None/null; ignore anything else so a

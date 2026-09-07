@@ -1900,6 +1900,10 @@ class Daemon:
                 if self._server_config
                 else []
             )
+            legacy_notice = None
+            if self._server_config is not None:
+                legacy_notice = self._server_config.legacy_bind_notice
+                self._server_config.legacy_bind_notice = None
             await self._notification_manager.notify_command_success(
                 command,
                 "Network interfaces retrieved",
@@ -1907,6 +1911,10 @@ class Daemon:
                     "interfaces": [i.to_dict() for i in interfaces],
                     "selected": selected,
                     "advertised": advertised,
+                    # One-shot: a config written when ``host`` still meant
+                    # "bind address". Cleared after the GUI has been told, so
+                    # the warning is shown once rather than every poll.
+                    "legacy_bind_notice": legacy_notice,
                 },
             )
         except Exception as e:
@@ -2589,7 +2597,16 @@ class Daemon:
                 )
                 return
 
-            self._client.choose_server(uid)
+            # This is the admin picking a server, so a genuine switch may drop
+            # the old server's trust material.
+            chosen = await self._client.choose_server(uid, user_initiated=True)
+            if not chosen:
+                # Previously this reported success even when the uid matched
+                # nothing and no config was written.
+                await self._notification_manager.notify_command_error(
+                    command, f"Server {uid} is no longer among the discovered servers"
+                )
+                return
 
             await self._notification_manager.notify_command_success(
                 command,

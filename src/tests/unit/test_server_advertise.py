@@ -29,8 +29,13 @@ from service.server import Server
 from utils.net._base import LocalInterface
 
 
-def _make_server(app_config, server_config) -> Server:
-    server_config.disable_ssl()  # certificates are covered elsewhere
+def _make_server(app_config, server_config, ssl: bool = False) -> Server:
+    # SSL off by default: certificate behaviour is covered in
+    # test_server_cert_multihomed and generating real keys is slow.
+    if ssl:
+        server_config.enable_ssl()
+    else:
+        server_config.disable_ssl()
     return Server(
         app_config=app_config,
         server_config=server_config,
@@ -56,29 +61,124 @@ TWO_LINKS = [
 
 
 class TestBindIsNotConfigurable:
-    def test_port_probe_ignores_the_advertise_preference(
+    """The core invariant: every listener binds the wildcard, whatever ``host``
+    says. ``host`` selects what is *advertised*.
+
+    These drive the real ``start()`` rather than calling the helpers directly:
+    asserting ``BIND_ALL == "0.0.0.0"`` and then invoking
+    ``_is_port_available(BIND_ALL, ...)`` by hand proves nothing about what
+    production passes, and a regression to ``config.host`` would slip through.
+    """
+
+    @pytest.mark.anyio
+    async def test_listener_binds_the_wildcard_not_the_preference(
         self, app_config, server_config, monkeypatch
     ):
-        """Probing config.host reported EADDRNOTAVAIL as a port conflict.
-
-        An interface that is momentarily absent would make the server refuse
-        to start with a message about a port that is in fact free.
-        """
+        captured = _stub_start(monkeypatch)
         server = _make_server(app_config, server_config)
-        server.config.host = "10.99.99.99"  # not present on this machine
+        server.config.host = "10.99.99.99"  # deliberately not on this machine
 
-        probed = []
+        assert await server.start() is False  # stubbed handler refuses
+
+        assert captured["connection_host"] == "0.0.0.0"
+
+    @pytest.mark.anyio
+    async def test_pairing_listener_also_binds_the_wildcard(
+        self, app_config, server_config, monkeypatch
+    ):
+        """Otherwise pairing would be reachable on one interface while the
+        data port listens on all - or the reverse.
+
+        The handler is allowed to start so ``start()`` actually reaches the
+        pairing call: asserting on a value this test passed in itself would
+        prove nothing about production.
+        """
+        captured = _stub_start(monkeypatch, handler_starts=True)
+        server_config.enable_ssl()
+        server = _make_server(app_config, server_config, ssl=True)
+        server.config.host = "10.99.99.99"
+
+        assert await server.start() is True
+        await server.stop(True)
+
+        assert "pairing_host" in captured, "start() never reached the pairing listener"
+        assert captured["pairing_host"] == "0.0.0.0"
+
+    @pytest.mark.anyio
+    async def test_port_probe_uses_the_wildcard(
+        self, app_config, server_config, monkeypatch
+    ):
+        """Probing ``config.host`` reported EADDRNOTAVAIL as a port conflict:
+        an absent interface made the server refuse to start complaining about
+        a port that was in fact free."""
+        captured = _stub_start(monkeypatch)
+        server = _make_server(app_config, server_config)
+        server.config.host = "10.99.99.99"
+
+        await server.start()
+
+        assert captured["probed_hosts"] == ["0.0.0.0"]
+
+    @pytest.mark.anyio
+    async def test_start_succeeds_with_an_absent_preference(
+        self, app_config, server_config, monkeypatch
+    ):
+        """The whole point of not binding the preference: a stale choice must
+        never stop the server from coming up."""
+        _stub_start(monkeypatch, handler_starts=True)
+        server = _make_server(app_config, server_config)
+        server.config.host = "10.99.99.99"
+
+        assert await server.start() is True
+        await server.stop(True)
+
+
+class TestStartWiring:
+    """Things start() must hand to the layers below.
+
+    Unit-testing the helpers is not enough: if production stops calling them
+    the feature is dead and every isolated test still passes.
+    """
+
+    @pytest.mark.anyio
+    async def test_accept_filter_is_wired_into_the_listener(
+        self, app_config, server_config, monkeypatch
+    ):
+        """Without this, ``host_exclusive`` is a checkbox that does nothing."""
+        captured = _stub_start(monkeypatch)
+        server = _make_server(app_config, server_config)
+
+        await server.start()
+
+        assert captured["interface_filter"] == server._on_interface_accept
+
+    @pytest.mark.anyio
+    async def test_san_is_rechecked_at_start_even_with_certs_loaded(
+        self, app_config, server_config, monkeypatch
+    ):
+        """Certificates are set up in __init__, i.e. at SERVICE_CHOICE time.
+
+        The address set can change before Start (a cable plugged in meanwhile),
+        and the ``not self.certfile`` guard skips the whole certificate block -
+        so without an explicit re-check the server would advertise an address
+        its leaf does not cover.
+        """
+        _stub_start(monkeypatch)
+        server_config.enable_ssl()
+        server = _make_server(app_config, server_config)
+        server_config.enable_ssl()
+        server.certfile, server.keyfile = "cert.pem", "key.pem"  # already loaded
+
+        checked = []
         monkeypatch.setattr(
             Server,
-            "_is_port_available",
-            staticmethod(lambda host, port: probed.append(host) or True),
+            "_reissue_server_cert_if_ip_changed",
+            lambda self: checked.append(True),
         )
 
-        assert server._is_port_available(server.BIND_ALL, 1234) is True
-        # The production call site is asserted by the start test below; here we
-        # only pin that BIND_ALL is the wildcard and not the preference.
-        assert server.BIND_ALL == "0.0.0.0"
-        assert probed == ["0.0.0.0"]
+        await server.start()
+
+        assert checked, "SAN check skipped at start"
 
 
 class TestInterfaceFilter:
@@ -209,6 +309,56 @@ class TestRefreshAdvertisement:
         # back without the admin configuring anything.
         assert kwargs["extra_props"]["addresses"] == "192.168.1.20,10.0.0.1"
         assert server._advertised_addresses == ["192.168.1.20", "10.0.0.1"]
+
+
+def _stub_start(monkeypatch, handler_starts: bool = False) -> dict:
+    """Let ``Server.start()`` run far enough to record what it binds.
+
+    Input capture, mDNS and the real socket are stubbed; the connection
+    handler is a recorder so the host it is constructed with can be asserted.
+    """
+    captured: dict = {"probed_hosts": []}
+
+    monkeypatch.setattr(
+        Server,
+        "_is_port_available",
+        staticmethod(lambda host, port: captured["probed_hosts"].append(host) or True),
+    )
+    monkeypatch.setattr(
+        "service.server.list_local_interfaces_async", _async_returning(TWO_LINKS)
+    )
+    monkeypatch.setattr(Server, "_initialize_streams", _async_returning(None))
+    monkeypatch.setattr(Server, "_initialize_components", _async_returning(None))
+    monkeypatch.setattr(
+        Server, "_reconcile_layouts_with_monitors", _async_returning([])
+    )
+
+    async def _pairing(self, host=None, port=None):
+        captured["pairing_host"] = host
+        return True
+
+    monkeypatch.setattr(Server, "start_pairing_service", _pairing)
+
+    class _Handler:
+        def __init__(self, **kwargs):
+            captured["connection_host"] = kwargs.get("host")
+            captured["connection_port"] = kwargs.get("port")
+            captured["interface_filter"] = kwargs.get("interface_filter")
+
+        async def start(self):
+            return handler_starts
+
+        def set_server_uid(self, uid):
+            captured["handler_uid"] = uid
+
+        def invalidate_ssl_context(self):
+            captured["ssl_invalidated"] = True
+
+        async def stop(self, *a, **k):
+            return None
+
+    monkeypatch.setattr("service.server.ConnectionHandler", _Handler)
+    return captured
 
 
 def _async_returning(value):

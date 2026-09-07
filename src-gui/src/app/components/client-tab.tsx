@@ -31,6 +31,7 @@ import {
     ClientStatus,
     CommandType,
     EventType,
+    NetworkInterfacesResult,
     ServerChoice,
     ServerFound,
     ServiceError,
@@ -46,7 +47,7 @@ import {abbreviateText, CopyableBadge} from './ui/copyable-badge';
 import {ServerSelectionPanel} from './ui/server-selection-panel';
 import {OtpInputPanel} from './ui/otp-input-panel';
 import {ActionButton} from './ui/action-button';
-import { getLocalIpAddress } from '../api/Sender';
+import { getLocalIpAddress, listNetworkInterfaces } from '../api/Sender';
 
 function getClientPairingKey(state: ClientStatus) {
     const server = state.server_info;
@@ -112,10 +113,42 @@ export function ClientTab({onStatusChange, state}: ClientTabProps) {
     const currentPairingKeyRef = useRef(getClientPairingKey(state));
     const otpSubmittedPairingKeyRef = useRef<string | null>(null);
 
-    const [ipAddr, setIpAddr] = useState<string | null>(null);
+    // Every local address, not just the one that reaches the internet. On a
+    // multi-homed client the route-probed address is often *not* the one the
+    // server sees, so showing only that made the peer IP in the server's
+    // approval prompt look like a different machine.
+    const [ipAddrs, setIpAddrs] = useState<string[]>([]);
 
     useEffect(() => {
-        getLocalIpAddress().then(ip => setIpAddr(ip));
+        let settled = false;
+        const done = () => {
+            settled = true;
+            listeners.removeListener('client-interfaces');
+            listeners.removeListener('client-interfaces-error');
+        };
+
+        listenCommand(EventType.CommandSuccess, CommandType.ListNetworkInterfaces, (event) => {
+            const result = event.data?.result as NetworkInterfacesResult | undefined;
+            const ips = (result?.interfaces ?? []).map(i => i.ip);
+            if (ips.length) setIpAddrs(ips);
+            done();
+        }).then(unlisten => listeners.addListenerOnce('client-interfaces', unlisten));
+
+        listenCommand(EventType.CommandError, CommandType.ListNetworkInterfaces, () => {
+            done();
+        }).then(unlisten => listeners.addListenerOnce('client-interfaces-error', unlisten));
+
+        listNetworkInterfaces().catch(() => done());
+
+        // A daemon that predates the command answers with a generic error, so
+        // the listener never fires: fall back to the single-address lookup
+        // rather than showing nothing.
+        setTimeout(() => {
+            if (!settled) {
+                done();
+                getLocalIpAddress().then(ip => setIpAddrs([ip])).catch(() => undefined);
+            }
+        }, 5000);
     }, []);
 
     const resetOtpSubmissionSuppression = () => {
@@ -746,14 +779,17 @@ export function ClientTab({onStatusChange, state}: ClientTabProps) {
                                     </div>
                                     <div className="text-xs" style={{color: 'var(--app-text-muted)'}}>Your Hostname</div>
                                 </div>
-                                {ipAddr && (
-                                    <div className="flex-shrink-0 flex items-center">
-                                        <CopyableBadge
-                                            fullText={ipAddr}
-                                            displayText={abbreviateText(ipAddr, 3, 3)}
-                                            label=""
-                                            titleText={`Your IP: ${ipAddr}`}
-                                        />
+                                {ipAddrs.length > 0 && (
+                                    <div className="flex-shrink-0 flex items-center gap-1">
+                                        {ipAddrs.map((ip) => (
+                                            <CopyableBadge
+                                                key={ip}
+                                                fullText={ip}
+                                                displayText={abbreviateText(ip, 3, 3)}
+                                                label=""
+                                                titleText={`Your IP: ${ip}`}
+                                            />
+                                        ))}
                                     </div>
                                 )}
                             </div>

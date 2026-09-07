@@ -1271,6 +1271,16 @@ class ConnectionHandler(BaseConnectionHandler):
         self.certfile = certfile
         self.keyfile = keyfile
 
+    def invalidate_ssl_context(self) -> None:
+        """Drop the cached context so the next handshake re-reads the files.
+
+        The cache is keyed on file *paths*, and a re-issued leaf certificate is
+        written back to the same path. Without this, a listener that is already
+        running keeps serving the old certificate - so widening the SAN to
+        cover a newly advertised address would have no effect until restart.
+        """
+        self._ssl_context_cache = None
+
     def _get_ssl_context(self) -> Optional[ssl.SSLContext]:
         """
         Create SSL context if certfile and keyfile are provided.

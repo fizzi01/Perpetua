@@ -24,6 +24,9 @@ vi.mock('../api/Listener', () => ({
 vi.mock('../api/Sender', () => ({
     chooseServer: vi.fn(() => Promise.resolve()),
     getLocalIpAddress: vi.fn(() => Promise.resolve('127.0.0.1')),
+    // The tab now asks the daemon for every local address instead of the
+    // frontend's single route-probed one.
+    listNetworkInterfaces: vi.fn(() => Promise.resolve()),
     saveClientConfig: vi.fn(() => Promise.resolve()),
     setOtp: vi.fn(() => Promise.resolve()),
     startClient: vi.fn(() => Promise.resolve()),
