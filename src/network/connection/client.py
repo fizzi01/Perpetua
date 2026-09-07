@@ -22,8 +22,9 @@ Client-side connection Handler
 import time
 
 import asyncio
+import os
 import ssl
-from typing import Optional, Callable, Any
+from typing import Optional, Callable, Any, Tuple
 
 from model.client import ClientsManager, ClientObj
 from model.connection import StreamWrapper, ClientConnection
@@ -101,6 +102,7 @@ class ConnectionHandler(BaseConnectionHandler):
         reconnected_callback: Optional[Callable[["ClientObj", list[int]], Any]] = None,
         connecting_callback: Optional[Callable[["ClientObj"], Any]] = None,
         stale_cert_callback: Optional[Callable[[], Any]] = None,
+        cert_mismatch_callback: Optional[Callable[[str, int, str], Any]] = None,
         server_uid_callback: Optional[Callable[[str], Any]] = None,
         host: str = "127.0.0.1",
         port: int = 5001,
@@ -146,6 +148,12 @@ class ConnectionHandler(BaseConnectionHandler):
         # OTP pairing flow so the user isn't left staring at a cryptic
         # SSL error in the log.
         self.stale_cert_callback = stale_cert_callback
+        # Reported when the CA still trusts the chain but the leaf's SAN does
+        # not cover the address we dialed. Retryable, so without a callback the
+        # client would retry forever with nothing visible to the user.
+        self.cert_mismatch_callback = cert_mismatch_callback
+        # Last (host, port) already reported, so a retry loop does not spam.
+        self._mismatch_reported: Optional[Tuple[str, int]] = None
         # Invoked with the server's UID once it arrives in the handshake
         # ack. The Client service uses this to persist the UID locally so
         # the certificate mapping has a stable, non-empty key even when
@@ -154,6 +162,10 @@ class ConnectionHandler(BaseConnectionHandler):
 
         self.host = host
         self.port = port
+        # Endpoint pinned for the duration of one connect attempt, so all the
+        # streams of a single connection land on the same address even if the
+        # target is retargeted mid-flight. See _connect.
+        self._target: Optional[Tuple[str, int]] = None
         self.wait = wait
         self.max_errors = max_errors
         self.heartbeat_interval = heartbeat_interval
@@ -468,16 +480,23 @@ class ConnectionHandler(BaseConnectionHandler):
             # the server can authenticate us via our client certificate.
             ssl_context = self._get_ssl_context()
 
+            # Pin the target for this whole attempt. update_target() can land
+            # between the command stream and the data streams, and the server
+            # correlates streams by peer IP - streams split across two
+            # addresses arrive as orphans and the handshake half-completes.
+            self._target = (self.host, self.port)
+            host, port = self._target
+
             # Connect to server
             if ssl_context is not None:
                 open_coro = asyncio.open_connection(
-                    self.host,
-                    self.port,
+                    host,
+                    port,
                     ssl=ssl_context,
-                    server_hostname=self.host,
+                    server_hostname=host,
                 )
             else:
-                open_coro = asyncio.open_connection(self.host, self.port)
+                open_coro = asyncio.open_connection(host, port)
             _command_reader, _command_writer = await asyncio.wait_for(
                 open_coro,
                 timeout=self.CONNECTION_ATTEMPT_TIMEOUT,
@@ -535,6 +554,25 @@ class ConnectionHandler(BaseConnectionHandler):
                     f"retrying without re-pairing.",
                     Logger.WARNING,
                 )
+                # Retryable, so the loop keeps going - but silently, which is
+                # what made this failure so hard to diagnose: the user saw
+                # "connecting" forever with nothing to act on. Report it once
+                # per target so the GUI can say what is actually wrong.
+                if self.cert_mismatch_callback and self._mismatch_reported != (
+                    self.host,
+                    self.port,
+                ):
+                    self._mismatch_reported = (self.host, self.port)
+                    try:
+                        result = self.cert_mismatch_callback(
+                            self.host, self.port, str(e)
+                        )
+                        if asyncio.iscoroutine(result):
+                            await result
+                    except Exception as cb_err:  # noqa: BLE001
+                        self._logger.log(
+                            f"Error in cert_mismatch_callback ({cb_err})", Logger.ERROR
+                        )
                 return False
             # Genuine CA-trust failure: the server regenerated its CA but we
             # still hold an old one. Surface a specific error so the service can
@@ -700,6 +738,26 @@ class ConnectionHandler(BaseConnectionHandler):
             self._logger.log(traceback.format_exc(), Logger.ERROR)
             return False
 
+    @staticmethod
+    def _file_stamp(path: Optional[str]) -> tuple:
+        """(path, mtime_ns, size), degrading to path-only if it cannot be read."""
+        if not path:
+            return (path, None, None)
+        try:
+            st = os.stat(path)
+        except OSError:
+            return (path, None, None)
+        return (path, st.st_mtime_ns, st.st_size)
+
+    def invalidate_ssl_context(self) -> None:
+        """Drop the cached context so the next attempt re-reads the key files.
+
+        Re-pairing writes a *new* CA to the same path. Keyed on paths alone the
+        cache would keep the old CA and reject the new server until the process
+        restarted.
+        """
+        self._ssl_context_cache = None
+
     def _get_ssl_context(self) -> Optional[ssl.SSLContext]:
         """
         Lazily build and cache the client SSL context.
@@ -707,7 +765,12 @@ class ConnectionHandler(BaseConnectionHandler):
         """
         if not self.use_ssl or not self.certfile:
             return None
-        cache_key = (self.certfile, self.client_certfile, self.client_keyfile)
+        # Include mtime/size: the paths do not change when a certificate is
+        # replaced in place, so paths alone would serve stale key material.
+        cache_key = tuple(
+            self._file_stamp(p)
+            for p in (self.certfile, self.client_certfile, self.client_keyfile)
+        )
         if (
             self._ssl_context_cache is not None
             and self._ssl_context_cache[0] == cache_key
@@ -750,15 +813,18 @@ class ConnectionHandler(BaseConnectionHandler):
                 # Connect to server for this stream. When TLS is on the stream
                 # is wrapped from the start (matching the server listener), so
                 # there is no separate start_tls upgrade step.
+                # Same endpoint the command stream used, not whatever
+                # update_target may have written in the meantime.
+                s_host, s_port = self._target or (self.host, self.port)
                 if ssl_context is not None:
                     open_coro = asyncio.open_connection(
-                        self.host,
-                        self.port,
+                        s_host,
+                        s_port,
                         ssl=ssl_context,
-                        server_hostname=self.host,
+                        server_hostname=s_host,
                     )
                 else:
-                    open_coro = asyncio.open_connection(self.host, self.port)
+                    open_coro = asyncio.open_connection(s_host, s_port)
                 reader, writer = await asyncio.wait_for(
                     open_coro,
                     timeout=self.CONNECTION_ATTEMPT_TIMEOUT,

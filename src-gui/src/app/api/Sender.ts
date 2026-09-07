@@ -73,8 +73,13 @@ export function setClientLayout(
     });
 }
 
-export function saveServerConfig(host: string, port: number, sslEnabled: boolean): Promise<void> {
-    return invoke(getType(CommandType, CommandType.SetServerConfig), {host, port, sslEnabled});
+export function saveServerConfig(host: string, port: number, sslEnabled: boolean, hostExclusive: boolean = false): Promise<void> {
+    return invoke(getType(CommandType, CommandType.SetServerConfig), {host, port, sslEnabled, hostExclusive});
+}
+
+/** Ask the daemon to enumerate local interfaces for the advertise picker. */
+export function listNetworkInterfaces(): Promise<void> {
+    return invoke(getType(CommandType, CommandType.ListNetworkInterfaces));
 }
 
 export function shareCertificate(timeout: number): Promise<void> {

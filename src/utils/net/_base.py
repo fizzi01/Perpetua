@@ -16,13 +16,45 @@
 #
 
 
+from dataclasses import dataclass
+from typing import Any, Optional
+
+import ipaddress
 import socket
+
+import ifaddr
 
 
 class MissingIpError(Exception):
     """Custom exception raised when the local IP address cannot be determined."""
 
     pass
+
+
+@dataclass(frozen=True, slots=True)
+class LocalInterface:
+    """One (adapter, IPv4 address) pair present on this machine.
+
+    One record per address rather than per adapter: an adapter can hold
+    several addresses and what the admin actually picks is a link.
+    """
+
+    name: str
+    display_name: str
+    ip: str
+    prefix: int
+    cidr: str
+    is_default_route: bool
+
+    def to_dict(self) -> dict[str, Any]:
+        return {
+            "name": self.name,
+            "display_name": self.display_name,
+            "ip": self.ip,
+            "prefix": self.prefix,
+            "cidr": self.cidr,
+            "is_default_route": self.is_default_route,
+        }
 
 
 def _is_usable_ip(ip: str | int) -> bool:
@@ -109,3 +141,65 @@ class CommonNetInfo:
         raise MissingIpError(
             f"Could not determine local IP address ({last_error})"
         ) from last_error
+
+    @staticmethod
+    def list_local_interfaces(
+        include_unusable: bool = False,
+        default_route_ip: Optional[str] = None,
+    ) -> list["LocalInterface"]:
+        """Every usable IPv4 address on this machine, with its adapter.
+
+        ``get_local_ip`` answers "which address reaches the internet"; this
+        answers "which addresses exist at all", which is the question a
+        multi-homed host actually needs answered before advertising itself.
+
+        :param include_unusable: keep loopback/link-local, which
+            ``_is_usable_ip`` normally rejects. The interface picker wants
+            them (a direct cable with no DHCP lands on 169.254/16);
+            auto-selection does not.
+        :param default_route_ip: the address ``get_local_ip`` would return.
+            Injected by callers so the module-level cache is reused instead
+            of firing a second route probe, and so tests stay pure. Resolved
+            internally when ``None``.
+        :return: records ordered default-route first, then by
+            ``(display_name, ip)``. Never raises: an empty list means "no
+            usable address right now", which every caller handles.
+        """
+        if default_route_ip is None:
+            try:
+                default_route_ip = CommonNetInfo.get_local_ip()
+            except Exception:  # noqa: BLE001 - flagging is best-effort
+                default_route_ip = None
+
+        interfaces: list[LocalInterface] = []
+        try:
+            for adapter in ifaddr.get_adapters():
+                for entry in adapter.ips:
+                    # ifaddr hands back a (addr, flowinfo, scope_id) tuple for
+                    # IPv6 and a plain string for IPv4; is_IPv4 is the
+                    # documented discriminator.
+                    if not entry.is_IPv4:
+                        continue
+                    ip = entry.ip
+                    if not include_unusable and not _is_usable_ip(ip):
+                        continue
+                    prefix = int(entry.network_prefix)
+                    try:
+                        cidr = str(ipaddress.ip_network(f"{ip}/{prefix}", strict=False))
+                    except ValueError:
+                        cidr = f"{ip}/{prefix}"
+                    interfaces.append(
+                        LocalInterface(
+                            name=adapter.name,
+                            display_name=adapter.nice_name or adapter.name,
+                            ip=ip,
+                            prefix=prefix,
+                            cidr=cidr,
+                            is_default_route=(ip == default_route_ip),
+                        )
+                    )
+        except Exception:  # noqa: BLE001 - enumeration must never break a start
+            return []
+
+        interfaces.sort(key=lambda i: (not i.is_default_route, i.display_name, i.ip))
+        return interfaces

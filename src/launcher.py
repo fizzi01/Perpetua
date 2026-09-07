@@ -44,7 +44,12 @@ class DaemonRunner:
         self.pid_file = Path(
             os.path.join(ApplicationConfig.get_runtime_path(), "daemon.pid")
         )
-        log_file = ApplicationConfig.get_default_log_file()
+        # Honour --config-dir: a daemon told to live elsewhere must keep its
+        # log there too, or it writes into the default install's log.
+        app_config = ApplicationConfig(auto_init=False)
+        if args and getattr(args, "config_dir", None):
+            app_config.set_save_path(args.config_dir)
+        log_file = app_config.get_default_log_file()
         self.log_file = Path(log_file) if log_file else None
         self._args = args
         # If --log-terminal, write logs to stdout only (no file)

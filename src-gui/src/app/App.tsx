@@ -17,284 +17,114 @@
  *
  */
 
-import {useEffect, useRef, useState} from 'react';
+import {useEffect, useState} from 'react';
 import {BrowserRouter, Route, Routes} from 'react-router-dom';
 import {ClientTab} from './components/client-tab';
 import {ServerTab} from './components/server-tab';
 import {Titlebar} from './components/titlebar';
 import {motion} from 'motion/react';
+import {ServiceTabSkeleton} from './components/ui/service-tab-skeleton';
 
 import {
-    ClientStatus,
     CommandType,
     EventType,
     PermissionInfo,
     PermissionsRequiredData,
     PermissionsResult,
-    ServerStatus,
-    ServiceStatus,
 } from './api/Interface';
 
-import {chooseService, getPermissions, getStatus} from './api/Sender';
+import {getPermissions} from './api/Sender';
 import {listenCommand, listenGeneralEvent} from './api/Listener';
 import {PermissionGate} from './components/ui/permission-gate';
-import {useEventListeners} from './hooks/useEventListeners';
-import {useAppDispatch, useAppSelector} from './hooks/redux';
-import {ActionType} from './store/actions';
+import {useDaemonSync} from './hooks/useDaemonSync';
+import {useAppSelector} from './hooks/redux';
 import {ScrollArea} from './components/ui/scrollbar';
-import {InlineNotification, Notification} from './components/ui/inline-notification';
-import {DaemonLogDialog} from './components/ui/DaemonLogDialog';
+import LogsWindow from './LogsWindow';
+import {openLogWindow} from './api/logWindow';
 import {SplashScreen} from './Splash';
 import LayoutEditorWindow from './LayoutEditorWindow';
 
 export function Main() {
 
-    const [mode, setMode] = useState<'client' | 'server'>('client');
+    const sync = useDaemonSync();
+    const {mode} = sync;
     const [disableModeSwitch, setDisableModeSwitch] = useState<boolean>(false);
-    const [stateListenersAdded, setListenersAdded] = useState<boolean>(false);
-    const [showLogs, setShowLogs] = useState<boolean>(false);
+    const [logWindowError, setLogWindowError] = useState('');
+    const showLogs = () => {
+        setLogWindowError('');
+        void openLogWindow().catch(err => setLogWindowError(String(err)));
+    };
     // OS-level permission gate (macOS Accessibility / Input Monitoring). Null
     // when nothing is missing; a non-empty list drives the blocking overlay.
     const [missingPerms, setMissingPerms] = useState<PermissionInfo[] | null>(null);
     const [pendingService, setPendingService] = useState<string | null>(null);
     // True when the gate is up because a permission was revoked at runtime.
     const [permsRevoked, setPermsRevoked] = useState<boolean>(false);
-    // App-level toasts. The tabs own their own stacks; this one covers failures
-    // that happen outside a tab, i.e. while switching service mode.
-    const [notifications, setNotifications] = useState<Notification[]>([]);
-
-    const listeners = useEventListeners();
-
     const serverState = useAppSelector(state => state.server);
     const clientState = useAppSelector(state => state.client);
-    const dispatch = useAppDispatch();
 
-    const isStartupRef = useRef(true);
-
-    const addNotification = (type: Notification['type'], message: string, description?: string) => {
-        const newNotification: Notification = {
-            id: Date.now().toString(),
-            type,
-            message,
-            description,
+    // Register before querying, and release even registrations that finish
+    // after cleanup (including StrictMode's first mount).
+    useEffect(() => {
+        let disposed = false;
+        let permissionsMissing = false;
+        let registered = false;
+        const unlisteners: (() => void)[] = [];
+        const register = async (promise: Promise<() => void>) => {
+            const unlisten = await promise;
+            if (disposed) unlisten();
+            else unlisteners.push(unlisten);
         };
-        setNotifications((prev) => [...prev, newNotification]);
-        setTimeout(() => {
-            setNotifications((prev) => prev.filter((n) => n.id !== newNotification.id));
-        }, 4000);
-    };
-
-    // The daemon answers ``service_choice`` asynchronously, with either
-    // command_success or command_error. Both listeners are registered before the
-    // command goes out (the send is fire-and-forget, so a fast reply would
-    // otherwise be missed) and both are released whichever way it resolves —
-    // leaving one behind would make every later switch self-cancel through
-    // addListenerOnce.
-    function releaseServiceChoiceListeners() {
-        if (listeners.hasListener('service-choice')) {
-            listeners.forceRemoveListener('service-choice');
-        }
-        if (listeners.hasListener('service-choice-error')) {
-            listeners.forceRemoveListener('service-choice-error');
-        }
-    }
-
-    function requestServiceChoice(newMode: 'client' | 'server') {
-        const successListener = listenCommand(EventType.CommandSuccess, CommandType.ServiceChoice, (event) => {
-            console.log(`Service choice changed successfully: ${event.message}`);
-            let mode = event.message?.toLowerCase();
-            if (mode === 'client' || mode === 'server') {
-                setMode(mode);
-            }
-            releaseServiceChoiceListeners();
-        }).then((unlisten) => {
-            listeners.addListenerOnce('service-choice', unlisten);
+        const queryPermissions = () => getPermissions().catch(err => {
+            if (!disposed) console.error('[App] Error fetching permissions:', err);
         });
-
-        const errorListener = listenCommand(EventType.CommandError, CommandType.ServiceChoice, (event) => {
-            const error = event.data?.error || '';
-            console.error(`Service choice failed: ${error}`);
-            // Mode intentionally left untouched: the daemon did not switch.
-            addNotification('error', `Cannot switch to ${newMode} mode`, error);
-            releaseServiceChoiceListeners();
-        }).then((unlisten) => {
-            listeners.addListenerOnce('service-choice-error', unlisten);
-        });
-
-        return Promise.all([successListener, errorListener])
-            .then(() => chooseService(newMode))
-            .catch((err) => {
-                console.error('Error changing service:', err);
-                addNotification('error', `Cannot switch to ${newMode} mode`, String(err));
-                releaseServiceChoiceListeners();
-            });
-    }
-
-    function firstStartup() {
-        let isStartup = isStartupRef.current;
-        if (isStartup) {
-            console.log('[App] First startup detected, choosing service and setting up listeners');
-            setupStatusListener();
-            isStartupRef.current = false;
-            requestServiceChoice(mode);
-
-            getStatus().catch((err) => {
-                console.error('[App] Error fetching status:', err);
-            });
-
-            // OS permission gate: the daemon pushes ``permissions_required`` when
-            // it defers startup on a missing macOS permission, and
-            // ``permissions_granted`` once it observes the grant.
-            listenGeneralEvent(EventType.PermissionsRequired, false, (event: any) => {
-                console.log('[App] PermissionsRequired event received', event);
+        Promise.all([
+            register(listenGeneralEvent(EventType.PermissionsRequired, false, event => {
+                if (disposed) return;
                 const data = event.data as PermissionsRequiredData | undefined;
                 const perms = data?.permissions ?? [];
+                permissionsMissing = perms.length > 0;
                 setPendingService(data?.pending_service ?? null);
                 setPermsRevoked(data?.revoked === true);
-                setMissingPerms(perms.length > 0 ? perms : null);
-            }).then((unlisten) => {
-                listeners.addListenerOnce('permissions-required', unlisten);
-            });
-
-            listenGeneralEvent(EventType.PermissionsGranted, true, (event: any) => {
-                console.log('[App] PermissionsGranted event received', event);
+                setMissingPerms(permissionsMissing ? perms : null);
+            })),
+            register(listenGeneralEvent(EventType.PermissionsGranted, true, () => {
+                if (disposed) return;
+                permissionsMissing = false;
                 setMissingPerms(null);
                 setPendingService(null);
                 setPermsRevoked(false);
-            }).then((unlisten) => {
-                listeners.addListenerOnce('permissions-granted', unlisten);
-            });
-
-            // Ask for the current permission state on startup so the gate shows
-            // immediately on a manual launch too (not only on autostart).
-            setupPermissionCheckListener();
-            getPermissions().catch((err) => {
-                console.error('[App] Error fetching permissions:', err);
-            });
-
-            listenGeneralEvent(EventType.ShowLog, true, (event: any) => {
-                console.log('[App] ShowLog event received', event);
-                setShowLogs(true);
-            }).then((unlisten) => {
-                listeners.addListenerOnce('show-log', () => {
-                    console.log('[App]Removing ShowLog listener');
-                    unlisten();
-                });
-            });
-
-            // Server-side monitor topology changed (display added/removed,
-            // resolution change). Pull a fresh STATUS so the layout editor's
-            // monitor list and any orphan warnings reach the GUI.
-            listenGeneralEvent(EventType.MonitorTopologyChanged, true, (event: any) => {
-                console.log('[App] MonitorTopologyChanged event received', event);
-                setupStatusListener();
-                getStatus().catch((err) => {
-                    console.error('[App] Error fetching status after monitor change:', err);
-                });
-            }).then((unlisten) => {
-                listeners.addListenerOnce('monitor-topology-changed', () => {
-                    unlisten();
-                });
-            });
-        }
-    }
-
-    function setupStatusListener() {
-        setListenersAdded(true);
-        listenCommand(EventType.CommandSuccess, CommandType.Status, (event) => {
-            // console.log(`Status received`, event);
-            let result = event.data?.result as ServiceStatus;
-            let server_status = result.server_info as ServerStatus;
-            let client_status = result.client_info as ClientStatus;
-            if (server_status) {
-                if (server_status.running) {
-                    setMode('server');
-                }
-                // Dispatch action to update server state
-                dispatch({type: ActionType.SERVER_STATE, payload: server_status});
-            }
-            if (client_status) {
-                // Update client state in the store
-                if (client_status.running) {
-                    setMode('client');
-                }
-                // Dispatch action to update client state
-                dispatch({type: ActionType.CLIENT_STATE, payload: client_status});
-            }
-            listeners.removeListener('status');
-        }).then((unlisten) => {
-            listeners.addListenerOnce('status', () => {
-                // console.log('Removing status listener');
-                unlisten();
-                setListenersAdded(false);
-            });
+            })),
+            register(listenCommand(EventType.CommandSuccess, CommandType.GetPermissions, event => {
+                if (disposed) return;
+                const result = event.data?.result as PermissionsResult | undefined;
+                const missing = result?.missing ?? [];
+                permissionsMissing = missing.length > 0;
+                setPendingService(result?.pending_service ?? null);
+                setMissingPerms(permissionsMissing ? missing : null);
+            })),
+            register(listenGeneralEvent(EventType.ShowLog, true, () => {
+                if (!disposed) showLogs();
+            })),
+            register(listenGeneralEvent(EventType.MonitorTopologyChanged, true, () => {
+                if (!disposed) sync.refresh();
+            })),
+        ]).then(() => {
+            if (disposed) return;
+            registered = true;
+            return queryPermissions();
+        }).catch(err => {
+            if (!disposed) console.error('[App] Error registering event listeners:', err);
         });
-    }
-
-    // One-shot listener for the ``get_permissions`` query result. Re-registered
-    // on every poll (mirrors setupStatusListener).
-    function setupPermissionCheckListener() {
-        listenCommand(EventType.CommandSuccess, CommandType.GetPermissions, (event) => {
-            const result = event.data?.result as PermissionsResult | undefined;
-            const missing = result?.missing ?? [];
-            setPendingService(result?.pending_service ?? null);
-            setMissingPerms(missing.length > 0 ? missing : null);
-            listeners.removeListener('get-permissions');
-        }).then((unlisten) => {
-            listeners.addListenerOnce('get-permissions', unlisten);
-        });
-    }
-
-    useEffect(() => {
-        firstStartup();
-    }, []);
-
-    useEffect(() => {
-        if (!stateListenersAdded) {
-            console.log('Setting up event listeners');
-            return () => {
-                setupStatusListener();
-
-                getStatus().catch((err) => {
-                    console.error('Error fetching status:', err);
-                });
-            };
-        }
-
-    }, [mode]);
-
-    // While the permission gate is up, re-query the daemon so the overlay
-    // reflects a grant even if the ``permissions_granted`` push is missed.
-    useEffect(() => {
-        if (missingPerms === null) return;
-        const interval = setInterval(() => {
-            setupPermissionCheckListener();
-            getPermissions().catch((err) => {
-                console.error('[App] Error polling permissions:', err);
-            });
+        const poll = setInterval(() => {
+            if (registered && permissionsMissing) void queryPermissions();
         }, 2500);
-        return () => clearInterval(interval);
-    }, [missingPerms]);
-
-    // Periodically fetch status to avoid desync
-    useEffect(() => {
-        const interval = setInterval(() => {
-            console.log('[App] Fetching status');
-            setupStatusListener();
-            getStatus().catch((err) => {
-                console.error('[App] Error fetching status:', err);
-            });
-        }, 2000); // 2 seconds
-
-        return () => clearInterval(interval);
+        return () => {
+            disposed = true;
+            clearInterval(poll);
+            unlisteners.forEach(unlisten => unlisten());
+        };
     }, []);
-
-    function changeMode(newMode: 'client' | 'server', force: boolean = false) {
-        console.log(`Changing mode to ${newMode} (force: ${force}, previous: ${mode})`);
-        if (newMode === mode && !force) return;
-
-        requestServiceChoice(newMode);
-    }
 
     return (
         <div className="w-full h-full flex items-start justify-start overflow-hidden"
@@ -302,34 +132,53 @@ export function Main() {
             <div className="w-full h-full flex flex-col overflow-hidden min-h-0"
                  style={{backgroundColor: 'var(--app-bg-secondary)', borderColor: 'var(--app-border)'}}>
                 {/* Titlebar */}
-                <Titlebar disabled={disableModeSwitch} mode={mode} onModeChange={(newMode) => {
-                    changeMode(newMode);
-
-                    // Fetch status after changing service. A failure here says
-                    // nothing about the pending service_choice, so its listeners
-                    // are left alone.
-                    getStatus().catch((err) => {
-                        console.error('Error fetching status:', err);
-                    });
-                }}/>
+                <Titlebar disabled={disableModeSwitch || sync.status !== 'ready'} mode={mode}
+                          onModeChange={sync.changeMode}/>
                 {/* Scrollable Content */}
                 <ScrollArea extraPadding='pl-10' className={`flex-1 min-h-0 overflow-y-auto px-8 py-6 relative`}>
-                    {/* Mode-switch failures and other app-level errors */}
-                    <InlineNotification
-                        notifications={notifications}
-                        onDismiss={(id) => setNotifications((prev) => prev.filter((n) => n.id !== id))}
-                    />
+                    {sync.error ? (
+                        <div className="p-4 mb-4 rounded-lg border text-sm space-y-3"
+                             style={{backgroundColor: 'var(--app-card-bg)', borderColor: 'var(--app-border)', color: 'var(--app-text-primary)'}}>
+                            <p role="alert">
+                                {sync.error}
+                            </p>
+                            <div className="flex items-center gap-3">
+                                {sync.status === 'error' && (
+                                    <button type="button" onClick={sync.retry} className="px-3 py-1.5 rounded-md border cursor-pointer"
+                                            style={{borderColor: 'var(--app-border)'}}>Retry</button>
+                                )}
+                                <button type="button" onClick={() => showLogs()} className="text-xs underline cursor-pointer">
+                                    Open logs
+                                </button>
+                            </div>
+                        </div>
+                    ) : null}
+                    {sync.status === 'loading' && !sync.hasState && (
+                        <>
+                            <ServiceTabSkeleton mode={mode}/>
+                            <button type="button" onClick={() => showLogs()}
+                                    className="mt-4 text-xs cursor-pointer hover:underline"
+                                    style={{color: 'var(--app-text-muted)'}}>Open logs</button>
+                        </>
+                    )}
                     {/* Content */}
-                    <motion.div
+                    {sync.hasState && <div
+                        // Retain the last valid tab during a switch, but prevent
+                        // commands from racing the pending service choice.
+                        {...{inert: sync.status !== 'ready' ? '' : undefined}}
+                        aria-busy={sync.status !== 'ready'}
                         key={mode}
-                        initial={{opacity: 0, scale: 0.95}}
-                        animate={{opacity: 1, scale: 1}}
-                        transition={{duration: 0.3}}
                     >
-                        {mode === 'client' ? <ClientTab onStatusChange={setDisableModeSwitch} state={clientState}/> :
-                            <ServerTab onStatusChange={setDisableModeSwitch} state={serverState}/>}
-                    </motion.div>
-                    <DaemonLogDialog isOpen={showLogs} onClose={() => setShowLogs(false)}/>
+                        <motion.div
+                            initial={{opacity: 0, scale: 0.95}}
+                            animate={{opacity: 1, scale: 1}}
+                            transition={{duration: 0.3}}
+                        >
+                            {mode === 'client' ? <ClientTab onStatusChange={setDisableModeSwitch} state={clientState}/> :
+                                <ServerTab onStatusChange={setDisableModeSwitch} state={serverState}/>}
+                        </motion.div>
+                    </div>}
+                    {logWindowError && <p role="alert" className="mt-3 text-xs">{logWindowError}</p>}
                 </ScrollArea>
             </div>
             {missingPerms && missingPerms.length > 0 ? (
@@ -345,6 +194,7 @@ export default function App() {
             <Routes>
                 <Route path="/" element={<Main/>}/>
                 <Route path="/splashscreen" element={<SplashScreen/>}/>
+                <Route path="/logs" element={<LogsWindow/>}/>
                 <Route path="/layout-editor" element={<LayoutEditorWindow/>}/>
             </Routes>
         </BrowserRouter>

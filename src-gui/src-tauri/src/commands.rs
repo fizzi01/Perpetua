@@ -325,15 +325,19 @@ pub async fn set_server_config(
     host: String,
     port: i32,
     ssl_enabled: bool,
+    host_exclusive: bool,
     s: tauri::State<'_, AtomicAsyncWriter>,
 ) -> Result<(), String> {
-    let command = CommandEvent::build(
-        CommandType::SetServerConfig,
-        &format!(
-            r#"{{ "host": "{}", "port": {}, "ssl_enabled": {} }}"#,
-            host, port, ssl_enabled
-        ),
-    );
+    // Built with serde_json rather than string interpolation: `host` is
+    // user-supplied, and a quote in it would previously produce a malformed
+    // frame the daemon silently rejected.
+    let params = serde_json::json!({
+        "host": host,
+        "port": port,
+        "ssl_enabled": ssl_enabled,
+        "host_exclusive": host_exclusive,
+    });
+    let command = CommandEvent::build(CommandType::SetServerConfig, &params.to_string());
     let command = EventParser::serialize(&command).map_err(|e| {
         format!(
             "Failed to serialize {} command: {}",
@@ -549,6 +553,52 @@ pub async fn read_daemon_logs(num_lines: usize, all: bool) -> Result<LogResponse
     })
 }
 
+/// macOS pasteboard write, independent of WKWebView's user-activation rules.
+#[tauri::command]
+pub async fn copy_log_text(text: String) -> Result<(), String> {
+    #[cfg(target_os = "macos")]
+    {
+        tauri::async_runtime::spawn_blocking(move || {
+            use std::io::Write;
+            use std::process::{Command, Stdio};
+
+            // Pass log content as data over stdin, never through a shell.
+            let mut child = Command::new("/usr/bin/pbcopy")
+                .env("LC_ALL", "en_US.UTF-8")
+                .stdin(Stdio::piped())
+                .stdout(Stdio::null())
+                .stderr(Stdio::piped())
+                .spawn()
+                .map_err(|e| format!("Failed to access clipboard: {}", e))?;
+            let write_result = child.stdin.take()
+                .ok_or_else(|| "Clipboard input unavailable".to_string())
+                .and_then(|mut input| input.write_all(text.as_bytes()).map_err(|e| e.to_string()));
+            // Closing stdin completes the pasteboard write; always reap the child.
+            let output = child.wait_with_output().map_err(|e| e.to_string())?;
+            write_result?;
+            if !output.status.success() {
+                return Err(format!("Clipboard write failed: {}", String::from_utf8_lossy(&output.stderr)));
+            }
+            Ok(())
+        }).await.map_err(|e| e.to_string())?
+    }
+    #[cfg(not(target_os = "macos"))]
+    {
+        let _ = text;
+        Err("Native log clipboard is only used on macOS".to_string())
+    }
+}
+
+/// Open only the daemon log resolved by the backend, never an arbitrary UI path.
+#[tauri::command]
+pub async fn open_daemon_log(app: tauri::AppHandle) -> Result<(), String> {
+    use tauri_plugin_opener::OpenerExt;
+    let log_file = get_log_file_path()?;
+    app.opener()
+        .open_path(log_file.to_string_lossy().into_owned(), None::<&str>)
+        .map_err(|e| format!("Failed to open log file: {}", e))
+}
+
 #[tauri::command]
 pub async fn get_log_file_path_cmd() -> Result<String, String> {
     let log_file = get_log_file_path()?;
@@ -676,6 +726,33 @@ pub async fn get_permissions(s: tauri::State<'_, AtomicAsyncWriter>) -> Result<(
         format!(
             "Failed to send {} command ({})",
             CommandType::GetPermissions,
+            e
+        )
+    })?;
+    Ok(())
+}
+
+/// Ask the daemon which local interfaces exist.
+///
+/// The daemon is the only authority on addresses - the frontend must not run
+/// its own route lookup, which is how the wrong interface used to end up
+/// persisted as the server's advertise address on multi-homed machines.
+#[tauri::command]
+pub async fn list_network_interfaces(
+    s: tauri::State<'_, AtomicAsyncWriter>,
+) -> Result<(), String> {
+    let command = CommandEvent::build(CommandType::ListNetworkInterfaces, "{}");
+    let command = EventParser::serialize(&command).map_err(|e| {
+        format!(
+            "Failed to serialize {} command: {}",
+            CommandType::ListNetworkInterfaces,
+            e
+        )
+    })?;
+    s.send(command).await.map_err(|e| {
+        format!(
+            "Failed to send {} command ({})",
+            CommandType::ListNetworkInterfaces,
             e
         )
     })?;

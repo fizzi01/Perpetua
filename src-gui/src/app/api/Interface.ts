@@ -202,6 +202,11 @@ export enum CommandType {
     // OS-level permissions (macOS Accessibility / Input Monitoring)
     GetPermissions,
     RequestPermissions,
+
+    // Network interfaces (which address the server advertises)
+    // Appended last on purpose: this is a numeric enum, and inserting in the
+    // middle renumbers every member after it.
+    ListNetworkInterfaces,
 }
 
 // -- Permission gate types (macOS) --
@@ -227,6 +232,34 @@ export interface PermissionsResult {
     permissions: PermissionInfo[];
     missing: PermissionInfo[];
     pending_service?: string | null;
+}
+
+// -- Network interfaces (server advertise picker) --
+
+/** "Advertise on every interface" — the default value of ServerConfig.host. */
+export const ADVERTISE_AUTO = '0.0.0.0';
+
+export interface NetworkInterfaceInfo {
+    name: string;
+    display_name: string;
+    ip: string;
+    prefix: number;
+    cidr: string;
+    is_default_route: boolean;
+}
+
+export interface NetworkInterfacesResult {
+    interfaces: NetworkInterfaceInfo[];
+    /** ServerConfig.host: an interface preference, ADVERTISE_AUTO for all. */
+    selected?: string | null;
+    /** What clients will actually be told, resolved by the daemon. */
+    advertised: string[];
+    /**
+     * Set once when a config predating the advertise preference is loaded:
+     * `host` used to restrict the listener and no longer does. Shown to the
+     * user so the change in reachability is not silent.
+     */
+    legacy_bind_notice?: string | null;
 }
 
 export enum StreamType {
@@ -305,7 +338,10 @@ export interface ServerStatus {
     start_time?: string;
     running: boolean;
     uid: string;
+    /** Interface preference, not a bind address. ADVERTISE_AUTO = all. */
     host: string;
+    /** Refuse connections arriving on any other interface. */
+    host_exclusive?: boolean;
     port: number;
     heartbeat_interval: number;
     streams_enabled: Object;

@@ -24,6 +24,9 @@ vi.mock('../api/Listener', () => ({
 vi.mock('../api/Sender', () => ({
     chooseServer: vi.fn(() => Promise.resolve()),
     getLocalIpAddress: vi.fn(() => Promise.resolve('127.0.0.1')),
+    // The tab now asks the daemon for every local address instead of the
+    // frontend's single route-probed one.
+    listNetworkInterfaces: vi.fn(() => Promise.resolve()),
     saveClientConfig: vi.fn(() => Promise.resolve()),
     setOtp: vi.fn(() => Promise.resolve()),
     startClient: vi.fn(() => Promise.resolve()),
@@ -157,5 +160,28 @@ describe('ClientTab OTP pairing panel', () => {
         rerender(<ClientTab state={clientState({otp_needed: true})} onStatusChange={vi.fn()}/>);
 
         expect(screen.getByText('Authentication Required')).toBeInTheDocument();
+    });
+});
+
+
+describe('local network addresses', () => {
+    it('replaces IP chips with one control and retains interface names', async () => {
+        await renderClientTab();
+        await waitFor(() => expect(commandListeners.get(`${EventType.CommandSuccess}:${CommandType.ListNetworkInterfaces}`)).toBeDefined());
+        act(() => {
+            commandListeners.get(`${EventType.CommandSuccess}:${CommandType.ListNetworkInterfaces}`)?.({
+                data: {result: {interfaces: [
+                    {ip: '192.168.1.20', display_name: 'Wi-Fi'},
+                    {ip: '10.0.0.1', display_name: 'Ethernet'},
+                    {ip: '10.0.0.1', display_name: 'Duplicate'},
+                ]}},
+            }, CommandType.ListNetworkInterfaces);
+        });
+        expect(screen.queryByRole('button', {name: 'Copy 192.168.1.20'})).not.toBeInTheDocument();
+        fireEvent.click(screen.getByRole('button', {name: 'Network addresses · 2'}));
+        expect(screen.getByText('Wi-Fi')).toBeInTheDocument();
+        expect(screen.getByText('Ethernet')).toBeInTheDocument();
+        expect(screen.getByRole('button', {name: 'Copy 192.168.1.20'})).toBeInTheDocument();
+        expect(screen.getByRole('button', {name: 'Copy 10.0.0.1'})).toBeInTheDocument();
     });
 });

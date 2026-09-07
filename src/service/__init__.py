@@ -23,7 +23,7 @@ Service package provides server and client public APIs.
 from utils import UIDGenerator
 
 import asyncio
-from typing import Dict, Optional
+from typing import Dict, List, Optional, Tuple
 import socket
 
 from zeroconf import (
@@ -37,7 +37,7 @@ from zeroconf.asyncio import AsyncZeroconf, AsyncServiceBrowser, AsyncServiceInf
 
 from config import ApplicationConfig
 from utils.logging import get_logger
-from utils.net import get_local_ip, CommonNetInfo
+from utils.net import is_usable_ip, CommonNetInfo
 
 
 def _txt_int(props: dict, key: bytes) -> Optional[int]:
@@ -64,25 +64,43 @@ class Service:
         hostname: Optional[str] = None,
         uid: Optional[str] = None,
         pairing_port: Optional[int] = None,
+        addresses: Optional[List[str]] = None,
     ):
         """
         An mDNS service instance.
 
         Args:
             name: Service name.
-            address: Service IP address.
+            address: Preferred service IP address.
             port: Service port.
             hostname: Service hostname.
             uid: Service unique identifier.
             pairing_port: Optional plaintext pairing/cert-sharing port
                 advertised in the TXT record. ``None`` for legacy servers.
+            addresses: Every address the server advertised, preferred first.
+                A multi-homed server publishes them all so a client that
+                cannot reach the first can fall back instead of giving up.
+                Defaults to ``[address]`` for legacy servers.
         """
         self.uid = uid
         self.name = name
-        self.address = address
+        self.addresses: List[str] = list(
+            dict.fromkeys(addresses or ([address] if address else []))
+        )
         self.hostname: Optional[str] = hostname
         self.port = port
         self.pairing_port: Optional[int] = pairing_port
+
+    @property
+    def address(self) -> str:
+        """The preferred address; ``""`` when the service advertised none."""
+        return self.addresses[0] if self.addresses else ""
+
+    @address.setter
+    def address(self, value: str) -> None:
+        """Promote ``value`` to preferred, keeping the rest as fallbacks."""
+        if value:
+            self.addresses = [value] + [a for a in self.addresses if a != value]
 
     def as_dict(self) -> dict:
         """
@@ -92,6 +110,8 @@ class Service:
             "uid": self.uid,
             # "name": self.name,
             "address": self.address,
+            # Additive: old GUIs keep reading "address" and ignore this.
+            "addresses": list(self.addresses),
             "hostname": self.hostname,
             "port": self.port,
             "pairing_port": self.pairing_port,
@@ -114,31 +134,72 @@ class _ServiceListener(ServiceListener):
         """
         return self._services
 
+    @staticmethod
+    def _candidate_addresses(info: "AsyncServiceInfo") -> List[str]:
+        """Every address this server can be reached at, preferred first.
+
+        The A records come first - zeroconf hands them back in receive order,
+        so entry 0 is whatever arrived last, not what the server prefers - and
+        the ``addresses`` TXT list fills in the links whose records this
+        client never saw. A server reachable on several links publishes them
+        all so a client on a different link can fall back instead of failing.
+        """
+        addresses = list(info.parsed_addresses())
+        raw = info.properties.get(b"addresses")
+        if raw:
+            try:
+                advertised = raw.decode().split(",")
+            except UnicodeDecodeError:
+                advertised = []
+            for entry in advertised:
+                entry = entry.strip()
+                if entry and entry not in addresses:
+                    addresses.append(entry)
+        return list(dict.fromkeys(a for a in addresses if a))
+
+    @staticmethod
+    def _txt_hostname(info: "AsyncServiceInfo") -> Optional[str]:
+        """Decode the hostname TXT, mapping an empty value to None.
+
+        An empty string is not a hostname: it poisons the identity checks that
+        compare against the saved server.
+        """
+        raw = info.properties.get(b"hostname")
+        if not raw:
+            return None
+        try:
+            decoded = raw.decode().strip()
+        except UnicodeDecodeError:
+            return None
+        return decoded or None
+
     async def _service_info_task(self, zc: Zeroconf, type_: str, name: str):
         # Get service info
         info = AsyncServiceInfo(type_=type_, name=name)
         await info.async_request(zc=zc, timeout=3000)
         if info is not None and len(info.parsed_addresses()) > 0:
-            address = info.parsed_addresses()[0]
+            addresses = self._candidate_addresses(info)
             uid = name.split(".")[0]
-            hostname = info.properties.get(b"hostname", None)
-            if hostname == b"":
-                hostname = None
-
-            if hostname is not None:
-                hostname = hostname.decode()
-
+            hostname = self._txt_hostname(info)
             pairing_port = _txt_int(info.properties, b"pairing_port")
 
             service = Service(
                 name,
-                address,
+                addresses[0] if addresses else "",
                 info.port,
                 uid=uid,
                 hostname=hostname,
                 pairing_port=pairing_port,
+                addresses=addresses,
             )
 
+            # Re-announcements fire add_service again; without this the same
+            # server accumulates duplicate entries, which then skews the
+            # "exactly one server found" auto-selection.
+            for existing in self._services:
+                if existing.uid == uid:
+                    self._services.remove(existing)
+                    break
             self._services.append(service)
 
     def add_service(self, zc: Zeroconf, type_: str, name: str) -> None:
@@ -156,11 +217,13 @@ class _ServiceListener(ServiceListener):
             uid = name.split(".")[0]
             for service in self._services:
                 if service.uid == uid:
-                    service.address = info.parsed_addresses()[0]
+                    # Full replace, so an address the server withdrew goes away
+                    # instead of lingering as a candidate forever.
+                    service.addresses = self._candidate_addresses(info)
                     service.port = info.port
-                    b_hostname = info.properties.get(b"hostname", None)
-                    if b_hostname is not None:
-                        service.hostname = b_hostname.decode()
+                    hostname = self._txt_hostname(info)
+                    if hostname is not None:
+                        service.hostname = hostname
                     pp = _txt_int(info.properties, b"pairing_port")
                     if pp is not None:
                         service.pairing_port = pp
@@ -202,12 +265,22 @@ class ServiceDiscovery:
             timeout: The timeout for mDNS operations in seconds.
         """
         self._async_zercnf = async_mdns if async_mdns is not None else AsyncZeroconf()
+        # True when we built the instance ourselves and may therefore create
+        # extra per-interface ones alongside it. An injected instance (tests,
+        # callers that own the lifecycle) is used exactly as given.
+        self._owns_zeroconf = async_mdns is None
         self._mdns_timeout = timeout
 
         self._service_type = (
             "_" + ApplicationConfig.service_name.lower() + "._tcp.local."
         )
         self._uid: Optional[str] = None
+
+        # One responder per advertised interface, each announcing only that
+        # interface's own address. A client on a given link then receives an
+        # address reachable on that link without reading TXT or probing -
+        # which is what makes an unupgraded client work on a direct cable.
+        self._iface_responders: List[Tuple[AsyncZeroconf, ServiceInfo]] = []
 
         self._logger = get_logger(self.__class__.__name__)
 
@@ -239,13 +312,25 @@ class ServiceDiscovery:
     async def resolve_hostname(hostname: str):
         """
         Resolve a machine hostname to an IP address (no mDNS).
+
+        Previously this ignored its argument and returned ``get_local_ip()``,
+        i.e. *our own* default-route address regardless of which host was
+        asked about - the same multi-homing mistake this module exists to fix.
         """
         try:
-            ip_address = get_local_ip()
-            await asyncio.sleep(0)
-            return ip_address
+            loop = asyncio.get_running_loop()
+            infos = await loop.run_in_executor(
+                None,
+                lambda: socket.getaddrinfo(hostname, None, socket.AF_INET),
+            )
         except Exception as e:
             raise RuntimeError(f"Failed to resolve hostname {hostname} ({e})")
+
+        for info in infos:
+            ip = info[4][0]
+            if is_usable_ip(ip):
+                return ip
+        raise RuntimeError(f"Hostname {hostname} resolves to no usable address")
 
     @staticmethod
     def _is_loopback(ip: str) -> bool:
@@ -275,6 +360,7 @@ class ServiceDiscovery:
         host: str,
         port: int,
         extra_props: Optional[Dict[str, str]] = None,
+        interface_addresses: Optional[List[str]] = None,
     ) -> None:
         """
         Registers a network service using mDNS. This allows the service
@@ -286,6 +372,11 @@ class ServiceDiscovery:
             host (str): The hostname or IP address the service is bound to. If a hostname
                 is provided, it will be resolved to an IP address.
             port (int): The network port on which the service is running.
+            extra_props: Additional TXT entries, coerced to ``str``.
+            interface_addresses: Advertise from a dedicated responder on each
+                of these addresses, announcing that address only. Falls back
+                to one responder on every interface announcing ``host`` -
+                the pre-existing behaviour - when omitted or unusable.
 
         Raises:
             ValueError: If the host is an empty string, or if the service type or name
@@ -304,9 +395,18 @@ class ServiceDiscovery:
             host = await self.resolve_hostname(host)
         else:
             if self._is_loopback(host):
-                host = CommonNetInfo.get_local_ip()
+                # "0.0.0.0" is a bind wildcard, never an advertisable address.
+                # Prefer the caller's resolved list; the route probe is only
+                # the last resort now.
+                if interface_addresses:
+                    host = interface_addresses[0]
+                else:
+                    host = CommonNetInfo.get_local_ip()
             hostname = socket.gethostname()
 
+        # Mint the UID *after* the address is settled: on a first run it is
+        # derived from it. Existing installs pass a persisted uid, so this
+        # never re-mints for them.
         if self._uid is None:
             self._uid = ServiceDiscovery.generate_uid(host)
 
@@ -321,6 +421,14 @@ class ServiceDiscovery:
                     if v is None:
                         continue
                     properties[str(k)] = str(v)
+
+            targets = [a for a in (interface_addresses or []) if self._is_ip(a)]
+            if self._owns_zeroconf and targets:
+                await self._register_per_interface(
+                    targets, service_name, port, properties
+                )
+                return
+
             s_info = ServiceInfo(
                 type_=self._service_type,
                 name=service_name,
@@ -330,12 +438,15 @@ class ServiceDiscovery:
             )
 
             await self._async_zercnf.async_register_service(s_info)
+            # TXT entries go in as one field rather than being splatted: they
+            # are caller-supplied keys and would collide with the log's own
+            # (``addresses`` already does).
             self._logger.info(
                 "mDNS service registered.",
                 uid=self._uid,
                 port=port,
                 host=host,
-                **properties,
+                txt=properties,
             )
         except BadTypeInNameException:
             raise ValueError("Invalid service type or name")
@@ -345,10 +456,71 @@ class ServiceDiscovery:
             self._logger.exception("Unhandled service error", error=str(e))
             raise RuntimeError(f"Failed to register mDNS service ({e})")
 
+    async def _register_per_interface(
+        self,
+        addresses: List[str],
+        service_name: str,
+        port: int,
+        properties: Dict[str, str],
+    ) -> None:
+        """One responder per address, each announcing only its own address.
+
+        A client sees a record whose A entry is reachable on the very link the
+        packet arrived on. Where a client can see several of our links the
+        records merge in its cache, which is what the TXT address list and the
+        client-side probe are there to resolve.
+        """
+        await self._unregister_iface_responders()
+
+        registered: List[str] = []
+        for ip in addresses:
+            try:
+                azc = AsyncZeroconf(interfaces=[ip])
+                s_info = ServiceInfo(
+                    type_=self._service_type,
+                    name=service_name,
+                    parsed_addresses=[ip],
+                    port=port,
+                    properties=properties,
+                )
+                await azc.async_register_service(s_info)
+            except Exception as e:  # noqa: BLE001 - one bad NIC must not stop the rest
+                self._logger.warning(
+                    "Could not advertise on interface", address=ip, error=str(e)
+                )
+                continue
+            self._iface_responders.append((azc, s_info))
+            registered.append(ip)
+
+        if not registered:
+            raise RuntimeError("Failed to register mDNS service on any interface")
+
+        self._logger.info(
+            "mDNS service registered per interface.",
+            uid=self._uid,
+            port=port,
+            addresses=registered,
+            txt=properties,
+        )
+
+    async def _unregister_iface_responders(self) -> None:
+        """Tear down every per-interface responder, best effort."""
+        for azc, s_info in self._iface_responders:
+            try:
+                await azc.async_unregister_service(s_info)
+            except Exception as e:  # noqa: BLE001 - teardown is best effort
+                self._logger.debug(f"Per-interface unregister failed ({e})")
+            try:
+                await azc.async_close()
+            except Exception as e:  # noqa: BLE001
+                self._logger.debug(f"Per-interface close failed ({e})")
+        self._iface_responders.clear()
+
     async def _unregister_service(self):
         if self._async_zercnf is None:
             raise RuntimeError("Zeroconf instance is not initialized")
 
+        await self._unregister_iface_responders()
         await self._async_zercnf.async_unregister_all_services()
         self._logger.info("mDNS service unregistered.")
 
@@ -407,6 +579,7 @@ class ServiceDiscovery:
         port: int,
         uid: Optional[str] = None,
         extra_props: Optional[Dict[str, str]] = None,
+        interface_addresses: Optional[List[str]] = None,
     ) -> None:
         """
         It registers a service on the network using mDNS.
@@ -428,7 +601,12 @@ class ServiceDiscovery:
         if uid is not None:
             self._uid = uid
         # TODO: We need to check if there is another service on same host/port
-        await self._register_service(host, port, extra_props=extra_props)
+        await self._register_service(
+            host,
+            port,
+            extra_props=extra_props,
+            interface_addresses=interface_addresses,
+        )
 
     async def unregister_service(self):
         """

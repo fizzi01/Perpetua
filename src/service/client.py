@@ -38,6 +38,7 @@ from event.notification import (
     DisconnectedEvent,
     OtpNeededEvent,
     ServerListFoundEvent,
+    WarningEvent,
     ServerChoiceMadeEvent,
     ConfigSavedEvent,
     StreamEnabledEvent,
@@ -171,9 +172,14 @@ class Client:
         # spamming notifications when nothing changed AND to detect when a
         # known UID's address shifts so the
         # persisted server config can be updated in place.
-        self._last_discovery_snapshot: set[tuple[Optional[str], str, Optional[int]]] = (
-            set()
-        )
+        self._last_discovery_snapshot: set[
+            tuple[Optional[str], tuple[str, ...], Optional[int]]
+        ] = set()
+
+        # In-flight retargeting of the saved server. The discovery loop ticks
+        # every 5s while disconnected and reconciliation may probe for up to
+        # RECONCILE_BUDGET, so a guard is needed or probes would stack.
+        self._reconcile_task: Optional[asyncio.Task] = None
 
         # Strong refs for fire-and-forget tasks (config saves, notifications,
         # stale-cert teardown).
@@ -758,20 +764,29 @@ class Client:
         ):
             return False
 
-        for service in self._found_services:
-            # We need to match all (address and port could vary)
-            if (
-                service.uid == self.config.get_server_uid()
-                and service.port == self.config.get_server_port()
-            ):
-                # If hostname is present, verify it first
-                if service.hostname:
-                    if not service.hostname == self.config.get_server_host():
-                        return False
+        saved_uid = self.config.get_server_uid()
+        saved_host = self.config.get_server_host()
+        saved_hostname = self.config.get_server_hostname()
+        saved_port = self.config.get_server_port()
 
-                # if no hostname, verify address
-                elif service.address == self.config.get_server_host():
+        for service in self._found_services:
+            if service.uid != saved_uid or service.port != saved_port:
+                continue
+
+            # Compare like with like. This used to test the advertised
+            # *hostname* against the saved *host* - a hostname against an IP -
+            # and returned False outright on the mismatch, so a server that
+            # advertises a hostname (every server does) was never recognised.
+            # The effect was that the caller always fell through to the
+            # unprobed auto-select path.
+            if saved_hostname and service.hostname:
+                if saved_hostname == service.hostname:
                     return True
+
+            # Any advertised address counts: a multi-homed server publishes
+            # several, and the one we saved is legitimately not always first.
+            if saved_host and saved_host in service.addresses:
+                return True
 
         return False
 
@@ -800,12 +815,24 @@ class Client:
         """
         return self._found_services
 
-    def choose_server(self, uid: str) -> None:
+    async def choose_server(self, uid: str, user_initiated: bool = False) -> bool:
         """
         Choose a server from discovered services by UID.
         It will set the server host and port in the configuration.
+
+        The address is picked by probing the advertised candidates rather than
+        trusting the first one: a multi-homed server announces every link it
+        has, and only some of them are reachable from here. This is what lets
+        a direct-cable setup connect with no configuration at all.
+
         Args:
             uid: UID of the server to choose
+            user_initiated: True when the admin picked this server explicitly.
+                Only then may the previous server's trust material be dropped
+                - an automatic pick must never destroy pairing state.
+
+        Returns:
+            True when the server was found and persisted.
         """
         for service in self._found_services:
             if service.uid == uid:
@@ -818,9 +845,22 @@ class Client:
                 old_hostname = self.config.get_server_hostname()
                 is_switch = bool(old_uid) and old_uid != service.uid
 
+                candidates = list(service.addresses)
+                chosen = await self._pick_reachable(candidates, service.port)
+                if chosen is None:
+                    # Nothing answered. Keep the preferred address anyway so
+                    # the ConnectionHandler's backoff loop has something to
+                    # retry - a server still booting is the common case.
+                    chosen = service.address
+                    self._logger.warning(
+                        "No advertised address answered; using the preferred one",
+                        uid=uid,
+                        candidates=candidates,
+                    )
+
                 self.config.set_server_connection(
                     uid=service.uid,
-                    host=service.address,
+                    host=chosen,
                     hostname=service.hostname,
                     port=service.port,
                 )
@@ -832,8 +872,22 @@ class Client:
                     self.config.save(), name="config_save_choose_server"
                 )
 
-                if is_switch:
-                    self._forget_previous_server(old_uid, old_host, old_hostname)
+                # Dropping the CA and the client identity forces a full OTP
+                # re-pair, so it happens only on a switch the admin asked for.
+                # An automatic pick can fire while the old server is merely
+                # unreachable - see _should_forget_previous_server.
+                if is_switch and user_initiated:
+                    if self._should_forget_previous_server(
+                        old_host, old_hostname, service
+                    ):
+                        self._forget_previous_server(old_uid, old_host, old_hostname)
+                    else:
+                        self._logger.info(
+                            "Skipping trust-material cleanup: the new service "
+                            "looks like the same machine",
+                            old_uid=old_uid,
+                            new_uid=service.uid,
+                        )
                 # Set the server future result in case someone is waiting for it
                 if not self._server.done():
                     self._server.set_result(service)
@@ -842,7 +896,7 @@ class Client:
                 self._bg_tasks.spawn(
                     self._send_notification(
                         ServerChoiceMadeEvent(
-                            server_host=service.address,
+                            server_host=chosen,
                             server_port=service.port if service.port else 0,
                             hostname=service.hostname,
                             uid=service.uid,
@@ -850,9 +904,30 @@ class Client:
                     ),
                     name="notify_server_choice",
                 )
-                return
+                return True
 
         self._logger.error("Server not found among discovered services", uid=uid)
+        return False
+
+    @staticmethod
+    def _should_forget_previous_server(
+        old_host: Optional[str],
+        old_hostname: Optional[str],
+        service: "Service",
+    ) -> bool:
+        """Is this really a different machine, or the same one moved?
+
+        A bare UID inequality is not enough: it also holds when the server was
+        reinstalled, when its UID was lost from config, or when a second
+        instance appears - and acting on it deletes the CA and the client
+        identity, forcing an OTP re-pair. Require that nothing else about the
+        service matches what we remembered.
+        """
+        if old_hostname and service.hostname and old_hostname == service.hostname:
+            return False
+        if old_host and old_host in service.addresses:
+            return False
+        return True
 
     def _forget_previous_server(
         self,
@@ -901,6 +976,15 @@ class Client:
     # ``DISCOVERY_REFRESH_INTERVAL`` once connected to avoid steady-state spam.
     DISCOVERY_RETRY_INTERVAL = 5.0
 
+    # Per-address reachability probe. Short: candidates are probed
+    # concurrently and a dead one must not hold up the decision.
+    PROBE_TIMEOUT = 1.5
+
+    # Whole-reconciliation budget. Must stay under DISCOVERY_RETRY_INTERVAL
+    # times the re-entrancy guard's effect: the guard skips a tick while one is
+    # in flight, so overrunning only delays retargeting, never stacks probes.
+    RECONCILE_BUDGET = 8.0
+
     async def discover_servers(self) -> None:
         """
         Discover available servers on the network using mDNS.
@@ -912,50 +996,39 @@ class Client:
             # changes: Recreate ServiceDiscovery instance to avoid stale cache
             self._found_services = await ServiceDiscovery().discover_services()
 
-            # Build a snapshot keyed on (uid, address, port). A change in any
-            # field for the same UID - typically the address after a DHCP
-            # renewal or interface switch - must propagate to the persisted
-            # server config so reconnections target the fresh IP.
-            current_snapshot: set[tuple[Optional[str], str, Optional[int]]] = {
-                (svc.uid, svc.address, svc.port) for svc in self._found_services
+            # Snapshot keyed on the whole advertised address set, not just the
+            # preferred one: a server that gains or loses a link has changed
+            # even when entry 0 is the same.
+            current_snapshot: set[
+                tuple[Optional[str], tuple[str, ...], Optional[int]]
+            ] = {
+                (svc.uid, tuple(svc.addresses), svc.port)
+                for svc in self._found_services
             }
 
-            # If the currently chosen server's address/port shifted, update
-            # the persisted config in place so the next reconnect targets the
-            # new IP without needing the user to re-pair.
+            # Retargeting the saved server needs TCP probes, so it runs in its
+            # own task: discovery already blocks ~5s inside discover_services
+            # and the loop re-ticks every 5s while disconnected.
             saved_uid = self.config.get_server_uid()
             if saved_uid:
                 for svc in self._found_services:
                     if svc.uid != saved_uid:
                         continue
-                    saved_host = self.config.get_server_host()
-                    saved_port = self.config.get_server_port()
-                    if svc.address != saved_host or (
-                        svc.port is not None and svc.port != saved_port
-                    ):
-                        self._logger.info(
-                            "Saved server changed network coordinates; "
-                            f"updating config (uid={saved_uid}, "
-                            f"old={saved_host}:{saved_port}, "
-                            f"new={svc.address}:{svc.port})"
+                    if self._reconcile_task is None or self._reconcile_task.done():
+                        # Pass by value: the browser callbacks mutate the
+                        # Service object underneath us.
+                        self._reconcile_task = self._bg_tasks.spawn(
+                            self._reconcile_saved_server(
+                                saved_uid,
+                                list(svc.addresses),
+                                svc.port,
+                                svc.hostname,
+                            ),
+                            name="discovery_reconcile",
                         )
-                        self.config.set_server_connection(
-                            host=svc.address,
-                            hostname=svc.hostname,
-                            port=svc.port,
-                        )
-                        self._bg_tasks.spawn(
-                            self.config.save(),
-                            name="config_save_discovery_refresh",
-                        )
-                        # Retarget the live connection loop so the ongoing
-                        # retry/reconnect aims at the new address immediately,
-                        # not just after the next full restart.
-                        if self.connection_handler is not None and svc.port:
-                            self.connection_handler.update_target(svc.address, svc.port)
                     break
 
-            # Surface the list to the GUI when any (uid, address, port) tuple
+            # Surface the list to the GUI when any (uid, addresses, port) tuple
             # changed - not just on UID set delta, so an IP change for the
             # same UID still propagates to the UI.
             if current_snapshot != self._last_discovery_snapshot:
@@ -966,6 +1039,106 @@ class Client:
                 )
         except Exception as e:
             self._logger.error("Error during server discovery", error=str(e))
+
+    async def _reconcile_saved_server(
+        self,
+        saved_uid: str,
+        addresses: list[str],
+        svc_port: Optional[int],
+        svc_hostname: Optional[str],
+    ) -> None:
+        """Retarget the saved server, but only onto an address that answers.
+
+        Discovery used to overwrite the persisted host with whatever mDNS
+        reported, unprobed. On a multi-homed server that silently replaced a
+        working address with an unreachable one - and because the write was
+        persisted, the setup stayed broken. The rule now is: a reachable
+        configuration is never touched.
+        """
+        try:
+            await asyncio.wait_for(
+                self._reconcile_saved_server_inner(
+                    saved_uid, addresses, svc_port, svc_hostname
+                ),
+                timeout=self.RECONCILE_BUDGET,
+            )
+        except asyncio.TimeoutError:
+            self._logger.warning(
+                "Server reconciliation timed out; leaving config untouched",
+                uid=saved_uid,
+                candidates=addresses,
+            )
+        except asyncio.CancelledError:
+            raise
+        except Exception as e:  # noqa: BLE001 - never break the discovery loop
+            self._logger.warning("Server reconciliation failed", error=str(e))
+
+    async def _reconcile_saved_server_inner(
+        self,
+        saved_uid: str,
+        addresses: list[str],
+        svc_port: Optional[int],
+        svc_hostname: Optional[str],
+    ) -> None:
+        saved_host = self.config.get_server_host()
+        saved_port = self.config.get_server_port()
+        target_port = svc_port or saved_port
+
+        # Steady state: the address we use is among the advertised ones, so
+        # there is nothing to decide and nothing to probe.
+        if saved_host and saved_host in addresses:
+            if svc_port is not None and svc_port != saved_port:
+                self._logger.info(
+                    "Saved server changed port",
+                    uid=saved_uid,
+                    old=saved_port,
+                    new=svc_port,
+                )
+                self.config.set_server_connection(port=svc_port)
+                self._bg_tasks.spawn(
+                    self.config.save(), name="config_save_discovery_refresh"
+                )
+                if self.connection_handler is not None:
+                    self.connection_handler.update_target(saved_host, svc_port)
+            return
+
+        # The saved address is not advertised any more - but if it still works,
+        # it stays. This is the check whose absence made the old code destroy
+        # working configurations.
+        if saved_host and await self._probe_tcp(saved_host, saved_port):
+            self._logger.debug(
+                "Saved server still reachable; keeping configured address",
+                host=saved_host,
+            )
+            return
+
+        chosen = await self._pick_reachable(addresses, target_port)
+        if chosen is None:
+            self._logger.warning(
+                "No advertised address of the saved server responded; "
+                "leaving config untouched",
+                uid=saved_uid,
+                candidates=addresses,
+                port=target_port,
+            )
+            return
+
+        self._logger.info(
+            "Saved server changed network coordinates; updating config",
+            uid=saved_uid,
+            old=f"{saved_host}:{saved_port}",
+            new=f"{chosen}:{target_port}",
+        )
+        self.config.set_server_connection(
+            host=chosen,
+            # An empty hostname is not a hostname: it would poison the
+            # identity comparison against the saved server.
+            hostname=svc_hostname or None,
+            port=target_port,
+        )
+        self._bg_tasks.spawn(self.config.save(), name="config_save_discovery_refresh")
+        if self.connection_handler is not None and target_port:
+            self.connection_handler.update_target(chosen, target_port)
 
     @staticmethod
     def _monitors_signature(monitors) -> tuple:
@@ -1238,6 +1411,60 @@ class Client:
         has_hostname = hostname is not None and hostname != ""
         return (has_host or has_hostname) and self.config.get_server_port() != 0
 
+    async def _probe_tcp(
+        self, host: str, port: int, timeout: float = PROBE_TIMEOUT
+    ) -> bool:
+        """Can we open a TCP connection to ``host:port``?
+
+        Deliberately lock-free: the discovery loop calls this while the start
+        path may be parked inside ``_guarded_handler`` waiting on a server
+        choice, so taking ``_handler_lock`` here would deadlock the two.
+
+        Only ever aimed at the data port. The pairing port is plaintext and
+        would sit in ``readuntil`` until its 30s timeout, and it is rate
+        limited per peer IP.
+        """
+        if not host or not port:
+            return False
+        try:
+            _, writer = await asyncio.wait_for(
+                asyncio.open_connection(host, port), timeout=timeout
+            )
+        except (asyncio.TimeoutError, ConnectionRefusedError, OSError):
+            return False
+        except asyncio.CancelledError:
+            raise
+        try:
+            writer.close()
+            await writer.wait_closed()
+        except Exception:  # noqa: BLE001 - the answer is already known
+            pass
+        return True
+
+    async def _pick_reachable(
+        self, addresses: list[str], port: Optional[int]
+    ) -> Optional[str]:
+        """First address that answers, probing them concurrently.
+
+        Serial probing would cost ``len(addresses) * timeout`` on a host whose
+        first candidates are dead - long enough to stall the connect path.
+        """
+        if not addresses or not port:
+            return None
+
+        async def _try(addr: str) -> Optional[str]:
+            return addr if await self._probe_tcp(addr, port) else None
+
+        results = await asyncio.gather(
+            *(_try(a) for a in addresses), return_exceptions=True
+        )
+        # Preserve the advertised preference order rather than "whoever
+        # answered first", so the choice is deterministic.
+        for addr, result in zip(addresses, results):
+            if result == addr:
+                return addr
+        return None
+
     async def _is_server_available(self) -> bool:
         """Check if server is configured in client config"""
         if self._has_server_configured():
@@ -1251,19 +1478,10 @@ class Client:
 
             try:
                 async with self._guarded_handler():
-                    try:
-                        # Attempt connection with short timeout
-                        _, writer = await asyncio.wait_for(
-                            asyncio.open_connection(host, port), timeout=3.0
-                        )
-                        writer.close()
-                        await writer.wait_closed()
-                        return True
-                    except (asyncio.TimeoutError, ConnectionRefusedError, OSError) as e:
-                        self._logger.warning(
-                            f"Server {host}:{port} not reachable ({e})"
-                        )
-                        return False
+                    reachable = await self._probe_tcp(host, port, timeout=3.0)
+                    if not reachable:
+                        self._logger.warning(f"Server {host}:{port} not reachable")
+                    return reachable
             except ClientAbortedError:
                 raise
 
@@ -1317,9 +1535,12 @@ class Client:
                 try:
                     async with self._guarded_handler():
                         if len(self._found_services) == 1:
-                            # Auto choose the only available server
+                            # Auto choose the only available server.
+                            # user_initiated stays False: this pick happens
+                            # whenever the saved server is merely unreachable,
+                            # and must never wipe pairing material.
                             if self._found_services[0].uid is not None:
-                                self.choose_server(self._found_services[0].uid)
+                                await self.choose_server(self._found_services[0].uid)
                                 self._need_server_choice.set_result(False)
                             else:
                                 self._logger.warning(
@@ -1403,6 +1624,7 @@ class Client:
                         reconnected_callback=self._on_streams_reconnected,
                         connecting_callback=self._on_connecting,
                         stale_cert_callback=self._on_stale_certificate,
+                        cert_mismatch_callback=self._on_certificate_address_mismatch,
                         server_uid_callback=self._on_server_uid_received,
                         host=self.config.get_server_host(),
                         port=self.config.get_server_port(),
@@ -1945,6 +2167,37 @@ class Client:
             await self.config.save()
         except Exception as e:
             self._logger.warning("Could not persist updated server UID", error=str(e))
+
+    async def _on_certificate_address_mismatch(
+        self, host: str, port: int, detail: str
+    ) -> None:
+        """Tell the user the server's certificate does not cover this address.
+
+        The CA still trusts the chain, so this is *not* a stale certificate and
+        must not purge anything - the connection layer keeps retrying. But
+        retrying silently is what made the multi-homing bug so opaque: the
+        client sat in "connecting" forever with the real cause only in a log
+        line nobody reads. The server fixes this by re-issuing its leaf, which
+        it does automatically once it advertises the address.
+        """
+        self._logger.warning(
+            "Server certificate does not cover the address we dialed",
+            host=host,
+            port=port,
+        )
+        await self._send_notification(
+            WarningEvent(
+                warning=(
+                    f"The server's certificate does not cover {host}. "
+                    f"It should re-issue it automatically; if this persists, "
+                    f"restart the server."
+                ),
+                context="tls_address_mismatch",
+                host=host,
+                port=port,
+                detail=detail,
+            )
+        )
 
     async def _on_stale_certificate(self) -> None:
         """Recover from a server cert that no longer verifies.

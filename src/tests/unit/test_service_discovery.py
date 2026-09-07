@@ -288,15 +288,38 @@ class TestHostnameResolution:
 
     @pytest.mark.anyio
     async def test_resolve_hostname_success(self):
-        """Test successful hostname resolution."""
-        hostname = "localhost"
+        """The argument is actually resolved, not ignored.
 
-        with patch(
-            "service.get_local_ip", return_value="127.0.0.1"
-        ) as mock_get_local_ip:
-            ip = await ServiceDiscovery.resolve_hostname(hostname)
-            assert ip == "127.0.0.1"
-            mock_get_local_ip.assert_called_once()
+        This used to return ``get_local_ip()`` - our own default-route address
+        - whatever hostname was asked about, which on a multi-homed host is the
+        same mistake the advertise fix exists to correct.
+        """
+        infos = [(2, 1, 6, "", ("192.168.4.7", 0))]
+
+        with patch("service.socket.getaddrinfo", return_value=infos) as resolver:
+            ip = await ServiceDiscovery.resolve_hostname("peer.local")
+
+        assert ip == "192.168.4.7"
+        assert resolver.call_args[0][0] == "peer.local"
+
+    @pytest.mark.anyio
+    async def test_resolve_hostname_skips_unadvertisable_answers(self):
+        """The result gets advertised, so loopback is not an answer."""
+        infos = [
+            (2, 1, 6, "", ("127.0.0.1", 0)),
+            (2, 1, 6, "", ("10.0.0.5", 0)),
+        ]
+
+        with patch("service.socket.getaddrinfo", return_value=infos):
+            assert await ServiceDiscovery.resolve_hostname("peer.local") == "10.0.0.5"
+
+    @pytest.mark.anyio
+    async def test_resolve_hostname_all_answers_unusable(self):
+        infos = [(2, 1, 6, "", ("127.0.0.1", 0))]
+
+        with patch("service.socket.getaddrinfo", return_value=infos):
+            with pytest.raises(RuntimeError, match="no usable address"):
+                await ServiceDiscovery.resolve_hostname("peer.local")
 
     @pytest.mark.anyio
     async def test_resolve_hostname_failure(self):
@@ -304,7 +327,7 @@ class TestHostnameResolution:
         hostname = "invalid-nonexistent-host.local"
 
         with patch(
-            "service.get_local_ip", side_effect=Exception("Name resolution failed")
+            "service.socket.getaddrinfo", side_effect=OSError("Name resolution failed")
         ):
             with pytest.raises(
                 RuntimeError, match=f"Failed to resolve hostname {hostname}"

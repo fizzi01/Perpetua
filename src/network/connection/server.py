@@ -89,6 +89,7 @@ class ConnectionHandler(BaseConnectionHandler):
         ] = None,
         rejected_callback: Optional[Callable[[str, str, str, str], Any]] = None,
         server_uid: Optional[str] = None,
+        interface_filter: Optional[Callable[[str], bool]] = None,
     ):
         self.certfile = certfile
         self.keyfile = keyfile
@@ -120,6 +121,12 @@ class ConnectionHandler(BaseConnectionHandler):
         # rejection is only visible in the daemon log. Receives
         # (peer_ip, hostname, uid, reason); never raises into the handshake.
         self.rejected_callback = rejected_callback
+        # Optional admission filter keyed on the *local* endpoint a connection
+        # arrived on. The listener always binds every interface, so this is
+        # where "only accept on the selected interface" is enforced; binding a
+        # single address instead would stop the server from starting whenever
+        # that address is momentarily absent.
+        self.interface_filter = interface_filter
 
         self.host = host
         self.port = port
@@ -384,6 +391,13 @@ class ConnectionHandler(BaseConnectionHandler):
         set_socket_nodelay(writer)
         addr = writer.get_extra_info("peername")
         self._logger.debug("Accepted connection", address=addr)
+
+        if self.interface_filter is not None:
+            sockname = writer.get_extra_info("sockname")
+            local_ip = sockname[0] if sockname else None
+            if local_ip and not self.interface_filter(local_ip):
+                writer.close()
+                return
 
         try:
             client_obj = self.clients.get_client(ip_address=addr[0])
@@ -1256,6 +1270,16 @@ class ConnectionHandler(BaseConnectionHandler):
         """
         self.certfile = certfile
         self.keyfile = keyfile
+
+    def invalidate_ssl_context(self) -> None:
+        """Drop the cached context so the next handshake re-reads the files.
+
+        The cache is keyed on file *paths*, and a re-issued leaf certificate is
+        written back to the same path. Without this, a listener that is already
+        running keeps serving the old certificate - so widening the SAN to
+        cover a newly advertised address would have no effect until restart.
+        """
+        self._ssl_context_cache = None
 
     def _get_ssl_context(self) -> Optional[ssl.SSLContext]:
         """
