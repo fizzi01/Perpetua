@@ -1717,12 +1717,7 @@ export function ServerTab({onStatusChange, state}: ServerTabProps) {
                                     >
                                         <SelectTrigger
                                             id="advertiseOn"
-                                            className="min-w-0 flex-1 shadow-none cursor-pointer [&>span]:truncate"
-                                            style={{
-                                                backgroundColor: 'var(--app-input-bg)',
-                                                borderColor: 'var(--app-border)',
-                                                color: 'var(--app-text-primary)',
-                                            }}
+                                            className="SelectTrigger min-w-0 flex-1 shadow-none [&>span]:truncate"
                                         >
                                             <SelectValue/>
                                         </SelectTrigger>
