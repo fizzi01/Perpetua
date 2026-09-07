@@ -73,6 +73,7 @@ from utils.net import (
     MissingIpError,
     get_local_ip,
     invalidate_local_ip_cache,
+    follow_interface_address,
     list_local_interfaces_async,
     match_interface,
     resolve_advertise_interfaces,
@@ -1413,6 +1414,11 @@ class Server:
         # Enumerate once, up front, and thread this snapshot through both the
         # certificate SAN and the mDNS record below.
         self._iface_snapshot = await list_local_interfaces_async(include_unusable=True)
+        # A renewal that happened while the daemon was down leaves a stale
+        # address here; there is no previous snapshot, so only the subnet
+        # match can recover it.
+        if self._follow_selected_interface(self._iface_snapshot):
+            await self.save_config()
         self._advertised_addresses = self.config.get_advertise_addresses(
             self._iface_snapshot
         )
@@ -1639,6 +1645,29 @@ class Server:
             except Exception as e:  # noqa: BLE001 - a bad tick must not kill the loop
                 self._logger.warning("Advertise refresh failed", error=str(e))
 
+    def _follow_selected_interface(self, interfaces: list) -> bool:
+        """Move ``config.host`` to the selected interface's current address.
+
+        ``host`` holds an address, so a DHCP renewal orphans the selection.
+        Following it keeps the admin's intent; see
+        ``utils.net.follow_interface_address`` for what counts as proof that
+        it is the same link.
+
+        :return: True when the stored value changed.
+        """
+        moved = follow_interface_address(
+            self.config.host, self._iface_snapshot, interfaces
+        )
+        if not moved:
+            return False
+        self._logger.info(
+            "Selected interface changed address; following it",
+            previous=self.config.host,
+            current=moved,
+        )
+        self.config.host = moved
+        return True
+
     async def refresh_advertisement(self, force: bool = False) -> None:
         """Re-resolve the advertised addresses; re-issue the SAN, then re-announce.
 
@@ -1647,6 +1676,10 @@ class Server:
         that retargets fails the handshake on an IP the leaf does not carry.
         """
         interfaces = await list_local_interfaces_async(include_unusable=True)
+        # Before resolving: with host_exclusive a stale address resolves to no
+        # addresses at all, and the early return below would skip the follow.
+        if self._follow_selected_interface(interfaces):
+            await self.save_config()
         addresses = self.config.get_advertise_addresses(interfaces)
         if not addresses:
             self._logger.warning("No usable address to advertise; keeping previous")

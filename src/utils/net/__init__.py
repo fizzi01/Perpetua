@@ -20,6 +20,7 @@ from utils.logging import get_logger
 from typing import TYPE_CHECKING, Optional
 
 import asyncio
+import ipaddress
 import socket
 import time
 
@@ -154,6 +155,66 @@ def match_interface(
     )
 
 
+def follow_interface_address(
+    preference: Optional[str],
+    previous: Optional[list[LocalInterface]],
+    current: Optional[list[LocalInterface]] = None,
+) -> Optional[str]:
+    """The address ``preference`` moved to, or ``None`` to leave it alone.
+
+    ``ServerConfig.host`` stores an address because that is what reads well in
+    a config file, but a DHCP renewal changes it and the selection then
+    matches nothing: the server quietly falls back to advertising everything,
+    or - with ``host_exclusive`` - stops accepting connections.
+
+    Following it needs evidence that it is the same link, and only two count:
+
+    1. the adapter the address sat on in ``previous`` still exists, so its
+       current address is the same link;
+    2. failing that (no snapshot, e.g. right after a restart), exactly one
+       interface's subnet contains the old address.
+
+    Anything less is a guess, and a wrong guess moves the server onto an
+    interface the admin never picked. A vanished adapter is deliberately *not*
+    followed: the choice is kept so the interface can come back.
+    """
+    if is_auto_preference(preference):
+        return None
+    if current is None:
+        current = list_local_interfaces(include_unusable=True)
+
+    wanted = (preference or "").strip()
+    try:
+        old_addr = ipaddress.ip_address(wanted)
+    except ValueError:
+        # Names already survive a renewal; there is nothing to follow.
+        return None
+
+    if any(i.ip == wanted for i in current):
+        return None
+
+    # (1) same adapter, new address.
+    if previous:
+        adapters = {i.name for i in previous if i.ip == wanted}
+        for iface in current:
+            if iface.name in adapters and iface.ip != wanted:
+                return iface.ip
+
+    # (2) unambiguous subnet match.
+    same_subnet = []
+    for iface in current:
+        try:
+            net = ipaddress.ip_network(f"{iface.ip}/{iface.prefix}", strict=False)
+        except ValueError:
+            continue
+        if old_addr in net:
+            same_subnet.append(iface.ip)
+    if len(same_subnet) == 1:
+        return same_subnet[0]
+
+    return None
+
+
 def resolve_advertise_addresses(
     preference: Optional[str],
     interfaces: Optional[list[LocalInterface]] = None,
@@ -183,6 +244,17 @@ def resolve_advertise_addresses(
 
     chosen = match_interface(preference, interfaces)
     if not chosen:
+        if exclusive:
+            # The accept filter refuses everything while the chosen interface
+            # is absent, so advertising anything here would invite clients to
+            # an address they are then turned away from. Announce nothing.
+            _logger.warning(
+                "Advertise interface not found and access is restricted to it; "
+                "advertising nothing",
+                preference=preference,
+                available=auto,
+            )
+            return []
         # Cable unplugged, adapter renamed. Fall back to auto rather than
         # returning [] - being invisible on the network is worse than
         # advertising too much - and never rewrite the stored preference:

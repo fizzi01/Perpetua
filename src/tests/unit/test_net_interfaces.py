@@ -222,6 +222,21 @@ def test_stale_preference_falls_back_to_auto(two_links):
     ]
 
 
+def test_stale_preference_advertises_nothing_when_exclusive(two_links):
+    """Falling back would invite clients to an address they are refused.
+
+    With ``host_exclusive`` the accept filter turns away every interface while
+    the chosen one is absent, so announcing the others contradicts it.
+    """
+    assert resolve_advertise_addresses("eth99", two_links, exclusive=True) == []
+
+
+def test_matched_preference_advertises_only_itself_when_exclusive(two_links):
+    assert resolve_advertise_addresses("eth1", two_links, exclusive=True) == [
+        "10.0.0.1"
+    ]
+
+
 def test_no_usable_address_yields_empty():
     assert resolve_advertise_addresses("eth1", []) == []
 

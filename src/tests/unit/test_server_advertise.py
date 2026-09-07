@@ -438,3 +438,97 @@ def _async_recording(sink):
         sink.append((args, kwargs))
 
     return _inner
+
+
+CABLE_RENEWED = _iface("10.0.0.7", "eth1")
+
+
+class TestFollowsTheSelectedInterface:
+    """``host`` stores an address, so a DHCP renewal orphans the selection.
+
+    Left alone the server falls back to advertising every interface, and with
+    ``host_exclusive`` it stops accepting connections entirely. The daemon
+    follows the address to the same adapter instead.
+    """
+
+    @pytest.mark.anyio
+    async def test_renewal_is_followed_and_persisted(
+        self, app_config, server_config, monkeypatch
+    ):
+        server = _make_server(app_config, server_config)
+        server.config.host = "10.0.0.1"
+        server._iface_snapshot = TWO_LINKS
+        server._advertised_addresses = ["10.0.0.1"]
+        _stub_refresh(monkeypatch, server, [TWO_LINKS[0], CABLE_RENEWED])
+        saved = []
+        monkeypatch.setattr(server, "save_config", _async_recording(saved))
+
+        await server.refresh_advertisement()
+
+        assert server.config.host == "10.0.0.7"
+        assert saved, "the new address must survive a restart"
+
+    @pytest.mark.anyio
+    async def test_following_happens_before_resolving(
+        self, app_config, server_config, monkeypatch
+    ):
+        """With ``host_exclusive`` a stale address resolves to no addresses at
+        all, so a follow placed after resolution would never run."""
+        server = _make_server(app_config, server_config)
+        server.config.host = "10.0.0.1"
+        server.config.host_exclusive = True
+        server._iface_snapshot = TWO_LINKS
+        server._advertised_addresses = ["10.0.0.1"]
+        _stub_refresh(monkeypatch, server, [TWO_LINKS[0], CABLE_RENEWED])
+        monkeypatch.setattr(server, "save_config", _async_recording([]))
+
+        await server.refresh_advertisement()
+
+        assert server.config.host == "10.0.0.7"
+        assert server._advertised_addresses == ["10.0.0.7"]
+        assert server._on_interface_accept("10.0.0.7") is True
+        assert server._on_interface_accept("192.168.1.20") is False
+
+    @pytest.mark.anyio
+    async def test_present_address_is_not_rewritten(
+        self, app_config, server_config, monkeypatch
+    ):
+        server = _make_server(app_config, server_config)
+        server.config.host = "10.0.0.1"
+        server._iface_snapshot = TWO_LINKS
+        server._advertised_addresses = []
+        _stub_refresh(monkeypatch, server, TWO_LINKS)
+        monkeypatch.setattr(server, "save_config", _async_recording([]))
+
+        await server.refresh_advertisement()
+
+        assert server.config.host == "10.0.0.1"
+
+    @pytest.mark.anyio
+    async def test_vanished_adapter_keeps_the_choice(
+        self, app_config, server_config, monkeypatch
+    ):
+        """The cable may come back; discarding the choice would be the bug
+        this whole change exists to avoid."""
+        server = _make_server(app_config, server_config)
+        server.config.host = "10.0.0.1"
+        server._iface_snapshot = TWO_LINKS
+        server._advertised_addresses = ["10.0.0.1"]
+        _stub_refresh(monkeypatch, server, [TWO_LINKS[0]])
+        monkeypatch.setattr(server, "save_config", _async_recording([]))
+
+        await server.refresh_advertisement()
+
+        assert server.config.host == "10.0.0.1"
+
+
+def _stub_refresh(monkeypatch, server, interfaces):
+    """Point the refresh at a given enumeration and neutralise mDNS."""
+    monkeypatch.setattr(
+        "service.server.list_local_interfaces_async", _async_returning(interfaces)
+    )
+    monkeypatch.setattr("utils.net.list_local_interfaces", lambda *a, **k: interfaces)
+    monkeypatch.setattr(server._mdns_service, "register_service", _async_recording([]))
+    monkeypatch.setattr(
+        server._mdns_service, "unregister_service", _async_returning(None)
+    )
