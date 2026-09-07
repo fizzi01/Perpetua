@@ -25,7 +25,11 @@
 
 import React, {useEffect, useMemo, useRef, useState} from 'react';
 import {invoke} from '@tauri-apps/api/core';
-import {FileText, Pause, Play, RefreshCw, Search, WrapText, X} from 'lucide-react';
+import {platform} from '@tauri-apps/plugin-os';
+import * as DropdownMenu from '@radix-ui/react-dropdown-menu';
+import {ScrollArea} from './scrollbar';
+import {Tooltip} from './tooltip';
+import {Check, ChevronDown, Copy, ExternalLink, FileText, Pause, Play, RefreshCw, Search, WrapText, X} from 'lucide-react';
 import {
     Select,
     SelectContent,
@@ -35,6 +39,7 @@ import {
 } from './select';
 
 interface LogViewerProps {
+    active?: boolean;
     // Optional: customize the number of lines to fetch
     initialLines?: number;
     // Optional: auto-refresh interval in milliseconds
@@ -48,6 +53,7 @@ interface LogResponse {
 }
 
 export const DaemonLogViewer: React.FC<LogViewerProps> = ({
+                                                              active = true,
                                                               initialLines = 100,
                                                               refreshInterval = 5000, // 5 seconds
                                                           }) => {
@@ -58,6 +64,15 @@ export const DaemonLogViewer: React.FC<LogViewerProps> = ({
     const [numLines, setNumLines] = useState<number>(initialLines);
     const [wrapLines, setWrapLines] = useState<boolean>(true);
     const [searchQuery, setSearchQuery] = useState<string>('');
+    const [actionBusy, setActionBusy] = useState(false);
+    const [actionMessage, setActionMessage] = useState('');
+    const [actionError, setActionError] = useState(false);
+    const actionPending = useRef(false);
+    const mounted = useRef(true);
+    useEffect(() => {
+        mounted.current = true;
+        return () => { mounted.current = false; };
+    }, []);
     const logEndRef = useRef<HTMLDivElement>(null);
     const scrollContainerRef = useRef<HTMLDivElement>(null);
     const isAtBottomRef = useRef<boolean>(true);
@@ -81,25 +96,6 @@ export const DaemonLogViewer: React.FC<LogViewerProps> = ({
         }
     };
 
-    // // Fetch all logs
-    // const fetchAllLogs = async () => {
-    //   setLoading(true);
-    //   setError(null);
-
-    //   try {
-    //     const response = await invoke<LogResponse>('read_daemon_logs', {
-    //       numLines: 0,
-    //       all: true,
-    //     });
-
-    //     setLogs(response.logs);
-    //   } catch (err) {
-    //     setError(`Error reading logs: ${err}`);
-    //   } finally {
-    //     setLoading(false);
-    //   }
-    // };
-
     // Auto-scroll to bottom when new logs arrive
     const scrollToBottom = () => {
         if (isAtBottomRef.current) {
@@ -116,19 +112,19 @@ export const DaemonLogViewer: React.FC<LogViewerProps> = ({
 
     // Initial load
     useEffect(() => {
-        fetchLogs();
-    }, []);
+        if (active) fetchLogs();
+    }, [active]);
 
     // Auto-refresh
     useEffect(() => {
-        if (!autoRefresh) return;
+        if (!active || !autoRefresh) return;
 
         const interval = setInterval(() => {
             fetchLogs();
         }, refreshInterval);
 
         return () => clearInterval(interval);
-    }, [autoRefresh, refreshInterval, numLines]);
+    }, [active, autoRefresh, refreshInterval, numLines]);
 
     // Scroll to bottom when logs update
     useEffect(() => {
@@ -211,15 +207,51 @@ export const DaemonLogViewer: React.FC<LogViewerProps> = ({
         return logs.filter(line => fuzzyMatch(line, searchQuery));
     }, [logs, searchQuery]);
 
+    const runLogAction = async (action: 'visible' | 'all' | 'open') => {
+        if (actionPending.current) return;
+        actionPending.current = true;
+        setActionBusy(true);
+        setActionMessage('');
+        setActionError(false);
+        // Capture the displayed snapshot before any async work or auto-refresh.
+        const visibleText = filteredLogs.join('\n');
+        try {
+            if (action === 'open') {
+                await invoke('open_daemon_log');
+            } else {
+                const text = action === 'visible' ? visibleText :
+                    (await invoke<LogResponse>('read_daemon_logs', {numLines: 0, all: true})).logs.join('\n');
+                if (platform() === 'macos') {
+                    // WKWebView can lose clipboard user activation while reading
+                    // the full file or closing the menu. Use the native pasteboard.
+                    await invoke('copy_log_text', {text});
+                } else {
+                    await navigator.clipboard.writeText(text);
+                }
+            }
+            if (mounted.current) setActionMessage(action === 'open' ? 'Log file opened' : 'Copied to clipboard');
+        } catch (err) {
+            if (mounted.current) {
+                setActionError(true);
+                setActionMessage(`${action === 'open' ? 'Could not open log file' : 'Could not copy logs'}: ${err}`);
+            }
+        } finally {
+            actionPending.current = false;
+            if (mounted.current) setActionBusy(false);
+        }
+    };
+    const actionStyle = {backgroundColor: 'var(--app-bg-tertiary)', color: 'var(--app-text-muted)'};
+    const actionClass = 'inline-flex items-center gap-1.5 px-2 py-1.5 rounded-md text-xs font-medium cursor-pointer hover:opacity-80 disabled:opacity-50 disabled:cursor-not-allowed';
+
     return (
-        <div className="daemon-log-viewer flex flex-col h-full">
+        <div className="daemon-log-viewer flex flex-col h-full min-h-0">
             {/* Header */}
             <div className="border-b" style={{
                 borderColor: 'var(--border)',
                 backgroundColor: 'var(--app-bg-secondary)',
             }}>
                 {/* First row - Controls */}
-                <div className="flex items-center justify-between px-3 py-1.5">
+                <div className="flex gap-2 items-center justify-between px-3 py-1.5">
                     <div className="flex items-center gap-2">
                         {/* Number of lines selector */}
                         <div className="flex items-center gap-1.5">
@@ -266,6 +298,7 @@ export const DaemonLogViewer: React.FC<LogViewerProps> = ({
                         </div>
 
                         {/* Auto-refresh toggle */}
+                        <Tooltip label={autoRefresh ? 'Pause auto-refresh' : 'Resume auto-refresh'}>
                         <button
                             onClick={() => setAutoRefresh(!autoRefresh)}
                             className="cursor-pointer flex items-center gap-2 px-2 py-1.5 rounded-md text-xs font-medium transition-all hover:scale-105 active:scale-95 focus:outline-none focus:ring-2 focus:ring-opacity-50 shadow-sm"
@@ -273,13 +306,15 @@ export const DaemonLogViewer: React.FC<LogViewerProps> = ({
                                 backgroundColor: autoRefresh ? 'var(--app-primary)' : 'var(--app-secondary)',
                                 color: autoRefresh ? '#ffffff' : 'var(--app-text-muted)',
                             }}
-                            title={autoRefresh ? 'Auto-refresh enabled' : 'Auto-refresh disabled'}
+                            aria-label={autoRefresh ? 'Pause auto-refresh' : 'Resume auto-refresh'}
                         >
                             {autoRefresh ? <Pause size={12}/> : <Play size={12}/>}
                             {/* {autoRefresh ? 'Pause' : 'Play'} */}
                         </button>
+                        </Tooltip>
 
                         {/* Refresh button */}
+                        <Tooltip label="Refresh logs">
                         <button
                             onClick={() => fetchLogs()}
                             disabled={loading}
@@ -288,13 +323,15 @@ export const DaemonLogViewer: React.FC<LogViewerProps> = ({
                                 backgroundColor: 'var(--app-primary-light)',
                                 color: '#ffffff',
                             }}
-                            title="Refresh logs"
+                            aria-label="Refresh logs"
                         >
                             <RefreshCw size={12} className={loading ? 'animate-spin' : ''}/>
 
                         </button>
+                        </Tooltip>
 
                         {/* Word wrap toggle */}
+                        <Tooltip label={wrapLines ? 'Disable line wrapping' : 'Enable line wrapping'}>
                         <button
                             onClick={() => setWrapLines(!wrapLines)}
                             className="cursor-pointer flex items-center gap-2 px-2 py-1.5 rounded-md text-xs font-medium transition-all hover:scale-105 active:scale-95 focus:outline-none focus:ring-2 focus:ring-opacity-50 shadow-sm"
@@ -302,10 +339,41 @@ export const DaemonLogViewer: React.FC<LogViewerProps> = ({
                                 backgroundColor: wrapLines ? 'var(--app-primary)' : 'var(--app-secondary)',
                                 color: wrapLines ? '#ffffff' : 'var(--app-text-muted)',
                             }}
-                            title={wrapLines ? 'Line wrapping enabled' : 'Line wrapping disabled'}
+                            aria-label={wrapLines ? 'Disable line wrapping' : 'Enable line wrapping'}
                         >
                             <WrapText size={12}/>
                         </button>
+                        </Tooltip>
+                        <DropdownMenu.Root>
+                            <Tooltip label="Copy displayed lines or the entire log">
+                            <DropdownMenu.Trigger asChild>
+                                <button type="button" disabled={actionBusy} className={actionClass} style={actionStyle} aria-label="Copy all">
+                                    <Copy size={14}/><ChevronDown size={12}/>
+                                </button>
+                            </DropdownMenu.Trigger>
+                            </Tooltip>
+                            <DropdownMenu.Portal>
+                                <DropdownMenu.Content align="start" sideOffset={6}
+                                    className="z-[150] min-w-48 rounded-md border p-1 shadow-lg text-xs"
+                                    style={{backgroundColor: 'var(--app-bg-secondary)', borderColor: 'var(--app-border)', color: 'var(--app-text-primary)'}}>
+                                    <DropdownMenu.Item disabled={!filteredLogs.length}
+                                        onSelect={() => void runLogAction('visible')}
+                                        className="px-3 py-2 rounded outline-none cursor-pointer focus:bg-[var(--app-primary)] focus:text-white data-[disabled]:opacity-50 data-[disabled]:pointer-events-none">
+                                        Copy displayed lines ({filteredLogs.length})
+                                    </DropdownMenu.Item>
+                                    <DropdownMenu.Item onSelect={() => void runLogAction('all')}
+                                        className="px-3 py-2 rounded outline-none cursor-pointer focus:bg-[var(--app-primary)] focus:text-white">
+                                        Copy entire log
+                                    </DropdownMenu.Item>
+                                </DropdownMenu.Content>
+                            </DropdownMenu.Portal>
+                        </DropdownMenu.Root>
+                        <Tooltip label="Open the full log in your default application">
+                        <button type="button" disabled={actionBusy} onClick={() => void runLogAction('open')}
+                                className={actionClass} style={actionStyle} aria-label="Open log file">
+                            <ExternalLink size={14}/>
+                        </button>
+                        </Tooltip>
                     </div>
 
                     {/* Line count or match count */}
@@ -360,6 +428,16 @@ export const DaemonLogViewer: React.FC<LogViewerProps> = ({
                 </div>
             </div>
 
+            {actionMessage && (
+                <div role={actionError ? 'alert' : 'status'} className="flex items-center gap-2 px-3 py-1.5 text-xs border-b"
+                     style={{borderColor: 'var(--app-border)', color: actionError ? 'var(--app-warning)' : 'var(--app-success)'}}>
+                    {!actionError && <Check size={12}/>}
+                    <span className="flex-1 break-words">{actionMessage}</span>
+                    <button type="button" aria-label="Dismiss log action message" onClick={() => setActionMessage('')}
+                            className="p-1 cursor-pointer"><X size={12}/></button>
+                </div>
+            )}
+
             {/* Error message */}
             {error && (
                 <div className="px-3 py-1.5 text-xs border-b" style={{
@@ -372,14 +450,14 @@ export const DaemonLogViewer: React.FC<LogViewerProps> = ({
             )}
 
             {/* Log content */}
-            <div
+            <ScrollArea
                 ref={scrollContainerRef}
                 onScroll={handleScroll}
-                className="flex-1 p-3 font-mono text-xs leading-relaxed"
+                className="flex-1 min-h-0 p-3 font-mono text-xs leading-relaxed"
                 style={{
                     backgroundColor: '#0d0d0d',
                     color: '#e8e8e8',
-                    overflow: wrapLines ? 'auto' : 'auto',
+                    overflowY: 'auto',
                     overflowX: wrapLines ? 'hidden' : 'auto',
                 }}
             >
@@ -426,7 +504,7 @@ export const DaemonLogViewer: React.FC<LogViewerProps> = ({
                         <div ref={logEndRef}/>
                     </div>
                 )}
-            </div>
+            </ScrollArea>
         </div>
     );
 };

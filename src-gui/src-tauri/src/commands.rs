@@ -553,6 +553,52 @@ pub async fn read_daemon_logs(num_lines: usize, all: bool) -> Result<LogResponse
     })
 }
 
+/// macOS pasteboard write, independent of WKWebView's user-activation rules.
+#[tauri::command]
+pub async fn copy_log_text(text: String) -> Result<(), String> {
+    #[cfg(target_os = "macos")]
+    {
+        tauri::async_runtime::spawn_blocking(move || {
+            use std::io::Write;
+            use std::process::{Command, Stdio};
+
+            // Pass log content as data over stdin, never through a shell.
+            let mut child = Command::new("/usr/bin/pbcopy")
+                .env("LC_ALL", "en_US.UTF-8")
+                .stdin(Stdio::piped())
+                .stdout(Stdio::null())
+                .stderr(Stdio::piped())
+                .spawn()
+                .map_err(|e| format!("Failed to access clipboard: {}", e))?;
+            let write_result = child.stdin.take()
+                .ok_or_else(|| "Clipboard input unavailable".to_string())
+                .and_then(|mut input| input.write_all(text.as_bytes()).map_err(|e| e.to_string()));
+            // Closing stdin completes the pasteboard write; always reap the child.
+            let output = child.wait_with_output().map_err(|e| e.to_string())?;
+            write_result?;
+            if !output.status.success() {
+                return Err(format!("Clipboard write failed: {}", String::from_utf8_lossy(&output.stderr)));
+            }
+            Ok(())
+        }).await.map_err(|e| e.to_string())?
+    }
+    #[cfg(not(target_os = "macos"))]
+    {
+        let _ = text;
+        Err("Native log clipboard is only used on macOS".to_string())
+    }
+}
+
+/// Open only the daemon log resolved by the backend, never an arbitrary UI path.
+#[tauri::command]
+pub async fn open_daemon_log(app: tauri::AppHandle) -> Result<(), String> {
+    use tauri_plugin_opener::OpenerExt;
+    let log_file = get_log_file_path()?;
+    app.opener()
+        .open_path(log_file.to_string_lossy().into_owned(), None::<&str>)
+        .map_err(|e| format!("Failed to open log file: {}", e))
+}
+
 #[tauri::command]
 pub async fn get_log_file_path_cmd() -> Result<String, String> {
     let log_file = get_log_file_path()?;

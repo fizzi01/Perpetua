@@ -4,6 +4,7 @@ import {configureStore} from '@reduxjs/toolkit';
 import {Provider} from 'react-redux';
 import {afterEach, beforeEach, describe, expect, it, vi} from 'vitest';
 import {Main} from './App';
+import {openLogWindow} from './api/logWindow';
 import {ClientStatus, CommandType, EventType, ServerStatus} from './api/Interface';
 import reducer from './store/reducer';
 import {chooseService, getPermissions, getStatus} from './api/Sender';
@@ -34,7 +35,7 @@ vi.mock('./components/client-tab', () => ({
 vi.mock('./components/server-tab', () => ({
     ServerTab: ({state}: {state: ServerStatus}) => <div data-testid="server-tab">{state.uid}</div>,
 }));
-vi.mock('./components/ui/DaemonLogDialog', () => ({DaemonLogDialog: ({isOpen}: {isOpen: boolean}) => isOpen ? <div data-testid="logs"/> : null}));
+vi.mock('./api/logWindow', () => ({openLogWindow: vi.fn(() => Promise.resolve())}));
 vi.mock('./components/ui/permission-gate', () => ({PermissionGate: () => <div data-testid="permission-gate"/>}));
 vi.mock('./components/titlebar', () => ({
     Titlebar: ({disabled, onModeChange}: {disabled: boolean; onModeChange: (mode: 'client' | 'server') => void}) => (
@@ -167,7 +168,7 @@ describe('daemon initialization', () => {
         expect(screen.getByTestId('permission-gate')).toBeInTheDocument();
         expect(screen.queryByTestId('client-tab')).not.toBeInTheDocument();
         fireEvent.click(screen.getByRole('button', {name: 'Open logs'}));
-        expect(screen.getByTestId('logs')).toBeInTheDocument();
+        expect(openLogWindow).toHaveBeenCalledTimes(1);
     });
 
     it('shows a recoverable error when sending the initial query fails', async () => {

@@ -5,7 +5,8 @@
   "windows": [
     "main",
     "splashscreen",
-    "layout-editor"
+    "layout-editor",
+    "logs"
   ],
   "permissions": [
     "core:default",

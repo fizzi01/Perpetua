@@ -39,7 +39,8 @@ import {PermissionGate} from './components/ui/permission-gate';
 import {useDaemonSync} from './hooks/useDaemonSync';
 import {useAppSelector} from './hooks/redux';
 import {ScrollArea} from './components/ui/scrollbar';
-import {DaemonLogDialog} from './components/ui/DaemonLogDialog';
+import LogsWindow from './LogsWindow';
+import {openLogWindow} from './api/logWindow';
 import {SplashScreen} from './Splash';
 import LayoutEditorWindow from './LayoutEditorWindow';
 
@@ -48,7 +49,11 @@ export function Main() {
     const sync = useDaemonSync();
     const {mode} = sync;
     const [disableModeSwitch, setDisableModeSwitch] = useState<boolean>(false);
-    const [showLogs, setShowLogs] = useState<boolean>(false);
+    const [logWindowError, setLogWindowError] = useState('');
+    const showLogs = () => {
+        setLogWindowError('');
+        void openLogWindow().catch(err => setLogWindowError(String(err)));
+    };
     // OS-level permission gate (macOS Accessibility / Input Monitoring). Null
     // when nothing is missing; a non-empty list drives the blocking overlay.
     const [missingPerms, setMissingPerms] = useState<PermissionInfo[] | null>(null);
@@ -99,7 +104,7 @@ export function Main() {
                 setMissingPerms(permissionsMissing ? missing : null);
             })),
             register(listenGeneralEvent(EventType.ShowLog, true, () => {
-                if (!disposed) setShowLogs(true);
+                if (!disposed) showLogs();
             })),
             register(listenGeneralEvent(EventType.MonitorTopologyChanged, true, () => {
                 if (!disposed) sync.refresh();
@@ -142,7 +147,7 @@ export function Main() {
                                     <button type="button" onClick={sync.retry} className="px-3 py-1.5 rounded-md border cursor-pointer"
                                             style={{borderColor: 'var(--app-border)'}}>Retry</button>
                                 )}
-                                <button type="button" onClick={() => setShowLogs(true)} className="text-xs underline cursor-pointer">
+                                <button type="button" onClick={() => showLogs()} className="text-xs underline cursor-pointer">
                                     Open logs
                                 </button>
                             </div>
@@ -151,7 +156,7 @@ export function Main() {
                     {sync.status === 'loading' && !sync.hasState && (
                         <>
                             <ServiceTabSkeleton mode={mode}/>
-                            <button type="button" onClick={() => setShowLogs(true)}
+                            <button type="button" onClick={() => showLogs()}
                                     className="mt-4 text-xs cursor-pointer hover:underline"
                                     style={{color: 'var(--app-text-muted)'}}>Open logs</button>
                         </>
@@ -173,7 +178,7 @@ export function Main() {
                                 <ServerTab onStatusChange={setDisableModeSwitch} state={serverState}/>}
                         </motion.div>
                     </div>}
-                    <DaemonLogDialog isOpen={showLogs} onClose={() => setShowLogs(false)}/>
+                    {logWindowError && <p role="alert" className="mt-3 text-xs">{logWindowError}</p>}
                 </ScrollArea>
             </div>
             {missingPerms && missingPerms.length > 0 ? (
@@ -189,6 +194,7 @@ export default function App() {
             <Routes>
                 <Route path="/" element={<Main/>}/>
                 <Route path="/splashscreen" element={<SplashScreen/>}/>
+                <Route path="/logs" element={<LogsWindow/>}/>
                 <Route path="/layout-editor" element={<LayoutEditorWindow/>}/>
             </Routes>
         </BrowserRouter>
