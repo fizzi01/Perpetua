@@ -201,7 +201,7 @@ Perpetua uses JSON to define client and server settings. The configuration file 
 <details>
 <summary><b>Server Configuration</b></summary>
 
-Basic server setup (certificates, network binding) is handled automatically. To accept client connections you have two options:
+Basic server setup (certificates, network binding) is handled automatically. The server listens on every interface; if the machine has more than one network you can choose which address it advertises (see [Advertised interface](#advertised-interface)). To accept client connections you have two options:
 
 - **Let the GUI handle it**: when a new client tries to connect, the `Server` shows an Allow/Deny card. Approving opens the Layout Editor. The full flow is described in [First Connection and OTP Pairing](#first-connection-and-otp-pairing).
 - **Pre-register each client manually** in `Server > Clients` (or by editing the config file). Identify each entry by its `host_name` and/or `ip_addresses`, you **cannot** set the client's `uid` yourself, the server assigns it during pairing (see [First Connection and OTP Pairing](#first-connection-and-otp-pairing)). Optionally add a list of `placements` to position the client's monitors (recommended for multi-monitor, see [Manual placements](#manual-placements)); the legacy `screen_position` (`left`, `right`, `top`, `bottom`) still works as a single-monitor fallback.
@@ -209,6 +209,24 @@ Basic server setup (certificates, network binding) is handled automatically. To 
 **Note:** pre-registering a client by hostname/IP only skips the **Allow/Deny** prompt. The one-time **OTP certificate exchange still has to happen once** (TLS mode) before the client can connect, and that step currently goes through the GUI.
 
 **Clipboard-only clients:** a client that is authorized and connected but has **no `placements`** (and no meaningful `screen_position`, e.g. `center`) is not part of the mouse/keyboard layout, yet it **still stays in clipboard sync**. Clipboard is broadcast to every connected client; only mouse and keyboard follow the layout. This lets you keep any number of machines synchronized on the clipboard without positioning them for cursor/keyboard control. (Clipboard delivery still respects `streams_enabled`.)
+
+</details>
+
+<a id="advertised-interface"></a>
+<details>
+<summary><b>Advertised interface (machines with several networks)</b></summary>
+
+The server listens on every interface, but a client needs a single address to connect to. By default (`Auto (all interfaces)`) every usable address is advertised, one mDNS responder per interface, and the client keeps the first that answers. Two machines joined by a direct ethernet cable work without configuration.
+
+To pin one, open `Server > Options`:
+
+- **Advertise on** picks the interface. Entries are labelled `Name - IP/prefix`, and `(default route)` marks the one that reaches the internet. Loopback and link-local (`169.254.x.x`) addresses can be selected here, but are never chosen automatically.
+- The button next to it lists the addresses clients are given, with a copy button for each `ip:port`.
+- **Accept only on this interface** refuses connections arriving on any other one. It is applied when the connection is accepted, not at bind time, so the server still starts when the interface is missing (connections are refused while it is).
+
+The interface can be changed while the server is running, the certificate and the mDNS record are updated automatically. Only `port` needs a stop/start. An interface that shows up later, e.g. a cable plugged in after startup, is picked up within 30 seconds.
+
+The TLS certificate covers every advertised address and is re-issued when that set changes. The CA is left untouched, so paired clients keep working and don't have to re-pair.
 
 </details>
 
@@ -224,6 +242,10 @@ Auto Discovery (Default):
 Manual Configuration:
 - Set the server's hostname or IP address directly in the config file (or in the appropriate field in `Client > Options`)
 - Use this when auto-discovery doesn't work or you have a static network setup
+
+A server with several addresses advertises all of them, the client tries them and keeps the first that answers. An address you set by hand is only replaced once it stops responding and another one works.
+
+The **Network addresses** button next to the client's hostname lists the machine's own addresses, useful to match the one shown in the server's Allow/Deny card.
 
 </details>
 
@@ -270,6 +292,13 @@ The configuration [json file](#file-structure) is split into three sections: `se
 - `0`: Debug (detailed logs)
 - `1`: Info (standard logs)
 
+`host` selects the interface to advertise, it is not a bind address: the server always listens on every interface. `0.0.0.0` (the default) advertises all of them. Any other value names one interface by adapter name, IP or friendly name (`eth1`, `10.0.0.1` and `Ethernet 1` are all valid). If it matches nothing, every address is advertised and a warning is logged.
+
+`host_exclusive` refuses connections arriving on an interface other than the one `host` names, `false` by default. With it enabled only the selected address is advertised.
+
+> [!NOTE]
+> In earlier versions `host` was the bind address, and the GUI wrote a concrete IP into it whenever you changed something in `Server > Options`. That value is now read as the advertised address and no longer restricts what the server accepts. Enable `host_exclusive` to restore the previous behaviour.
+
 `pairing_port` is the port used for the initial OTP-based certificate exchange. Leave it `null` to derive it as `port - 2`. The value is advertised over mDNS so clients discover it automatically.
 
 `authorized_clients` lists the clients that can connect. To pre-register a client by hand, you only need to specify:
@@ -294,6 +323,7 @@ These parameters affect the application's internal behavior. Only modify them if
     "server": {
         "uid": "...",
         "host": "0.0.0.0",
+        "host_exclusive": false,
         "port": 55655,
         "pairing_port": null,
         "heartbeat_interval": 1,
@@ -468,6 +498,19 @@ Auto-discovery uses mDNS. Make sure:
 - UDP `5353` is not blocked by a firewall (see [Firewall ports](#firewall-ports)).
 
 As a fallback, set the server's hostname or IP directly in the `Client > Options` section.
+
+</details>
+
+<details>
+<summary><b>The client sees the server but can't connect</b></summary>
+
+Common when the server has more than one network (Wi-Fi plus a direct cable, a VPN, Hyper-V/WSL adapters). Discovery reaches the client on every interface, but the address it was given may not be routable from there.
+
+Open `Server > Options` and check the button next to `Advertise on` for the addresses being advertised. If the one the client needs is missing, select that interface (see [Advertised interface](#advertised-interface)).
+
+On a direct cable without DHCP both machines fall back to link-local `169.254.x.x`, which is never advertised automatically. Select the interface explicitly, or assign static addresses to both ends.
+
+With **Accept only on this interface** enabled, connections arriving anywhere else are refused, and all connections are refused while that interface is missing.
 
 </details>
 
