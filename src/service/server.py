@@ -22,7 +22,7 @@ import asyncio
 import socket
 import sys
 
-from typing import Optional, Dict, Tuple, Callable, Awaitable
+from typing import Optional, Dict, List, Tuple, Callable, Awaitable
 
 from config import ApplicationConfig, ServerConfig
 from model.client import ClientObj, ClientsManager
@@ -69,7 +69,13 @@ from input.clipboard import ClipboardListener, ClipboardController
 
 from utils import BackgroundTasks, UIDGenerator
 from utils.metrics import PerformanceMonitor
-from utils.net import MissingIpError, get_local_ip, invalidate_local_ip_cache
+from utils.net import (
+    MissingIpError,
+    get_local_ip,
+    invalidate_local_ip_cache,
+    list_local_interfaces_async,
+    resolve_advertise_interfaces,
+)
 from utils.crypto import CertificateManager
 from utils.crypto.sharing import CertificateSharing
 
@@ -96,6 +102,22 @@ class Server:
 
     CLEANUP_DELAY = 0.5
 
+    # Every listener binds this, always. ``config.host`` selects which address
+    # is *advertised*, not which one is bound: a bind tied to one address stops
+    # the server from starting the moment that address goes away (DHCP rebind,
+    # cable unplugged). Restricting reachability is ``host_exclusive``, applied
+    # at accept time instead.
+    BIND_ALL = "0.0.0.0"
+
+    # How often the advertised address set is re-derived while running, so a
+    # cable plugged in after start still gets announced. Matches the local-IP
+    # cache TTL in utils.net.
+    ADVERTISE_REFRESH_INTERVAL = 30.0
+
+    # A single TXT string caps at 255 bytes; 15 dotted quads plus separators
+    # stays well inside that with room for the key.
+    MAX_TXT_ADDRESSES = 15
+
     def __init__(
         self,
         app_config: Optional[ApplicationConfig] = None,
@@ -121,6 +143,16 @@ class Server:
         # client is added at connection-approval time). Guards uniqueness across
         # concurrent pairings.
         self._issued_uids: set[str] = set()
+
+        # Interface enumeration taken once per start / advertise refresh and
+        # shared between the certificate SAN and the mDNS record, so the two
+        # can never disagree. Set before the certificate block below, which
+        # already reads it.
+        self._iface_snapshot: Optional[list] = None
+        # Addresses currently advertised, in preference order. Also the source
+        # of truth for the ``host_exclusive`` accept filter.
+        self._advertised_addresses: List[str] = []
+        self._advertise_watch_task: Optional[asyncio.Task] = None
 
         self.certfile, self.keyfile = None, None
         if self.config.ssl_enabled:
@@ -259,12 +291,18 @@ class Server:
                     "SSL certificates not found, generating new ones..."
                 )
                 hostname = socket.gethostname()
-                ip = get_local_ip()
+                addresses = self.config.get_advertise_addresses(self._iface_snapshot)
+                if not addresses:
+                    # get_advertise_addresses never raises, so this is the only
+                    # path left that can surface MissingIpError - and callers
+                    # (and tests) rely on that exception to distinguish "the
+                    # machine is offline" from "certificates are broken".
+                    addresses = [get_local_ip()]
 
                 if not self._cert_manager.generate_ca():
                     raise RuntimeError("Failed to generate CA certificate")
                 if not self._cert_manager.generate_server_certificate(
-                    hostname, [ip, "localhost"]
+                    hostname, [*addresses, "localhost", "127.0.0.1"]
                 ):
                     raise RuntimeError("Failed to generate server SSL certificate")
 
@@ -294,45 +332,54 @@ class Server:
             raise
 
     def _reissue_server_cert_if_ip_changed(self) -> None:
-        """Re-issue the server leaf cert when the current IP left its SAN.
+        """Re-issue the server leaf cert when an advertised IP left its SAN.
 
-        Keeps the CA intact (clients stay paired) and unions the current IP with
-        the SANs already present, so a client still dialing the old IP mid-
-        reconnect keeps validating until mDNS retargets it.
+        Keeps the CA intact (clients stay paired) and unions the advertised
+        addresses with the SANs already present, so a client still dialing the
+        old IP mid-reconnect keeps validating until mDNS retargets it.
+
+        The test is set containment, not "is the default-route IP present": on
+        a multi-homed host that one address is already in the SAN, so a
+        single-value check would never fire and the address the admin actually
+        selected would never be covered.
         """
         # Force a fresh lookup: the 30s TTL cache may still hold the pre-change
         # IP right after a network event.
         invalidate_local_ip_cache()
-        try:
-            current_ip = get_local_ip(force_refresh=True)
-        except MissingIpError as e:
-            # No usable address right now (machine offline). The existing
-            # certificates stay valid for whenever the network comes back —
-            # never discard them over a failed probe.
-            self._logger.warning(
-                "Skipping certificate SAN check, local IP unavailable",
-                error=str(e),
-            )
-            return
+        addresses = self.config.get_advertise_addresses(self._iface_snapshot)
+        if not addresses:
+            try:
+                addresses = [get_local_ip(force_refresh=True)]
+            except MissingIpError as e:
+                # No usable address right now (machine offline). The existing
+                # certificates stay valid for whenever the network comes back —
+                # never discard them over a failed probe.
+                self._logger.warning(
+                    "Skipping certificate SAN check, local IP unavailable",
+                    error=str(e),
+                )
+                return
 
         san_ips, san_dns = self._cert_manager.get_server_cert_san()
-        if current_ip in san_ips:
+        missing = [ip for ip in addresses if ip not in san_ips]
+        if not missing:
             return
 
         hostname = socket.gethostname()
         # Preserve existing SAN entries (old IPs + any DNS names) and add the
-        # current IP and localhost, de-duplicated while keeping order.
+        # advertised addresses and localhost, de-duplicated while keeping order.
         # generate_server_certificate() always re-adds ``hostname`` as a DNS
         # name, and classifies each remaining entry as an IP or, on failure, a
         # DNS name (so preserved hostnames stay valid).
         extra_names: list[str] = []
-        for name in [*san_ips, *san_dns, current_ip, "localhost"]:
+        for name in [*san_ips, *san_dns, *addresses, "localhost", "127.0.0.1"]:
             if name != hostname and name not in extra_names:
                 extra_names.append(name)
 
         self._logger.warning(
-            "Server IP not covered by certificate SAN, re-issuing leaf certificate",
-            current_ip=current_ip,
+            "Advertised address not covered by certificate SAN, re-issuing leaf",
+            missing_ips=missing,
+            advertised=addresses,
             previous_san_ips=san_ips,
             new_san_names=extra_names,
         )
@@ -1315,6 +1362,30 @@ class Server:
         except OSError:
             return False
 
+    def _on_interface_accept(self, local_ip: str) -> bool:
+        """Admission filter for ``host_exclusive``.
+
+        The listener always binds every interface, so restricting reachability
+        happens here instead: a connection whose local endpoint is not the
+        selected address is refused. Doing it at bind time would stop the
+        server from starting whenever that address is momentarily absent.
+        """
+        if not self.config.host_exclusive:
+            return True
+        allowed = self._advertised_addresses or self.config.get_advertise_addresses()
+        if not allowed:
+            # Nothing resolved: fail open rather than locking the admin out of
+            # their own server over a transient enumeration failure.
+            return True
+        if local_ip in allowed[:1]:
+            return True
+        self._logger.warning(
+            "Rejected connection on non-selected interface",
+            local_ip=local_ip,
+            selected=allowed[0],
+        )
+        return False
+
     async def start(self) -> bool:
         """Start the server with enabled components"""
         if self._running:
@@ -1323,13 +1394,22 @@ class Server:
 
         self._logger.info("Starting Server...")
 
+        # Enumerate once, up front, and thread this snapshot through both the
+        # certificate SAN and the mDNS record below.
+        self._iface_snapshot = await list_local_interfaces_async()
+        self._advertised_addresses = self.config.get_advertise_addresses(
+            self._iface_snapshot
+        )
+
         # Refuse to start if the data port is taken. Unlike the pairing
         # port, this one is published over mDNS and baked into client
         # configs — a silent fallback would confuse everything.
-        if not self._is_port_available(self.config.host, self.config.port):
+        # Probe the wildcard, matching the bind below. Probing config.host
+        # would report EADDRNOTAVAIL - "no such address here" - as a port
+        # conflict whenever the selected interface is momentarily absent.
+        if not self._is_port_available(self.BIND_ALL, self.config.port):
             error_msg = (
-                f"Port {self.config.port} is already in use on "
-                f"{self.config.host or 'all interfaces'}. "
+                f"Port {self.config.port} is already in use. "
                 f"Change the port in Options and try again."
             )
             self._logger.error(error_msg)
@@ -1337,7 +1417,7 @@ class Server:
                 error_msg,
                 reason="port_in_use",
                 port=self.config.port,
-                host=self.config.host,
+                host=self.BIND_ALL,
             )
 
         # Certificate setup deferred from __init__. Retry now that the user explicitly asked
@@ -1368,7 +1448,7 @@ class Server:
             connected_callback=self._on_client_connected,
             disconnected_callback=self._on_client_disconnected,
             reconnected_callback=self._on_client_stream_reconnected,
-            host=self.config.host,
+            host=self.BIND_ALL,
             port=self.config.port,
             heartbeat_interval=self.config.heartbeat_interval,
             allowlist=self.clients_manager,
@@ -1383,6 +1463,7 @@ class Server:
             approval_callback=self._request_client_approval,
             rejected_callback=self._on_client_rejected,
             server_uid=self.config.uid,
+            interface_filter=self._on_interface_accept,
         )
 
         try:
@@ -1402,7 +1483,7 @@ class Server:
         # to an adjacent port). Failure is non-fatal.
         if self.config.ssl_enabled:
             try:
-                await self.start_pairing_service(host=self.config.host)
+                await self.start_pairing_service(host=self.BIND_ALL)
             except Exception as e:
                 self._logger.warning("Pairing service did not start", error=str(e))
 
@@ -1412,7 +1493,19 @@ class Server:
         advertised_pairing = (
             actual_pairing if actual_pairing else self.config.get_pairing_port()
         )
+        # One enumeration, reused for the SAN check above and the record
+        # below, so the certificate and the advertisement can never disagree.
+        addresses = self._advertised_addresses or self.config.get_advertise_addresses(
+            self._iface_snapshot
+        )
+        self._advertised_addresses = addresses
         extra_props = {"pairing_port": str(advertised_pairing)}
+        if addresses:
+            # Full candidate list for clients that know to look: a client that
+            # cannot reach the A record can fall back without the admin having
+            # to configure anything. Old clients ignore TXT keys they don't
+            # know, which is why this is a TXT and not extra A records.
+            extra_props["addresses"] = ",".join(addresses[: self.MAX_TXT_ADDRESSES])
         service_task = None
         try:
             service_task = self._bg_tasks.spawn(
@@ -1421,6 +1514,9 @@ class Server:
                     port=self.config.port,
                     uid=self.config.uid,
                     extra_props=extra_props,
+                    interface_addresses=resolve_advertise_interfaces(
+                        self.config.host, self._iface_snapshot
+                    ),
                 ),
                 name="mdns_register_service",
             )
@@ -1486,10 +1582,96 @@ class Server:
         except Exception as e:
             self._logger.warning("Failed to start monitor watch task", error=str(e))
 
+        try:
+            self._advertise_watch_task = self._bg_tasks.spawn(
+                self._advertise_watch_loop(), name="advertise_watch_loop"
+            )
+        except Exception as e:
+            self._logger.warning("Failed to start advertise watch task", error=str(e))
+
         self._logger.info(
-            "Server started", host=self.config.host, port=self.config.port
+            "Server started",
+            bind=self.BIND_ALL,
+            advertising=self._advertised_addresses,
+            port=self.config.port,
         )
         return True
+
+    async def _advertise_watch_loop(self) -> None:
+        """Re-derive the advertised addresses periodically.
+
+        Registration happens once at start, so without this a cable plugged
+        in after the server is up is never announced and never enters the
+        certificate SAN - the user would have to restart to be reachable on
+        an interface that already works.
+        """
+        while self._running:
+            try:
+                await asyncio.sleep(self.ADVERTISE_REFRESH_INTERVAL)
+                if not self._running:
+                    return
+                await self.refresh_advertisement()
+            except asyncio.CancelledError:
+                return
+            except Exception as e:  # noqa: BLE001 - a bad tick must not kill the loop
+                self._logger.warning("Advertise refresh failed", error=str(e))
+
+    async def refresh_advertisement(self, force: bool = False) -> None:
+        """Re-resolve the advertised addresses; re-issue the SAN, then re-announce.
+
+        Ordering is load-bearing: the certificate must cover an address
+        *before* any client is pointed at it, or every already-paired client
+        that retargets fails the handshake on an IP the leaf does not carry.
+        """
+        interfaces = await list_local_interfaces_async()
+        addresses = self.config.get_advertise_addresses(interfaces)
+        if not addresses:
+            self._logger.warning("No usable address to advertise; keeping previous")
+            return
+        if not force and addresses == self._advertised_addresses:
+            return
+
+        self._iface_snapshot = interfaces
+        loop = asyncio.get_running_loop()
+
+        if self.config.ssl_enabled:
+            # Synchronous and does RSA keygen when it actually re-issues.
+            await loop.run_in_executor(None, self._reissue_server_cert_if_ip_changed)
+            if self.connection_handler is not None:
+                # The listener caches its SSLContext on file paths, which do
+                # not change when the leaf is rewritten in place.
+                invalidate = getattr(
+                    self.connection_handler, "invalidate_ssl_context", None
+                )
+                if callable(invalidate):
+                    invalidate()
+
+        actual_pairing = self.get_pairing_actual_port()
+        advertised_pairing = (
+            actual_pairing if actual_pairing else self.config.get_pairing_port()
+        )
+        extra_props = {
+            "pairing_port": str(advertised_pairing),
+            "addresses": ",".join(addresses[: self.MAX_TXT_ADDRESSES]),
+        }
+
+        await self._mdns_service.unregister_service()
+        await self._mdns_service.register_service(
+            host=self.config.host,
+            port=self.config.port,
+            uid=self.config.uid,
+            extra_props=extra_props,
+            interface_addresses=resolve_advertise_interfaces(
+                self.config.host, interfaces
+            ),
+        )
+
+        self._logger.info(
+            "Advertisement refreshed",
+            previous=self._advertised_addresses,
+            current=addresses,
+        )
+        self._advertised_addresses = addresses
 
     async def stop(self, force: bool = False):
         """Stop all server components"""

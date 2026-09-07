@@ -222,6 +222,7 @@ pub enum CommandType {
     // OS-level permissions (macOS Accessibility / Input Monitoring)
     GetPermissions,
     RequestPermissions,
+    ListNetworkInterfaces,
 }
 
 impl Type for CommandType {}

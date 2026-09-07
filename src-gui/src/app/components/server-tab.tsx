@@ -36,7 +36,7 @@ import {
     addClient as addClientCommand,
     approveClient as approveClientCommand,
     denyClient as denyClientCommand,
-    getLocalIpAddress,
+    listNetworkInterfaces,
     removeClient as removeClientCommand,
     saveServerConfig,
     setClientLayout,
@@ -47,6 +47,7 @@ import {
 } from '../api/Sender';
 import {listenCommand, listenGeneralEvent} from '../api/Listener';
 import {
+    ADVERTISE_AUTO,
     ClientApprovalRequest,
     ClientApprovalResolved,
     ClientRejected,
@@ -54,6 +55,8 @@ import {
     ClientObj,
     CommandType,
     EventType,
+    NetworkInterfaceInfo,
+    NetworkInterfacesResult,
     OtpInfo,
     PairingRequestInfo,
     ServerStatus,
@@ -117,7 +120,12 @@ export function ServerTab({onStatusChange, state}: ServerTabProps) {
     }, [state.authorized_clients]);
     const [uid, setUid] = useState(state.uid);
     const [port, setPort] = useState(state.port.toString());
+    // Interface preference, not a bind address. "0.0.0.0" means "advertise on
+    // every interface" and is the default.
     const [host, setHost] = useState(state.host);
+    const [hostExclusive, setHostExclusive] = useState(state.host_exclusive ?? false);
+    const [interfaces, setInterfaces] = useState<NetworkInterfaceInfo[]>([]);
+    const [advertised, setAdvertised] = useState<string[]>([]);
     const [enableMouse, setEnableMouse] = useState(parseStreams(state.streams_enabled).includes(StreamType.Mouse));
     const [enableKeyboard, setEnableKeyboard] = useState(parseStreams(state.streams_enabled).includes(StreamType.Keyboard));
     const [enableClipboard, setEnableClipboard] = useState(parseStreams(state.streams_enabled).includes(StreamType.Clipboard));
@@ -158,22 +166,69 @@ export function ServerTab({onStatusChange, state}: ServerTabProps) {
     const otpFocus = useRef<HTMLDivElement>(null);
     const saveOptionsTimeoutRef = useRef<ReturnType<typeof setTimeout> | null>(null);
     const ipInputRef = useRef<HTMLInputElement>(null);
+    const portInputRef = useRef<HTMLInputElement>(null);
+
+    // Live mirror of the options, so a debounced save always ships the current
+    // values for the fields it is not changing. See scheduleOptionsSave.
+    const optionsRef = useRef({host, port, requireSSL, hostExclusive});
+    optionsRef.current = {host, port, requireSSL, hostExclusive};
+
+    // ``host`` is an interface preference owned by the daemon, and "0.0.0.0"
+    // legitimately means "all of them". Nothing here computes an address: the
+    // GUI used to overwrite the saved value with the frontend's own route
+    // lookup, which on a multi-homed machine wrote the wrong interface and,
+    // via the options save, persisted it as the bind address.
+
+    /**
+     * Pull the interface list from the daemon, the only authority on addresses.
+     *
+     * A daemon too old to know the command answers with a generic error rather
+     * than a command_error for it, so the listener would never fire: the
+     * timeout is what keeps the picker from spinning forever in that case.
+     */
+    const refreshInterfaces = () => {
+        let settled = false;
+        const done = () => {
+            settled = true;
+            listeners.removeListener('list-network-interfaces');
+            listeners.removeListener('list-network-interfaces-error');
+        };
+
+        listenCommand(EventType.CommandSuccess, CommandType.ListNetworkInterfaces, (event) => {
+            const result = event.data?.result as NetworkInterfacesResult | undefined;
+            if (result) {
+                setInterfaces(result.interfaces ?? []);
+                setAdvertised(result.advertised ?? []);
+                if (result.selected) setHost(result.selected);
+            }
+            done();
+        }).then(unlisten => listeners.addListenerOnce('list-network-interfaces', unlisten));
+
+        listenCommand(EventType.CommandError, CommandType.ListNetworkInterfaces, (event) => {
+            console.error('Failed to list network interfaces:', event.data?.error);
+            done();
+        }).then(unlisten => listeners.addListenerOnce('list-network-interfaces-error', unlisten));
+
+        listNetworkInterfaces().catch(err => {
+            console.error('Error invoking listNetworkInterfaces:', err);
+            done();
+        });
+
+        setTimeout(() => {
+            if (!settled) {
+                console.warn('list_network_interfaces timed out (daemon too old?)');
+                done();
+            }
+        }, 5000);
+    };
 
     useEffect(() => {
-        if (state.host === '' || state.host === '0.0.0.0') {
-            getLocalIpAddress().then(ip => setHost(ip));
-        } else {
-            // If saved IP has changed, update it
-            getLocalIpAddress().then(ip => {
-                if (state.host !== ip) {
-                    setHost(ip);
-                }
-            }).catch(err => {
-                setHost('0.0.0.0'); // Fallback
-                console.error('Failed to get local IP address:', err);
-            });
-        }
+        refreshInterfaces();
     }, []);
+
+    useEffect(() => {
+        if (showOptions) refreshInterfaces();
+    }, [showOptions]);
 
     // The daemon snapshots ``pending_approvals`` on every STATUS response so a
     // GUI launched AFTER the daemon (with a client already awaiting approval)
@@ -497,7 +552,13 @@ export function ServerTab({onStatusChange, state}: ServerTabProps) {
         switchTrayIcon(state.running);
         setUid(state.uid);
         setHost(state.host);
-        setPort(state.port.toString());
+        setHostExclusive(state.host_exclusive ?? false);
+        // Status arrives every couple of seconds; adopting it while the user is
+        // mid-edit would wipe what they are typing before the debounced save
+        // has had a chance to run.
+        if (document.activeElement !== portInputRef.current) {
+            setPort(state.port.toString());
+        }
         setRequireSSL(state.ssl_enabled);
         let permissions = parseStreams(state.streams_enabled);
         setEnableMouse(permissions.includes(StreamType.Mouse));
@@ -1025,8 +1086,8 @@ export function ServerTab({onStatusChange, state}: ServerTabProps) {
         return `${hours}:${minutes.toString().padStart(2, '0')}:${secs.toString().padStart(2, '0')}`;
     };
 
-    const handleSaveOptions = (hostValue: string, portValue: string, sslEnabledValue: boolean, save_feedback: boolean = true) => {
-        console.log('Saving options:', {host: hostValue, port: portValue, sslEnabled: sslEnabledValue});
+    const handleSaveOptions = (hostValue: string, portValue: string, sslEnabledValue: boolean, save_feedback: boolean = true, hostExclusiveValue: boolean = hostExclusive) => {
+        console.log('Saving options:', {host: hostValue, port: portValue, sslEnabled: sslEnabledValue, hostExclusive: hostExclusiveValue});
 
         if (save_feedback) {
             listenCommand(EventType.CommandSuccess, CommandType.SetServerConfig, (event) => {
@@ -1046,7 +1107,7 @@ export function ServerTab({onStatusChange, state}: ServerTabProps) {
         });
 
         const portNum = parseInt(portValue, 10);
-        saveServerConfig(hostValue, portNum, sslEnabledValue).catch((err) => {
+        saveServerConfig(hostValue, portNum, sslEnabledValue, hostExclusiveValue).catch((err) => {
             console.error('Error saving options:', err);
             addNotification('error', 'Failed to save options');
             listeners.forceRemoveListener('set-server-config');
@@ -1055,16 +1116,22 @@ export function ServerTab({onStatusChange, state}: ServerTabProps) {
 
     };
 
-    const scheduleOptionsSave = (hostValue: string, portValue: string, sslEnabledValue: boolean) => {
-        // Clear existing timeout
+    /**
+     * Save a subset of the options, taking every other field from the live
+     * values rather than from whatever the caller happened to close over.
+     *
+     * Editing only the port used to ship the stale ``host`` captured in the
+     * handler's closure, silently persisting an address the user never chose.
+     * Passing one key at a time makes that class of bug unrepresentable.
+     */
+    const scheduleOptionsSave = (patch: Partial<typeof optionsRef.current>) => {
+        const next = {...optionsRef.current, ...patch};
         if (saveOptionsTimeoutRef.current) {
             clearTimeout(saveOptionsTimeoutRef.current);
         }
-
-        // Schedule new save after inactivity
         saveOptionsTimeoutRef.current = setTimeout(() => {
-            handleSaveOptions(hostValue, portValue, sslEnabledValue, false);
-        }, 100);
+            handleSaveOptions(next.host, next.port, next.requireSSL, false, next.hostExclusive);
+        }, 400); // long enough not to fire mid-keystroke
     };
 
     return (
@@ -1560,7 +1627,7 @@ export function ServerTab({onStatusChange, state}: ServerTabProps) {
                                         onCheckedChange={(checked) => {
                                             if (otp !== '' || otpRequested) return;
                                             setRequireSSL(checked);
-                                            handleSaveOptions(host, port, checked, false);
+                                            scheduleOptionsSave({requireSSL: checked});
                                         }}
                                     />
                                 </div>
@@ -1624,31 +1691,84 @@ export function ServerTab({onStatusChange, state}: ServerTabProps) {
                             <div>
                                 <label className="block mb-2 font-semibold"
                                        style={{color: 'var(--app-text-primary)'}}
-                                >Host</label>
-                                <input
-                                    type="text"
+                                >Advertise on</label>
+                                <select
                                     value={host}
                                     onChange={(e) => {
                                         const newHost = e.target.value;
                                         setHost(newHost);
-                                        scheduleOptionsSave(newHost, port, requireSSL);
+                                        // "All interfaces" and per-interface
+                                        // isolation are contradictory.
+                                        const nextExclusive = newHost === ADVERTISE_AUTO ? false : hostExclusive;
+                                        setHostExclusive(nextExclusive);
+                                        scheduleOptionsSave({host: newHost, hostExclusive: nextExclusive});
                                     }}
                                     className="app-input"
                                     disabled={isRunning}
-                                />
+                                >
+                                    <option value={ADVERTISE_AUTO}>Auto (all interfaces)</option>
+                                    {interfaces.map((iface) => (
+                                        <option key={`${iface.name}-${iface.ip}`} value={iface.ip}>
+                                            {`${iface.display_name} — ${iface.ip}/${iface.prefix}`}
+                                            {iface.is_default_route ? ' (default route)' : ''}
+                                        </option>
+                                    ))}
+                                    {host !== ADVERTISE_AUTO && !interfaces.some(i => i.ip === host) && (
+                                        // Keep a vanished selection visible rather than
+                                        // silently snapping back to Auto, which would hide
+                                        // the real problem (cable out, adapter disabled).
+                                        <option value={host} disabled>
+                                            {`${host} (not present)`}
+                                        </option>
+                                    )}
+                                </select>
+                                {host !== ADVERTISE_AUTO && !interfaces.some(i => i.ip === host) && (
+                                    <p className="mt-1 text-xs" style={{color: 'var(--app-warning, #b45309)'}}>
+                                        This interface is not currently available. Perpetua is
+                                        advertising on all interfaces until it comes back.
+                                    </p>
+                                )}
+                                <p className="mt-1 text-xs" style={{color: 'var(--app-text-muted)'}}>
+                                    {advertised.length
+                                        ? `Advertising: ${advertised.join(', ')}`
+                                        : 'Advertising: nothing — no usable address'}
+                                </p>
                             </div>
+
+                            {host !== ADVERTISE_AUTO && (
+                                <div className="flex items-center justify-between">
+                                    <label htmlFor="hostExclusive" className="font-semibold"
+                                           style={{color: 'var(--app-text-primary)'}}>
+                                        Accept only on this interface
+                                        <span className="block text-xs font-normal"
+                                              style={{color: 'var(--app-text-muted)'}}>
+                                            Refuse connections arriving on any other interface.
+                                        </span>
+                                    </label>
+                                    <Switch
+                                        id="hostExclusive"
+                                        checked={hostExclusive}
+                                        disabled={isRunning}
+                                        onCheckedChange={(checked) => {
+                                            setHostExclusive(checked);
+                                            scheduleOptionsSave({hostExclusive: checked});
+                                        }}
+                                    />
+                                </div>
+                            )}
 
                             <div>
                                 <label className="block mb-2 font-semibold"
                                        style={{color: 'var(--app-text-primary)'}}
                                 >Port</label>
                                 <input
+                                    ref={portInputRef}
                                     type="text"
                                     value={port}
                                     onChange={(e) => {
                                         const newPort = e.target.value;
                                         setPort(newPort);
-                                        scheduleOptionsSave(host, newPort, requireSSL);
+                                        scheduleOptionsSave({port: newPort});
                                     }}
                                     className="app-input"
                                     disabled={isRunning}

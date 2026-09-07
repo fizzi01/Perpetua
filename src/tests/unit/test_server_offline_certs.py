@@ -28,12 +28,13 @@ import pytest
 
 from service import server as server_module
 from service.server import Server, ServerStartError
+from utils import net as net_module
 from utils.net import MissingIpError
 
 
 @pytest.fixture
 def offline(monkeypatch):
-    """Make every local-IP lookup inside service.server fail."""
+    """Make every source of a local address inside service.server come up empty."""
 
     def _no_ip(*_args, **_kwargs):
         raise MissingIpError(
@@ -41,6 +42,11 @@ def offline(monkeypatch):
         )
 
     monkeypatch.setattr(server_module, "get_local_ip", _no_ip)
+    # There are two independent sources now: the route probe above and the
+    # interface enumeration behind ServerConfig.get_advertise_addresses. A
+    # machine with no network has neither, so stubbing only one would leave
+    # these tests asserting against a half-offline host that cannot exist.
+    monkeypatch.setattr(net_module, "list_local_interfaces", lambda *_a, **_k: [])
     # Pin the hostname too: certificate generation feeds it into the cert, and
     # letting the real machine name through makes these tests depend on
     # whatever the CI runner happens to be called.

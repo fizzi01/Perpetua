@@ -246,6 +246,74 @@ class TestServerConfigSerialization:
         assert server_config.is_stream_enabled(1) is True
         assert server_config.is_stream_enabled(12) is False
 
+    def test_to_dict_carries_fields_the_daemon_hand_builds(self, server_config):
+        """``pairing_port`` was already missing from the daemon's config dicts.
+
+        Lock both keys in: a field absent there is a field the GUI cannot read
+        back, so it silently overwrites it on the next save.
+        """
+        data = server_config.to_dict()
+
+        assert "pairing_port" in data
+        assert "host_exclusive" in data
+
+
+class TestServerConfigAdvertise:
+    """``host`` is an interface preference, not a bind address."""
+
+    def test_host_defaults_to_all_interfaces(self, server_config):
+        assert server_config.host == "0.0.0.0"
+        assert server_config.host_exclusive is False
+
+    @pytest.mark.parametrize("absent", [{}, {"host_exclusive": None}])
+    def test_host_exclusive_defaults_off(self, server_config, absent):
+        """A 1.6.0 config has no such key; isolation must stay opt-in."""
+        server_config.from_dict(absent)
+
+        assert server_config.host_exclusive is False
+
+    @pytest.mark.parametrize("bogus", ["yes", 1, [], {"a": 1}])
+    def test_only_a_real_bool_restricts_the_listener(self, server_config, bogus):
+        """A botched manual edit must never silently narrow what is accepted."""
+        server_config.from_dict({"host_exclusive": bogus})
+
+        assert server_config.host_exclusive is False
+
+    def test_host_exclusive_roundtrip(self, server_config):
+        server_config.host_exclusive = True
+
+        reloaded = ServerConfig()
+        reloaded.from_dict(server_config.to_dict())
+
+        assert reloaded.host_exclusive is True
+
+    def test_legacy_wildcard_host_means_every_interface(self, server_config):
+        """No migration step: the value 1.6.0 already stored reads correctly."""
+        from utils.net._base import LocalInterface
+
+        ifaces = [
+            LocalInterface("en0", "Wi-Fi", "192.168.1.20", 24, "192.168.1.0/24", True),
+            LocalInterface("eth1", "Ethernet", "10.0.0.1", 24, "10.0.0.0/24", False),
+        ]
+        server_config.from_dict({"host": "0.0.0.0"})
+
+        assert server_config.get_advertise_addresses(ifaces) == [
+            "192.168.1.20",
+            "10.0.0.1",
+        ]
+
+    def test_legacy_concrete_host_selects_that_interface(self, server_config):
+        """The value the GUI bug used to persist now reads as an explicit pick."""
+        from utils.net._base import LocalInterface
+
+        ifaces = [
+            LocalInterface("en0", "Wi-Fi", "192.168.1.20", 24, "192.168.1.0/24", True),
+            LocalInterface("eth1", "Ethernet", "10.0.0.1", 24, "10.0.0.0/24", False),
+        ]
+        server_config.from_dict({"host": "10.0.0.1"})
+
+        assert server_config.get_advertise_addresses(ifaces)[0] == "10.0.0.1"
+
 
 # ============================================================================
 # Test ServerConfig - Persistence

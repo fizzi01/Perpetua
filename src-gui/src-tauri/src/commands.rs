@@ -325,15 +325,19 @@ pub async fn set_server_config(
     host: String,
     port: i32,
     ssl_enabled: bool,
+    host_exclusive: bool,
     s: tauri::State<'_, AtomicAsyncWriter>,
 ) -> Result<(), String> {
-    let command = CommandEvent::build(
-        CommandType::SetServerConfig,
-        &format!(
-            r#"{{ "host": "{}", "port": {}, "ssl_enabled": {} }}"#,
-            host, port, ssl_enabled
-        ),
-    );
+    // Built with serde_json rather than string interpolation: `host` is
+    // user-supplied, and a quote in it would previously produce a malformed
+    // frame the daemon silently rejected.
+    let params = serde_json::json!({
+        "host": host,
+        "port": port,
+        "ssl_enabled": ssl_enabled,
+        "host_exclusive": host_exclusive,
+    });
+    let command = CommandEvent::build(CommandType::SetServerConfig, &params.to_string());
     let command = EventParser::serialize(&command).map_err(|e| {
         format!(
             "Failed to serialize {} command: {}",
@@ -676,6 +680,33 @@ pub async fn get_permissions(s: tauri::State<'_, AtomicAsyncWriter>) -> Result<(
         format!(
             "Failed to send {} command ({})",
             CommandType::GetPermissions,
+            e
+        )
+    })?;
+    Ok(())
+}
+
+/// Ask the daemon which local interfaces exist.
+///
+/// The daemon is the only authority on addresses - the frontend must not run
+/// its own route lookup, which is how the wrong interface used to end up
+/// persisted as the server's advertise address on multi-homed machines.
+#[tauri::command]
+pub async fn list_network_interfaces(
+    s: tauri::State<'_, AtomicAsyncWriter>,
+) -> Result<(), String> {
+    let command = CommandEvent::build(CommandType::ListNetworkInterfaces, "{}");
+    let command = EventParser::serialize(&command).map_err(|e| {
+        format!(
+            "Failed to serialize {} command: {}",
+            CommandType::ListNetworkInterfaces,
+            e
+        )
+    })?;
+    s.send(command).await.map_err(|e| {
+        format!(
+            "Failed to send {} command ({})",
+            CommandType::ListNetworkInterfaces,
             e
         )
     })?;

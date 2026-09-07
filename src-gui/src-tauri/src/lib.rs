@@ -563,6 +563,8 @@ pub fn run(daemon_config: Option<DaemonConfig>, start_minimized: bool) {
             // -- OS-level permissions (macOS gate) --
             commands::get_permissions,
             commands::request_permissions,
+            // -- Network interfaces (advertise picker) --
+            commands::list_network_interfaces,
         ])
         .setup(move |app| {
             // Spawn daemon (release) or create empty handle (debug)

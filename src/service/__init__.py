@@ -23,7 +23,7 @@ Service package provides server and client public APIs.
 from utils import UIDGenerator
 
 import asyncio
-from typing import Dict, Optional
+from typing import Dict, List, Optional, Tuple
 import socket
 
 from zeroconf import (
@@ -202,12 +202,22 @@ class ServiceDiscovery:
             timeout: The timeout for mDNS operations in seconds.
         """
         self._async_zercnf = async_mdns if async_mdns is not None else AsyncZeroconf()
+        # True when we built the instance ourselves and may therefore create
+        # extra per-interface ones alongside it. An injected instance (tests,
+        # callers that own the lifecycle) is used exactly as given.
+        self._owns_zeroconf = async_mdns is None
         self._mdns_timeout = timeout
 
         self._service_type = (
             "_" + ApplicationConfig.service_name.lower() + "._tcp.local."
         )
         self._uid: Optional[str] = None
+
+        # One responder per advertised interface, each announcing only that
+        # interface's own address. A client on a given link then receives an
+        # address reachable on that link without reading TXT or probing -
+        # which is what makes an unupgraded client work on a direct cable.
+        self._iface_responders: List[Tuple[AsyncZeroconf, ServiceInfo]] = []
 
         self._logger = get_logger(self.__class__.__name__)
 
@@ -275,6 +285,7 @@ class ServiceDiscovery:
         host: str,
         port: int,
         extra_props: Optional[Dict[str, str]] = None,
+        interface_addresses: Optional[List[str]] = None,
     ) -> None:
         """
         Registers a network service using mDNS. This allows the service
@@ -286,6 +297,11 @@ class ServiceDiscovery:
             host (str): The hostname or IP address the service is bound to. If a hostname
                 is provided, it will be resolved to an IP address.
             port (int): The network port on which the service is running.
+            extra_props: Additional TXT entries, coerced to ``str``.
+            interface_addresses: Advertise from a dedicated responder on each
+                of these addresses, announcing that address only. Falls back
+                to one responder on every interface announcing ``host`` -
+                the pre-existing behaviour - when omitted or unusable.
 
         Raises:
             ValueError: If the host is an empty string, or if the service type or name
@@ -304,9 +320,18 @@ class ServiceDiscovery:
             host = await self.resolve_hostname(host)
         else:
             if self._is_loopback(host):
-                host = CommonNetInfo.get_local_ip()
+                # "0.0.0.0" is a bind wildcard, never an advertisable address.
+                # Prefer the caller's resolved list; the route probe is only
+                # the last resort now.
+                if interface_addresses:
+                    host = interface_addresses[0]
+                else:
+                    host = CommonNetInfo.get_local_ip()
             hostname = socket.gethostname()
 
+        # Mint the UID *after* the address is settled: on a first run it is
+        # derived from it. Existing installs pass a persisted uid, so this
+        # never re-mints for them.
         if self._uid is None:
             self._uid = ServiceDiscovery.generate_uid(host)
 
@@ -321,6 +346,14 @@ class ServiceDiscovery:
                     if v is None:
                         continue
                     properties[str(k)] = str(v)
+
+            targets = [a for a in (interface_addresses or []) if self._is_ip(a)]
+            if self._owns_zeroconf and targets:
+                await self._register_per_interface(
+                    targets, service_name, port, properties
+                )
+                return
+
             s_info = ServiceInfo(
                 type_=self._service_type,
                 name=service_name,
@@ -345,10 +378,71 @@ class ServiceDiscovery:
             self._logger.exception("Unhandled service error", error=str(e))
             raise RuntimeError(f"Failed to register mDNS service ({e})")
 
+    async def _register_per_interface(
+        self,
+        addresses: List[str],
+        service_name: str,
+        port: int,
+        properties: Dict[str, str],
+    ) -> None:
+        """One responder per address, each announcing only its own address.
+
+        A client sees a record whose A entry is reachable on the very link the
+        packet arrived on. Where a client can see several of our links the
+        records merge in its cache, which is what the TXT address list and the
+        client-side probe are there to resolve.
+        """
+        await self._unregister_iface_responders()
+
+        registered: List[str] = []
+        for ip in addresses:
+            try:
+                azc = AsyncZeroconf(interfaces=[ip])
+                s_info = ServiceInfo(
+                    type_=self._service_type,
+                    name=service_name,
+                    parsed_addresses=[ip],
+                    port=port,
+                    properties=properties,
+                )
+                await azc.async_register_service(s_info)
+            except Exception as e:  # noqa: BLE001 - one bad NIC must not stop the rest
+                self._logger.warning(
+                    "Could not advertise on interface", address=ip, error=str(e)
+                )
+                continue
+            self._iface_responders.append((azc, s_info))
+            registered.append(ip)
+
+        if not registered:
+            raise RuntimeError("Failed to register mDNS service on any interface")
+
+        self._logger.info(
+            "mDNS service registered per interface.",
+            uid=self._uid,
+            port=port,
+            addresses=registered,
+            **properties,
+        )
+
+    async def _unregister_iface_responders(self) -> None:
+        """Tear down every per-interface responder, best effort."""
+        for azc, s_info in self._iface_responders:
+            try:
+                await azc.async_unregister_service(s_info)
+            except Exception as e:  # noqa: BLE001 - teardown is best effort
+                self._logger.debug(f"Per-interface unregister failed ({e})")
+            try:
+                await azc.async_close()
+            except Exception as e:  # noqa: BLE001
+                self._logger.debug(f"Per-interface close failed ({e})")
+        self._iface_responders.clear()
+
     async def _unregister_service(self):
         if self._async_zercnf is None:
             raise RuntimeError("Zeroconf instance is not initialized")
 
+        await self._unregister_iface_responders()
         await self._async_zercnf.async_unregister_all_services()
         self._logger.info("mDNS service unregistered.")
 
@@ -407,6 +501,7 @@ class ServiceDiscovery:
         port: int,
         uid: Optional[str] = None,
         extra_props: Optional[Dict[str, str]] = None,
+        interface_addresses: Optional[List[str]] = None,
     ) -> None:
         """
         It registers a service on the network using mDNS.
@@ -428,7 +523,12 @@ class ServiceDiscovery:
         if uid is not None:
             self._uid = uid
         # TODO: We need to check if there is another service on same host/port
-        await self._register_service(host, port, extra_props=extra_props)
+        await self._register_service(
+            host,
+            port,
+            extra_props=extra_props,
+            interface_addresses=interface_addresses,
+        )
 
     async def unregister_service(self):
         """

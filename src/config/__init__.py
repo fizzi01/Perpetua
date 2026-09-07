@@ -472,8 +472,17 @@ class ServerConfig:
             self.app_config.get_config_dir(), self.app_config.config_file
         )
 
-        # Connection settings
+        # Connection settings.
+        # ``host`` is an *interface preference*, not a bind address: the
+        # listener always binds every interface (Server.BIND_ALL). It selects
+        # which address is advertised over mDNS and baked into the certificate
+        # SAN. "0.0.0.0" - the default, and the value in every config written
+        # before this became a preference - means "all of them".
         self.host: str = self.DEFAULT_HOST
+        # Reject connections that arrived on an interface other than the one
+        # ``host`` names. Opt-in: restricting the *bind* instead would stop the
+        # server from starting whenever that address is momentarily absent.
+        self.host_exclusive: bool = False
         self.port: int = self.DEFAULT_PORT
         self.heartbeat_interval: int = self.DEFAULT_HEARTBEAT_INTERVAL
         # Plaintext port the always-on pairing/cert-sharing listener binds to.
@@ -512,6 +521,23 @@ class ServerConfig:
         if isinstance(self.pairing_port, int) and self.pairing_port > 0:
             return self.pairing_port
         return self.port - 2
+
+    def get_advertise_addresses(self, interfaces: Optional[list] = None) -> List[str]:
+        """Addresses to advertise over mDNS and put in the certificate SAN.
+
+        This is the single place ``host`` is interpreted. "0.0.0.0" (the
+        default) means "every usable address"; anything else names one
+        interface, by adapter name, IP or friendly name.
+
+        :param interfaces: snapshot from ``utils.net.list_local_interfaces``.
+            Pass one so the SAN and the mDNS record are derived from the same
+            enumeration and cannot diverge across a link flap.
+        :return: chosen address first. Never raises; [] means "no usable
+            address right now", which callers treat as "skip, retry later".
+        """
+        from utils.net import resolve_advertise_addresses
+
+        return resolve_advertise_addresses(self.host, interfaces)
 
     # SSL Configuration
     def enable_ssl(self) -> None:
@@ -658,6 +684,7 @@ class ServerConfig:
         return {
             "uid": self.uid,
             "host": self.host,
+            "host_exclusive": self.host_exclusive,
             "port": self.port,
             "pairing_port": self.pairing_port,
             "heartbeat_interval": self.heartbeat_interval,
@@ -671,6 +698,9 @@ class ServerConfig:
         """Load configuration from dictionary"""
         self.uid = data.get("uid", self.uid)
         self.host = data.get("host", self.host)
+        # Only a real bool restricts the listener; a botched manual edit must
+        # never silently narrow what the server accepts.
+        self.host_exclusive = data.get("host_exclusive", self.host_exclusive) is True
         self.port = data.get("port", self.port)
         pp = data.get("pairing_port", self.pairing_port)
         # Accept either an integer or None/null; ignore anything else so a
