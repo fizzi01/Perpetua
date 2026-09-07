@@ -668,7 +668,7 @@ class Daemon:
             if self._endpoint_url:
                 try:
                     json_path, txt_path = write_endpoint(
-                        ApplicationConfig.get_state_path(),
+                        self.app_config.get_state_path(),
                         self._endpoint_url,
                         version=self.app_config.version,
                     )
@@ -921,7 +921,7 @@ class Daemon:
             os.unlink(self.socket_path)
 
         try:
-            remove_endpoint(ApplicationConfig.get_state_path())
+            remove_endpoint(self.app_config.get_state_path())
         except Exception as e:
             self._logger.debug("Failed to clean endpoint file", error=str(e))
 

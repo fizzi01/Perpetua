@@ -290,14 +290,27 @@ class ApplicationConfig:
 
         return base_path
 
-    @classmethod
-    def get_state_path(cls) -> str:
+    def get_state_path(self) -> str:
         """Return the directory for log files and the daemon endpoint file.
 
-        On Linux this is ``$XDG_STATE_HOME/perpetua`` (default
+        Honours an explicit ``set_save_path`` so a daemon started with
+        ``--config-dir`` - and every test daemon - keeps its runtime files to
+        itself. It used to be a classmethod resolving to the *production*
+        location regardless: running the test suite rewrote the real endpoint
+        file with a test socket path, which pointed a live GUI at a socket
+        that kept appearing and vanishing.
+
+        On Linux the default is ``$XDG_STATE_HOME/perpetua`` (default
         ``~/.local/state/perpetua``); on macOS/Windows it folds back to
         :py:meth:`get_main_path` so existing layouts are unchanged.
         """
+        if self.mainpath:
+            return self.mainpath
+        return type(self).get_default_state_path()
+
+    @classmethod
+    def get_default_state_path(cls) -> str:
+        """The state directory for a config with no explicit save path."""
         if sys.platform.startswith("linux"):
             _, state_dir, _ = cls._linux_xdg_dirs()
             if not os.path.exists(state_dir):
@@ -322,18 +335,23 @@ class ApplicationConfig:
                     return runtime_dir
                 except OSError:
                     pass
-            return cls.get_state_path()
+            return cls.get_default_state_path()
         return cls.get_main_path()
 
     @classmethod
     def set_log_file(cls, log_file: str | None) -> None:
         cls.DEFAULT_LOG_FILE = log_file
 
-    @classmethod
-    def get_default_log_file(cls) -> str | None:
-        if cls.DEFAULT_LOG_FILE is None:
+    def get_default_log_file(self) -> str | None:
+        """Log file path, under this config's own state directory.
+
+        Instance-aware for the same reason as :py:meth:`get_state_path`: the
+        test suite was appending to the user's production daemon.log, which
+        made the real log unreadable for diagnosis.
+        """
+        if type(self).DEFAULT_LOG_FILE is None:
             return None
-        return path.join(cls.get_state_path(), cls.DEFAULT_LOG_FILE)
+        return path.join(self.get_state_path(), type(self).DEFAULT_LOG_FILE)
 
     def init_config_file(self) -> bool:
         """

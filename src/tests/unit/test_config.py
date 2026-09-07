@@ -684,3 +684,52 @@ class TestClientConfigPersistence:
         """Test synchronous loading from file."""
         loaded = client_config_with_test_files.sync_load()
         assert loaded is True
+
+
+class TestRuntimePathsAreInstanceScoped:
+    """Runtime files must follow the config's own save path.
+
+    ``get_state_path``/``get_default_log_file`` used to be classmethods that
+    always resolved to the production location. The test suite therefore
+    appended to the user's real daemon.log *and* overwrote the real
+    ``daemon.endpoint`` with a test socket - which pointed a live GUI at a
+    socket that kept appearing and vanishing, so it flapped while the real
+    daemon stayed up and responsive.
+    """
+
+    def test_state_path_follows_the_configured_save_path(self, temp_dir):
+        cfg = ApplicationConfig(auto_init=False)
+        cfg.set_save_path(str(temp_dir))
+
+        assert cfg.get_state_path() == str(temp_dir)
+
+    def test_log_file_lands_under_the_configured_save_path(self, temp_dir):
+        cfg = ApplicationConfig(auto_init=False)
+        cfg.set_save_path(str(temp_dir))
+
+        log_file = cfg.get_default_log_file()
+
+        assert log_file is not None
+        assert log_file.startswith(str(temp_dir))
+
+    def test_two_configs_do_not_share_runtime_paths(self, tmp_path):
+        a = ApplicationConfig(auto_init=False)
+        a.set_save_path(str(tmp_path / "a"))
+        b = ApplicationConfig(auto_init=False)
+        b.set_save_path(str(tmp_path / "b"))
+
+        assert a.get_state_path() != b.get_state_path()
+        assert a.get_default_log_file() != b.get_default_log_file()
+
+    def test_unconfigured_config_still_uses_the_default_location(self):
+        """The real daemon keeps its existing layout."""
+        cfg = ApplicationConfig(auto_init=False)
+
+        assert cfg.get_state_path() == ApplicationConfig.get_default_state_path()
+
+    def test_log_file_is_none_when_file_logging_is_off(self, temp_dir, monkeypatch):
+        monkeypatch.setattr(ApplicationConfig, "DEFAULT_LOG_FILE", None)
+        cfg = ApplicationConfig(auto_init=False)
+        cfg.set_save_path(str(temp_dir))
+
+        assert cfg.get_default_log_file() is None
