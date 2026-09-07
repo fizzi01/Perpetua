@@ -27,7 +27,7 @@ from unittest.mock import AsyncMock, patch
 
 import pytest
 
-from service import Service, _ServiceListener
+from service import Service, ServiceDiscovery, _ServiceListener
 
 
 def _info(addresses=("10.0.0.1",), props=None, port=5555):
@@ -218,6 +218,61 @@ class TestListenerIntegration:
 
         (svc,) = listener.get_services()
         assert svc.hostname == "known"
+
+
+class TestRegistrationLogging:
+    """The TXT map is caller-supplied and must not be splatted into the log.
+
+    It carries an ``addresses`` key, which collided with the log's own
+    ``addresses`` field and made every per-interface registration die with
+    "got multiple values for keyword argument" - taking mDNS down entirely.
+    """
+
+    @pytest.mark.anyio
+    async def test_per_interface_registration_survives_txt_keys(self, monkeypatch):
+        registered = []
+
+        class _FakeZeroconf:
+            def __init__(self, interfaces=None):
+                self.interfaces = interfaces
+
+            async def async_register_service(self, info):
+                registered.append(info)
+
+            async def async_unregister_service(self, info):
+                return None
+
+            async def async_close(self):
+                return None
+
+        monkeypatch.setattr("service.AsyncZeroconf", _FakeZeroconf)
+        discovery = ServiceDiscovery()
+
+        await discovery.register_service(
+            host="0.0.0.0",
+            port=5555,
+            uid="uid1",
+            extra_props={"pairing_port": "5553", "addresses": "10.0.0.1,192.168.1.20"},
+            interface_addresses=["10.0.0.1", "192.168.1.20"],
+        )
+
+        assert len(registered) == 2
+        await discovery._unregister_iface_responders()
+
+    @pytest.mark.anyio
+    async def test_single_registration_survives_txt_keys(self, monkeypatch):
+        """Same hazard on the fallback path, with an injected instance."""
+        zc = AsyncMock()
+        discovery = ServiceDiscovery(async_mdns=zc)
+
+        await discovery.register_service(
+            host="10.0.0.1",
+            port=5555,
+            uid="uid1",
+            extra_props={"addresses": "10.0.0.1", "host": "shadow", "port": "9"},
+        )
+
+        zc.async_register_service.assert_awaited_once()
 
 
 class TestServiceInfoSignature:

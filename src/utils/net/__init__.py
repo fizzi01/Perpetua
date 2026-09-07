@@ -105,46 +105,83 @@ async def list_local_interfaces_async(
     )
 
 
+def is_auto_preference(preference: Optional[str]) -> bool:
+    """Does ``ServerConfig.host`` mean "every interface"?
+
+    ``"0.0.0.0"`` is the historical default and the value in every config
+    written before ``host`` became a preference; treating it as auto is what
+    lets those carry over with no migration step.
+    """
+    return not preference or preference.strip() == "0.0.0.0"
+
+
+def match_interface(
+    preference: Optional[str],
+    interfaces: Optional[list[LocalInterface]] = None,
+) -> list[str]:
+    """Addresses the admin's explicit choice names. **No fallback.**
+
+    Matching accepts an adapter name, an IP literal or a friendly name:
+    hand-edited configs and configs copied between machines both degrade
+    sanely.
+
+    Every address in ``interfaces`` is a candidate, loopback and link-local
+    included. ``_is_usable_ip`` decides what *automatic* selection may pick;
+    it is not a veto on an explicit choice, and the picker offers these, so
+    refusing to match them here is how "advertise on 127.0.0.1" silently
+    became "advertise on everything".
+
+    :return: the matching addresses, or ``[]`` when the choice names nothing
+        present. Callers decide what an unmatched choice should mean - which
+        is deliberately *not* the same answer for advertising and for access
+        control.
+    """
+    if is_auto_preference(preference):
+        return []
+    if interfaces is None:
+        interfaces = list_local_interfaces(include_unusable=True)
+
+    wanted = (preference or "").strip()
+    lowered = wanted.lower()
+    return list(
+        dict.fromkeys(
+            i.ip
+            for i in interfaces
+            if i.name == wanted
+            or i.ip.lower() == lowered
+            or i.display_name.lower() == lowered
+        )
+    )
+
+
 def resolve_advertise_addresses(
     preference: Optional[str],
     interfaces: Optional[list[LocalInterface]] = None,
+    exclusive: bool = False,
 ) -> list[str]:
     """Addresses to advertise over mDNS and bake into the certificate SAN.
 
     ``preference`` is ``ServerConfig.host``, which is an *interface
     preference*, not a bind address - the listener always binds BIND_ALL.
 
-    Matching accepts, in order, an adapter name, an IP literal or a friendly
-    name: hand-edited configs and configs copied between machines both
-    degrade sanely.
-
     :param interfaces: injected snapshot; keeps the function pure and lets a
         caller reuse one enumeration for both the SAN and the mDNS record so
         the two can never diverge across a link flap.
+    :param exclusive: when the admin restricted access to the chosen
+        interface, advertise *only* it. Publishing addresses that the accept
+        filter will then refuse is worse than publishing fewer.
     :return: chosen address first, remaining usable ones after, de-duplicated.
         Empty only when the machine genuinely has no usable address.
     """
     if interfaces is None:
-        interfaces = list_local_interfaces()
+        interfaces = list_local_interfaces(include_unusable=True)
 
-    usable = [i.ip for i in interfaces]
+    auto = [i.ip for i in interfaces if is_usable_ip(i.ip)]
 
-    # "0.0.0.0" is the historical default and the value in every untouched
-    # 1.6.0 config; treating it as "auto" is what lets legacy configs carry
-    # over with no migration step.
-    if not preference or preference == "0.0.0.0":
-        return list(dict.fromkeys(usable))
+    if is_auto_preference(preference):
+        return list(dict.fromkeys(auto))
 
-    wanted = preference.strip()
-    lowered = wanted.lower()
-    chosen = [
-        i.ip
-        for i in interfaces
-        if i.name == wanted
-        or i.ip.lower() == lowered
-        or i.display_name.lower() == lowered
-    ]
-
+    chosen = match_interface(preference, interfaces)
     if not chosen:
         # Cable unplugged, adapter renamed. Fall back to auto rather than
         # returning [] - being invisible on the network is worse than
@@ -153,12 +190,14 @@ def resolve_advertise_addresses(
         # is the very bug class this whole change exists to fix.
         _logger.warning(
             "Advertise interface not found, falling back to all interfaces",
-            preference=wanted,
-            available=usable,
+            preference=preference,
+            available=auto,
         )
-        return list(dict.fromkeys(usable))
+        return list(dict.fromkeys(auto))
 
-    return list(dict.fromkeys([*chosen, *usable]))
+    if exclusive:
+        return chosen
+    return list(dict.fromkeys([*chosen, *auto]))
 
 
 def resolve_advertise_interfaces(
@@ -174,28 +213,20 @@ def resolve_advertise_interfaces(
     no probing needed. That is what makes a direct cable work for a client
     that has not been upgraded.
 
-    Auto advertises on every usable interface; an explicit preference speaks
-    only on the interface it names, which is what "Advertise on: eth1" should
+    Auto speaks on every usable interface; an explicit preference speaks only
+    on the interface it names, which is what "Advertise on: eth1" should
     plainly mean.
     """
     if interfaces is None:
-        interfaces = list_local_interfaces()
+        interfaces = list_local_interfaces(include_unusable=True)
 
-    if not preference or preference == "0.0.0.0":
-        return list(dict.fromkeys(i.ip for i in interfaces))
+    auto = [i.ip for i in interfaces if is_usable_ip(i.ip)]
+    if is_auto_preference(preference):
+        return list(dict.fromkeys(auto))
 
-    wanted = preference.strip()
-    lowered = wanted.lower()
-    chosen = [
-        i.ip
-        for i in interfaces
-        if i.name == wanted
-        or i.ip.lower() == lowered
-        or i.display_name.lower() == lowered
-    ]
     # Stale preference: fall back to speaking everywhere rather than going
     # silent. resolve_advertise_addresses logs the warning for this case.
-    return list(dict.fromkeys(chosen)) or list(dict.fromkeys(i.ip for i in interfaces))
+    return match_interface(preference, interfaces) or list(dict.fromkeys(auto))
 
 
 def set_socket_nodelay(writer: "asyncio.StreamWriter") -> None:

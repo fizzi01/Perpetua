@@ -438,12 +438,15 @@ class ServiceDiscovery:
             )
 
             await self._async_zercnf.async_register_service(s_info)
+            # TXT entries go in as one field rather than being splatted: they
+            # are caller-supplied keys and would collide with the log's own
+            # (``addresses`` already does).
             self._logger.info(
                 "mDNS service registered.",
                 uid=self._uid,
                 port=port,
                 host=host,
-                **properties,
+                txt=properties,
             )
         except BadTypeInNameException:
             raise ValueError("Invalid service type or name")
@@ -497,7 +500,7 @@ class ServiceDiscovery:
             uid=self._uid,
             port=port,
             addresses=registered,
-            **properties,
+            txt=properties,
         )
 
     async def _unregister_iface_responders(self) -> None:

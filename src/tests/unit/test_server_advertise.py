@@ -197,24 +197,89 @@ class TestInterfaceFilter:
         server = _make_server(app_config, server_config)
         server.config.host = "10.0.0.1"
         server.config.host_exclusive = True
-        server._advertised_addresses = ["10.0.0.1", "192.168.1.20"]
+        server._iface_snapshot = TWO_LINKS
 
         assert server._on_interface_accept("10.0.0.1") is True
         assert server._on_interface_accept("192.168.1.20") is False
 
-    def test_fails_open_when_nothing_resolves(
-        self, app_config, server_config, monkeypatch
+    def test_loopback_can_be_selected(self, app_config, server_config):
+        """The picker offers loopback, so the filter must be able to match it.
+
+        The regression: ``_is_usable_ip`` rejects 127.0.0.0/8, the resolver
+        used a usable-only enumeration, so an explicit loopback pick matched
+        nothing - and the "restrict" setting fell back to allowing the whole
+        machine. A LAN client connected to a server pinned to loopback.
+        """
+        server = _make_server(app_config, server_config)
+        server.config.host = "127.0.0.1"
+        server.config.host_exclusive = True
+        server._iface_snapshot = TWO_LINKS + [_iface("127.0.0.1", "lo0")]
+
+        assert server._on_interface_accept("127.0.0.1") is True
+        assert server._on_interface_accept("192.168.1.20") is False
+
+    def test_unresolvable_choice_refuses_rather_than_widening(
+        self, app_config, server_config
     ):
-        """A transient enumeration failure must not lock the admin out."""
+        """ "Only eth1" must never degrade into "any interface".
+
+        The advertise path deliberately falls back to every interface so the
+        server stays findable; inheriting that fallback here inverted the
+        setting. Refusing costs nothing: no connection can arrive on an
+        address the machine does not have, so this only rejects the others -
+        which is exactly what was asked for.
+        """
+        server = _make_server(app_config, server_config)
+        server.config.host = "10.99.99.99"  # not present
+        server.config.host_exclusive = True
+        server._iface_snapshot = TWO_LINKS
+        server._advertised_addresses = ["192.168.1.20", "10.0.0.1"]
+
+        assert server._on_interface_accept("192.168.1.20") is False
+        assert server._on_interface_accept("10.0.0.1") is False
+
+    def test_advertised_list_is_not_the_allow_list(self, app_config, server_config):
+        """Advertising is permissive by design; access control must not be."""
         server = _make_server(app_config, server_config)
         server.config.host = "10.0.0.1"
         server.config.host_exclusive = True
-        server._advertised_addresses = []
-        monkeypatch.setattr(
-            server.config, "get_advertise_addresses", lambda *_a, **_k: []
-        )
+        server._iface_snapshot = TWO_LINKS
+        # Whatever ended up advertised, only the chosen interface is allowed.
+        server._advertised_addresses = ["192.168.1.20", "10.0.0.1"]
 
-        assert server._on_interface_accept("192.168.1.20") is True
+        assert server._on_interface_accept("192.168.1.20") is False
+
+
+class TestExclusiveAdvertising:
+    def test_exclusive_advertises_only_the_chosen_address(
+        self, app_config, server_config
+    ):
+        """Publishing addresses the filter will refuse just misleads clients."""
+        server = _make_server(app_config, server_config)
+        server.config.host = "10.0.0.1"
+        server.config.host_exclusive = True
+
+        assert server.config.get_advertise_addresses(TWO_LINKS) == ["10.0.0.1"]
+
+    def test_non_exclusive_keeps_the_others_as_fallbacks(
+        self, app_config, server_config
+    ):
+        server = _make_server(app_config, server_config)
+        server.config.host = "10.0.0.1"
+        server.config.host_exclusive = False
+
+        assert server.config.get_advertise_addresses(TWO_LINKS) == [
+            "10.0.0.1",
+            "192.168.1.20",
+        ]
+
+    def test_auto_never_advertises_loopback(self, app_config, server_config):
+        """An explicit pick is intent; automatic selection still filters."""
+        server = _make_server(app_config, server_config)
+        server.config.host = "0.0.0.0"
+        ifaces = TWO_LINKS + [_iface("127.0.0.1", "lo0")]
+
+        assert "127.0.0.1" not in server.config.get_advertise_addresses(ifaces)
 
 
 class TestAdvertiseResolution:

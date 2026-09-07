@@ -74,6 +74,7 @@ from utils.net import (
     get_local_ip,
     invalidate_local_ip_cache,
     list_local_interfaces_async,
+    match_interface,
     resolve_advertise_interfaces,
 )
 from utils.crypto import CertificateManager
@@ -1372,17 +1373,32 @@ class Server:
         """
         if not self.config.host_exclusive:
             return True
-        allowed = self._advertised_addresses or self.config.get_advertise_addresses()
+
+        # Resolve the choice strictly. Reusing the *advertised* list would
+        # fail open on the whole machine whenever the choice does not match
+        # anything: the advertise path deliberately falls back to "all
+        # interfaces" so the server stays findable, and inheriting that here
+        # turned "accept only on this interface" into "accept on every one".
+        allowed = match_interface(self.config.host, self._iface_snapshot)
+        if local_ip in allowed:
+            return True
+
         if not allowed:
-            # Nothing resolved: fail open rather than locking the admin out of
-            # their own server over a transient enumeration failure.
-            return True
-        if local_ip in allowed[:1]:
-            return True
+            # The named interface is not present. Refusing is what the setting
+            # asks for, and costs nothing: no connection can arrive on an
+            # address the machine does not have, so this only rejects the
+            # other interfaces - which is the point.
+            self._logger.warning(
+                "Rejecting connections: the selected interface is not present",
+                local_ip=local_ip,
+                selected=self.config.host,
+            )
+            return False
+
         self._logger.warning(
             "Rejected connection on non-selected interface",
             local_ip=local_ip,
-            selected=allowed[0],
+            selected=allowed,
         )
         return False
 
@@ -1396,7 +1412,7 @@ class Server:
 
         # Enumerate once, up front, and thread this snapshot through both the
         # certificate SAN and the mDNS record below.
-        self._iface_snapshot = await list_local_interfaces_async()
+        self._iface_snapshot = await list_local_interfaces_async(include_unusable=True)
         self._advertised_addresses = self.config.get_advertise_addresses(
             self._iface_snapshot
         )
@@ -1630,7 +1646,7 @@ class Server:
         *before* any client is pointed at it, or every already-paired client
         that retargets fails the handshake on an IP the leaf does not carry.
         """
-        interfaces = await list_local_interfaces_async()
+        interfaces = await list_local_interfaces_async(include_unusable=True)
         addresses = self.config.get_advertise_addresses(interfaces)
         if not addresses:
             self._logger.warning("No usable address to advertise; keeping previous")

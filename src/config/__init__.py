@@ -540,7 +540,9 @@ class ServerConfig:
         """
         from utils.net import resolve_advertise_addresses
 
-        return resolve_advertise_addresses(self.host, interfaces)
+        return resolve_advertise_addresses(
+            self.host, interfaces, exclusive=self.host_exclusive
+        )
 
     # SSL Configuration
     def enable_ssl(self) -> None:
