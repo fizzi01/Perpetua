@@ -44,6 +44,7 @@ import {useEventListeners} from '../hooks/useEventListeners';
 import {parseStreams, isValidIpAddress} from '../api/Utility'
 import {PermissionsPanel} from './ui/permissions-panel';
 import {abbreviateText, CopyableBadge} from './ui/copyable-badge';
+import {NetworkAddressesPopover, NetworkAddressEntry} from './ui/network-addresses-popover';
 import {ServerSelectionPanel} from './ui/server-selection-panel';
 import {OtpInputPanel} from './ui/otp-input-panel';
 import {ActionButton} from './ui/action-button';
@@ -117,7 +118,7 @@ export function ClientTab({onStatusChange, state}: ClientTabProps) {
     // multi-homed client the route-probed address is often *not* the one the
     // server sees, so showing only that made the peer IP in the server's
     // approval prompt look like a different machine.
-    const [ipAddrs, setIpAddrs] = useState<string[]>([]);
+    const [networkAddresses, setNetworkAddresses] = useState<NetworkAddressEntry[]>([]);
 
     useEffect(() => {
         let settled = false;
@@ -129,8 +130,12 @@ export function ClientTab({onStatusChange, state}: ClientTabProps) {
 
         listenCommand(EventType.CommandSuccess, CommandType.ListNetworkInterfaces, (event) => {
             const result = event.data?.result as NetworkInterfacesResult | undefined;
-            const ips = (result?.interfaces ?? []).map(i => i.ip);
-            if (ips.length) setIpAddrs(ips);
+            const addresses = (result?.interfaces ?? []).map(iface => ({
+                address: iface.ip,
+                interfaceName: iface.display_name || iface.name,
+                copyValue: iface.ip,
+            }));
+            if (addresses.length) setNetworkAddresses(addresses);
             done();
         }).then(unlisten => listeners.addListenerOnce('client-interfaces', unlisten));
 
@@ -146,7 +151,7 @@ export function ClientTab({onStatusChange, state}: ClientTabProps) {
         setTimeout(() => {
             if (!settled) {
                 done();
-                getLocalIpAddress().then(ip => setIpAddrs([ip])).catch(() => undefined);
+                getLocalIpAddress().then(ip => setNetworkAddresses([{address: ip, copyValue: ip}])).catch(() => undefined);
             }
         }, 5000);
     }, []);
@@ -779,19 +784,7 @@ export function ClientTab({onStatusChange, state}: ClientTabProps) {
                                     </div>
                                     <div className="text-xs" style={{color: 'var(--app-text-muted)'}}>Your Hostname</div>
                                 </div>
-                                {ipAddrs.length > 0 && (
-                                    <div className="flex-shrink-0 flex items-center gap-1">
-                                        {ipAddrs.map((ip) => (
-                                            <CopyableBadge
-                                                key={ip}
-                                                fullText={ip}
-                                                displayText={abbreviateText(ip, 3, 3)}
-                                                label=""
-                                                titleText={`Your IP: ${ip}`}
-                                            />
-                                        ))}
-                                    </div>
-                                )}
+                                <NetworkAddressesPopover title="Network addresses" entries={networkAddresses}/>
                             </div>
                         </motion.div>
                     )}

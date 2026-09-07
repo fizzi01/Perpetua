@@ -15,3 +15,8 @@ if (!('ResizeObserver' in globalThis)) {
 
     (globalThis as unknown as { ResizeObserver: unknown }).ResizeObserver = ResizeObserverStub;
 }
+
+// Radix Select scrolls the focused option into view; jsdom has no layout API.
+if (!HTMLElement.prototype.scrollIntoView) {
+    HTMLElement.prototype.scrollIntoView = () => {};
+}

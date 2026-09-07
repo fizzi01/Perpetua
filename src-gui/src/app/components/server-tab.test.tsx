@@ -130,9 +130,10 @@ describe('Advertise picker', () => {
         fireInterfaces();
         await openOptions();
 
-        const select = screen.getByLabelText(/advertise on/i) as HTMLSelectElement;
+        const select = screen.getByRole('combobox', {name: /advertise on/i});
 
-        expect(select.value).toBe(ADVERTISE_AUTO);
+        expect(select).toHaveTextContent('Auto (all interfaces)');
+        fireEvent.keyDown(select, {key: 'Enter'});
         expect(screen.getByRole('option', {name: /auto \(all interfaces\)/i})).toBeInTheDocument();
         expect(screen.getByRole('option', {name: /Wi-Fi — 192\.168\.1\.20\/24 \(default route\)/})).toBeInTheDocument();
         expect(screen.getByRole('option', {name: /Ethernet 1 — 10\.0\.0\.1\/24/})).toBeInTheDocument();
@@ -143,7 +144,8 @@ describe('Advertise picker', () => {
         fireInterfaces();
         await openOptions();
 
-        fireEvent.change(screen.getByLabelText(/advertise on/i), {target: {value: '10.0.0.1'}});
+        fireEvent.keyDown(screen.getByRole('combobox', {name: /advertise on/i}), {key: 'Enter'});
+        fireEvent.click(screen.getByRole('option', {name: /Ethernet 1/}));
         await act(async () => {
             vi.advanceTimersByTime(500);
         });
@@ -156,7 +158,11 @@ describe('Advertise picker', () => {
         fireInterfaces();
         await openOptions();
 
-        expect(screen.getByText(/Advertising: 192\.168\.1\.20, 10\.0\.0\.1/)).toBeInTheDocument();
+        expect(screen.queryByText(/Will advertise|Reachable at/)).not.toBeInTheDocument();
+        fireEvent.click(screen.getByRole('button', {name: 'Addresses to advertise · 2'}));
+        expect(screen.getByText('192.168.1.20:5555')).toBeInTheDocument();
+        expect(screen.getByText('10.0.0.1:5555')).toBeInTheDocument();
+        expect(screen.getByText('Wi-Fi')).toBeInTheDocument();
     });
 
     it('keeps a vanished selection visible instead of snapping to Auto', async () => {
@@ -165,6 +171,7 @@ describe('Advertise picker', () => {
         fireInterfaces({...INTERFACES, selected: '172.16.9.9'});
         await openOptions();
 
+        fireEvent.keyDown(screen.getByRole('combobox', {name: /advertise on/i}), {key: 'Enter'});
         expect(screen.getByRole('option', {name: /172\.16\.9\.9 \(not present\)/})).toBeInTheDocument();
         expect(screen.getByText(/not currently available/i)).toBeInTheDocument();
     });
@@ -177,22 +184,31 @@ describe('Advertise picker', () => {
     });
 });
 
-describe('Reachability is visible without opening Options', () => {
-    it('shows where clients will find the server', async () => {
-        // The reporter's complaint was about which address the app displays;
-        // burying it in Options would answer that with "none at all".
+describe('Network addresses in Options', () => {
+    it('does not duplicate addresses below the statistics', async () => {
         await renderServerTab();
         fireInterfaces();
-
-        expect(await screen.findByTitle(/copy 192\.168\.1\.20:5555/i)).toBeInTheDocument();
-        expect(screen.getByTitle(/copy 10\.0\.0\.1:5555/i)).toBeInTheDocument();
+        expect(screen.queryByText(/Will advertise|Reachable at/)).not.toBeInTheDocument();
+        expect(screen.queryByRole('button', {name: /addresses to advertise/i})).not.toBeInTheDocument();
+        expect(screen.queryByTitle(/copy 192\.168\.1\.20:5555/i)).not.toBeInTheDocument();
     });
 
-    it('says so when an explicit interface is also exclusive', async () => {
-        await renderServerTab(serverState({host: '10.0.0.1', host_exclusive: true}));
+    it('shows only advertised addresses and retains the exclusive option', async () => {
+        await renderServerTab(serverState({running: true, host: '10.0.0.1', host_exclusive: true}));
         fireInterfaces({...INTERFACES, selected: '10.0.0.1', advertised: ['10.0.0.1']});
+        await openOptions();
+        expect(screen.getByLabelText(/Accept only on this interface/i)).toBeChecked();
+        fireEvent.click(screen.getByRole('button', {name: 'Advertised addresses · 1'}));
+        expect(screen.getByText('10.0.0.1:5555')).toBeInTheDocument();
+        expect(screen.queryByText('192.168.1.20:5555')).not.toBeInTheDocument();
+    });
 
-        expect(await screen.findByText(/this interface only/i)).toBeInTheDocument();
+    it('shows a quiet empty state when no address is usable', async () => {
+        await renderServerTab();
+        fireInterfaces({...INTERFACES, interfaces: [], advertised: []});
+        await openOptions();
+        expect(screen.getByText('No usable network address')).toBeInTheDocument();
+        expect(screen.queryByRole('button', {name: /addresses to advertise/i})).not.toBeInTheDocument();
     });
 });
 

@@ -66,6 +66,8 @@ import {
 import {ServerTabProps} from '../commons/Tab'
 import {isValidIpAddress, parseStreams} from '../api/Utility'
 import {abbreviateText, CopyableBadge} from './ui/copyable-badge';
+import {NetworkAddressesPopover} from './ui/network-addresses-popover';
+import {Select, SelectContent, SelectItem, SelectTrigger, SelectValue} from './ui/select';
 import {ActionButton} from './ui/action-button';
 import type {MonitorInfo, MonitorPlacement} from '../api/Interface';
 import {
@@ -1321,39 +1323,6 @@ export function ServerTab({onStatusChange, state}: ServerTabProps) {
                 </motion.div>
             </motion.div>
 
-            {/*
-              * Where clients will find this server. Without it the address is
-              * buried in Options, yet it is the one thing someone pairing a
-              * client needs - and on a multi-homed machine the "obvious" guess
-              * is usually the wrong interface.
-              */}
-            {advertised.length > 0 && (
-                <motion.div
-                    initial={{opacity: 0}}
-                    animate={{opacity: 1}}
-                    transition={{delay: 0.25}}
-                    className="flex items-center gap-2 flex-wrap px-1"
-                >
-                    <span className="text-xs" style={{color: 'var(--app-text-muted)'}}>
-                        {isRunning ? 'Reachable at' : 'Will advertise'}
-                    </span>
-                    {advertised.map((addr) => (
-                        <CopyableBadge
-                            key={addr}
-                            fullText={`${addr}:${port}`}
-                            displayText={`${addr}:${port}`}
-                            label=""
-                            titleText={`Click to copy ${addr}:${port}`}
-                        />
-                    ))}
-                    {host !== ADVERTISE_AUTO && (
-                        <span className="text-xs" style={{color: 'var(--app-text-muted)'}}>
-                            {hostExclusive ? '(this interface only)' : '(advertised)'}
-                        </span>
-                    )}
-                </motion.div>
-            )}
-
             {/* Active Permissions Panel - Always Visible */}
             <PermissionsPanel
                 enableMouse={enableMouse}
@@ -1735,52 +1704,76 @@ export function ServerTab({onStatusChange, state}: ServerTabProps) {
                                 <label htmlFor="advertiseOn" className="block mb-2 font-semibold"
                                        style={{color: 'var(--app-text-primary)'}}
                                 >Advertise on</label>
-                                <select
-                                    id="advertiseOn"
-                                    value={host}
-                                    onChange={(e) => {
-                                        const newHost = e.target.value;
-                                        setHost(newHost);
-                                        // "All interfaces" and per-interface
-                                        // isolation are contradictory.
-                                        const nextExclusive = newHost === ADVERTISE_AUTO ? false : hostExclusive;
-                                        setHostExclusive(nextExclusive);
-                                        scheduleOptionsSave({host: newHost, hostExclusive: nextExclusive});
-                                    }}
-                                    className="app-input"
-                                    // Editable while running: the daemon
-                                    // re-issues the certificate SAN and
-                                    // re-announces on the fly, so there is no
-                                    // reason to make the user stop the KVM to
-                                    // move it onto another link.
-                                >
-                                    <option value={ADVERTISE_AUTO}>Auto (all interfaces)</option>
-                                    {interfaces.map((iface) => (
-                                        <option key={`${iface.name}-${iface.ip}`} value={iface.ip}>
-                                            {`${iface.display_name} — ${iface.ip}/${iface.prefix}`}
-                                            {iface.is_default_route ? ' (default route)' : ''}
-                                        </option>
-                                    ))}
-                                    {host !== ADVERTISE_AUTO && !interfaces.some(i => i.ip === host) && (
-                                        // Keep a vanished selection visible rather than
-                                        // silently snapping back to Auto, which would hide
-                                        // the real problem (cable out, adapter disabled).
-                                        <option value={host} disabled>
-                                            {`${host} (not present)`}
-                                        </option>
-                                    )}
-                                </select>
+                                <div className="flex items-center gap-2">
+                                    <Select
+                                        value={host}
+                                        onValueChange={(newHost) => {
+                                            setHost(newHost);
+                                            // Advertising on all interfaces cannot be exclusive.
+                                            const nextExclusive = newHost === ADVERTISE_AUTO ? false : hostExclusive;
+                                            setHostExclusive(nextExclusive);
+                                            scheduleOptionsSave({host: newHost, hostExclusive: nextExclusive});
+                                        }}
+                                    >
+                                        <SelectTrigger
+                                            id="advertiseOn"
+                                            className="min-w-0 flex-1 shadow-none cursor-pointer [&>span]:truncate"
+                                            style={{
+                                                backgroundColor: 'var(--app-input-bg)',
+                                                borderColor: 'var(--app-border)',
+                                                color: 'var(--app-text-primary)',
+                                            }}
+                                        >
+                                            <SelectValue/>
+                                        </SelectTrigger>
+                                        <SelectContent
+                                            position="item-aligned"
+                                            style={{
+                                                backgroundColor: 'var(--app-bg-secondary)',
+                                                borderColor: 'var(--app-border)',
+                                                color: 'var(--app-text-primary)',
+                                            }}
+                                        >
+                                            <SelectItem value={ADVERTISE_AUTO} className="focus:bg-[var(--app-primary)] focus:text-white">
+                                                Auto (all interfaces)
+                                            </SelectItem>
+                                            {interfaces.map((iface) => (
+                                                <SelectItem key={`${iface.name}-${iface.ip}`} value={iface.ip}
+                                                            className="focus:bg-[var(--app-primary)] focus:text-white">
+                                                    {`${iface.display_name} — ${iface.ip}/${iface.prefix}`}
+                                                    {iface.is_default_route ? ' (default route)' : ''}
+                                                </SelectItem>
+                                            ))}
+                                            {host !== ADVERTISE_AUTO && !interfaces.some(i => i.ip === host) && (
+                                                <SelectItem value={host} disabled>
+                                                    {`${host} (not present)`}
+                                                </SelectItem>
+                                            )}
+                                        </SelectContent>
+                                    </Select>
+                                    <NetworkAddressesPopover
+                                        title={isRunning ? 'Advertised addresses' : 'Addresses to advertise'}
+                                        entries={advertised.map(address => {
+                                            const iface = interfaces.find(item => item.ip === address);
+                                            return {
+                                                address,
+                                                interfaceName: iface?.display_name || iface?.name,
+                                                copyValue: `${address.includes(':') ? `[${address}]` : address}:${port}`,
+                                            };
+                                        })}
+                                    />
+                                </div>
                                 {host !== ADVERTISE_AUTO && !interfaces.some(i => i.ip === host) && (
                                     <p className="mt-1 text-xs" style={{color: 'var(--app-warning, #b45309)'}}>
                                         This interface is not currently available. Perpetua is
                                         advertising on all interfaces until it comes back.
                                     </p>
                                 )}
-                                <p className="mt-1 text-xs" style={{color: 'var(--app-text-muted)'}}>
-                                    {advertised.length
-                                        ? `Advertising: ${advertised.join(', ')}`
-                                        : 'Advertising: nothing — no usable address'}
-                                </p>
+                                {advertised.length === 0 && (
+                                    <p className="mt-2 text-xs" style={{color: 'var(--app-text-muted)'}}>
+                                        No usable network address
+                                    </p>
+                                )}
                             </div>
 
                             {host !== ADVERTISE_AUTO && (
