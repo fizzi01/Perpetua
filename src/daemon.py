@@ -36,6 +36,7 @@ from enum import StrEnum
 from config import ApplicationConfig, ServerConfig, ClientConfig
 from service.client import Client
 from service.server import Server, ServerStartError
+from utils.crypto.sharing import CertificateReceiveError
 from utils import BackgroundTasks
 from utils.logging import Logger, get_logger
 from utils.cli import DaemonArguments
@@ -1414,7 +1415,18 @@ class Daemon:
             return
 
         try:
-            success = await self._client.start()
+            try:
+                success = await self._client.start()
+            except CertificateReceiveError as pair_err:
+                # Known, user-actionable failure (no pairing material and the
+                # server is down): forward the reason rather than logging it
+                # as an unhandled error, which reads like a crash.
+                self._logger.error(str(pair_err))
+                await self._notification_manager.notify_command_error(
+                    command, str(pair_err)
+                )
+                return
+
             if success:
                 self._state["client"].start()
                 response_data = {
