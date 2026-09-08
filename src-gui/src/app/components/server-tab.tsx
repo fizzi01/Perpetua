@@ -82,6 +82,23 @@ export function ServerTab({onStatusChange, state}: ServerTabProps) {
     let previousState = useRef<ServerStatus | null>(null);
 
     const [runningPending, setRunningPending] = useState(false);
+    const [lifecycleReady, setLifecycleReady] = useState(false);
+    const lifecycleReadyRef = useRef(false);
+    const lifecycleGeneration = useRef(0);
+    const pendingOperation = useRef<'start' | 'stop' | null>(null);
+    const runningRef = useRef(state.running);
+    const seenStarts = useRef(new Set<string>(state.start_time ? [state.start_time] : []));
+    const notificationSequence = useRef(0);
+    const notificationTimers = useRef(new Set<ReturnType<typeof setTimeout>>());
+    const notificationsMounted = useRef(false);
+    useEffect(() => {
+        notificationsMounted.current = true;
+        return () => {
+            notificationsMounted.current = false;
+            notificationTimers.current.forEach(clearTimeout);
+            notificationTimers.current.clear();
+        };
+    }, []);
     const [isRunning, setIsRunning] = useState(state.running);
     const [showOptions, setShowOptions] = useState(false);
     const [showClients, setShowClients] = useState(false);
@@ -159,6 +176,13 @@ export function ServerTab({onStatusChange, state}: ServerTabProps) {
 
     const clientManager = useClientManagement();
     const listeners = useEventListeners('server-tab');
+    const clientCallbacks = useRef<{
+        connected: typeof handleClientConnected;
+        pairing: typeof handlePairingRequest;
+        approval: typeof handleApprovalRequest;
+        resolved: typeof handleApprovalResolved;
+        rejected: typeof handleClientRejected;
+    } | null>(null);
     const clientEventHandler = handleClientEventListeners();
 
     // Ref instead of the closure's clientManager: the SAVE listener registered in
@@ -256,16 +280,19 @@ export function ServerTab({onStatusChange, state}: ServerTabProps) {
     }, [state.pending_approvals]);
 
     const addNotification = (type: Notification['type'], message: string, description?: string) => {
+        if (!notificationsMounted.current) return;
         const newNotification: Notification = {
-            id: Date.now().toString(),
+            id: `server-notification-${++notificationSequence.current}`,
             type,
             message,
             description,
         };
         setNotifications((prev) => [...prev, newNotification]);
-        setTimeout(() => {
-            setNotifications((prev) => prev.filter((n) => n.id !== newNotification.id));
+        const timer = setTimeout(() => {
+            notificationTimers.current.delete(timer);
+            if (notificationsMounted.current) setNotifications(prev => prev.filter(n => n.id !== newNotification.id));
         }, 4000);
+        notificationTimers.current.add(timer);
     };
 
     // Tracks the open editor session so upstream changes (new client, monitor list grew) can be pushed live.
@@ -551,6 +578,10 @@ export function ServerTab({onStatusChange, state}: ServerTabProps) {
         }
         console.log('[Server] State updated', state);
         onStatusChange(state.running);
+        runningRef.current = state.running;
+        if (state.running && state.start_time && pendingOperation.current !== 'start') {
+            seenStarts.current.add(state.start_time);
+        }
         setIsRunning(state.running);
         switchTrayIcon(state.running);
         setUid(state.uid);
@@ -573,9 +604,6 @@ export function ServerTab({onStatusChange, state}: ServerTabProps) {
         });
 
         if (state.running) {
-            clientEventHandler.cleanup();
-            clientEventHandler.setup();
-
             if (state.start_time) {
                 let startDate = new Date(state.start_time);
                 let now = new Date();
@@ -608,50 +636,52 @@ export function ServerTab({onStatusChange, state}: ServerTabProps) {
     function handleClientEventListeners() {
 
         const setup = () => {
-            listenGeneralEvent(EventType.ClientConnected, false, (event) => {
+            let cancelled = false;
+            const unlisteners: Array<() => void> = [];
+            const subscribe = (eventType: EventType, noData: boolean, callback: Parameters<typeof listenGeneralEvent>[2]) => {
+                listenGeneralEvent(eventType, noData, event => {
+                    if (!cancelled) callback(event);
+                }).then(unlisten => {
+                    if (cancelled) unlisten();
+                    else unlisteners.push(unlisten);
+                }).catch(err => {
+                    if (!cancelled) addNotification('error', 'Failed to listen for client events', String(err));
+                });
+            };
+            subscribe(EventType.ClientConnected, false, (event) => {
                 // Handle client connected event here
                 let client_data = event.data as ClientObj;
-                handleClientConnected(client_data, true, true);
-            }).then(unlisten => {
-                listeners.addListenerOnce('client-connected', unlisten);
+                clientCallbacks.current?.connected(client_data, true, true);
             });
 
-            listenGeneralEvent(EventType.ClientDisconnected, false, (event) => {
+            subscribe(EventType.ClientDisconnected, false, (event) => {
                 // Handle client disconnected event here
                 let client_data = event.data as ClientObj;
-                handleClientConnected(client_data, false, true);
-            }).then(unlisten => {
-                listeners.addListenerOnce('client-disconnected', unlisten);
+                clientCallbacks.current?.connected(client_data, false, true);
             });
 
             // A client asked us to auto-generate an OTP. Surface it the same
             // way as a manual share: populate the OTP field and toast.
-            listenGeneralEvent(EventType.PairingRequested, false, (event) => {
+            subscribe(EventType.PairingRequested, false, (event) => {
                 const info = event.data as PairingRequestInfo | undefined;
                 if (!info || !info.otp) return;
-                handlePairingRequest(info);
-            }).then(unlisten => {
-                listeners.addListenerOnce('pairing-requested', unlisten);
+                clientCallbacks.current?.pairing(info);
             });
 
             // An unknown client is trying to connect - server is holding the
             // handshake open until we allow or deny via the inline card.
-            listenGeneralEvent(EventType.ClientApprovalRequested, false, (event) => {
+            subscribe(EventType.ClientApprovalRequested, false, (event) => {
                 const info = event.data as ClientApprovalRequest | undefined;
                 if (!info || !info.peer_ip) return;
-                handleApprovalRequest(info);
-            }).then(unlisten => {
-                listeners.addListenerOnce('approval-requested', unlisten);
+                clientCallbacks.current?.approval(info);
             });
 
             // Server signalled the approval is resolved (timeout, second
             // window, etc.). Drop the inline card if it's still up.
-            listenGeneralEvent(EventType.ClientApprovalResolved, false, (event) => {
+            subscribe(EventType.ClientApprovalResolved, false, (event) => {
                 const info = event.data as ClientApprovalResolved | undefined;
                 if (!info || !info.peer_ip) return;
-                handleApprovalResolved(info);
-            }).then(unlisten => {
-                listeners.addListenerOnce('approval-resolved', unlisten);
+                clientCallbacks.current?.resolved(info);
             });
 
             // A known/admitted client failed an identity check at handshake
@@ -659,18 +689,16 @@ export function ServerTab({onStatusChange, state}: ServerTabProps) {
             // unauthorized address). This is otherwise only visible in the
             // daemon log - surface it so the admin knows why a client that
             // looked paired never actually connected.
-            listenGeneralEvent(EventType.ClientRejected, false, (event) => {
+            subscribe(EventType.ClientRejected, false, (event) => {
                 const info = event.data as ClientRejected | undefined;
                 if (!info || !info.peer_ip) return;
-                handleClientRejected(info);
-            }).then(unlisten => {
-                listeners.addListenerOnce('client-rejected', unlisten);
+                clientCallbacks.current?.rejected(info);
             });
 
             // Server monitor hot-plug/topology change. The daemon already
             // auto-prunes placements that no longer touch any server monitor;
             // surface the orphans (if any) so the admin can re-place them.
-            listenGeneralEvent(EventType.MonitorTopologyChanged, true, (event: any) => {
+            subscribe(EventType.MonitorTopologyChanged, true, (event: any) => {
                 const data = event?.data || {};
                 const orphans = Array.isArray(data.orphans) ? data.orphans : [];
                 if (orphans.length > 0) {
@@ -688,23 +716,19 @@ export function ServerTab({onStatusChange, state}: ServerTabProps) {
                 } else {
                     addNotification('info', 'Monitor layout changed');
                 }
-            }).then(unlisten => {
-                listeners.addListenerOnce('monitor-topology-changed', unlisten);
             });
 
+            return () => {
+                cancelled = true;
+                unlisteners.forEach(unlisten => unlisten());
+            };
         };
+        return {setup};
+    }
 
-        const cleanup = () => {
-            listeners.removeListener('client-connected');
-            listeners.removeListener('client-disconnected');
-            listeners.removeListener('pairing-requested');
-            listeners.removeListener('approval-requested');
-            listeners.removeListener('approval-resolved');
-            listeners.removeListener('monitor-topology-changed');
-        };
-
-        return {cleanup, setup};
-    };
+    useEffect(() => {
+        if (isRunning) return clientEventHandler.setup();
+    }, [isRunning]);
 
     const handleApprovalRequest = (info: ClientApprovalRequest) => {
         setPendingApprovals((prev) => {
@@ -794,101 +818,110 @@ export function ServerTab({onStatusChange, state}: ServerTabProps) {
         setOtpRequested(false);
     };
 
-    // Register Start/Stop server command listeners exactly once for the tab's
-    // lifetime. Previously these were re-registered per click, which caused
-    // two compounding bugs: a race between the in-callback ``removeListener``
-    // and the async ``addListener``, plus ``addListener`` refcounting that
-    // dropped the new unlisten - leaking Tauri handlers that fired on
-    // subsequent events.
-    //
-    // Under React StrictMode this useEffect itself runs mount->cleanup->mount.
-    // Tauri's ``listen`` API is async, so the cleanup of the first pass runs
-    // *before* the promise resolves with the unlisten. The ``cancelled`` flag
-    // catches the latecomers: if a promise resolves after cleanup, we
-    // immediately call unlisten on it so it can never become a leaked Tauri
-    // handler.
+    clientCallbacks.current = {
+        connected: handleClientConnected,
+        pairing: handlePairingRequest,
+        approval: handleApprovalRequest,
+        resolved: handleApprovalResolved,
+        rejected: handleClientRejected,
+    };
+
+    // Callback validity is revoked synchronously; Tauri unlisten may finish later.
     useEffect(() => {
         let cancelled = false;
+        const generation = ++lifecycleGeneration.current;
         const unlisteners: Array<() => void> = [];
-
-        const register = (promise: Promise<() => void>) => {
-            promise.then(unlisten => {
-                if (cancelled) {
-                    unlisten();
-                } else {
-                    unlisteners.push(unlisten);
-                }
+        lifecycleReadyRef.current = false;
+        setLifecycleReady(false);
+        const register = async (eventType: EventType, command: CommandType,
+                                callback: Parameters<typeof listenCommand>[2]) => {
+            const unlisten = await listenCommand(eventType, command, (event, cmd) => {
+                if (!cancelled && lifecycleGeneration.current === generation) callback(event, cmd);
             });
+            if (cancelled) unlisten();
+            else unlisteners.push(unlisten);
         };
-
-        register(listenCommand(EventType.CommandSuccess, CommandType.StartServer, (event) => {
-            console.log(`Server started successfully: ${event.message}`);
-            const res = event.data?.result;
-            setIsRunning(true);
-            switchTrayIcon(true);
-            setRunningPending(false);
-            if (res) {
-                addNotification('success', 'Server started', `Listening on ${res.host}:${res.port}`);
-                setPort(res.port.toString());
-                const start_time = res.start_time;
-                if (start_time) {
-                    const startDate = new Date(start_time);
-                    const now = new Date();
-                    setUptime(Math.floor((now.getTime() - startDate.getTime()) / 1000));
+        Promise.all([
+            register(EventType.CommandSuccess, CommandType.StartServer, event => {
+                const res = event.data?.result;
+                const session = typeof res?.start_time === 'string' && res.start_time ? res.start_time : undefined;
+                const first = session ? !seenStarts.current.has(session) : pendingOperation.current === 'start';
+                if (session) seenStarts.current.add(session);
+                // A replay of a completed session cannot resurrect a stopped server.
+                if (!first && !runningRef.current) return;
+                runningRef.current = true;
+                setIsRunning(true);
+                switchTrayIcon(true);
+                if (pendingOperation.current === 'start') {
+                    pendingOperation.current = null;
+                    setRunningPending(false);
                 }
+                if (res) {
+                    if (first) addNotification('success', 'Server started', `Listening on ${res.host}:${res.port}`);
+                    if (res.port != null) setPort(res.port.toString());
+                    if (session) setUptime(Math.floor((Date.now() - new Date(session).getTime()) / 1000));
+                }
+            }),
+            register(EventType.CommandError, CommandType.StartServer, event => {
+                if (pendingOperation.current !== 'start') return;
+                pendingOperation.current = null;
+                addNotification('error', 'Failed', event.data?.error || '');
+                setRunningPending(false);
+                onStatusChange(false);
+            }),
+            register(EventType.CommandSuccess, CommandType.StopServer, () => {
+                if (!runningRef.current && pendingOperation.current !== 'stop') return;
+                runningRef.current = false;
+                pendingOperation.current = null;
+                setIsRunning(false);
+                clientManager.disconnectAll();
+                setUptime(0);
+                dismissOtp();
+                addNotification('warning', 'Server stopped');
+                onStatusChange(false);
+                setRunningPending(false);
+                switchTrayIcon(false);
+            }),
+            register(EventType.CommandError, CommandType.StopServer, event => {
+                if (pendingOperation.current !== 'stop') return;
+                pendingOperation.current = null;
+                addNotification('error', 'Failed to stop server', event.data?.error || '');
+                setRunningPending(false);
+            }),
+        ]).then(() => {
+            if (!cancelled) {
+                lifecycleReadyRef.current = true;
+                setLifecycleReady(true);
             }
-            clientEventHandler.setup();
-        }));
-
-        register(listenCommand(EventType.CommandError, CommandType.StartServer, (event) => {
-            addNotification('error', 'Failed', event.data?.error || '');
-            setRunningPending(false);
-            onStatusChange(false);
-        }));
-
-        register(listenCommand(EventType.CommandSuccess, CommandType.StopServer, (event) => {
-            console.log(`Server stopped successfully: ${event.message}`);
-            setIsRunning(false);
-            clientManager.disconnectAll();
-            setUptime(0);
-            dismissOtp();
-            addNotification('warning', 'Server stopped');
-            onStatusChange(false);
-            setRunningPending(false);
-            switchTrayIcon(false);
-            clientEventHandler.cleanup();
-        }));
-
-        register(listenCommand(EventType.CommandError, CommandType.StopServer, (event) => {
-            addNotification('error', 'Failed to stop server', event.data?.error || '');
-            setRunningPending(false);
-        }));
-
+        }).catch(err => {
+            if (cancelled) return;
+            cancelled = true;
+            unlisteners.forEach(unlisten => unlisten());
+            addNotification('error', 'Server controls unavailable', String(err));
+        });
         return () => {
             cancelled = true;
-            unlisteners.forEach(u => u());
+            lifecycleReadyRef.current = false;
+            pendingOperation.current = null;
+            unlisteners.forEach(unlisten => unlisten());
         };
-        // eslint-disable-next-line react-hooks/exhaustive-deps
     }, []);
 
     const handleToggleServer = () => {
-        if (!isRunning) {
-            setRunningPending(true);
-            onStatusChange(true);
-            startServer().catch((err) => {
-                console.error('Error starting server:', err);
-                addNotification('error', 'Failed to start server');
-                setRunningPending(false);
-                onStatusChange(false);
-            });
-        } else {
-            setRunningPending(true);
-            stopServer().catch((err) => {
-                console.error('Error stopping server:', err);
-                addNotification('error', 'Failed to stop server');
-                setRunningPending(false);
-            });
-        }
+        if (!lifecycleReadyRef.current || pendingOperation.current) return;
+        const operation = runningRef.current ? 'stop' : 'start';
+        const generation = lifecycleGeneration.current;
+        pendingOperation.current = operation;
+        setRunningPending(true);
+        if (operation === 'start') onStatusChange(true);
+        const send = operation === 'start' ? startServer : stopServer;
+        send().catch(err => {
+            if (!lifecycleReadyRef.current || lifecycleGeneration.current !== generation || pendingOperation.current !== operation) return;
+            pendingOperation.current = null;
+            addNotification('error', operation === 'start' ? 'Failed to start server' : 'Failed to stop server', String(err));
+            setRunningPending(false);
+            if (operation === 'start') onStatusChange(false);
+        });
     };
 
     const generateOtp = () => {
@@ -1143,6 +1176,7 @@ export function ServerTab({onStatusChange, state}: ServerTabProps) {
             <PowerButton
                 status={runningPending ? 'pending' : isRunning ? 'running' : 'stopped'}
                 onClick={handleToggleServer}
+                disabled={!lifecycleReady}
                 stoppedLabel="Server Stopped"
                 runningLabel="Server Running"
                 uid={isRunning ? uid : undefined}

@@ -66,6 +66,26 @@ export function ClientTab({onStatusChange, state}: ClientTabProps) {
 
     const [clientHostname, setClientHostname] = useState(state.client_hostname || '');
     const [runningPending, setRunningPending] = useState(false);
+    const [lifecycleReady, setLifecycleReady] = useState(false);
+    const lifecycleReadyRef = useRef(false);
+    const lifecycleGeneration = useRef(0);
+    const operationSequence = useRef(0);
+    const pendingOperation = useRef<'start' | 'stop' | null>(null);
+    const runningRef = useRef(state.running);
+    const connectedRef = useRef(state.connected);
+    const cancelledStart = useRef(false);
+    const seenStarts = useRef(new Set<string>(state.start_time ? [state.start_time] : []));
+    const notificationSequence = useRef(0);
+    const notificationTimers = useRef(new Set<ReturnType<typeof setTimeout>>());
+    const notificationsMounted = useRef(false);
+    useEffect(() => {
+        notificationsMounted.current = true;
+        return () => {
+            notificationsMounted.current = false;
+            notificationTimers.current.forEach(clearTimeout);
+            notificationTimers.current.clear();
+        };
+    }, []);
     const [isRunning, setIsRunning] = useState(state.running);
     const [isConnected, setIsConnected] = useState(state.connected);
     const [isConnecting, setIsConnecting] = useState(false);
@@ -107,7 +127,7 @@ export function ClientTab({onStatusChange, state}: ClientTabProps) {
     const [pendingSwitchUid, setPendingSwitchUid] = useState<string | null>(null);
 
     const listeners = useEventListeners('client-tab');
-    const connectionListeners = handleConnectionListeners();
+
     const saveOptionsTimeoutRef = useRef<ReturnType<typeof setTimeout> | null>(null);
     // Tauri event callbacks need the latest OTP state synchronously; refs avoid
     // stale closures while React state still controls the visible panel.
@@ -169,16 +189,19 @@ export function ClientTab({onStatusChange, state}: ClientTabProps) {
     };
 
     const addNotification = (type: Notification['type'], message: string, description?: string) => {
+        if (!notificationsMounted.current) return;
         const newNotification: Notification = {
-            id: Date.now().toString(),
+            id: `client-notification-${++notificationSequence.current}`,
             type,
             message,
             description,
         };
         setNotifications((prev) => [...prev, newNotification]);
-        setTimeout(() => {
-            setNotifications((prev) => prev.filter((n) => n.id !== newNotification.id));
+        const timer = setTimeout(() => {
+            notificationTimers.current.delete(timer);
+            if (notificationsMounted.current) setNotifications(prev => prev.filter(n => n.id !== newNotification.id));
         }, 4000);
+        notificationTimers.current.add(timer);
     };
 
     const handleToggleSecurity = () => {
@@ -229,6 +252,9 @@ export function ClientTab({onStatusChange, state}: ClientTabProps) {
         }
         console.log('[Client] State updated', state);
         onStatusChange(state.running);
+        runningRef.current = state.running;
+        connectedRef.current = state.connected;
+        if (state.running && state.start_time && pendingOperation.current !== 'start') seenStarts.current.add(state.start_time);
         setIsRunning(state.running);
         switchTrayIcon(state.connected);
         setIsConnected(state.connected);
@@ -256,9 +282,6 @@ export function ClientTab({onStatusChange, state}: ClientTabProps) {
         setEnableClipboard(permissions.includes(StreamType.Clipboard));
 
         if (state.running) {
-            connectionListeners.cleanup();
-            connectionListeners.setup();
-
             if (state.start_time) {
                 let startDate = new Date(state.start_time);
                 let now = new Date();
@@ -268,19 +291,17 @@ export function ClientTab({onStatusChange, state}: ClientTabProps) {
 
     }, [state]);
 
-    function handleConnectionListeners() {
-
-        const setup = () => {
+    function registerConnectionListeners(subscribe: (type: EventType, noData: boolean, callback: Parameters<typeof listenGeneralEvent>[2]) => void) {
             // Emitted while the client is attempting/retrying the connection
             // (initial connect or reconnect) before Connected fires. Surfaces
             // an explicit "connecting" status instead of deriving it.
-            listenGeneralEvent(EventType.Connecting, false, () => {
+            subscribe(EventType.Connecting, false, () => {
                 setIsConnecting(true);
-            }).then((unlisten) => {
-                listeners.addListenerOnce('client-connecting', unlisten);
             });
 
-            listenGeneralEvent(EventType.Connected, false, (event) => {
+            subscribe(EventType.Connected, false, (event) => {
+                const newlyConnected = !connectedRef.current;
+                connectedRef.current = true;
                 let res = event.data as ClientConnectionInfo;
                 setCurrentConnection(res);
                 setHost(res.host);
@@ -290,12 +311,12 @@ export function ClientTab({onStatusChange, state}: ClientTabProps) {
                 switchTrayIcon(true);
                 setShowOtpInput(false);
                 resetOtpSubmissionSuppression();
-                addNotification('success', 'Connected', `${res.host}:${res.port}`);
-            }).then((unlisten) => {
-                listeners.addListenerOnce('client-connected', unlisten);
+                if (newlyConnected) addNotification('success', 'Connected', `${res.host}:${res.port}`);
             });
 
-            listenGeneralEvent(EventType.Disconnected, false, () => {
+            subscribe(EventType.Disconnected, false, () => {
+                const wasConnected = connectedRef.current;
+                connectedRef.current = false;
                 setIsConnected(false);
                 setIsConnecting(false);
                 switchTrayIcon(false);
@@ -304,12 +325,10 @@ export function ClientTab({onStatusChange, state}: ClientTabProps) {
                 setControlStatus('none'); //TODO: Implement in backend
                 setShowOtpInput(false);
                 resetOtpSubmissionSuppression();
-                addNotification('warning', 'Disconnected');
-            }).then((unlisten) => {
-                listeners.addListenerOnce('client-disconnected', unlisten);
+                if (wasConnected) addNotification('warning', 'Disconnected');
             });
 
-            listenGeneralEvent(EventType.ServerChoiceNeeded, false, (event) => {
+            subscribe(EventType.ServerChoiceNeeded, false, (event) => {
                 console.log('Server choice needed event received', event);
                 let res = event.data as ServerChoice;
                 if (res && res.servers && res.servers.length > 0) {
@@ -317,172 +336,167 @@ export function ClientTab({onStatusChange, state}: ClientTabProps) {
                     setShowServerChoice(true);
                 }
 
-            }).then((unlisten) => {
-                listeners.addListenerOnce('server-choice-needed', unlisten);
             });
 
-            listenGeneralEvent(EventType.OtpNeeded, false, () => {
+            subscribe(EventType.OtpNeeded, false, () => {
                 if (!isOtpSuppressedForCurrentPairing()) {
                     setShowOtpInput(true);
                 }
-                listeners.removeListener('otp-needed');
-            }).then((unlisten) => {
-                listeners.addListenerOnce('otp-needed', unlisten);
             });
 
-            listenGeneralEvent(EventType.ServiceError, false, (event) => {
+            subscribe(EventType.ServiceError, false, (event) => {
                 let res = event.data as ServiceError;
                 if (!res) return;
                 if (res.service_name.toLowerCase() !== 'client') return;
                 addNotification('error', 'Connection Error', res.error || 'An unknown error occurred during connection');
-            }).then((unlisten) => {
-                listeners.addListenerOnce('client-connection-error', unlisten);
             });
 
             // The stored CA cert no longer verifies (server regenerated its
             // CA). The daemon already deleted the cached copy and reset the
             // pairing state; we just surface a clear message so the user
             // knows to restart and re-enter a fresh OTP.
-            listenGeneralEvent(EventType.CertificateStale, false, (event) => {
+            subscribe(EventType.CertificateStale, false, (event) => {
                 addNotification(
                     'warning',
                     'Server changed its certificate',
                     event.message || 'Restart the client and re-pair with a fresh OTP.'
                 );
-            }).then((unlisten) => {
-                listeners.addListenerOnce('certificate-stale', unlisten);
             });
-        }
-
-        const cleanup = () => {
-            listeners.forceRemoveListener('client-connecting');
-            listeners.forceRemoveListener('client-connected');
-            listeners.forceRemoveListener('client-disconnected');
-            listeners.forceRemoveListener('server-choice-needed');
-            listeners.forceRemoveListener('otp-needed');
-            listeners.forceRemoveListener('client-connection-error');
-            listeners.forceRemoveListener('certificate-stale');
-        }
-
-        return {setup, cleanup};
     }
 
-    const handleStopClient = () => {
-        setPendingForceStop(true);
-        setRunningPending(true);
-
-        listeners.removeListener('client-start');
-        listeners.removeListener('client-start-error');
-        connectionListeners.cleanup();
-
-        listenCommand(EventType.CommandSuccess, CommandType.StopClient, (event) => {
-            console.log(`Client stopped successfully`, event);
-            setIsRunning(false);
-            setIsConnecting(false);
-            switchTrayIcon(false);
-            setIsConnected(false);
-            setConnectionTime(0);
-            // setDataUsage(0);
-            setShowOtpInput(false);
-            resetOtpSubmissionSuppression();
-            setAvailableServers(null);
-            setShowServerChoice(false);
-            setControlStatus('none');
-            onStatusChange(false);
-            addNotification('info', 'Stopped');
-            setRunningPending(false);
-            setPendingForceStop(false);
-            listeners.removeListener('client-stop');
-            listeners.removeListener('client-stop-error');
-        }).then(unlisten => {
-            listeners.addListenerOnce('client-stop', unlisten);
-        });
-
-        listenCommand(EventType.CommandError, CommandType.StopClient, (event) => {
-            console.error(`Error stopping client: ${event.message}`);
-            addNotification('error', 'Failed to Stop', event.data?.error || 'Unknown error');
-
-            listeners.removeListener('client-stop-error');
-            listeners.removeListener('client-stop');
-            setPendingForceStop(false);
-        }).then(unlisten => {
-            listeners.addListenerOnce('client-stop-error', unlisten);
-        });
-
-        stopClient().catch((err) => {
-            console.error('Error invoking stopClient:', err);
-            addNotification('error', 'Failed to Stop', err.message || 'Unknown error');
-            setRunningPending(false);
-            setPendingForceStop(false);
-            listeners.forceRemoveListener('client-stop-error');
-            listeners.forceRemoveListener('client-stop');
-        });
-    }
-
-    const handleToggleClient = () => {
-        if (!isRunning) {
-            resetOtpSubmissionSuppression();
-            setRunningPending(true);
-            onStatusChange(true);
-
-            listenCommand(EventType.CommandSuccess, CommandType.StartClient, (event) => {
-                console.log(`Client started successfully`, event);
-                setIsRunning(true);
-                let res = event.data?.result as ClientConnectionInfo;
-                if (res) {
-                    let permissions = parseStreams(event.data?.result.enabled_streams as number[]);
-                    setEnableMouse(permissions.includes(StreamType.Mouse));
-                    setEnableKeyboard(permissions.includes(StreamType.Keyboard));
-                    setEnableClipboard(permissions.includes(StreamType.Clipboard));
-                    onStatusChange(true);
-                    addNotification('success', 'Started');
-                    setRunningPending(false);
-                }
-
-                listeners.removeListener('client-start');
-                listeners.removeListener('client-start-error');
-            }).then(unlisten => {
-                listeners.addListenerOnce('client-start', unlisten);
-            });
-
-            listenCommand(EventType.CommandError, CommandType.StartClient, (event) => {
-                console.error(`Error starting client: ${event.message}`);
-                addNotification('error', 'Connection Failed', event.data?.error || 'Unknown error');
-                setRunningPending(false);
-                setIsRunning(false);
-                setIsConnecting(false);
-                switchTrayIcon(false);
-                setIsConnected(false);
-                onStatusChange(false);
-
-                setShowOtpInput(false);
-                resetOtpSubmissionSuppression();
-                setShowServerChoice(false);
-                setAvailableServers(null);
-
-
-                listeners.removeListener('client-start-error');
-                listeners.removeListener('client-start');
-                connectionListeners.cleanup();
-            }).then(unlisten => {
-                listeners.addListenerOnce('client-start-error', unlisten);
-            });
-
-            startClient().then(() => {
-                connectionListeners.setup();
-            }).catch((err) => {
-                console.error('Error invoking startClient:', err);
-                addNotification('error', 'Connection Failed', err.message || 'Unknown error');
-                setRunningPending(false);
-                onStatusChange(false);
-                listeners.forceRemoveListener('client-start-error');
-                listeners.forceRemoveListener('client-start');
-            });
-
-        } else {
-            handleStopClient();
-        }
+    const resetStoppedState = () => {
+        runningRef.current = false;
+        connectedRef.current = false;
+        setIsRunning(false);
+        setIsConnecting(false);
+        setIsConnected(false);
+        switchTrayIcon(false);
+        setConnectionTime(0);
+        setShowOtpInput(false);
+        resetOtpSubmissionSuppression();
+        setAvailableServers(null);
+        setShowServerChoice(false);
+        setControlStatus('none');
+        setRunningPending(false);
+        setPendingForceStop(false);
+        onStatusChange(false);
     };
+
+    useEffect(() => {
+        let cancelled = false;
+        const generation = ++lifecycleGeneration.current;
+        const unlisteners: (() => void)[] = [];
+        const registrations: Promise<void>[] = [];
+        lifecycleReadyRef.current = false;
+        setLifecycleReady(false);
+        const active = () => !cancelled && lifecycleGeneration.current === generation;
+        const register = (promise: Promise<() => void>) => {
+            registrations.push(promise.then(unlisten => {
+                if (!active()) unlisten();
+                else unlisteners.push(unlisten);
+            }));
+        };
+        const command = (type: EventType, cmd: CommandType, callback: Parameters<typeof listenCommand>[2]) => {
+            register(listenCommand(type, cmd, (event, received) => {
+                if (active()) callback(event, received);
+            }));
+        };
+        // Connection/pairing events may precede the start command's success.
+        registerConnectionListeners((type, noData, callback) => {
+            register(listenGeneralEvent(type, noData, event => {
+                if (active() && pendingOperation.current !== 'stop' && (runningRef.current || pendingOperation.current === 'start')) callback(event);
+            }));
+        });
+        command(EventType.CommandSuccess, CommandType.StartClient, event => {
+            const res = event.data?.result;
+            const session = typeof res?.start_time === 'string' && res.start_time ? res.start_time : undefined;
+            const first = session ? !seenStarts.current.has(session) : pendingOperation.current === 'start';
+            if (session) seenStarts.current.add(session);
+            if (pendingOperation.current === 'stop' || cancelledStart.current || (!first && !runningRef.current)) return;
+            runningRef.current = true;
+            setIsRunning(true);
+            onStatusChange(true);
+            if (pendingOperation.current === 'start') {
+                pendingOperation.current = null;
+                setRunningPending(false);
+            }
+            if (res) {
+                const permissions = parseStreams(res.enabled_streams);
+                setEnableMouse(permissions.includes(StreamType.Mouse));
+                setEnableKeyboard(permissions.includes(StreamType.Keyboard));
+                setEnableClipboard(permissions.includes(StreamType.Clipboard));
+                if (first) addNotification('success', 'Started');
+            }
+        });
+        command(EventType.CommandError, CommandType.StartClient, event => {
+            if (pendingOperation.current !== 'start') return;
+            pendingOperation.current = null;
+            addNotification('error', 'Connection Failed', event.data?.error || 'Unknown error');
+            resetStoppedState();
+        });
+        command(EventType.CommandSuccess, CommandType.StopClient, () => {
+            if (!runningRef.current && pendingOperation.current !== 'stop') return;
+            pendingOperation.current = null;
+            cancelledStart.current = true;
+            resetStoppedState();
+            addNotification('info', 'Stopped');
+        });
+        command(EventType.CommandError, CommandType.StopClient, event => {
+            if (pendingOperation.current !== 'stop') return;
+            pendingOperation.current = null;
+            cancelledStart.current = false;
+            setRunningPending(false);
+            setPendingForceStop(false);
+            addNotification('error', 'Failed to Stop', event.data?.error || 'Unknown error');
+        });
+        Promise.all(registrations).then(() => {
+            if (active()) {
+                lifecycleReadyRef.current = true;
+                setLifecycleReady(true);
+            }
+        }).catch(err => {
+            if (!active()) return;
+            cancelled = true;
+            unlisteners.forEach(unlisten => unlisten());
+            addNotification('error', 'Client controls unavailable', String(err));
+        });
+        return () => {
+            cancelled = true;
+            lifecycleReadyRef.current = false;
+            pendingOperation.current = null;
+            unlisteners.forEach(unlisten => unlisten());
+        };
+    }, []);
+
+    const sendOperation = (operation: 'start' | 'stop') => {
+        if (!lifecycleReadyRef.current || pendingOperation.current === 'stop') return;
+        if (operation === 'start' && pendingOperation.current) return;
+        // Stop deliberately supersedes a pending start (OTP cancellation/force stop).
+        const sequence = ++operationSequence.current;
+        const generation = lifecycleGeneration.current;
+        pendingOperation.current = operation;
+        cancelledStart.current = operation === 'stop';
+        setRunningPending(true);
+        setPendingForceStop(operation === 'stop');
+        if (operation === 'start') {
+            resetOtpSubmissionSuppression();
+            onStatusChange(true);
+        }
+        const send = operation === 'start' ? startClient : stopClient;
+        send().catch(err => {
+            if (!lifecycleReadyRef.current || lifecycleGeneration.current !== generation || operationSequence.current !== sequence || pendingOperation.current !== operation) return;
+            pendingOperation.current = null;
+            addNotification('error', operation === 'start' ? 'Connection Failed' : 'Failed to Stop', String(err));
+            if (operation === 'start') resetStoppedState();
+            else {
+                cancelledStart.current = false;
+                setRunningPending(false);
+                setPendingForceStop(false);
+            }
+        });
+    };
+    const handleStopClient = () => sendOperation('stop');
+    const handleToggleClient = () => sendOperation(runningRef.current ? 'stop' : 'start');
 
     const handleOtpSubmit = (otp: string) => {
         listenCommand(EventType.CommandSuccess, CommandType.SetOtp, (event) => {
@@ -667,6 +681,7 @@ export function ClientTab({onStatusChange, state}: ClientTabProps) {
                                 'stopped'
                 }
                 onClick={handleToggleClient}
+                disabled={!lifecycleReady}
                 onForceStop={handleStopClient}
                 pendingForceStop={pendingForceStop}
                 uid={state.uid}

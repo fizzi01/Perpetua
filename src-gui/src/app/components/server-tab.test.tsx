@@ -1,7 +1,9 @@
+import {StrictMode} from 'react';
 import {act, cleanup, fireEvent, render, screen, waitFor} from '@testing-library/react';
 import {afterEach, beforeEach, describe, expect, it, vi} from 'vitest';
 
 import {ServerTab} from './server-tab';
+import {startServer, stopServer, switchTrayIcon} from '../api/Sender';
 import {
     BIND_ALL,
     CommandType,
@@ -16,15 +18,44 @@ type GeneralCallback = (data: GeneralEvent) => void;
 
 const commandListeners = new Map<string, CommandCallback>();
 const generalListeners = new Map<EventType, GeneralCallback>();
+const commandSubscriptions = new Map<string, Set<CommandCallback>>();
+const generalSubscriptions = new Map<EventType, Set<GeneralCallback>>();
+let deferLifecycleRegistration = false;
+let deferRemoval = false;
+let rejectLifecycleRegistration = false;
+let finishRegistrations: (() => void)[] = [];
+let finishRemovals: (() => void)[] = [];
+
+// Assert the notification queue, independently of Motion's exiting DOM nodes.
+vi.mock('./ui/inline-notification', () => ({
+    InlineNotification: ({notifications}: {notifications: {id: string; message: string; description?: string}[]}) => (
+        <div data-testid="notifications">{notifications.map(item => (
+            <div key={item.id} data-notification-id={item.id}><p>{item.message}</p><p>{item.description}</p></div>
+        ))}</div>
+    ),
+}));
 
 vi.mock('../api/Listener', () => ({
     listenCommand: vi.fn((eventType: EventType, commandType: CommandType, callback: CommandCallback) => {
-        commandListeners.set(`${eventType}:${commandType}`, callback);
-        return Promise.resolve(() => commandListeners.delete(`${eventType}:${commandType}`));
+        const key = `${eventType}:${commandType}`;
+        const lifecycle = commandType === CommandType.StartServer || commandType === CommandType.StopServer;
+        if (lifecycle && rejectLifecycleRegistration) return Promise.reject(new Error('Registration failed'));
+        const callbacks = commandSubscriptions.get(key) || new Set<CommandCallback>();
+        callbacks.add(callback);
+        commandSubscriptions.set(key, callbacks);
+        commandListeners.set(key, (data, command) => [...callbacks].forEach(cb => cb(data, command)));
+        const remove = () => { callbacks.delete(callback); };
+        const unlisten = () => { if (deferRemoval) finishRemovals.push(remove); else remove(); };
+        return lifecycle && deferLifecycleRegistration
+            ? new Promise<() => void>(resolve => finishRegistrations.push(() => resolve(unlisten)))
+            : Promise.resolve(unlisten);
     }),
     listenGeneralEvent: vi.fn((eventType: EventType, _noData: boolean, callback: GeneralCallback) => {
-        generalListeners.set(eventType, callback);
-        return Promise.resolve(() => generalListeners.delete(eventType));
+        const callbacks = generalSubscriptions.get(eventType) || new Set<GeneralCallback>();
+        callbacks.add(callback);
+        generalSubscriptions.set(eventType, callbacks);
+        generalListeners.set(eventType, data => [...callbacks].forEach(cb => cb(data)));
+        return Promise.resolve(() => { callbacks.delete(callback); });
     }),
 }));
 
@@ -94,6 +125,16 @@ async function openOptions() {
 
 beforeEach(() => {
     commandListeners.clear();
+    commandSubscriptions.clear();
+    generalSubscriptions.clear();
+    deferLifecycleRegistration = false;
+    deferRemoval = false;
+    rejectLifecycleRegistration = false;
+    finishRegistrations = [];
+    finishRemovals = [];
+    vi.mocked(startServer).mockReset().mockResolvedValue(undefined);
+    vi.mocked(switchTrayIcon).mockClear();
+    vi.mocked(stopServer).mockReset().mockResolvedValue(undefined);
     generalListeners.clear();
     saveServerConfig.mockClear();
     listNetworkInterfaces.mockClear();
@@ -272,4 +313,144 @@ describe('Partial saves do not clobber other fields', () => {
 
         expect(port.value).toBe('6001');
     });
+});
+
+
+const startResult = (start_time = '2026-09-08T10:00:00.000Z') => ({host: '0.0.0.0', port: 55655, start_time});
+function fireStart(result = startResult()) {
+    act(() => commandListeners.get(`${EventType.CommandSuccess}:${CommandType.StartServer}`)?.({
+        data: {result}, message: 'Server started successfully',
+    }, CommandType.StartServer));
+}
+
+describe('Server lifecycle notifications', () => {
+    it('handles a replayed start response once', async () => {
+        await renderServerTab();
+        fireStart();
+        fireStart();
+        expect(screen.getAllByText('Server started')).toHaveLength(1);
+    });
+
+    it('ignores StrictMode callbacks whose cleanup precedes registration completion', async () => {
+        deferLifecycleRegistration = true;
+        deferRemoval = true;
+        render(<StrictMode><ServerTab state={serverState()} onStatusChange={vi.fn()}/></StrictMode>);
+        await act(async () => finishRegistrations.splice(0).forEach(finish => finish()));
+        expect(commandSubscriptions.get(`${EventType.CommandSuccess}:${CommandType.StartServer}`)?.size).toBe(2);
+        fireStart();
+        expect(screen.getAllByText('Server started')).toHaveLength(1);
+    });
+});
+
+
+function powerButton() {
+    return screen.getAllByRole('button')[0];
+}
+function fireStop() {
+    act(() => commandListeners.get(`${EventType.CommandSuccess}:${CommandType.StopServer}`)?.({
+        message: 'Server stopped',
+    }, CommandType.StopServer));
+}
+
+describe('Server lifecycle regression scenarios', () => {
+    it('waits for registrations and sends only one command on rapid clicks', async () => {
+        deferLifecycleRegistration = true;
+        await renderServerTab();
+        expect(powerButton()).toBeDisabled();
+        fireEvent.click(powerButton());
+        expect(startServer).not.toHaveBeenCalled();
+        await act(async () => finishRegistrations.splice(0).forEach(finish => finish()));
+        expect(powerButton()).not.toBeDisabled();
+        act(() => { powerButton().click(); powerButton().click(); });
+        expect(startServer).toHaveBeenCalledTimes(1);
+        fireStart();
+        expect(screen.getAllByText('Server started')).toHaveLength(1);
+    });
+
+    it('reports registration failure and leaves controls disabled', async () => {
+        rejectLifecycleRegistration = true;
+        await renderServerTab();
+        expect(await screen.findByText('Server controls unavailable')).toBeInTheDocument();
+        expect(powerButton()).toBeDisabled();
+        expect(startServer).not.toHaveBeenCalled();
+    });
+
+    it('accepts an immediate response and suppresses repeats without start_time', async () => {
+        await renderServerTab();
+        vi.mocked(startServer).mockImplementationOnce(async () => {
+            commandListeners.get(`${EventType.CommandSuccess}:${CommandType.StartServer}`)?.({
+                data: {result: {host: '0.0.0.0', port: 55655}},
+            }, CommandType.StartServer);
+        });
+        fireEvent.click(powerButton());
+        await act(async () => {});
+        fireStart({host: '0.0.0.0', port: 55655, start_time: ''});
+        expect(screen.getAllByText('Server started')).toHaveLength(1);
+        expect(startServer).toHaveBeenCalledTimes(1);
+    });
+
+    it('announces a new session after stop and ignores old replays', async () => {
+        await renderServerTab();
+        fireEvent.click(powerButton());
+        fireStart();
+        fireEvent.click(powerButton());
+        expect(stopServer).toHaveBeenCalledTimes(1);
+        fireStop();
+        fireStart();
+        expect(screen.getByText('Server Stopped')).toBeInTheDocument();
+        await act(async () => vi.advanceTimersByTime(4500));
+        fireEvent.click(powerButton());
+        fireStart(startResult('2026-09-08T10:01:00.000Z'));
+        expect(screen.getAllByText('Server started')).toHaveLength(1);
+        expect(startServer).toHaveBeenCalledTimes(2);
+    });
+
+    it('polling and remounting an active server do not replay the start notification', async () => {
+        const state = serverState({running: true, start_time: startResult().start_time});
+        const view = await renderServerTab(state);
+        fireStart();
+        expect(screen.queryByText('Server started')).not.toBeInTheDocument();
+        const connectedCallbacks = [...(generalSubscriptions.get(EventType.ClientConnected) || [])];
+        view.rerender(<ServerTab state={{...state, heartbeat_interval: 2}} onStatusChange={vi.fn()}/>);
+        await act(async () => {});
+        expect([...(generalSubscriptions.get(EventType.ClientConnected) || [])]).toEqual(connectedCallbacks);
+        view.unmount();
+        await renderServerTab(state);
+        fireStart();
+        expect(screen.queryByText('Server started')).not.toBeInTheDocument();
+        expect(commandSubscriptions.get(`${EventType.CommandSuccess}:${CommandType.StartServer}`)?.size).toBe(1);
+    });
+
+    it('callbacks queued before unmount cannot touch the tray or create notifications', async () => {
+        const view = await renderServerTab();
+        const callback = [...commandSubscriptions.get(`${EventType.CommandSuccess}:${CommandType.StartServer}`)!][0];
+        view.unmount();
+        vi.mocked(switchTrayIcon).mockClear();
+        act(() => callback({data: {result: startResult()}}, CommandType.StartServer));
+        expect(switchTrayIcon).not.toHaveBeenCalled();
+    });
+
+    it('send failures release the operation so the user can retry', async () => {
+        await renderServerTab();
+        vi.mocked(startServer).mockRejectedValueOnce(new Error('IPC unavailable'));
+        fireEvent.click(powerButton());
+        expect(await screen.findByText('Failed to start server')).toBeInTheDocument();
+        expect(powerButton()).not.toBeDisabled();
+        fireEvent.click(powerButton());
+        expect(startServer).toHaveBeenCalledTimes(2);
+    });
+});
+
+
+it('gives notifications unique keys even when created in the same millisecond and clears their timers', async () => {
+    const view = await renderServerTab();
+    const now = vi.spyOn(Date, 'now').mockReturnValue(1788861600000);
+    fireStart();
+    fireStop();
+    const entries = screen.getByTestId('notifications').querySelectorAll('[data-notification-id]');
+    expect(entries).toHaveLength(2);
+    expect(new Set([...entries].map(node => node.getAttribute('data-notification-id'))).size).toBe(2);
+    view.unmount();
+    await act(async () => vi.advanceTimersByTime(5000));
+    now.mockRestore();
 });
