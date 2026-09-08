@@ -325,7 +325,6 @@ pub async fn set_server_config(
     host: String,
     port: i32,
     ssl_enabled: bool,
-    host_exclusive: bool,
     s: tauri::State<'_, AtomicAsyncWriter>,
 ) -> Result<(), String> {
     // Built with serde_json rather than string interpolation: `host` is
@@ -335,7 +334,6 @@ pub async fn set_server_config(
         "host": host,
         "port": port,
         "ssl_enabled": ssl_enabled,
-        "host_exclusive": host_exclusive,
     });
     let command = CommandEvent::build(CommandType::SetServerConfig, &params.to_string());
     let command = EventParser::serialize(&command).map_err(|e| {

@@ -47,7 +47,7 @@ import {
 } from '../api/Sender';
 import {listenCommand, listenGeneralEvent} from '../api/Listener';
 import {
-    ADVERTISE_AUTO,
+    BIND_ALL,
     ClientApprovalRequest,
     ClientApprovalResolved,
     ClientRejected,
@@ -125,7 +125,8 @@ export function ServerTab({onStatusChange, state}: ServerTabProps) {
     // Interface preference, not a bind address. "0.0.0.0" means "advertise on
     // every interface" and is the default.
     const [host, setHost] = useState(state.host);
-    const [hostExclusive, setHostExclusive] = useState(state.host_exclusive ?? false);
+    // The adapter the chosen address sits on. Sent alongside it so the daemon
+    // can follow the selection when DHCP renews the address.
     const [interfaces, setInterfaces] = useState<NetworkInterfaceInfo[]>([]);
     const [advertised, setAdvertised] = useState<string[]>([]);
     const [enableMouse, setEnableMouse] = useState(parseStreams(state.streams_enabled).includes(StreamType.Mouse));
@@ -172,8 +173,8 @@ export function ServerTab({onStatusChange, state}: ServerTabProps) {
 
     // Live mirror of the options, so a debounced save always ships the current
     // values for the fields it is not changing. See scheduleOptionsSave.
-    const optionsRef = useRef({host, port, requireSSL, hostExclusive});
-    optionsRef.current = {host, port, requireSSL, hostExclusive};
+    const optionsRef = useRef({host, port, requireSSL});
+    optionsRef.current = {host, port, requireSSL};
 
     // ``host`` is an interface preference owned by the daemon, and "0.0.0.0"
     // legitimately means "all of them". Nothing here computes an address: the
@@ -202,15 +203,6 @@ export function ServerTab({onStatusChange, state}: ServerTabProps) {
                 setInterfaces(result.interfaces ?? []);
                 setAdvertised(result.advertised ?? []);
                 if (result.selected) setHost(result.selected);
-                if (result.legacy_bind_notice) {
-                    // The daemon clears this after reporting it once.
-                    addNotification(
-                        'warning',
-                        'Perpetua now listens on all interfaces',
-                        `It advertises ${result.legacy_bind_notice}. Previously this address also restricted which interface accepted connections. `
-                        + `Tick "Accept only on this interface" to restore that restriction.`,
-                    );
-                }
             }
             done();
         }).then(unlisten => listeners.addListenerOnce('list-network-interfaces', unlisten));
@@ -563,7 +555,6 @@ export function ServerTab({onStatusChange, state}: ServerTabProps) {
         switchTrayIcon(state.running);
         setUid(state.uid);
         setHost(state.host);
-        setHostExclusive(state.host_exclusive ?? false);
         // Status arrives every couple of seconds; adopting it while the user is
         // mid-edit would wipe what they are typing before the debounced save
         // has had a chance to run.
@@ -1097,8 +1088,8 @@ export function ServerTab({onStatusChange, state}: ServerTabProps) {
         return `${hours}:${minutes.toString().padStart(2, '0')}:${secs.toString().padStart(2, '0')}`;
     };
 
-    const handleSaveOptions = (hostValue: string, portValue: string, sslEnabledValue: boolean, save_feedback: boolean = true, hostExclusiveValue: boolean = hostExclusive) => {
-        console.log('Saving options:', {host: hostValue, port: portValue, sslEnabled: sslEnabledValue, hostExclusive: hostExclusiveValue});
+    const handleSaveOptions = (hostValue: string, portValue: string, sslEnabledValue: boolean, save_feedback: boolean = true) => {
+        console.log('Saving options:', {host: hostValue, port: portValue, sslEnabled: sslEnabledValue});
 
         listenCommand(EventType.CommandSuccess, CommandType.SetServerConfig, (event) => {
             console.log(`Server config saved successfully: ${event.message}`);
@@ -1119,7 +1110,7 @@ export function ServerTab({onStatusChange, state}: ServerTabProps) {
         });
 
         const portNum = parseInt(portValue, 10);
-        saveServerConfig(hostValue, portNum, sslEnabledValue, hostExclusiveValue).catch((err) => {
+        saveServerConfig(hostValue, portNum, sslEnabledValue).catch((err) => {
             console.error('Error saving options:', err);
             addNotification('error', 'Failed to save options');
             listeners.forceRemoveListener('set-server-config');
@@ -1142,7 +1133,7 @@ export function ServerTab({onStatusChange, state}: ServerTabProps) {
             clearTimeout(saveOptionsTimeoutRef.current);
         }
         saveOptionsTimeoutRef.current = setTimeout(() => {
-            handleSaveOptions(next.host, next.port, next.requireSSL, false, next.hostExclusive);
+            handleSaveOptions(next.host, next.port, next.requireSSL, false);
         }, 400); // long enough not to fire mid-keystroke
     };
 
@@ -1701,22 +1692,23 @@ export function ServerTab({onStatusChange, state}: ServerTabProps) {
                             </h3>
 
                             <div>
-                                <label htmlFor="advertiseOn" className="block mb-2 font-semibold"
+                                <label htmlFor="listenOn" className="block mb-2 font-semibold"
                                        style={{color: 'var(--app-text-primary)'}}
-                                >Advertise on</label>
+                                >Listen on</label>
                                 <div className="flex items-center gap-2">
                                     <Select
+                                        // The socket is already bound: a new
+                                        // address only takes effect on the
+                                        // next start, same as the port.
+                                        disabled={isRunning}
                                         value={host}
                                         onValueChange={(newHost) => {
                                             setHost(newHost);
-                                            // Advertising on all interfaces cannot be exclusive.
-                                            const nextExclusive = newHost === ADVERTISE_AUTO ? false : hostExclusive;
-                                            setHostExclusive(nextExclusive);
-                                            scheduleOptionsSave({host: newHost, hostExclusive: nextExclusive});
+                                            scheduleOptionsSave({host: newHost});
                                         }}
                                     >
                                         <SelectTrigger
-                                            id="advertiseOn"
+                                            id="listenOn"
                                             className="SelectTrigger min-w-0 flex-1 shadow-none [&>span]:truncate"
                                         >
                                             <SelectValue/>
@@ -1729,7 +1721,7 @@ export function ServerTab({onStatusChange, state}: ServerTabProps) {
                                                 color: 'var(--app-text-primary)',
                                             }}
                                         >
-                                            <SelectItem value={ADVERTISE_AUTO} className="focus:bg-[var(--app-primary)] focus:text-white">
+                                            <SelectItem value={BIND_ALL} className="focus:bg-[var(--app-primary)] focus:text-white">
                                                 Auto (all interfaces)
                                             </SelectItem>
                                             {interfaces.map((iface) => (
@@ -1739,7 +1731,7 @@ export function ServerTab({onStatusChange, state}: ServerTabProps) {
                                                     {iface.is_default_route ? ' (default route)' : ''}
                                                 </SelectItem>
                                             ))}
-                                            {host !== ADVERTISE_AUTO && !interfaces.some(i => i.ip === host) && (
+                                            {host !== BIND_ALL && !interfaces.some(i => i.ip === host) && (
                                                 <SelectItem value={host} disabled>
                                                     {`${host} (not present)`}
                                                 </SelectItem>
@@ -1747,7 +1739,7 @@ export function ServerTab({onStatusChange, state}: ServerTabProps) {
                                         </SelectContent>
                                     </Select>
                                     <NetworkAddressesPopover
-                                        title={isRunning ? 'Advertised addresses' : 'Addresses to advertise'}
+                                        title={isRunning ? 'Reachable at' : 'Will be reachable at'}
                                         entries={advertised.map(address => {
                                             const iface = interfaces.find(item => item.ip === address);
                                             return {
@@ -1758,10 +1750,10 @@ export function ServerTab({onStatusChange, state}: ServerTabProps) {
                                         })}
                                     />
                                 </div>
-                                {host !== ADVERTISE_AUTO && !interfaces.some(i => i.ip === host) && (
+                                {host !== BIND_ALL && !interfaces.some(i => i.ip === host) && (
                                     <p className="mt-1 text-xs" style={{color: 'var(--app-warning, #b45309)'}}>
-                                        This interface is not currently available. Perpetua is
-                                        advertising on all interfaces until it comes back.
+                                        This address is not on this machine right now. The server
+                                        will not start until it comes back, or you pick another one.
                                     </p>
                                 )}
                                 {advertised.length === 0 && (
@@ -1770,27 +1762,6 @@ export function ServerTab({onStatusChange, state}: ServerTabProps) {
                                     </p>
                                 )}
                             </div>
-
-                            {host !== ADVERTISE_AUTO && (
-                                <div className="flex items-center justify-between">
-                                    <label htmlFor="hostExclusive" className="font-semibold"
-                                           style={{color: 'var(--app-text-primary)'}}>
-                                        Accept only on this interface
-                                        <span className="block text-xs font-normal"
-                                              style={{color: 'var(--app-text-muted)'}}>
-                                            Refuse connections arriving on any other interface.
-                                        </span>
-                                    </label>
-                                    <Switch
-                                        id="hostExclusive"
-                                        checked={hostExclusive}
-                                        onCheckedChange={(checked) => {
-                                            setHostExclusive(checked);
-                                            scheduleOptionsSave({hostExclusive: checked});
-                                        }}
-                                    />
-                                </div>
-                            )}
 
                             <div>
                                 <label htmlFor="serverPort" className="block mb-2 font-semibold"

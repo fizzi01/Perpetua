@@ -19,6 +19,7 @@
 #
 
 import asyncio
+import errno
 import socket
 import sys
 
@@ -73,10 +74,7 @@ from utils.net import (
     MissingIpError,
     get_local_ip,
     invalidate_local_ip_cache,
-    follow_interface_address,
     list_local_interfaces_async,
-    match_interface,
-    resolve_advertise_interfaces,
 )
 from utils.crypto import CertificateManager
 from utils.crypto.sharing import CertificateSharing
@@ -103,13 +101,6 @@ class Server:
     """Manages server configuration, clients, connections, SSL and cert sharing."""
 
     CLEANUP_DELAY = 0.5
-
-    # Every listener binds this, always. ``config.host`` selects which address
-    # is *advertised*, not which one is bound: a bind tied to one address stops
-    # the server from starting the moment that address goes away (DHCP rebind,
-    # cable unplugged). Restricting reachability is ``host_exclusive``, applied
-    # at accept time instead.
-    BIND_ALL = "0.0.0.0"
 
     # How often the advertised address set is re-derived while running, so a
     # cable plugged in after start still gets announced. Matches the local-IP
@@ -151,8 +142,7 @@ class Server:
         # can never disagree. Set before the certificate block below, which
         # already reads it.
         self._iface_snapshot: Optional[list] = None
-        # Addresses currently advertised, in preference order. Also the source
-        # of truth for the ``host_exclusive`` accept filter.
+        # Addresses currently advertised, in preference order.
         self._advertised_addresses: List[str] = []
         self._advertise_watch_task: Optional[asyncio.Task] = None
 
@@ -1345,14 +1335,19 @@ class Server:
         ]
 
     @staticmethod
-    def _is_port_available(host: str, port: int) -> bool:
-        """Synchronously probe whether ``host:port`` is free for bind.
+    def _probe_bind(host: str, port: int) -> Optional[str]:
+        """Synchronously probe whether ``host:port`` can be bound.
 
         Mirrors ``asyncio.start_server``: on POSIX the loop sets
         SO_REUSEADDR by default, so TIME_WAIT sockets from a previous
         run don't block a fresh bind. On Windows SO_REUSEADDR has
         looser semantics (would let two servers steal each other's
         port) so the probe stays strict there.
+
+        :return: ``None`` when the bind would succeed, otherwise the reason.
+            The two are worth separating: a chosen address that is no longer
+            on the machine used to be reported as a port conflict, which sent
+            the admin changing a port that was never the problem.
         """
         bind_host = host if host and host != "0.0.0.0" else ""
         try:
@@ -1360,48 +1355,16 @@ class Server:
                 if sys.platform != "win32":
                     s.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
                 s.bind((bind_host, port))
-            return True
-        except OSError:
-            return False
-
-    def _on_interface_accept(self, local_ip: str) -> bool:
-        """Admission filter for ``host_exclusive``.
-
-        The listener always binds every interface, so restricting reachability
-        happens here instead: a connection whose local endpoint is not the
-        selected address is refused. Doing it at bind time would stop the
-        server from starting whenever that address is momentarily absent.
-        """
-        if not self.config.host_exclusive:
-            return True
-
-        # Resolve the choice strictly. Reusing the *advertised* list would
-        # fail open on the whole machine whenever the choice does not match
-        # anything: the advertise path deliberately falls back to "all
-        # interfaces" so the server stays findable, and inheriting that here
-        # turned "accept only on this interface" into "accept on every one".
-        allowed = match_interface(self.config.host, self._iface_snapshot)
-        if local_ip in allowed:
-            return True
-
-        if not allowed:
-            # The named interface is not present. Refusing is what the setting
-            # asks for, and costs nothing: no connection can arrive on an
-            # address the machine does not have, so this only rejects the
-            # other interfaces - which is the point.
-            self._logger.warning(
-                "Rejecting connections: the selected interface is not present",
-                local_ip=local_ip,
-                selected=self.config.host,
-            )
-            return False
-
-        self._logger.warning(
-            "Rejected connection on non-selected interface",
-            local_ip=local_ip,
-            selected=allowed,
-        )
-        return False
+            return None
+        except socket.gaierror:
+            # Not an address at all. Config normalisation should have caught
+            # this; classifying it as a port conflict would send the admin
+            # after the wrong setting.
+            return "address_unavailable"
+        except OSError as e:
+            if e.errno == errno.EADDRNOTAVAIL:
+                return "address_unavailable"
+            return "port_in_use"
 
     async def start(self) -> bool:
         """Start the server with enabled components"""
@@ -1414,22 +1377,29 @@ class Server:
         # Enumerate once, up front, and thread this snapshot through both the
         # certificate SAN and the mDNS record below.
         self._iface_snapshot = await list_local_interfaces_async(include_unusable=True)
-        # A renewal that happened while the daemon was down leaves a stale
-        # address here; there is no previous snapshot, so only the subnet
-        # match can recover it.
-        if self._follow_selected_interface(self._iface_snapshot):
-            await self.save_config()
         self._advertised_addresses = self.config.get_advertise_addresses(
             self._iface_snapshot
         )
 
-        # Refuse to start if the data port is taken. Unlike the pairing
-        # port, this one is published over mDNS and baked into client
-        # configs — a silent fallback would confuse everything.
-        # Probe the wildcard, matching the bind below. Probing config.host
-        # would report EADDRNOTAVAIL - "no such address here" - as a port
-        # conflict whenever the selected interface is momentarily absent.
-        if not self._is_port_available(self.BIND_ALL, self.config.port):
+        # Refuse to start if the port is taken. Unlike the pairing port, this
+        # one is published over mDNS and baked into client configs — a silent
+        # fallback would confuse everything. Probe the address actually being
+        # bound, otherwise the check says nothing about the socket to come.
+        failure = self._probe_bind(self.config.host, self.config.port)
+        if failure == "address_unavailable":
+            error_msg = (
+                f"The address {self.config.host} is not on this machine right "
+                f"now. Pick another one in Options, or choose Auto to listen "
+                f"on every interface."
+            )
+            self._logger.error(error_msg)
+            raise ServerStartError(
+                error_msg,
+                reason="address_unavailable",
+                port=self.config.port,
+                host=self.config.host,
+            )
+        if failure:
             error_msg = (
                 f"Port {self.config.port} is already in use. "
                 f"Change the port in Options and try again."
@@ -1439,7 +1409,7 @@ class Server:
                 error_msg,
                 reason="port_in_use",
                 port=self.config.port,
-                host=self.BIND_ALL,
+                host=self.config.host,
             )
 
         # Certificate setup deferred from __init__. Retry now that the user explicitly asked
@@ -1477,7 +1447,7 @@ class Server:
             connected_callback=self._on_client_connected,
             disconnected_callback=self._on_client_disconnected,
             reconnected_callback=self._on_client_stream_reconnected,
-            host=self.BIND_ALL,
+            host=self.config.host,
             port=self.config.port,
             heartbeat_interval=self.config.heartbeat_interval,
             allowlist=self.clients_manager,
@@ -1492,7 +1462,6 @@ class Server:
             approval_callback=self._request_client_approval,
             rejected_callback=self._on_client_rejected,
             server_uid=self.config.uid,
-            interface_filter=self._on_interface_accept,
         )
 
         try:
@@ -1512,7 +1481,7 @@ class Server:
         # to an adjacent port). Failure is non-fatal.
         if self.config.ssl_enabled:
             try:
-                await self.start_pairing_service(host=self.BIND_ALL)
+                await self.start_pairing_service(host=self.config.host)
             except Exception as e:
                 self._logger.warning("Pairing service did not start", error=str(e))
 
@@ -1543,9 +1512,7 @@ class Server:
                     port=self.config.port,
                     uid=self.config.uid,
                     extra_props=extra_props,
-                    interface_addresses=resolve_advertise_interfaces(
-                        self.config.host, self._iface_snapshot
-                    ),
+                    interface_addresses=addresses,
                 ),
                 name="mdns_register_service",
             )
@@ -1620,7 +1587,7 @@ class Server:
 
         self._logger.info(
             "Server started",
-            bind=self.BIND_ALL,
+            bind=self.config.host,
             advertising=self._advertised_addresses,
             port=self.config.port,
         )
@@ -1645,29 +1612,6 @@ class Server:
             except Exception as e:  # noqa: BLE001 - a bad tick must not kill the loop
                 self._logger.warning("Advertise refresh failed", error=str(e))
 
-    def _follow_selected_interface(self, interfaces: list) -> bool:
-        """Move ``config.host`` to the selected interface's current address.
-
-        ``host`` holds an address, so a DHCP renewal orphans the selection.
-        Following it keeps the admin's intent; see
-        ``utils.net.follow_interface_address`` for what counts as proof that
-        it is the same link.
-
-        :return: True when the stored value changed.
-        """
-        moved = follow_interface_address(
-            self.config.host, self._iface_snapshot, interfaces
-        )
-        if not moved:
-            return False
-        self._logger.info(
-            "Selected interface changed address; following it",
-            previous=self.config.host,
-            current=moved,
-        )
-        self.config.host = moved
-        return True
-
     async def refresh_advertisement(self, force: bool = False) -> None:
         """Re-resolve the advertised addresses; re-issue the SAN, then re-announce.
 
@@ -1676,10 +1620,6 @@ class Server:
         that retargets fails the handshake on an IP the leaf does not carry.
         """
         interfaces = await list_local_interfaces_async(include_unusable=True)
-        # Before resolving: with host_exclusive a stale address resolves to no
-        # addresses at all, and the early return below would skip the follow.
-        if self._follow_selected_interface(interfaces):
-            await self.save_config()
         addresses = self.config.get_advertise_addresses(interfaces)
         if not addresses:
             self._logger.warning("No usable address to advertise; keeping previous")
@@ -1715,9 +1655,7 @@ class Server:
             port=self.config.port,
             uid=self.config.uid,
             extra_props=extra_props,
-            interface_addresses=resolve_advertise_interfaces(
-                self.config.host, interfaces
-            ),
+            interface_addresses=addresses,
         )
 
         self._logger.info(

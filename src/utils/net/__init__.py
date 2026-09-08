@@ -106,199 +106,64 @@ async def list_local_interfaces_async(
     )
 
 
-def is_auto_preference(preference: Optional[str]) -> bool:
+def is_bind_all(host: Optional[str]) -> bool:
     """Does ``ServerConfig.host`` mean "every interface"?
 
-    ``"0.0.0.0"`` is the historical default and the value in every config
-    written before ``host`` became a preference; treating it as auto is what
-    lets those carry over with no migration step.
+    ``"0.0.0.0"`` is the default and the value in every config written before
+    the address became selectable from the GUI, so treating it as the wildcard
+    is what lets those carry over untouched.
     """
-    return not preference or preference.strip() == "0.0.0.0"
+    return not host or host.strip() in ("0.0.0.0", "")
 
 
-def match_interface(
-    preference: Optional[str],
-    interfaces: Optional[list[LocalInterface]] = None,
-) -> list[str]:
-    """Addresses the admin's explicit choice names. **No fallback.**
+def normalize_bind_host(host: Optional[str]) -> str:
+    """``host`` as an address a socket can actually bind.
 
-    Matching accepts an adapter name, an IP literal or a friendly name:
-    hand-edited configs and configs copied between machines both degrade
-    sanely.
-
-    Every address in ``interfaces`` is a candidate, loopback and link-local
-    included. ``_is_usable_ip`` decides what *automatic* selection may pick;
-    it is not a veto on an explicit choice, and the picker offers these, so
-    refusing to match them here is how "advertise on 127.0.0.1" silently
-    became "advertise on everything".
-
-    :return: the matching addresses, or ``[]`` when the choice names nothing
-        present. Callers decide what an unmatched choice should mean - which
-        is deliberately *not* the same answer for advertising and for access
-        control.
+    Only an IPv4 literal or the wildcard survives. A name - an adapter, a
+    hostname, a hand-edited typo - is discarded in favour of the wildcard:
+    the server still comes up on every interface instead of failing to bind,
+    and the name would otherwise reach the certificate SAN as a DNS entry
+    that no client resolves.
     """
-    if is_auto_preference(preference):
-        return []
-    if interfaces is None:
-        interfaces = list_local_interfaces(include_unusable=True)
+    if is_bind_all(host):
+        return "0.0.0.0"
 
-    wanted = (preference or "").strip()
-    lowered = wanted.lower()
-    return list(
-        dict.fromkeys(
-            i.ip
-            for i in interfaces
-            if i.name == wanted
-            or i.ip.lower() == lowered
-            or i.display_name.lower() == lowered
-        )
-    )
-
-
-def follow_interface_address(
-    preference: Optional[str],
-    previous: Optional[list[LocalInterface]],
-    current: Optional[list[LocalInterface]] = None,
-) -> Optional[str]:
-    """The address ``preference`` moved to, or ``None`` to leave it alone.
-
-    ``ServerConfig.host`` stores an address because that is what reads well in
-    a config file, but a DHCP renewal changes it and the selection then
-    matches nothing: the server quietly falls back to advertising everything,
-    or - with ``host_exclusive`` - stops accepting connections.
-
-    Following it needs evidence that it is the same link, and only two count:
-
-    1. the adapter the address sat on in ``previous`` still exists, so its
-       current address is the same link;
-    2. failing that (no snapshot, e.g. right after a restart), exactly one
-       interface's subnet contains the old address.
-
-    Anything less is a guess, and a wrong guess moves the server onto an
-    interface the admin never picked. A vanished adapter is deliberately *not*
-    followed: the choice is kept so the interface can come back.
-    """
-    if is_auto_preference(preference):
-        return None
-    if current is None:
-        current = list_local_interfaces(include_unusable=True)
-
-    wanted = (preference or "").strip()
+    candidate = (host or "").strip()
     try:
-        old_addr = ipaddress.ip_address(wanted)
+        ipaddress.IPv4Address(candidate)
     except ValueError:
-        # Names already survive a renewal; there is nothing to follow.
-        return None
-
-    if any(i.ip == wanted for i in current):
-        return None
-
-    # (1) same adapter, new address.
-    if previous:
-        adapters = {i.name for i in previous if i.ip == wanted}
-        for iface in current:
-            if iface.name in adapters and iface.ip != wanted:
-                return iface.ip
-
-    # (2) unambiguous subnet match.
-    same_subnet = []
-    for iface in current:
-        try:
-            net = ipaddress.ip_network(f"{iface.ip}/{iface.prefix}", strict=False)
-        except ValueError:
-            continue
-        if old_addr in net:
-            same_subnet.append(iface.ip)
-    if len(same_subnet) == 1:
-        return same_subnet[0]
-
-    return None
+        _logger.warning(
+            "Ignoring a bind address that is not an IPv4 literal; "
+            "listening on every interface",
+            host=candidate,
+        )
+        return "0.0.0.0"
+    return candidate
 
 
 def resolve_advertise_addresses(
-    preference: Optional[str],
+    host: Optional[str],
     interfaces: Optional[list[LocalInterface]] = None,
-    exclusive: bool = False,
 ) -> list[str]:
     """Addresses to advertise over mDNS and bake into the certificate SAN.
 
-    ``preference`` is ``ServerConfig.host``, which is an *interface
-    preference*, not a bind address - the listener always binds BIND_ALL.
+    Derived from the bind address rather than configured separately: the
+    listener is only reachable where it is bound, so advertising anything
+    else invites clients to an address that will refuse them.
 
     :param interfaces: injected snapshot; keeps the function pure and lets a
         caller reuse one enumeration for both the SAN and the mDNS record so
-        the two can never diverge across a link flap.
-    :param exclusive: when the admin restricted access to the chosen
-        interface, advertise *only* it. Publishing addresses that the accept
-        filter will then refuse is worse than publishing fewer.
-    :return: chosen address first, remaining usable ones after, de-duplicated.
-        Empty only when the machine genuinely has no usable address.
+        the two can never diverge across a link flap. Only consulted for the
+        wildcard - a concrete address is already the answer.
+    :return: de-duplicated addresses. Empty only when the machine binds every
+        interface and has no usable address at all.
     """
+    if not is_bind_all(host):
+        return [(host or "").strip()]
+
     if interfaces is None:
         interfaces = list_local_interfaces(include_unusable=True)
-
-    auto = [i.ip for i in interfaces if is_usable_ip(i.ip)]
-
-    if is_auto_preference(preference):
-        return list(dict.fromkeys(auto))
-
-    chosen = match_interface(preference, interfaces)
-    if not chosen:
-        if exclusive:
-            # The accept filter refuses everything while the chosen interface
-            # is absent, so advertising anything here would invite clients to
-            # an address they are then turned away from. Announce nothing.
-            _logger.warning(
-                "Advertise interface not found and access is restricted to it; "
-                "advertising nothing",
-                preference=preference,
-                available=auto,
-            )
-            return []
-        # Cable unplugged, adapter renamed. Fall back to auto rather than
-        # returning [] - being invisible on the network is worse than
-        # advertising too much - and never rewrite the stored preference:
-        # the NIC may come back, and silently discarding the admin's choice
-        # is the very bug class this whole change exists to fix.
-        _logger.warning(
-            "Advertise interface not found, falling back to all interfaces",
-            preference=preference,
-            available=auto,
-        )
-        return list(dict.fromkeys(auto))
-
-    if exclusive:
-        return chosen
-    return list(dict.fromkeys([*chosen, *auto]))
-
-
-def resolve_advertise_interfaces(
-    preference: Optional[str],
-    interfaces: Optional[list[LocalInterface]] = None,
-) -> list[str]:
-    """Addresses to run a *separate* mDNS responder on, one each.
-
-    Distinct from ``resolve_advertise_addresses``, which answers "what goes in
-    the TXT and the certificate SAN". This answers "where do we speak, and as
-    whom" - one responder per address means a client on a given link receives
-    a record containing an address reachable *on that link*, with no TXT and
-    no probing needed. That is what makes a direct cable work for a client
-    that has not been upgraded.
-
-    Auto speaks on every usable interface; an explicit preference speaks only
-    on the interface it names, which is what "Advertise on: eth1" should
-    plainly mean.
-    """
-    if interfaces is None:
-        interfaces = list_local_interfaces(include_unusable=True)
-
-    auto = [i.ip for i in interfaces if is_usable_ip(i.ip)]
-    if is_auto_preference(preference):
-        return list(dict.fromkeys(auto))
-
-    # Stale preference: fall back to speaking everywhere rather than going
-    # silent. resolve_advertise_addresses logs the warning for this case.
-    return match_interface(preference, interfaces) or list(dict.fromkeys(auto))
+    return list(dict.fromkeys(i.ip for i in interfaces if is_usable_ip(i.ip)))
 
 
 def set_socket_nodelay(writer: "asyncio.StreamWriter") -> None:

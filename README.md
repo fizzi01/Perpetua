@@ -201,7 +201,7 @@ Perpetua uses JSON to define client and server settings. The configuration file 
 <details>
 <summary><b>Server Configuration</b></summary>
 
-Basic server setup (certificates, network binding) is handled automatically. The server listens on every interface; if the machine has more than one network you can choose which address it advertises (see [Advertised interface](#advertised-interface)). To accept client connections you have two options:
+Basic server setup (certificates, network binding) is handled automatically. The server listens on every interface; if the machine has more than one network you can choose a single address to listen on (see [Listening address](#listening-address)). To accept client connections you have two options:
 
 - **Let the GUI handle it**: when a new client tries to connect, the `Server` shows an Allow/Deny card. Approving opens the Layout Editor. The full flow is described in [First Connection and OTP Pairing](#first-connection-and-otp-pairing).
 - **Pre-register each client manually** in `Server > Clients` (or by editing the config file). Identify each entry by its `host_name` and/or `ip_addresses`, you **cannot** set the client's `uid` yourself, the server assigns it during pairing (see [First Connection and OTP Pairing](#first-connection-and-otp-pairing)). Optionally add a list of `placements` to position the client's monitors (recommended for multi-monitor, see [Manual placements](#manual-placements)); the legacy `screen_position` (`left`, `right`, `top`, `bottom`) still works as a single-monitor fallback.
@@ -212,19 +212,22 @@ Basic server setup (certificates, network binding) is handled automatically. The
 
 </details>
 
-<a id="advertised-interface"></a>
+<a id="listening-address"></a>
 <details>
-<summary><b>Advertised interface (machines with several networks)</b></summary>
+<summary><b>Listening address (machines with several networks)</b></summary>
 
-The server listens on every interface, but a client needs a single address to connect to. By default (`Auto (all interfaces)`) every usable address is advertised, one mDNS responder per interface, and the client keeps the first that answers. Two machines joined by a direct ethernet cable work without configuration.
+By default (`Auto (all interfaces)`) the server listens on every interface and advertises every usable address, one mDNS responder per interface, and the client keeps the first that answers. Two machines joined by a direct ethernet cable work without configuration.
 
-To pin one, open `Server > Options`:
+To restrict it to one network, open `Server > Options`:
 
-- **Advertise on** picks the interface. Entries are labelled `Name - IP/prefix`, and `(default route)` marks the one that reaches the internet. Loopback and link-local (`169.254.x.x`) addresses can be selected here, but are never chosen automatically.
+- **Listen on** picks the address. Entries are labelled `Name - IP/prefix`, and `(default route)` marks the one that reaches the internet. Loopback and link-local (`169.254.x.x`) addresses can be selected here, but are never chosen automatically.
 - The button next to it lists the addresses clients are given, with a copy button for each `ip:port`.
-- **Accept only on this interface** refuses connections arriving on any other one. It is applied when the connection is accepted, not at bind time, so the server still starts when the interface is missing (connections are refused while it is).
 
-The interface can be changed while the server is running, the certificate and the mDNS record are updated automatically. Only `port` needs a stop/start. An interface that shows up later, e.g. a cable plugged in after startup, is picked up within 30 seconds.
+What the server advertises follows what it listens on: with a single address selected, that is the only one published and the only one that accepts connections. `Auto` publishes them all.
+
+The address is applied at startup, like `port`, so it can only be changed while the server is stopped. On `Auto`, an interface that shows up later, e.g. a cable plugged in after startup, is picked up within 30 seconds.
+
+If the selected address is no longer on the machine, the server does not start and says so. Pick another one, or go back to `Auto`.
 
 The TLS certificate covers every advertised address and is re-issued when that set changes. The CA is left untouched, so paired clients keep working and don't have to re-pair.
 
@@ -292,12 +295,7 @@ The configuration [json file](#file-structure) is split into three sections: `se
 - `0`: Debug (detailed logs)
 - `1`: Info (standard logs)
 
-`host` selects the interface to advertise, it is not a bind address: the server always listens on every interface. `0.0.0.0` (the default) advertises all of them. Any other value names one interface by adapter name, IP or friendly name (`eth1`, `10.0.0.1` and `Ethernet 1` are all valid). If it matches nothing, every address is advertised and a warning is logged.
-
-`host_exclusive` refuses connections arriving on an interface other than the one `host` names, `false` by default. With it enabled only the selected address is advertised.
-
-> [!NOTE]
-> In earlier versions `host` was the bind address, and the GUI wrote a concrete IP into it whenever you changed something in `Server > Options`. That value is now read as the advertised address and no longer restricts what the server accepts. Enable `host_exclusive` to restore the previous behaviour.
+`host` is the address the server listens on. `0.0.0.0` (the default) listens on every interface and advertises all of them; any other value must be an IPv4 address present on the machine, and is the only one advertised. Anything that is not an IPv4 address falls back to `0.0.0.0` and a warning is logged.
 
 `pairing_port` is the port used for the initial OTP-based certificate exchange. Leave it `null` to derive it as `port - 2`. The value is advertised over mDNS so clients discover it automatically.
 
@@ -323,7 +321,6 @@ These parameters affect the application's internal behavior. Only modify them if
     "server": {
         "uid": "...",
         "host": "0.0.0.0",
-        "host_exclusive": false,
         "port": 55655,
         "pairing_port": null,
         "heartbeat_interval": 1,
@@ -506,11 +503,9 @@ As a fallback, set the server's hostname or IP directly in the `Client > Options
 
 Common when the server has more than one network (Wi-Fi plus a direct cable, a VPN, Hyper-V/WSL adapters). Discovery reaches the client on every interface, but the address it was given may not be routable from there.
 
-Open `Server > Options` and check the button next to `Advertise on` for the addresses being advertised. If the one the client needs is missing, select that interface (see [Advertised interface](#advertised-interface)).
+Open `Server > Options` and check the button next to `Listen on` for the addresses being advertised. If the one the client needs is missing, stop the server and select that address (see [Listening address](#listening-address)).
 
-On a direct cable without DHCP both machines fall back to link-local `169.254.x.x`, which is never advertised automatically. Select the interface explicitly, or assign static addresses to both ends.
-
-With **Accept only on this interface** enabled, connections arriving anywhere else are refused, and all connections are refused while that interface is missing.
+On a direct cable without DHCP both machines fall back to link-local `169.254.x.x`, which is never advertised automatically. Select the address explicitly, or assign static addresses to both ends.
 
 </details>
 

@@ -3,7 +3,7 @@ import {afterEach, beforeEach, describe, expect, it, vi} from 'vitest';
 
 import {ServerTab} from './server-tab';
 import {
-    ADVERTISE_AUTO,
+    BIND_ALL,
     CommandType,
     EventType,
     GeneralEvent,
@@ -51,8 +51,7 @@ function serverState(overrides: Partial<ServerStatus> = {}): ServerStatus {
     return {
         running: false,
         uid: 'server-uid',
-        host: ADVERTISE_AUTO,
-        host_exclusive: false,
+        host: BIND_ALL,
         port: 5555,
         heartbeat_interval: 1,
         streams_enabled: {},
@@ -67,7 +66,7 @@ const INTERFACES: NetworkInterfacesResult = {
         {name: 'en0', display_name: 'Wi-Fi', ip: '192.168.1.20', prefix: 24, cidr: '192.168.1.0/24', is_default_route: true},
         {name: 'eth1', display_name: 'Ethernet 1', ip: '10.0.0.1', prefix: 24, cidr: '10.0.0.0/24', is_default_route: false},
     ],
-    selected: ADVERTISE_AUTO,
+    selected: BIND_ALL,
     advertised: ['192.168.1.20', '10.0.0.1'],
 };
 
@@ -90,7 +89,7 @@ function fireInterfaces(result: NetworkInterfacesResult = INTERFACES) {
 
 async function openOptions() {
     fireEvent.click(screen.getByText(/options/i));
-    await waitFor(() => expect(screen.getByLabelText(/advertise on/i)).toBeInTheDocument());
+    await waitFor(() => expect(screen.getByLabelText(/listen on/i)).toBeInTheDocument());
 }
 
 beforeEach(() => {
@@ -130,7 +129,7 @@ describe('Advertise picker', () => {
         fireInterfaces();
         await openOptions();
 
-        const select = screen.getByRole('combobox', {name: /advertise on/i});
+        const select = screen.getByRole('combobox', {name: /listen on/i});
 
         expect(select).toHaveTextContent('Auto (all interfaces)');
         fireEvent.keyDown(select, {key: 'Enter'});
@@ -144,13 +143,27 @@ describe('Advertise picker', () => {
         fireInterfaces();
         await openOptions();
 
-        fireEvent.keyDown(screen.getByRole('combobox', {name: /advertise on/i}), {key: 'Enter'});
+        fireEvent.keyDown(screen.getByRole('combobox', {name: /listen on/i}), {key: 'Enter'});
         fireEvent.click(screen.getByRole('option', {name: /Ethernet 1/}));
         await act(async () => {
             vi.advanceTimersByTime(500);
         });
 
-        expect(saveServerConfig).toHaveBeenCalledWith('10.0.0.1', 5555, true, false);
+        expect(saveServerConfig).toHaveBeenCalledWith('10.0.0.1', 5555, true);
+    });
+
+    it('goes back to Auto', async () => {
+        await renderServerTab(serverState({host: '10.0.0.1'}));
+        fireInterfaces({...INTERFACES, selected: '10.0.0.1'});
+        await openOptions();
+
+        fireEvent.keyDown(screen.getByRole('combobox', {name: /listen on/i}), {key: 'Enter'});
+        fireEvent.click(screen.getByRole('option', {name: /auto \(all interfaces\)/i}));
+        await act(async () => {
+            vi.advanceTimersByTime(500);
+        });
+
+        expect(saveServerConfig).toHaveBeenCalledWith(BIND_ALL, 5555, true);
     });
 
     it('shows what clients will actually be told', async () => {
@@ -159,29 +172,24 @@ describe('Advertise picker', () => {
         await openOptions();
 
         expect(screen.queryByText(/Will advertise|Reachable at/)).not.toBeInTheDocument();
-        fireEvent.click(screen.getByRole('button', {name: 'Addresses to advertise · 2'}));
+        fireEvent.click(screen.getByRole('button', {name: 'Will be reachable at · 2'}));
         expect(screen.getByText('192.168.1.20:5555')).toBeInTheDocument();
         expect(screen.getByText('10.0.0.1:5555')).toBeInTheDocument();
         expect(screen.getByText('Wi-Fi')).toBeInTheDocument();
     });
 
     it('keeps a vanished selection visible instead of snapping to Auto', async () => {
-        // Silently resetting would hide the real problem: cable unplugged.
+        // Silently resetting would hide the real problem: the address the
+        // server is about to bind is gone, and it will refuse to start.
         await renderServerTab(serverState({host: '172.16.9.9'}));
         fireInterfaces({...INTERFACES, selected: '172.16.9.9'});
         await openOptions();
 
-        fireEvent.keyDown(screen.getByRole('combobox', {name: /advertise on/i}), {key: 'Enter'});
+        fireEvent.keyDown(screen.getByRole('combobox', {name: /listen on/i}), {key: 'Enter'});
         expect(screen.getByRole('option', {name: /172\.16\.9\.9 \(not present\)/})).toBeInTheDocument();
-        expect(screen.getByText(/not currently available/i)).toBeInTheDocument();
+        expect(screen.getByText(/not on this machine right now/i)).toBeInTheDocument();
     });
 
-    it('surfaces the one-time change-of-behaviour notice', async () => {
-        await renderServerTab(serverState({host: '192.168.1.20'}));
-        fireInterfaces({...INTERFACES, selected: '192.168.1.20', legacy_bind_notice: '192.168.1.20'});
-
-        expect(await screen.findByText(/listens on all interfaces/i)).toBeInTheDocument();
-    });
 });
 
 describe('Network addresses in Options', () => {
@@ -189,16 +197,17 @@ describe('Network addresses in Options', () => {
         await renderServerTab();
         fireInterfaces();
         expect(screen.queryByText(/Will advertise|Reachable at/)).not.toBeInTheDocument();
-        expect(screen.queryByRole('button', {name: /addresses to advertise/i})).not.toBeInTheDocument();
+        expect(screen.queryByRole('button', {name: /reachable at/i})).not.toBeInTheDocument();
         expect(screen.queryByTitle(/copy 192\.168\.1\.20:5555/i)).not.toBeInTheDocument();
     });
 
-    it('shows only advertised addresses and retains the exclusive option', async () => {
-        await renderServerTab(serverState({running: true, host: '10.0.0.1', host_exclusive: true}));
+    it('a bound address is the only one shown', async () => {
+        // Isolation comes free from the bind: nothing else is listening, so
+        // nothing else may be advertised.
+        await renderServerTab(serverState({running: true, host: '10.0.0.1'}));
         fireInterfaces({...INTERFACES, selected: '10.0.0.1', advertised: ['10.0.0.1']});
         await openOptions();
-        expect(screen.getByLabelText(/Accept only on this interface/i)).toBeChecked();
-        fireEvent.click(screen.getByRole('button', {name: 'Advertised addresses · 1'}));
+        fireEvent.click(screen.getByRole('button', {name: 'Reachable at · 1'}));
         expect(screen.getByText('10.0.0.1:5555')).toBeInTheDocument();
         expect(screen.queryByText('192.168.1.20:5555')).not.toBeInTheDocument();
     });
@@ -208,19 +217,19 @@ describe('Network addresses in Options', () => {
         fireInterfaces({...INTERFACES, interfaces: [], advertised: []});
         await openOptions();
         expect(screen.getByText('No usable network address')).toBeInTheDocument();
-        expect(screen.queryByRole('button', {name: /addresses to advertise/i})).not.toBeInTheDocument();
+        expect(screen.queryByRole('button', {name: /reachable at/i})).not.toBeInTheDocument();
     });
 });
 
-describe('Advanced management stays usable while running', () => {
-    it('lets the interface be changed without stopping the server', async () => {
-        // The daemon re-issues the certificate SAN and re-announces on the
-        // fly, so forcing a stop would be friction with nothing behind it.
+describe('Connection settings while running', () => {
+    it('requires a stop to change the address', async () => {
+        // The socket is already bound. Letting the picker move would show a
+        // selection the running server is not honouring.
         await renderServerTab(serverState({running: true}));
         fireInterfaces();
         await openOptions();
 
-        expect(screen.getByLabelText(/advertise on/i)).not.toBeDisabled();
+        expect(screen.getByLabelText(/listen on/i)).toBeDisabled();
     });
 
     it('still requires a stop to change the listening port', async () => {
@@ -232,26 +241,8 @@ describe('Advanced management stays usable while running', () => {
     });
 });
 
-describe('Isolation toggle', () => {
-    it('is hidden while advertising on every interface', async () => {
-        await renderServerTab();
-        fireInterfaces();
-        await openOptions();
-
-        expect(screen.queryByLabelText(/accept only on this interface/i)).not.toBeInTheDocument();
-    });
-
-    it('appears once a single interface is chosen', async () => {
-        await renderServerTab(serverState({host: '10.0.0.1'}));
-        fireInterfaces({...INTERFACES, selected: '10.0.0.1'});
-        await openOptions();
-
-        expect(screen.getByLabelText(/accept only on this interface/i)).toBeInTheDocument();
-    });
-});
-
 describe('Partial saves do not clobber other fields', () => {
-    it('editing only the port keeps the advertise address', async () => {
+    it('editing only the port keeps the bind address', async () => {
         // The regression: the port handler shipped the `host` captured in its
         // closure, silently persisting an address the user never chose.
         await renderServerTab(serverState({host: '10.0.0.1'}));
@@ -263,7 +254,7 @@ describe('Partial saves do not clobber other fields', () => {
             vi.advanceTimersByTime(500);
         });
 
-        expect(saveServerConfig).toHaveBeenCalledWith('10.0.0.1', 6000, true, false);
+        expect(saveServerConfig).toHaveBeenCalledWith('10.0.0.1', 6000, true);
     });
 
     it('a status tick does not overwrite a port being typed', async () => {

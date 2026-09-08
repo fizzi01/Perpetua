@@ -29,8 +29,9 @@ import pytest
 from utils import net as net_module
 from utils.net import (
     MissingIpError,
+    is_bind_all,
+    normalize_bind_host,
     resolve_advertise_addresses,
-    resolve_advertise_interfaces,
 )
 from utils.net._base import CommonNetInfo, LocalInterface
 
@@ -195,50 +196,30 @@ def two_links():
 
 
 @pytest.mark.parametrize("auto", [None, "", "0.0.0.0"])
-def test_auto_advertises_everything(two_links, auto):
-    """ "0.0.0.0" is the value in every untouched 1.6.0 config: it must mean "all"."""
+def test_wildcard_advertises_everything(two_links, auto):
+    """ "0.0.0.0" is the value in every untouched 1.6.0 config, and the bind
+    that value produces really does listen everywhere."""
     assert resolve_advertise_addresses(auto, two_links) == ["192.168.1.20", "10.0.0.1"]
 
 
-@pytest.mark.parametrize("pref", ["eth1", "10.0.0.1", "Ethernet 1", "ethernet 1"])
-def test_preference_matches_name_ip_or_display_name(two_links, pref):
-    """Hand-edited configs and configs copied between machines both work."""
-    assert resolve_advertise_addresses(pref, two_links)[0] == "10.0.0.1"
+def test_a_bound_address_advertises_only_itself(two_links):
+    """The socket is on that address alone, so announcing the others would
+    point clients at a port nothing is listening on."""
+    assert resolve_advertise_addresses("10.0.0.1", two_links) == ["10.0.0.1"]
 
 
-def test_chosen_first_but_others_kept(two_links):
-    """The rest still reach the SAN and the TXT, so no address is unreachable."""
-    assert resolve_advertise_addresses("eth1", two_links) == [
-        "10.0.0.1",
-        "192.168.1.20",
-    ]
+def test_a_bound_address_needs_no_enumeration(two_links):
+    """The bind proved the address exists. Looking it up again is how an
+    enumeration hiccup used to discard the admin's choice."""
+    assert resolve_advertise_addresses("10.0.0.1", []) == ["10.0.0.1"]
 
 
-def test_stale_preference_falls_back_to_auto(two_links):
-    """Cable unplugged: advertise too much rather than becoming invisible."""
-    assert resolve_advertise_addresses("eth99", two_links) == [
-        "192.168.1.20",
-        "10.0.0.1",
-    ]
+def test_bound_address_is_stripped(two_links):
+    assert resolve_advertise_addresses("  10.0.0.1  ", two_links) == ["10.0.0.1"]
 
 
-def test_stale_preference_advertises_nothing_when_exclusive(two_links):
-    """Falling back would invite clients to an address they are refused.
-
-    With ``host_exclusive`` the accept filter turns away every interface while
-    the chosen one is absent, so announcing the others contradicts it.
-    """
-    assert resolve_advertise_addresses("eth99", two_links, exclusive=True) == []
-
-
-def test_matched_preference_advertises_only_itself_when_exclusive(two_links):
-    assert resolve_advertise_addresses("eth1", two_links, exclusive=True) == [
-        "10.0.0.1"
-    ]
-
-
-def test_no_usable_address_yields_empty():
-    assert resolve_advertise_addresses("eth1", []) == []
+def test_wildcard_with_no_usable_address_yields_empty():
+    assert resolve_advertise_addresses("0.0.0.0", []) == []
 
 
 def test_addresses_are_deduplicated():
@@ -247,26 +228,14 @@ def test_addresses_are_deduplicated():
     assert resolve_advertise_addresses(None, dupes) == ["10.0.0.1"]
 
 
-# --------------------------------------------- per-interface responder targets
+@pytest.mark.parametrize("wildcard", [None, "", "  ", "0.0.0.0"])
+def test_is_bind_all_recognises_the_wildcard(wildcard):
+    assert is_bind_all(wildcard) is True
 
 
-def test_auto_speaks_on_every_interface(two_links):
-    assert resolve_advertise_interfaces(None, two_links) == [
-        "192.168.1.20",
-        "10.0.0.1",
-    ]
-
-
-def test_explicit_choice_speaks_only_there(two_links):
-    """ "Advertise on: eth1" must not keep announcing on Wi-Fi as well."""
-    assert resolve_advertise_interfaces("eth1", two_links) == ["10.0.0.1"]
-
-
-def test_stale_choice_still_speaks_somewhere(two_links):
-    assert resolve_advertise_interfaces("eth99", two_links) == [
-        "192.168.1.20",
-        "10.0.0.1",
-    ]
+@pytest.mark.parametrize("pinned", ["10.0.0.1", "127.0.0.1"])
+def test_is_bind_all_rejects_a_concrete_address(pinned):
+    assert is_bind_all(pinned) is False
 
 
 @pytest.mark.anyio
@@ -277,3 +246,32 @@ async def test_async_variant_matches_sync(fake_adapters):
     result = await net_module.list_local_interfaces_async()
 
     assert [i.ip for i in result] == ["192.168.1.10"]
+
+
+# ------------------------------------------------------ bind host normalisation
+
+
+@pytest.mark.parametrize(
+    "name", ["eth1", "Ethernet 1", "perpetua.local", "not an ip", "999.1.1.1"]
+)
+def test_a_name_is_not_a_bind_address(name):
+    """Measured: binding a name raises gaierror, which the port probe read as
+    a conflict - and the name reached the certificate SAN as a DNS entry no
+    client resolves. Fall back to the wildcard so the server still starts."""
+    assert normalize_bind_host(name) == "0.0.0.0"
+
+
+@pytest.mark.parametrize("wildcard", [None, "", "   ", "0.0.0.0"])
+def test_the_wildcard_normalises_to_itself(wildcard):
+    assert normalize_bind_host(wildcard) == "0.0.0.0"
+
+
+@pytest.mark.parametrize("addr", ["10.0.0.1", "127.0.0.1", "169.254.3.4"])
+def test_an_ipv4_literal_is_kept(addr):
+    """Link-local included: a direct cable with no DHCP lands there, and it is
+    exactly the setup the picker exists for."""
+    assert normalize_bind_host(addr) == addr
+
+
+def test_surrounding_whitespace_is_tolerated():
+    assert normalize_bind_host("  10.0.0.1 ") == "10.0.0.1"

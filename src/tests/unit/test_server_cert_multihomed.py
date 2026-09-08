@@ -111,17 +111,18 @@ class TestFirstGeneration:
         assert "127.0.0.1" in san_ips
         assert "localhost" in san_dns
 
-    def test_explicit_choice_still_covers_the_others(
+    def test_a_bound_address_gets_a_leaf_that_covers_it(
         self, app_config, server_config, monkeypatch
     ):
-        """A client mid-reconnect may still dial the address we moved off."""
-        server_config.host = "eth1"
+        """The one address clients will dial must be in the SAN, or every
+        already-paired client fails the handshake on an IP the leaf does not
+        carry - retryable, so it just loops silently."""
+        server_config.host = "10.0.0.1"
         server = _make_server(app_config, server_config, monkeypatch)
 
         san_ips, _ = server._cert_manager.get_server_cert_san()
 
         assert "10.0.0.1" in san_ips
-        assert "192.168.1.20" in san_ips
 
 
 class TestReissue:
@@ -227,15 +228,14 @@ class TestHostnameIsNotTheBindAddress:
     def test_cert_hostname_comes_from_the_os_not_config(
         self, app_config, server_config, monkeypatch
     ):
-        """``config.host`` is an interface preference and must never leak in.
-
-        It can legitimately hold an adapter *name*, which is not a DNS name
-        and has no business in a certificate.
-        """
-        server_config.host = "eth1"
+        """``config.host`` is an address, and the DNS half of the SAN comes
+        from the OS. A value that is not an address must not reach either:
+        config normalisation turns it into the wildcard first."""
+        server_config.from_dict({"host": "eth1"})
         server = _make_server(app_config, server_config, monkeypatch)
 
         _, san_dns = server._cert_manager.get_server_cert_san()
 
+        assert server_config.host == "0.0.0.0"
         assert "test-host.local" in san_dns
         assert "eth1" not in san_dns

@@ -491,19 +491,10 @@ class ServerConfig:
         )
 
         # Connection settings.
-        # ``host`` is an *interface preference*, not a bind address: the
-        # listener always binds every interface (Server.BIND_ALL). It selects
-        # which address is advertised over mDNS and baked into the certificate
-        # SAN. "0.0.0.0" - the default, and the value in every config written
-        # before this became a preference - means "all of them".
+        # ``host`` is the address the listeners bind. "0.0.0.0" - the default -
+        # binds every interface; a concrete address binds only that one, which
+        # is also what restricts who can reach the server.
         self.host: str = self.DEFAULT_HOST
-        # Reject connections that arrived on an interface other than the one
-        # ``host`` names. Opt-in: restricting the *bind* instead would stop the
-        # server from starting whenever that address is momentarily absent.
-        self.host_exclusive: bool = False
-        # Set by from_dict when a pre-advertise-preference config is loaded;
-        # transient (never persisted), consumed once by the GUI.
-        self.legacy_bind_notice: Optional[str] = None
         self.port: int = self.DEFAULT_PORT
         self.heartbeat_interval: int = self.DEFAULT_HEARTBEAT_INTERVAL
         # Plaintext port the always-on pairing/cert-sharing listener binds to.
@@ -546,21 +537,18 @@ class ServerConfig:
     def get_advertise_addresses(self, interfaces: Optional[list] = None) -> List[str]:
         """Addresses to advertise over mDNS and put in the certificate SAN.
 
-        This is the single place ``host`` is interpreted. "0.0.0.0" (the
-        default) means "every usable address"; anything else names one
-        interface, by adapter name, IP or friendly name.
+        Derived from ``host``: the server is reachable only where it is bound.
+        "0.0.0.0" (the default) expands to every usable address on the machine.
 
         :param interfaces: snapshot from ``utils.net.list_local_interfaces``.
             Pass one so the SAN and the mDNS record are derived from the same
             enumeration and cannot diverge across a link flap.
-        :return: chosen address first. Never raises; [] means "no usable
-            address right now", which callers treat as "skip, retry later".
+        :return: never raises; [] means "no usable address right now", which
+            callers treat as "skip, retry later".
         """
         from utils.net import resolve_advertise_addresses
 
-        return resolve_advertise_addresses(
-            self.host, interfaces, exclusive=self.host_exclusive
-        )
+        return resolve_advertise_addresses(self.host, interfaces)
 
     # SSL Configuration
     def enable_ssl(self) -> None:
@@ -707,7 +695,6 @@ class ServerConfig:
         return {
             "uid": self.uid,
             "host": self.host,
-            "host_exclusive": self.host_exclusive,
             "port": self.port,
             "pairing_port": self.pairing_port,
             "heartbeat_interval": self.heartbeat_interval,
@@ -720,22 +707,12 @@ class ServerConfig:
     def from_dict(self, data: Dict[str, Any]) -> None:
         """Load configuration from dictionary"""
         self.uid = data.get("uid", self.uid)
-        self.host = data.get("host", self.host)
-        # Only a real bool restricts the listener; a botched manual edit must
-        # never silently narrow what the server accepts.
-        self.host_exclusive = data.get("host_exclusive", self.host_exclusive) is True
+        from utils.net import normalize_bind_host
 
-        # A config written before ``host`` became an advertise preference had
-        # it as the *bind* address, so a concrete value there restricted the
-        # listener. It no longer does. Surface that once rather than changing
-        # reachability silently - and do not infer host_exclusive from it: the
-        # GUI used to write a concrete host on any options edit, so the value
-        # is not evidence of intent.
-        self.legacy_bind_notice: Optional[str] = None
-        if "host_exclusive" not in data:
-            legacy_host = data.get("host")
-            if legacy_host and legacy_host != self.DEFAULT_HOST:
-                self.legacy_bind_notice = legacy_host
+        host = data.get("host", self.host)
+        # Anything that is not an IPv4 literal falls back to the wildcard: a
+        # botched manual edit must leave a server that still starts.
+        self.host = normalize_bind_host(host if isinstance(host, str) else None)
         self.port = data.get("port", self.port)
         pp = data.get("pairing_port", self.pairing_port)
         # Accept either an integer or None/null; ignore anything else so a
