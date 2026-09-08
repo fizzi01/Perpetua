@@ -46,12 +46,12 @@ export default function LogsWindow() {
                 <div data-tauri-drag-region className="flex-1 self-stretch"/>
                 <button type="button" onClick={() => void close()} aria-label="Close logs" title="Close logs"
                         className="p-2 rounded-lg border cursor-pointer hover:opacity-80"
-                        style={{borderColor: 'var(--app-border)', backgroundColor: 'var(--app-bg-tertiary)'}}>
+                        style={{borderColor: 'var(--app-input-border)', backgroundColor: 'var(--app-bg-tertiary)'}}>
                     <X size={18}/>
                 </button>
             </header>
             {error && <p role="alert" className="text-xs">{error}</p>}
-            <div className="flex-1 min-h-0 overflow-hidden rounded-xl border" style={{borderColor: 'var(--app-border)'}}>
+            <div className="flex-1 min-h-0 overflow-hidden rounded-xl shadow-sm" style={{backgroundColor: 'var(--app-card-bg)'}}>
                 <DaemonLogViewer active={active}/>
             </div>
         </div>
