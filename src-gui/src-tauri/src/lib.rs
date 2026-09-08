@@ -359,10 +359,8 @@ where
                 show_window(app, "main");
             }
             "show_log" => {
-                let app_handle = app.clone();
-                app_handle.emit("show_log", {}).unwrap();
-
-                show_window(app, "main");
+                // Logs has its own window; opening it must not reveal the main UI.
+                show_window(app, "logs");
             }
             "quit" => {
                 let state = app.state::<Mutex<AppState>>();
