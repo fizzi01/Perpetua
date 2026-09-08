@@ -1,5 +1,36 @@
 # Changelog
 
+## [1.7.0](https://github.com/fizzi01/Perpetua/compare/v1.6.0...v1.7.0) (2026-09-08)
+
+
+### Features
+
+* **gui:** enhance tray with status ([4f6f4f8](https://github.com/fizzi01/Perpetua/commit/4f6f4f894f2ea305cfb0453d911fa3d3c184be40))
+* **gui:** implement logs window with clipboard functionality and refactor log handling ([3a1708e](https://github.com/fizzi01/Perpetua/commit/3a1708ed1f0a97fe66933cb03cb8404d9ea3b69a))
+* implement comprehensive network interface handling and enhance server connection ([#95](https://github.com/fizzi01/Perpetua/issues/95)) ([3a1708e](https://github.com/fizzi01/Perpetua/commit/3a1708ed1f0a97fe66933cb03cb8404d9ea3b69a))
+
+
+### Bug Fixes
+
+* **certificates:** enhance certificate generation with hostname sanitization and clearer errors ([a2dcbc4](https://github.com/fizzi01/Perpetua/commit/a2dcbc459a063da4981fa0d1af2258cdba0d6ede))
+* **client:** improve pairing logic ([4f6f4f8](https://github.com/fizzi01/Perpetua/commit/4f6f4f894f2ea305cfb0453d911fa3d3c184be40))
+* enhance network configuration and address handling ([#96](https://github.com/fizzi01/Perpetua/issues/96)) ([4f6f4f8](https://github.com/fizzi01/Perpetua/commit/4f6f4f894f2ea305cfb0453d911fa3d3c184be40))
+* **gui, daemon:** improve service choice handling and user-facing error reporting ([a2dcbc4](https://github.com/fizzi01/Perpetua/commit/a2dcbc459a063da4981fa0d1af2258cdba0d6ede))
+* **gui:** enhance scrollbar styling ([3961ad6](https://github.com/fizzi01/Perpetua/commit/3961ad69ce506acb4e0bb7f8dbafca7519d2c5f7))
+* **gui:** improve layout editor ([#89](https://github.com/fizzi01/Perpetua/issues/89)) ([3961ad6](https://github.com/fizzi01/Perpetua/commit/3961ad69ce506acb4e0bb7f8dbafca7519d2c5f7))
+* **gui:** improve lines selection in log view ([3961ad6](https://github.com/fizzi01/Perpetua/commit/3961ad69ce506acb4e0bb7f8dbafca7519d2c5f7))
+* **gui:** improve OTP handling ([#91](https://github.com/fizzi01/Perpetua/issues/91)) ([a2dcbc4](https://github.com/fizzi01/Perpetua/commit/a2dcbc459a063da4981fa0d1af2258cdba0d6ede))
+* **gui:** improve service lifecycle management and notification handling ([4f6f4f8](https://github.com/fizzi01/Perpetua/commit/4f6f4f894f2ea305cfb0453d911fa3d3c184be40))
+* **gui:** update log window handling ([4f6f4f8](https://github.com/fizzi01/Perpetua/commit/4f6f4f894f2ea305cfb0453d911fa3d3c184be40))
+* **input,macOS:** improve mouse emulation ([#92](https://github.com/fizzi01/Perpetua/issues/92)) ([21a06ff](https://github.com/fizzi01/Perpetua/commit/21a06ff4d7b9c96c6d8c5a3237ea6938b44f573d))
+* **input:** fix cursor clamping and edge routing regressions ([21a06ff](https://github.com/fizzi01/Perpetua/commit/21a06ff4d7b9c96c6d8c5a3237ea6938b44f573d))
+* **input:** improve cursor crossing and input handling ([#88](https://github.com/fizzi01/Perpetua/issues/88)) ([9ea986e](https://github.com/fizzi01/Perpetua/commit/9ea986e5f4624c93466840c9c171c3f1cbe39fd2))
+
+
+### Documentation
+
+* **input:** document macOS mouse emulation fallback ([21a06ff](https://github.com/fizzi01/Perpetua/commit/21a06ff4d7b9c96c6d8c5a3237ea6938b44f573d))
+
 ## [1.6.0](https://github.com/fizzi01/Perpetua/compare/v1.5.0...v1.6.0) (2026-07-23)
 
 
