@@ -201,6 +201,26 @@ fn prevent_default_ctxmenu() -> tauri::plugin::TauriPlugin<tauri::Wry> {
         .build()
 }
 
+fn tray_status_label(role: Option<&str>, result: &serde_json::Value) -> &'static str {
+    match role {
+        Some("server") => match result["server_info"]["running"].as_bool() {
+            Some(true) => "Server: Running",
+            Some(false) => "Server: Stopped",
+            None => "Loading status…",
+        },
+        Some("client") => match result["client_info"]["running"].as_bool() {
+            Some(false) => "Client: Stopped",
+            Some(true) => match result["client_info"]["connected"].as_bool() {
+                Some(true) => "Client: Connected",
+                Some(false) => "Client: Disconnected",
+                None => "Loading status…",
+            },
+            None => "Loading status…",
+        },
+        _ => "Loading status…",
+    }
+}
+
 fn create_main_window<R>(app: &AppHandle<R>) -> Result<(), Box<dyn std::error::Error>>
 where
     R: Runtime,
@@ -287,9 +307,11 @@ where
         .item(&autostart_server)
         .item(&autostart_client)
         .build()?;
+    // A disabled header reports the last confirmed service state.
+    let role_info = MenuItem::with_id(app, "role_info", "Loading status…", false, None::<&str>)?;
     let mut menu = MenuBuilder::new(app);
 
-    menu = menu.item(&show);
+    menu = menu.item(&role_info).separator().item(&show);
 
     menu = menu.item(&MenuItem::with_id(
         app,
@@ -349,6 +371,49 @@ where
             if let Err(e) = item.set_checked(checked) {
                 eprintln!("Failed to update autostart tray check state: {}", e);
             }
+        }
+    });
+
+    // Reuse authoritative replies already received by the GUI, including its
+    // periodic STATUS snapshots. Never infer a role from an unconfirmed click.
+    let confirmed_role = Mutex::new(None::<&'static str>);
+    app.listen("command_success", move |evt| {
+        let Ok(payload) = serde_json::from_str::<serde_json::Value>(evt.payload()) else {
+            return;
+        };
+        let data = &payload["data"];
+        let mut role = confirmed_role.lock().unwrap();
+        match data["command"].as_str() {
+            Some("service_choice") => {
+                match payload["message"].as_str() {
+                    Some("server") => *role = Some("server"),
+                    Some("client") => *role = Some("client"),
+                    _ => return,
+                }
+            }
+            Some("status") => {
+                let result = &data["result"];
+                let server = result["server_info"].is_object();
+                let client = result["client_info"].is_object();
+                if result["server_info"]["running"].as_bool() == Some(true) {
+                    *role = Some("server");
+                } else if result["client_info"]["running"].as_bool() == Some(true) {
+                    *role = Some("client");
+                } else if role.is_none() {
+                    *role = match (server, client) {
+                        (true, false) => Some("server"),
+                        (false, true) => Some("client"),
+                        _ => None,
+                    };
+                }
+            }
+            _ => return,
+        }
+        // A service-choice acknowledgement confirms the role, not its runtime
+        // state. Wait for the next STATUS before claiming running or stopped.
+        let label = tray_status_label(*role, &data["result"]);
+        if let Err(err) = role_info.set_text(label) {
+            eprintln!("Failed to update tray status: {}", err);
         }
     });
 
@@ -681,4 +746,39 @@ pub fn run(daemon_config: Option<DaemonConfig>, start_minimized: bool) {
         }
         _ => {}
     });
+}
+
+#[cfg(test)]
+mod tray_status_tests {
+    use super::tray_status_label;
+    use serde_json::json;
+
+    #[test]
+    fn reports_confirmed_service_states() {
+        for (running, connected, expected) in [
+            (false, false, "Client: Stopped"),
+            (false, true, "Client: Stopped"),
+            (true, false, "Client: Disconnected"),
+            (true, true, "Client: Connected"),
+        ] {
+            assert_eq!(tray_status_label(Some("client"), &json!({
+                "client_info": {"running": running, "connected": connected}
+            })), expected);
+        }
+        for (running, expected) in [(true, "Server: Running"), (false, "Server: Stopped")] {
+            assert_eq!(tray_status_label(Some("server"), &json!({
+                "server_info": {"running": running}
+            })), expected);
+        }
+    }
+
+    #[test]
+    fn unknown_state_is_not_reported_as_stopped() {
+        assert_eq!(tray_status_label(None, &json!({})), "Loading status…");
+        assert_eq!(tray_status_label(Some("client"), &json!({})), "Loading status…");
+        assert_eq!(tray_status_label(Some("server"), &json!({})), "Loading status…");
+        assert_eq!(tray_status_label(Some("client"), &json!({
+            "client_info": {"running": true}
+        })), "Loading status…");
+    }
 }
