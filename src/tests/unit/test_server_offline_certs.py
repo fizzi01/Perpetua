@@ -79,7 +79,7 @@ async def test_start_reports_missing_ip(
 ):
     """The failure surfaces where the user can act on it: starting the server."""
     server = _make_server(app_config, server_config)
-    monkeypatch.setattr(Server, "_is_port_available", staticmethod(lambda *_: True))
+    monkeypatch.setattr(Server, "_probe_bind", staticmethod(lambda *_: None))
 
     with pytest.raises(ServerStartError) as excinfo:
         await server.start()

@@ -201,7 +201,7 @@ Perpetua uses JSON to define client and server settings. The configuration file 
 <details>
 <summary><b>Server Configuration</b></summary>
 
-Basic server setup (certificates, network binding) is handled automatically. To accept client connections you have two options:
+Basic server setup (certificates, network binding) is handled automatically. The server listens on every interface; if the machine has more than one network you can choose a single address to listen on (see [Listening address](#listening-address)). To accept client connections you have two options:
 
 - **Let the GUI handle it**: when a new client tries to connect, the `Server` shows an Allow/Deny card. Approving opens the Layout Editor. The full flow is described in [First Connection and OTP Pairing](#first-connection-and-otp-pairing).
 - **Pre-register each client manually** in `Server > Clients` (or by editing the config file). Identify each entry by its `host_name` and/or `ip_addresses`, you **cannot** set the client's `uid` yourself, the server assigns it during pairing (see [First Connection and OTP Pairing](#first-connection-and-otp-pairing)). Optionally add a list of `placements` to position the client's monitors (recommended for multi-monitor, see [Manual placements](#manual-placements)); the legacy `screen_position` (`left`, `right`, `top`, `bottom`) still works as a single-monitor fallback.
@@ -209,6 +209,27 @@ Basic server setup (certificates, network binding) is handled automatically. To 
 **Note:** pre-registering a client by hostname/IP only skips the **Allow/Deny** prompt. The one-time **OTP certificate exchange still has to happen once** (TLS mode) before the client can connect, and that step currently goes through the GUI.
 
 **Clipboard-only clients:** a client that is authorized and connected but has **no `placements`** (and no meaningful `screen_position`, e.g. `center`) is not part of the mouse/keyboard layout, yet it **still stays in clipboard sync**. Clipboard is broadcast to every connected client; only mouse and keyboard follow the layout. This lets you keep any number of machines synchronized on the clipboard without positioning them for cursor/keyboard control. (Clipboard delivery still respects `streams_enabled`.)
+
+</details>
+
+<a id="listening-address"></a>
+<details>
+<summary><b>Listening address (machines with several networks)</b></summary>
+
+By default (`Auto (all interfaces)`) the server listens on every interface and advertises every usable address, one mDNS responder per interface, and the client keeps the first that answers. Two machines joined by a direct ethernet cable work without configuration.
+
+To restrict it to one network, open `Server > Options`:
+
+- **Listen on** picks the address. Entries are labelled `Name - IP/prefix`, and `(default route)` marks the one that reaches the internet. Loopback and link-local (`169.254.x.x`) addresses can be selected here, but are never chosen automatically.
+- The button next to it lists the addresses clients are given, with a copy button for each `ip:port`.
+
+What the server advertises follows what it listens on: with a single address selected, that is the only one published and the only one that accepts connections. `Auto` publishes them all.
+
+The address is applied at startup, like `port`, so it can only be changed while the server is stopped. On `Auto`, an interface that shows up later, e.g. a cable plugged in after startup, is picked up within 30 seconds.
+
+If the selected address is no longer on the machine, the server does not start and says so. Pick another one, or go back to `Auto`.
+
+The TLS certificate covers every advertised address and is re-issued when that set changes. The CA is left untouched, so paired clients keep working and don't have to re-pair.
 
 </details>
 
@@ -224,6 +245,10 @@ Auto Discovery (Default):
 Manual Configuration:
 - Set the server's hostname or IP address directly in the config file (or in the appropriate field in `Client > Options`)
 - Use this when auto-discovery doesn't work or you have a static network setup
+
+A server with several addresses advertises all of them, the client tries them and keeps the first that answers. An address you set by hand is only replaced once it stops responding and another one works.
+
+The **Network addresses** button next to the client's hostname lists the machine's own addresses, useful to match the one shown in the server's Allow/Deny card.
 
 </details>
 
@@ -269,6 +294,8 @@ The configuration [json file](#file-structure) is split into three sections: `se
 `log_level` sets the logging verbosity:
 - `0`: Debug (detailed logs)
 - `1`: Info (standard logs)
+
+`host` is the address the server listens on. `0.0.0.0` (the default) listens on every interface and advertises all of them; any other value must be an IPv4 address present on the machine, and is the only one advertised. Anything that is not an IPv4 address falls back to `0.0.0.0` and a warning is logged.
 
 `pairing_port` is the port used for the initial OTP-based certificate exchange. Leave it `null` to derive it as `port - 2`. The value is advertised over mDNS so clients discover it automatically.
 
@@ -468,6 +495,17 @@ Auto-discovery uses mDNS. Make sure:
 - UDP `5353` is not blocked by a firewall (see [Firewall ports](#firewall-ports)).
 
 As a fallback, set the server's hostname or IP directly in the `Client > Options` section.
+
+</details>
+
+<details>
+<summary><b>The client sees the server but can't connect</b></summary>
+
+Common when the server has more than one network (Wi-Fi plus a direct cable, a VPN, Hyper-V/WSL adapters). Discovery reaches the client on every interface, but the address it was given may not be routable from there.
+
+Open `Server > Options` and check the button next to `Listen on` for the addresses being advertised. If the one the client needs is missing, stop the server and select that address (see [Listening address](#listening-address)).
+
+On a direct cable without DHCP both machines fall back to link-local `169.254.x.x`, which is never advertised automatically. Select the address explicitly, or assign static addresses to both ends.
 
 </details>
 

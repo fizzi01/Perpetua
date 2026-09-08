@@ -255,37 +255,37 @@ class TestServerConfigSerialization:
         data = server_config.to_dict()
 
         assert "pairing_port" in data
-        assert "host_exclusive" in data
+        assert "host" in data
 
 
 class TestServerConfigAdvertise:
-    """``host`` is an interface preference, not a bind address."""
+    """``host`` is the bind address; the advertisement is derived from it."""
 
     def test_host_defaults_to_all_interfaces(self, server_config):
         assert server_config.host == "0.0.0.0"
-        assert server_config.host_exclusive is False
 
-    @pytest.mark.parametrize("absent", [{}, {"host_exclusive": None}])
-    def test_host_exclusive_defaults_off(self, server_config, absent):
-        """A 1.6.0 config has no such key; isolation must stay opt-in."""
-        server_config.from_dict(absent)
+    @pytest.mark.parametrize("bogus", [123, [], {}, "", "   ", None])
+    def test_an_unusable_host_falls_back_to_the_wildcard(self, server_config, bogus):
+        """A botched manual edit must leave a server that still starts, not
+        one that cannot bind anything."""
+        server_config.from_dict({"host": bogus})
 
-        assert server_config.host_exclusive is False
+        assert server_config.host == "0.0.0.0"
 
-    @pytest.mark.parametrize("bogus", ["yes", 1, [], {"a": 1}])
-    def test_only_a_real_bool_restricts_the_listener(self, server_config, bogus):
-        """A botched manual edit must never silently narrow what is accepted."""
-        server_config.from_dict({"host_exclusive": bogus})
-
-        assert server_config.host_exclusive is False
-
-    def test_host_exclusive_roundtrip(self, server_config):
-        server_config.host_exclusive = True
+    def test_host_roundtrip(self, server_config):
+        server_config.host = "10.0.0.1"
 
         reloaded = ServerConfig()
         reloaded.from_dict(server_config.to_dict())
 
-        assert reloaded.host_exclusive is True
+        assert reloaded.host == "10.0.0.1"
+
+    def test_a_bound_address_advertises_only_itself(self, server_config):
+        """Anything else would point clients at an address the socket is not
+        listening on."""
+        server_config.host = "10.0.0.1"
+
+        assert server_config.get_advertise_addresses([]) == ["10.0.0.1"]
 
     def test_legacy_wildcard_host_means_every_interface(self, server_config):
         """No migration step: the value 1.6.0 already stored reads correctly."""

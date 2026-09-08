@@ -28,6 +28,7 @@ interface PowerButtonProps {
     status: PowerButtonStatus;
     /** Callback when button is clicked */
     onClick: () => void;
+    disabled?: boolean;
     /** Callback when force stop is clicked (only shown when connecting) */
     onForceStop?: () => void;
     /** Whether a force stop is pending (disables the force stop button) */
@@ -49,6 +50,7 @@ interface PowerButtonProps {
 export function PowerButton({
                                 status,
                                 onClick,
+                                disabled = false,
                                 onForceStop,
                                 pendingForceStop,
                                 stoppedLabel = 'Stopped',
@@ -81,16 +83,16 @@ export function PowerButton({
         <div className={`flex flex-col items-center ${className}`}>
             <div className="relative flex items-center justify-center">
                 <motion.button
-                    whileHover={!isPending && !isConnecting ? {scale: 1.05} : {}}
-                    whileTap={!isPending && !isConnecting ? {scale: 0.95} : {}}
+                    whileHover={!disabled && !isPending && !isConnecting ? {scale: 1.05} : {}}
+                    whileTap={!disabled && !isPending && !isConnecting ? {scale: 0.95} : {}}
                     onClick={onClick}
-                    disabled={isPending || isConnecting}
+                    disabled={disabled || isPending || isConnecting}
                     className="w-24 h-24 rounded-full flex items-center justify-center transition-all duration-300 shadow-lg relative overflow-hidden"
                     style={{
                         backgroundColor: isActive ? 'var(--app-success)' : 'var(--power-button-bg)',
                         color: isActive ? 'var(--white)' : 'var(--power-button-text)',
-                        opacity: isPending || isConnecting ? 0.7 : 1,
-                        cursor: isPending || isConnecting ? '' : 'pointer',
+                        opacity: disabled || isPending || isConnecting ? 0.7 : 1,
+                        cursor: disabled || isPending || isConnecting ? 'default' : 'pointer',
                     }}
                 >
                     {/* Pending/Connecting Animation */}

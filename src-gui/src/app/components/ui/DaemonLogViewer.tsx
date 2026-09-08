@@ -240,18 +240,18 @@ export const DaemonLogViewer: React.FC<LogViewerProps> = ({
             if (mounted.current) setActionBusy(false);
         }
     };
-    const actionStyle = {backgroundColor: 'var(--app-bg-tertiary)', color: 'var(--app-text-muted)'};
+    const actionStyle = {backgroundColor: 'var(--app-input-bg)', color: 'var(--app-text-muted)'};
     const actionClass = 'inline-flex items-center gap-1.5 px-2 py-1.5 rounded-md text-xs font-medium cursor-pointer hover:opacity-80 disabled:opacity-50 disabled:cursor-not-allowed';
 
     return (
         <div className="daemon-log-viewer flex flex-col h-full min-h-0">
             {/* Header */}
             <div className="border-b" style={{
-                borderColor: 'var(--border)',
-                backgroundColor: 'var(--app-bg-secondary)',
+                borderColor: 'var(--app-input-border)',
+                backgroundColor: 'var(--app-card-bg)',
             }}>
                 {/* First row - Controls */}
-                <div className="flex gap-2 items-center justify-between px-3 py-1.5">
+                <div className="flex gap-2 items-center justify-between px-3 py-2.5">
                     <div className="flex items-center gap-2">
                         {/* Number of lines selector */}
                         <div className="flex items-center gap-1.5">
@@ -400,7 +400,7 @@ export const DaemonLogViewer: React.FC<LogViewerProps> = ({
                 </div>
 
                 {/* Second row - Search */}
-                <div className="px-3 pb-1.5">
+                <div className="px-3 pb-3">
                     <div className="relative flex items-center w-full">
                         <Search size={12} className="absolute left-2" style={{color: 'var(--app-text-muted)'}}/>
                         <input
@@ -410,7 +410,7 @@ export const DaemonLogViewer: React.FC<LogViewerProps> = ({
                             placeholder="Search logs..."
                             className="w-full pl-7 pr-7 py-1 text-xs rounded-md border transition-all focus:outline-none focus:ring-2 focus:ring-opacity-50"
                             style={{
-                                backgroundColor: 'var(--app-input-background)',
+                                backgroundColor: 'var(--app-input-bg)',
                                 borderColor: 'var(--app-input-border)',
                                 color: 'var(--app-text-primary)',
                             }}
@@ -453,7 +453,7 @@ export const DaemonLogViewer: React.FC<LogViewerProps> = ({
             <ScrollArea
                 ref={scrollContainerRef}
                 onScroll={handleScroll}
-                className="flex-1 min-h-0 p-3 font-mono text-xs leading-relaxed"
+                className="flex-1 min-h-0 m-3 p-3 rounded-lg font-mono text-xs leading-relaxed"
                 style={{
                     backgroundColor: '#0d0d0d',
                     color: '#e8e8e8',

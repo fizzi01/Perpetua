@@ -15,17 +15,17 @@
 #  along with this program.  If not, see <https://www.gnu.org/licenses/>.
 #
 
-"""Bind vs advertise, and the accept-time interface filter.
+"""What the server binds, and what it advertises as a consequence.
 
-``config.host`` used to be the bind address, and the GUI persisted a concrete
-IP into it on any options edit - so a multi-homed server silently stopped
-listening on every interface but one. It is now an *advertise* preference and
-the listener always binds the wildcard.
+``config.host`` is the bind address. "0.0.0.0" - the default - listens on
+every interface and advertises them all; a concrete address listens only
+there and advertises only that. There is no separate advertise setting: the
+two cannot disagree because one is derived from the other.
 """
 
 import pytest
 
-from service.server import Server
+from service.server import Server, ServerStartError
 from utils.net._base import LocalInterface
 
 
@@ -60,97 +60,214 @@ TWO_LINKS = [
 ]
 
 
-class TestBindIsNotConfigurable:
-    """The core invariant: every listener binds the wildcard, whatever ``host``
-    says. ``host`` selects what is *advertised*.
+class TestBind:
+    """``host`` reaches the socket, unchanged.
 
     These drive the real ``start()`` rather than calling the helpers directly:
-    asserting ``BIND_ALL == "0.0.0.0"`` and then invoking
-    ``_is_port_available(BIND_ALL, ...)`` by hand proves nothing about what
-    production passes, and a regression to ``config.host`` would slip through.
+    a regression that resolved the address somewhere in between would still
+    pass every isolated test of the helper.
     """
 
     @pytest.mark.anyio
-    async def test_listener_binds_the_wildcard_not_the_preference(
+    async def test_default_binds_every_interface(
         self, app_config, server_config, monkeypatch
     ):
         captured = _stub_start(monkeypatch)
         server = _make_server(app_config, server_config)
-        server.config.host = "10.99.99.99"  # deliberately not on this machine
 
-        assert await server.start() is False  # stubbed handler refuses
+        await server.start()
 
+        assert server.config.host == "0.0.0.0"
         assert captured["connection_host"] == "0.0.0.0"
 
     @pytest.mark.anyio
-    async def test_pairing_listener_also_binds_the_wildcard(
+    async def test_chosen_address_reaches_the_listener(
         self, app_config, server_config, monkeypatch
     ):
-        """Otherwise pairing would be reachable on one interface while the
-        data port listens on all - or the reverse.
+        """The whole point of the picker: pick 10.0.0.1 and the server is on
+        10.0.0.1, not on whichever interface holds the default route."""
+        captured = _stub_start(monkeypatch)
+        server = _make_server(app_config, server_config)
+        server.config.host = "10.0.0.1"
+
+        await server.start()
+
+        assert captured["connection_host"] == "10.0.0.1"
+
+    @pytest.mark.anyio
+    async def test_pairing_listener_binds_the_same_address(
+        self, app_config, server_config, monkeypatch
+    ):
+        """Otherwise pairing stays reachable everywhere while the data port
+        does not, which is the confusing half-open state.
 
         The handler is allowed to start so ``start()`` actually reaches the
-        pairing call: asserting on a value this test passed in itself would
-        prove nothing about production.
+        pairing call: asserting a value this test passed in itself would prove
+        nothing about production.
         """
         captured = _stub_start(monkeypatch, handler_starts=True)
         server_config.enable_ssl()
         server = _make_server(app_config, server_config, ssl=True)
-        server.config.host = "10.99.99.99"
+        server.config.host = "10.0.0.1"
 
         assert await server.start() is True
         await server.stop(True)
 
         assert "pairing_host" in captured, "start() never reached the pairing listener"
-        assert captured["pairing_host"] == "0.0.0.0"
+        assert captured["pairing_host"] == "10.0.0.1"
 
     @pytest.mark.anyio
-    async def test_port_probe_uses_the_wildcard(
+    async def test_port_probe_uses_the_bind_address(
         self, app_config, server_config, monkeypatch
     ):
-        """Probing ``config.host`` reported EADDRNOTAVAIL as a port conflict:
-        an absent interface made the server refuse to start complaining about
-        a port that was in fact free."""
+        """Probing anything else makes the check meaningless: the port can be
+        free on the wildcard and taken on the address we are about to use."""
         captured = _stub_start(monkeypatch)
         server = _make_server(app_config, server_config)
-        server.config.host = "10.99.99.99"
+        server.config.host = "10.0.0.1"
 
         await server.start()
 
-        assert captured["probed_hosts"] == ["0.0.0.0"]
+        assert captured["probed_hosts"] == ["10.0.0.1"]
+
+
+class TestBindFailuresAreHonest:
+    """A pinned address that is gone must say so.
+
+    Both cases came back as "Port already in use", which sent the admin
+    changing a port that was never the problem.
+    """
 
     @pytest.mark.anyio
-    async def test_start_succeeds_with_an_absent_preference(
+    async def test_absent_address_reports_itself(
         self, app_config, server_config, monkeypatch
     ):
-        """The whole point of not binding the preference: a stale choice must
-        never stop the server from coming up."""
-        _stub_start(monkeypatch, handler_starts=True)
+        _stub_start(monkeypatch, bind_result="address_unavailable")
         server = _make_server(app_config, server_config)
         server.config.host = "10.99.99.99"
+
+        with pytest.raises(ServerStartError) as excinfo:
+            await server.start()
+
+        assert excinfo.value.reason == "address_unavailable"
+        assert "10.99.99.99" in str(excinfo.value)
+
+    @pytest.mark.anyio
+    async def test_taken_port_still_reports_the_port(
+        self, app_config, server_config, monkeypatch
+    ):
+        _stub_start(monkeypatch, bind_result="port_in_use")
+        server = _make_server(app_config, server_config)
+
+        with pytest.raises(ServerStartError) as excinfo:
+            await server.start()
+
+        assert excinfo.value.reason == "port_in_use"
+
+    def test_the_two_are_distinguished_at_the_socket(self, app_config, server_config):
+        """Not a mock: the classification rests on errno, so it is worth
+        checking against a real kernel."""
+        import socket
+
+        server = _make_server(app_config, server_config)
+        with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as taken:
+            taken.bind(("127.0.0.1", 0))
+            taken.listen()
+            port = taken.getsockname()[1]
+
+            assert server._probe_bind("127.0.0.1", port) == "port_in_use"
+            assert server._probe_bind("10.99.99.99", port) == "address_unavailable"
+            assert server._probe_bind("127.0.0.1", 0) is None
+
+
+class TestAdvertisingFollowsTheBind:
+    def test_wildcard_advertises_every_usable_address(self, app_config, server_config):
+        server = _make_server(app_config, server_config)
+        server.config.host = "0.0.0.0"
+
+        assert server.config.get_advertise_addresses(TWO_LINKS) == [
+            "192.168.1.20",
+            "10.0.0.1",
+        ]
+
+    def test_a_pinned_address_advertises_only_itself(self, app_config, server_config):
+        """Advertising anything else would invite clients to an address the
+        socket is not listening on."""
+        server = _make_server(app_config, server_config)
+        server.config.host = "10.0.0.1"
+
+        assert server.config.get_advertise_addresses(TWO_LINKS) == ["10.0.0.1"]
+
+    def test_wildcard_never_advertises_loopback(self, app_config, server_config):
+        """Automatic selection filters; it has no way to know loopback was
+        wanted, and a client on another machine cannot use it."""
+        server = _make_server(app_config, server_config)
+        server.config.host = "0.0.0.0"
+        ifaces = TWO_LINKS + [_iface("127.0.0.1", "lo0")]
+
+        assert "127.0.0.1" not in server.config.get_advertise_addresses(ifaces)
+
+    def test_a_pinned_loopback_is_advertised(self, app_config, server_config):
+        """An explicit pick is intent, and the bind succeeded, so the address
+        exists. Filtering it here would advertise nothing at all."""
+        server = _make_server(app_config, server_config)
+        server.config.host = "127.0.0.1"
+
+        assert server.config.get_advertise_addresses(TWO_LINKS) == ["127.0.0.1"]
+
+    def test_resolution_needs_no_enumeration_when_pinned(
+        self, app_config, server_config, monkeypatch
+    ):
+        """The bind already proved the address is present; going back to the
+        adapter list to confirm it is what used to lose the choice whenever
+        enumeration disagreed."""
+        server = _make_server(app_config, server_config)
+        server.config.host = "10.0.0.1"
+
+        def _boom(*_a, **_k):
+            raise AssertionError("enumerated while pinned")
+
+        monkeypatch.setattr("utils.net.list_local_interfaces", _boom)
+
+        assert server.config.get_advertise_addresses() == ["10.0.0.1"]
+
+
+class TestStartWiring:
+    """Things start() must hand to the layers below. Unit-testing the helpers
+    is not enough: if production stops calling them the feature is dead and
+    every isolated test still passes."""
+
+    @pytest.mark.anyio
+    async def test_mdns_speaks_only_where_the_socket_listens(
+        self, app_config, server_config, monkeypatch
+    ):
+        """One responder per advertised address, so a client on a given link
+        receives an address reachable *on that link* with no TXT parsing."""
+        captured = _stub_start(monkeypatch, handler_starts=True)
+        server = _make_server(app_config, server_config)
+        server.config.host = "10.0.0.1"
 
         assert await server.start() is True
         await server.stop(True)
 
-
-class TestStartWiring:
-    """Things start() must hand to the layers below.
-
-    Unit-testing the helpers is not enough: if production stops calling them
-    the feature is dead and every isolated test still passes.
-    """
+        kwargs = captured["mdns"][0][1]
+        assert kwargs["interface_addresses"] == ["10.0.0.1"]
+        assert kwargs["extra_props"]["addresses"] == "10.0.0.1"
+        assert kwargs["host"] == "10.0.0.1"
 
     @pytest.mark.anyio
-    async def test_accept_filter_is_wired_into_the_listener(
+    async def test_wildcard_registers_a_responder_per_interface(
         self, app_config, server_config, monkeypatch
     ):
-        """Without this, ``host_exclusive`` is a checkbox that does nothing."""
-        captured = _stub_start(monkeypatch)
+        captured = _stub_start(monkeypatch, handler_starts=True)
         server = _make_server(app_config, server_config)
 
-        await server.start()
+        assert await server.start() is True
+        await server.stop(True)
 
-        assert captured["interface_filter"] == server._on_interface_accept
+        kwargs = captured["mdns"][0][1]
+        assert kwargs["interface_addresses"] == ["192.168.1.20", "10.0.0.1"]
+        assert kwargs["extra_props"]["addresses"] == "192.168.1.20,10.0.0.1"
 
     @pytest.mark.anyio
     async def test_san_is_rechecked_at_start_even_with_certs_loaded(
@@ -179,124 +296,6 @@ class TestStartWiring:
         await server.start()
 
         assert checked, "SAN check skipped at start"
-
-
-class TestInterfaceFilter:
-    """``host_exclusive`` is enforced at accept time, not at bind time."""
-
-    def test_disabled_by_default_accepts_everything(self, app_config, server_config):
-        server = _make_server(app_config, server_config)
-        server._advertised_addresses = ["10.0.0.1"]
-
-        assert server.config.host_exclusive is False
-        assert server._on_interface_accept("192.168.1.20") is True
-
-    def test_enabled_accepts_only_the_selected_interface(
-        self, app_config, server_config
-    ):
-        server = _make_server(app_config, server_config)
-        server.config.host = "10.0.0.1"
-        server.config.host_exclusive = True
-        server._iface_snapshot = TWO_LINKS
-
-        assert server._on_interface_accept("10.0.0.1") is True
-        assert server._on_interface_accept("192.168.1.20") is False
-
-    def test_loopback_can_be_selected(self, app_config, server_config):
-        """The picker offers loopback, so the filter must be able to match it.
-
-        The regression: ``_is_usable_ip`` rejects 127.0.0.0/8, the resolver
-        used a usable-only enumeration, so an explicit loopback pick matched
-        nothing - and the "restrict" setting fell back to allowing the whole
-        machine. A LAN client connected to a server pinned to loopback.
-        """
-        server = _make_server(app_config, server_config)
-        server.config.host = "127.0.0.1"
-        server.config.host_exclusive = True
-        server._iface_snapshot = TWO_LINKS + [_iface("127.0.0.1", "lo0")]
-
-        assert server._on_interface_accept("127.0.0.1") is True
-        assert server._on_interface_accept("192.168.1.20") is False
-
-    def test_unresolvable_choice_refuses_rather_than_widening(
-        self, app_config, server_config
-    ):
-        """ "Only eth1" must never degrade into "any interface".
-
-        The advertise path deliberately falls back to every interface so the
-        server stays findable; inheriting that fallback here inverted the
-        setting. Refusing costs nothing: no connection can arrive on an
-        address the machine does not have, so this only rejects the others -
-        which is exactly what was asked for.
-        """
-        server = _make_server(app_config, server_config)
-        server.config.host = "10.99.99.99"  # not present
-        server.config.host_exclusive = True
-        server._iface_snapshot = TWO_LINKS
-        server._advertised_addresses = ["192.168.1.20", "10.0.0.1"]
-
-        assert server._on_interface_accept("192.168.1.20") is False
-        assert server._on_interface_accept("10.0.0.1") is False
-
-    def test_advertised_list_is_not_the_allow_list(self, app_config, server_config):
-        """Advertising is permissive by design; access control must not be."""
-        server = _make_server(app_config, server_config)
-        server.config.host = "10.0.0.1"
-        server.config.host_exclusive = True
-        server._iface_snapshot = TWO_LINKS
-        # Whatever ended up advertised, only the chosen interface is allowed.
-        server._advertised_addresses = ["192.168.1.20", "10.0.0.1"]
-
-        assert server._on_interface_accept("192.168.1.20") is False
-
-
-class TestExclusiveAdvertising:
-    def test_exclusive_advertises_only_the_chosen_address(
-        self, app_config, server_config
-    ):
-        """Publishing addresses the filter will refuse just misleads clients."""
-        server = _make_server(app_config, server_config)
-        server.config.host = "10.0.0.1"
-        server.config.host_exclusive = True
-
-        assert server.config.get_advertise_addresses(TWO_LINKS) == ["10.0.0.1"]
-
-    def test_non_exclusive_keeps_the_others_as_fallbacks(
-        self, app_config, server_config
-    ):
-        server = _make_server(app_config, server_config)
-        server.config.host = "10.0.0.1"
-        server.config.host_exclusive = False
-
-        assert server.config.get_advertise_addresses(TWO_LINKS) == [
-            "10.0.0.1",
-            "192.168.1.20",
-        ]
-
-    def test_auto_never_advertises_loopback(self, app_config, server_config):
-        """An explicit pick is intent; automatic selection still filters."""
-        server = _make_server(app_config, server_config)
-        server.config.host = "0.0.0.0"
-        ifaces = TWO_LINKS + [_iface("127.0.0.1", "lo0")]
-
-        assert "127.0.0.1" not in server.config.get_advertise_addresses(ifaces)
-
-
-class TestAdvertiseResolution:
-    def test_auto_advertises_every_address(self, app_config, server_config):
-        server = _make_server(app_config, server_config)
-        server.config.host = "0.0.0.0"
-
-        assert server.config.get_advertise_addresses(TWO_LINKS) == [
-            "192.168.1.20",
-            "10.0.0.1",
-        ]
-
-    def test_explicit_choice_leads(self, app_config, server_config):
-        server = _make_server(app_config, server_config)
-        server.config.host = "eth1"
-
-        assert server.config.get_advertise_addresses(TWO_LINKS)[0] == "10.0.0.1"
 
 
 class TestRefreshAdvertisement:
@@ -345,10 +344,9 @@ class TestRefreshAdvertisement:
         assert server._advertised_addresses == ["10.0.0.1"]
 
     @pytest.mark.anyio
-    async def test_change_reregisters_with_per_interface_targets(
+    async def test_a_new_cable_is_announced_without_a_restart(
         self, app_config, server_config, monkeypatch
     ):
-        """A cable plugged in after start must reach mDNS without a restart."""
         server = _make_server(app_config, server_config)
         server._advertised_addresses = ["192.168.1.20"]
 
@@ -368,30 +366,66 @@ class TestRefreshAdvertisement:
 
         assert len(calls) == 1
         kwargs = calls[0][1]
-        # Auto: one responder per interface, each announcing its own address.
         assert kwargs["interface_addresses"] == ["192.168.1.20", "10.0.0.1"]
-        # Full list in TXT so a client whose A record is unreachable can fall
-        # back without the admin configuring anything.
         assert kwargs["extra_props"]["addresses"] == "192.168.1.20,10.0.0.1"
         assert server._advertised_addresses == ["192.168.1.20", "10.0.0.1"]
 
+    @pytest.mark.anyio
+    async def test_a_pinned_bind_ignores_a_new_cable(
+        self, app_config, server_config, monkeypatch
+    ):
+        """The socket is not listening there, so announcing it would be a lie.
 
-def _stub_start(monkeypatch, handler_starts: bool = False) -> dict:
+        This is the property that makes the picker safe to leave alone: with
+        an explicit address the advertisement is fixed for the lifetime of the
+        listener and nothing can drift onto another link.
+        """
+        server = _make_server(app_config, server_config)
+        server.config.host = "192.168.1.20"
+        server._advertised_addresses = ["192.168.1.20"]
+
+        monkeypatch.setattr(
+            "service.server.list_local_interfaces_async",
+            _async_returning(TWO_LINKS),
+        )
+        calls = []
+        monkeypatch.setattr(
+            server._mdns_service, "register_service", _async_recording(calls)
+        )
+
+        await server.refresh_advertisement()
+
+        assert calls == []
+        assert server._advertised_addresses == ["192.168.1.20"]
+
+
+def _stub_start(monkeypatch, handler_starts: bool = False, bind_result=None) -> dict:
     """Let ``Server.start()`` run far enough to record what it binds.
 
     Input capture, mDNS and the real socket are stubbed; the connection
     handler is a recorder so the host it is constructed with can be asserted.
     """
-    captured: dict = {"probed_hosts": []}
+    captured: dict = {"probed_hosts": [], "mdns": []}
 
     monkeypatch.setattr(
         Server,
-        "_is_port_available",
-        staticmethod(lambda host, port: captured["probed_hosts"].append(host) or True),
+        "_probe_bind",
+        staticmethod(
+            lambda host, port: captured["probed_hosts"].append(host) or bind_result
+        ),
     )
     monkeypatch.setattr(
         "service.server.list_local_interfaces_async", _async_returning(TWO_LINKS)
     )
+    # Class-level: start() builds its own ServiceDiscovery, so there is no
+    # instance to patch before the call under test runs.
+    monkeypatch.setattr(
+        "service.ServiceDiscovery.register_service", _async_recording(captured["mdns"])
+    )
+    monkeypatch.setattr(
+        "service.ServiceDiscovery.unregister_service", _async_returning(None)
+    )
+    monkeypatch.setattr("service.ServiceDiscovery.get_uid", lambda self: "uid-test")
     monkeypatch.setattr(Server, "_initialize_streams", _async_returning(None))
     monkeypatch.setattr(Server, "_initialize_components", _async_returning(None))
     monkeypatch.setattr(
@@ -408,7 +442,6 @@ def _stub_start(monkeypatch, handler_starts: bool = False) -> dict:
         def __init__(self, **kwargs):
             captured["connection_host"] = kwargs.get("host")
             captured["connection_port"] = kwargs.get("port")
-            captured["interface_filter"] = kwargs.get("interface_filter")
 
         async def start(self):
             return handler_starts

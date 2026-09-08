@@ -237,7 +237,7 @@ export interface PermissionsResult {
 // -- Network interfaces (server advertise picker) --
 
 /** "Advertise on every interface" — the default value of ServerConfig.host. */
-export const ADVERTISE_AUTO = '0.0.0.0';
+export const BIND_ALL = '0.0.0.0';
 
 export interface NetworkInterfaceInfo {
     name: string;
@@ -250,16 +250,10 @@ export interface NetworkInterfaceInfo {
 
 export interface NetworkInterfacesResult {
     interfaces: NetworkInterfaceInfo[];
-    /** ServerConfig.host: an interface preference, ADVERTISE_AUTO for all. */
+    /** ServerConfig.host: the bind address, BIND_ALL for every interface. */
     selected?: string | null;
     /** What clients will actually be told, resolved by the daemon. */
     advertised: string[];
-    /**
-     * Set once when a config predating the advertise preference is loaded:
-     * `host` used to restrict the listener and no longer does. Shown to the
-     * user so the change in reachability is not silent.
-     */
-    legacy_bind_notice?: string | null;
 }
 
 export enum StreamType {
@@ -338,10 +332,8 @@ export interface ServerStatus {
     start_time?: string;
     running: boolean;
     uid: string;
-    /** Interface preference, not a bind address. ADVERTISE_AUTO = all. */
+    /** Bind address. BIND_ALL = every interface. */
     host: string;
-    /** Refuse connections arriving on any other interface. */
-    host_exclusive?: boolean;
     port: number;
     heartbeat_interval: number;
     streams_enabled: Object;

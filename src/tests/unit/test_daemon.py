@@ -837,24 +837,23 @@ class TestAdvertiseConfigCommands:
         responses = await send_command(reader, writer, DaemonCommand.GET_SERVER_CONFIG)
 
         data = responses[-1]["data"]["result"]
-        assert "host_exclusive" in data
+        assert "host" in data
         assert "pairing_port" in data
 
     @pytest.mark.anyio
-    async def test_host_and_exclusive_round_trip(self, daemon_client_connection):
+    async def test_host_round_trips(self, daemon_client_connection):
         reader, writer, _ = daemon_client_connection
 
         await send_command(
             reader,
             writer,
             DaemonCommand.SET_SERVER_CONFIG,
-            {"host": "10.0.0.1", "host_exclusive": True},
+            {"host": "10.0.0.1"},
         )
         responses = await send_command(reader, writer, DaemonCommand.GET_SERVER_CONFIG)
 
         data = responses[-1]["data"]["result"]
         assert data["host"] == "10.0.0.1"
-        assert data["host_exclusive"] is True
 
     @pytest.mark.anyio
     async def test_omitted_keys_leave_values_alone(self, daemon_client_connection):
@@ -865,7 +864,7 @@ class TestAdvertiseConfigCommands:
             reader,
             writer,
             DaemonCommand.SET_SERVER_CONFIG,
-            {"host": "10.0.0.1", "host_exclusive": True},
+            {"host": "10.0.0.1"},
         )
         await send_command(
             reader, writer, DaemonCommand.SET_SERVER_CONFIG, {"port": 7777}
@@ -874,7 +873,6 @@ class TestAdvertiseConfigCommands:
 
         data = responses[-1]["data"]["result"]
         assert data["host"] == "10.0.0.1"
-        assert data["host_exclusive"] is True
         assert data["port"] == 7777
 
     @pytest.mark.anyio
@@ -960,25 +958,6 @@ class TestListNetworkInterfaces:
         )
 
         assert responses[-1]["event_type"] == NotificationEventType.COMMAND_ERROR
-
-    @pytest.mark.anyio
-    async def test_legacy_bind_notice_is_reported_once(
-        self, daemon_client_connection, monkeypatch
-    ):
-        """The change in reachability must be declared, not silent - but once."""
-        reader, writer, daemon = daemon_client_connection
-        monkeypatch.setattr(net_module, "list_local_interfaces", lambda *a, **k: [])
-        daemon._server_config.legacy_bind_notice = "192.168.1.20"
-
-        first = await send_command(
-            reader, writer, DaemonCommand.LIST_NETWORK_INTERFACES
-        )
-        second = await send_command(
-            reader, writer, DaemonCommand.LIST_NETWORK_INTERFACES
-        )
-
-        assert first[-1]["data"]["result"]["legacy_bind_notice"] == "192.168.1.20"
-        assert second[-1]["data"]["result"]["legacy_bind_notice"] is None
 
 
 # ============================================================================
@@ -1362,3 +1341,7 @@ class TestPermissionCommands:
         assert responses is not None
         assert responses[-1]["event_type"] == NotificationEventType.COMMAND_SUCCESS
         assert PermissionType.ACCESSIBILITY in _FakePermissionChecker.requested
+
+
+class TestHostInterfaceCommand:
+    """The adapter travels with the address, or the GUI can't record it."""

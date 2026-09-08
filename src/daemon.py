@@ -36,6 +36,7 @@ from enum import StrEnum
 from config import ApplicationConfig, ServerConfig, ClientConfig
 from service.client import Client
 from service.server import Server, ServerStartError
+from utils.crypto.sharing import CertificateReceiveError
 from utils import BackgroundTasks
 from utils.logging import Logger, get_logger
 from utils.cli import DaemonArguments
@@ -1414,7 +1415,18 @@ class Daemon:
             return
 
         try:
-            success = await self._client.start()
+            try:
+                success = await self._client.start()
+            except CertificateReceiveError as pair_err:
+                # Known, user-actionable failure (no pairing material and the
+                # server is down): forward the reason rather than logging it
+                # as an unhandled error, which reads like a crash.
+                self._logger.error(str(pair_err))
+                await self._notification_manager.notify_command_error(
+                    command, str(pair_err)
+                )
+                return
+
             if success:
                 self._state["client"].start()
                 response_data = {
@@ -1542,7 +1554,6 @@ class Daemon:
         config_dict = {
             "uid": self._server_config.uid,
             "host": self._server_config.host,
-            "host_exclusive": self._server_config.host_exclusive,
             "port": self._server_config.port,
             "pairing_port": self._server_config.pairing_port,
             "heartbeat_interval": self._server_config.heartbeat_interval,
@@ -1578,9 +1589,6 @@ class Daemon:
                 port = params.get("port", self._server_config.port)
                 host_changed = host != self._server_config.host
                 self._server_config.set_connection_params(host=host, port=port)
-
-            if "host_exclusive" in params:
-                self._server_config.host_exclusive = params["host_exclusive"] is True
 
             if "heartbeat_interval" in params:
                 self._server_config.heartbeat_interval = params["heartbeat_interval"]
@@ -1900,10 +1908,6 @@ class Daemon:
                 if self._server_config
                 else []
             )
-            legacy_notice = None
-            if self._server_config is not None:
-                legacy_notice = self._server_config.legacy_bind_notice
-                self._server_config.legacy_bind_notice = None
             await self._notification_manager.notify_command_success(
                 command,
                 "Network interfaces retrieved",
@@ -1911,10 +1915,6 @@ class Daemon:
                     "interfaces": [i.to_dict() for i in interfaces],
                     "selected": selected,
                     "advertised": advertised,
-                    # One-shot: a config written when ``host`` still meant
-                    # "bind address". Cleared after the GUI has been told, so
-                    # the warning is shown once rather than every poll.
-                    "legacy_bind_notice": legacy_notice,
                 },
             )
         except Exception as e:
@@ -2467,7 +2467,7 @@ class Daemon:
             # This is a bind address for the pairing listener, not an advertise
             # preference: it must stay the wildcard, or pairing would only be
             # reachable on one interface while the data port listens on all.
-            host = params.get("host", self._server.BIND_ALL)
+            host = params.get("host", self._server.config.host)
             timeout = params.get("timeout", 30)
             res, otp = await self._server.share_certificate(host=host, timeout=timeout)
             if res and otp:

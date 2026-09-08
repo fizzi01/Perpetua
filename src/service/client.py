@@ -1329,6 +1329,25 @@ class Client:
         except asyncio.CancelledError:
             return
 
+    def _needs_pairing(self) -> bool:
+        """True when the next connection must go through OTP pairing first.
+
+        Pairing is required when TLS is on and either the server CA or our own
+        client identity is missing. The latter covers migration: a client
+        paired under the old CA-only scheme holds no client certificate and
+        must re-pair before a TLS-mode server will accept it.
+        """
+        if not self.config.ssl_enabled:
+            return False
+        if not self._cert_manager.client_credentials_exist():
+            return True
+        if self.has_certificate():
+            return False
+        # A peer entry with no CA file behind it is not usable material.
+        return not self._cert_manager.get_ca_cert_path(
+            source_id=self.config.get_server_uid(),
+        )
+
     async def _handle_certificate_check(self) -> Optional[str]:
         """
         Handles the process of checking and obtaining a server certificate if necessary.
@@ -1342,49 +1361,34 @@ class Client:
             otherwise, None.
         """
         try:
-            # Need pairing when the CA is missing OR we hold no client identity
-            # (cert+key) for mutual TLS. The latter covers migration: a client
-            # paired under the old CA-only scheme must re-pair to obtain a
-            # client certificate before a TLS-mode server will accept it.
-            needs_client_identity = not self._cert_manager.client_credentials_exist()
-            if self.config.ssl_enabled and (
-                not self.has_certificate() or needs_client_identity
-            ):
-                certfile = self._cert_manager.get_ca_cert_path(
-                    source_id=self.config.get_server_uid(),
+            if self._needs_pairing():
+                self._otp_needed.set_result(True)
+                self._logger.info(
+                    "Waiting to receive certificate from server. Provide OTP to continue..."
                 )
 
-                # If the CA or our client identity is missing, (re-)pair.
-                if not certfile or needs_client_identity:
-                    self._otp_needed.set_result(True)
-                    self._logger.info(
-                        "Waiting to receive certificate from server. Provide OTP to continue..."
-                    )
+                # Best-effort: ask the server to auto-generate an OTP and
+                # surface it on its admin GUI. Failures (legacy server,
+                # rate-limit, network) are fine - the user can still get
+                # an OTP by clicking "Share Certificate" on the server.
+                try:
+                    ok, ttl, err = await self.request_pairing()
+                    if ok:
+                        self._logger.info(f"Pairing request accepted; OTP valid {ttl}s")
+                    else:
+                        self._logger.info(
+                            "Auto pairing not available "
+                            f"({err or 'unknown'}); fall back to manual OTP"
+                        )
+                except Exception as e:
+                    self._logger.warning("Pairing request failed", error=str(e))
 
-                    # Best-effort: ask the server to auto-generate an OTP and
-                    # surface it on its admin GUI. Failures (legacy server,
-                    # rate-limit, network) are fine - the user can still get
-                    # an OTP by clicking "Share Certificate" on the server.
-                    try:
-                        ok, ttl, err = await self.request_pairing()
-                        if ok:
-                            self._logger.info(
-                                f"Pairing request accepted; OTP valid {ttl}s"
-                            )
-                        else:
-                            self._logger.info(
-                                "Auto pairing not available "
-                                f"({err or 'unknown'}); fall back to manual OTP"
-                            )
-                    except Exception as e:
-                        self._logger.warning("Pairing request failed", error=str(e))
+                # Send notification that OTP is needed
+                await self._send_notification(OtpNeededEvent(needed=True))
 
-                    # Send notification that OTP is needed
-                    await self._send_notification(OtpNeededEvent(needed=True))
-
-                    otp = await self._otp_received
-                    if not await self.receive_certificate(otp=otp):
-                        return None
+                otp = await self._otp_received
+                if not await self.receive_certificate(otp=otp):
+                    return None
 
             return self._cert_manager.get_ca_cert_path(
                 source_id=self.config.get_server_uid(),
@@ -1465,23 +1469,26 @@ class Client:
                 return addr
         return None
 
+    async def _probe_configured_server(self, timeout: float = 3.0) -> bool:
+        """Does the persisted server answer on its data port?
+
+        Lock-free like ``_probe_tcp``: callers already inside
+        ``_guarded_handler`` would deadlock on a variant that took
+        ``_handler_lock`` itself.
+        """
+        host = self.config.get_server_host() or self.config.get_server_hostname() or ""
+        port = self.config.get_server_port()
+        reachable = await self._probe_tcp(host, port, timeout=timeout)
+        if not reachable:
+            self._logger.warning(f"Server {host}:{port} not reachable")
+        return reachable
+
     async def _is_server_available(self) -> bool:
         """Check if server is configured in client config"""
         if self._has_server_configured():
-            # Try to establish a TCP connection to verify server is reachable
-            host = (
-                self.config.get_server_host()
-                if self.config.get_server_host() != ""
-                else self.config.get_server_hostname()
-            )
-            port = self.config.get_server_port()
-
             try:
                 async with self._guarded_handler():
-                    reachable = await self._probe_tcp(host, port, timeout=3.0)
-                    if not reachable:
-                        self._logger.warning(f"Server {host}:{port} not reachable")
-                    return reachable
+                    return await self._probe_configured_server()
             except ClientAbortedError:
                 raise
 
@@ -1600,6 +1607,30 @@ class Client:
                 # Initial server availability check
                 if not await self._handle_server_availability():
                     return False
+
+                async with self._guarded_handler():
+                    # The check above deliberately lets an unreachable but
+                    # configured server through, so the ConnectionHandler's
+                    # backoff loop can pick it up once it comes online. That
+                    # only works for a client that is already paired: pairing
+                    # is a live exchange with the server, and the handler
+                    # cannot even be built without a CA. Aiming it at a dead
+                    # server would just strand the GUI on an OTP prompt that
+                    # nobody can answer, so fail the start with the reason.
+                    if (
+                        self._needs_pairing()
+                        and not await self._probe_configured_server()
+                    ):
+                        # Explicit: the retry-loop line logged just above
+                        # promised a hand-off that does not apply here.
+                        self._logger.error(
+                            "Pairing required but the server is unreachable; "
+                            "aborting start"
+                        )
+                        raise CertificateReceiveError(
+                            "Cannot pair with the server: it is not reachable. "
+                            "Start the server, then try connecting again."
+                        )
 
                 async with self._guarded_handler():
                     # Initialize stream handlers (but don't start them yet)
