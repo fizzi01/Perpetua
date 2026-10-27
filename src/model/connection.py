@@ -16,6 +16,7 @@
 #
 
 import asyncio
+import time
 from typing import Tuple, Dict, Optional
 
 
@@ -29,11 +30,29 @@ class StreamWrapper:
         Wrapper for asyncio StreamReader.
         """
 
+        # A stream counts as being read if recv() was called within this
+        # time. Receive loops poll recv() with a short timeout.
+        READ_GAP = 1.0  # sec
+
         def __init__(self, reader: asyncio.StreamReader):
             self._reader: asyncio.StreamReader = reader
+            # Monotonic times of the last recv() call and of the last one that
+            # returned data. The peer sends heartbeats every second, so a long
+            # gap in data while the stream is being read means the peer is
+            # gone even if the socket still looks open (e.g. it went to sleep).
+            self.last_read: Optional[float] = None
+            self.last_data: float = time.monotonic()
 
         async def recv(self, size: int) -> bytes:
-            return await self._reader.read(size)
+            now = time.monotonic()
+            if self.last_read is None or now - self.last_read > self.READ_GAP:
+                # Reading (re)started: don't count the time nobody was reading.
+                self.last_data = now
+            self.last_read = now
+            data = await self._reader.read(size)
+            if data:
+                self.last_data = time.monotonic()
+            return data
 
         def close(self):
             self._reader.feed_eof()
@@ -46,6 +65,10 @@ class StreamWrapper:
         Wrapper for asyncio StreamWriter.
         """
 
+        # Max time to wait for a graceful close. A TLS close to a peer that
+        # is no longer reachable otherwise blocks until TCP gives up.
+        CLOSE_TIMEOUT = 2.0  # sec
+
         def __init__(self, writer: asyncio.StreamWriter):
             self._writer: asyncio.StreamWriter = writer
 
@@ -56,7 +79,11 @@ class StreamWrapper:
         async def close(self):
             try:
                 self._writer.close()
-                await self._writer.wait_closed()
+                await asyncio.wait_for(
+                    self._writer.wait_closed(), timeout=self.CLOSE_TIMEOUT
+                )
+            except asyncio.TimeoutError:
+                self._writer.transport.abort()
             except (
                 BrokenPipeError,
                 ConnectionResetError,
@@ -227,6 +254,24 @@ class ClientConnection:
     def get_available_stream_types(self) -> list[int]:
         """Get list of available stream types"""
         return list(self.wrappers.keys())
+
+    def read_silence(self, stream_types: list[int]) -> Optional[float]:
+        """
+        Shortest time since any of the given streams received data.
+
+        Only streams that are currently being read count. Returns None if
+        none of them is, since an unread stream says nothing about whether
+        the peer is still there.
+        """
+        now = time.monotonic()
+        silences = [
+            now - stream.reader.last_data
+            for stream_type, stream in self.wrappers.items()
+            if stream_type in stream_types
+            and stream.reader.last_read is not None
+            and now - stream.reader.last_read <= stream.reader.READ_GAP
+        ]
+        return min(silences) if silences else None
 
     async def is_open(self) -> bool:
         """
