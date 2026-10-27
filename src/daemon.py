@@ -286,6 +286,9 @@ class Daemon:
 
         self._server: Optional[Server] = None
         self._client: Optional[Client] = None
+        # Services whose start() is in progress. They don't report
+        # is_running() yet, but must not be stopped or replaced meanwhile.
+        self._starting: set[str] = set()
         self._state: Dict[str, RunningState] = {
             "server": RunningState("server", False),
             "client": RunningState("client", False),
@@ -1274,7 +1277,9 @@ class Daemon:
                 self._server.set_notification_callback(
                     self._service_notification_callback
                 )
-            if self._client and self._client.is_running():
+            if self._client and (
+                self._client.is_running() or "client" in self._starting
+            ):
                 await self._notification_manager.notify_command_error(
                     command, "Cannot start server while client is running"
                 )
@@ -1301,7 +1306,9 @@ class Daemon:
                 self._client.set_notification_callback(
                     self._service_notification_callback
                 )
-            if self._server and self._server.is_running():
+            if self._server and (
+                self._server.is_running() or "server" in self._starting
+            ):
                 await self._notification_manager.notify_command_error(
                     command, "Cannot start client while server is running"
                 )
@@ -1321,7 +1328,7 @@ class Daemon:
         """Start the server service."""
         command = DaemonCommand.START_SERVER.value
 
-        if self._server and self._server.is_running():
+        if self._server and (self._server.is_running() or "server" in self._starting):
             await self._notification_manager.notify_command_error(
                 command, "Server already running"
             )
@@ -1340,6 +1347,7 @@ class Daemon:
                 )
                 return
 
+            self._starting.add("server")
             try:
                 success = await self._server.start()
             except ServerStartError as start_err:
@@ -1350,6 +1358,8 @@ class Daemon:
                     command, str(start_err)
                 )
                 return
+            finally:
+                self._starting.discard("server")
 
             if success:
                 self._state["server"].start()
@@ -1396,7 +1406,7 @@ class Daemon:
         """Start the client service."""
         command = DaemonCommand.START_CLIENT.value
 
-        if self._client and self._client.is_running():
+        if self._client and (self._client.is_running() or "client" in self._starting):
             await self._notification_manager.notify_command_error(
                 command, "Client already running"
             )
@@ -1415,6 +1425,7 @@ class Daemon:
             return
 
         try:
+            self._starting.add("client")
             try:
                 success = await self._client.start()
             except CertificateReceiveError as pair_err:
@@ -1426,6 +1437,8 @@ class Daemon:
                     command, str(pair_err)
                 )
                 return
+            finally:
+                self._starting.discard("client")
 
             if success:
                 self._state["client"].start()
