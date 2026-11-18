@@ -70,6 +70,10 @@ class ConnectionHandler(BaseConnectionHandler):
     )
     CONNECTION_ATTEMPT_TIMEOUT = 10  # sec
     MAX_HEARTBEAT_MISSES = 0
+    # Clients send a heartbeat on every data stream each second. If nothing
+    # arrives for this long the client is gone (sleep, lid closed, network
+    # lost) even though TCP has not noticed yet.
+    PEER_SILENCE_TIMEOUT = 5  # sec
 
     def __init__(
         self,
@@ -1147,6 +1151,21 @@ class ConnectionHandler(BaseConnectionHandler):
                             if command_reader is None or command_reader.is_closed():
                                 raise ConnectionResetError(
                                     "Command stream reader is closed"
+                                )
+
+                            # The command stream carries no client heartbeats.
+                            silence = client_conn.read_silence(
+                                [
+                                    t
+                                    for t in client_conn.get_available_stream_types()
+                                    if t != StreamType.COMMAND
+                                ]
+                            )
+                            if silence is not None and silence > max(
+                                self.PEER_SILENCE_TIMEOUT, 3 * self.heartbeat_interval
+                            ):
+                                raise ConnectionResetError(
+                                    f"No data from client for {silence:.0f}s"
                                 )
 
                             # Check others streams to handle reconnection
