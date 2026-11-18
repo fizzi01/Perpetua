@@ -36,9 +36,21 @@ class ServerKeyboardListener(_base.ServerKeyboardListener):
             filtering,
         )
 
+    # Windows emits a synthetic LCtrl (scan code 0x21D) together with AltGr.
+    # Forwarding it makes clients see Ctrl+AltGr+<key>, which is a shortcut
+    # on Linux/macOS instead of the AltGr character (e.g. "@", "~").
+    _VK_LCONTROL = 0xA2
+    _ALTGR_FAKE_CTRL_SCAN = 0x21D
+
     def _win32_suppress_filter(self, msg, data):
         if self._listener is not None:
             self._listener._suppress = self._listening
+        if (
+            data.vkCode == self._VK_LCONTROL
+            and data.scanCode == self._ALTGR_FAKE_CTRL_SCAN
+        ):
+            # Still suppressed while forwarding, just not sent to the client.
+            return False
 
 
 class ClientKeyboardController(_base.ClientKeyboardController):
