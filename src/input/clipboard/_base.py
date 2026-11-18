@@ -18,7 +18,7 @@
 import asyncio
 import enum
 from typing import Optional, Callable, Any
-from copykitten import copy, paste, paste_file_list, CopykittenError
+from copykitten import copy, paste, paste_paths, CopykittenError
 import hashlib
 
 from event import (
@@ -99,7 +99,7 @@ class Clipboard:
     @staticmethod
     def _is_file(content: str) -> bool:
         try:
-            file_list = paste_file_list()
+            file_list = paste_paths()
             if content in file_list:
                 return True
         except Exception:
@@ -109,7 +109,7 @@ class Clipboard:
     @staticmethod
     def _try_get_clip_files() -> list[str]:
         try:
-            return paste_file_list()
+            return [str(f) for f in paste_paths()]
         except Exception:
             return []
 
