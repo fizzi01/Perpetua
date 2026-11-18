@@ -116,7 +116,26 @@ class DaemonRunner:
                 print(e)
 
 
+def _enable_dpi_awareness():
+    """Make Windows report physical pixels. Without this, monitors with
+    scaling > 100% are reported with logical sizes while the mouse hook
+    delivers physical coordinates, so the layout overlaps."""
+    import ctypes
+
+    try:
+        # DPI_AWARENESS_CONTEXT_PER_MONITOR_AWARE_V2
+        ctypes.windll.user32.SetProcessDpiAwarenessContext(ctypes.c_void_p(-4))
+    except Exception:
+        try:
+            ctypes.windll.shcore.SetProcessDpiAwareness(2)
+        except Exception:
+            pass
+
+
 def main():
+    if IS_WINDOWS:
+        _enable_dpi_awareness()
+
     from utils.screen import Screen
 
     Screen.hide_icon()
