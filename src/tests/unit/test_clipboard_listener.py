@@ -1164,11 +1164,11 @@ class TestSpecialCharacters:
 
 @pytest.mark.anyio
 class TestFileListDetection:
-    """Test clipboard file list detection via paste_file_list."""
+    """Test clipboard file list detection via paste_paths."""
 
     async def test_is_file_returns_true_when_content_in_file_list(self):
         """Test _is_file returns True when content matches a file in the list."""
-        with patch("input.clipboard._base.paste_file_list") as mock_pfl:
+        with patch("input.clipboard._base.paste_paths") as mock_pfl:
             mock_pfl.return_value = ["/tmp/file1.txt", "/tmp/file2.txt"]
 
             assert Clipboard._is_file("/tmp/file1.txt") is True
@@ -1177,21 +1177,21 @@ class TestFileListDetection:
 
     async def test_is_file_returns_false_when_content_not_in_file_list(self):
         """Test _is_file returns False when content is not in the file list."""
-        with patch("input.clipboard._base.paste_file_list") as mock_pfl:
+        with patch("input.clipboard._base.paste_paths") as mock_pfl:
             mock_pfl.return_value = ["/tmp/file1.txt"]
 
             assert Clipboard._is_file("/tmp/other.txt") is False
 
     async def test_is_file_returns_false_on_exception(self):
-        """Test _is_file returns False when paste_file_list raises."""
-        with patch("input.clipboard._base.paste_file_list") as mock_pfl:
+        """Test _is_file returns False when paste_paths raises."""
+        with patch("input.clipboard._base.paste_paths") as mock_pfl:
             mock_pfl.side_effect = Exception("Clipboard unavailable")
 
             assert Clipboard._is_file("anything") is False
 
     async def test_try_get_clip_files_returns_files(self):
         """Test _try_get_clip_files returns file list on success."""
-        with patch("input.clipboard._base.paste_file_list") as mock_pfl:
+        with patch("input.clipboard._base.paste_paths") as mock_pfl:
             mock_pfl.return_value = ["/tmp/a.txt", "/tmp/b.txt"]
 
             result = Clipboard._try_get_clip_files()
@@ -1199,7 +1199,7 @@ class TestFileListDetection:
 
     async def test_try_get_clip_files_returns_empty_on_exception(self):
         """Test _try_get_clip_files returns empty list on exception."""
-        with patch("input.clipboard._base.paste_file_list") as mock_pfl:
+        with patch("input.clipboard._base.paste_paths") as mock_pfl:
             mock_pfl.side_effect = Exception("No files")
 
             result = Clipboard._try_get_clip_files()
@@ -1207,14 +1207,14 @@ class TestFileListDetection:
 
     async def test_try_get_clip_files_returns_empty_list(self):
         """Test _try_get_clip_files when clipboard has no files."""
-        with patch("input.clipboard._base.paste_file_list") as mock_pfl:
+        with patch("input.clipboard._base.paste_paths") as mock_pfl:
             mock_pfl.return_value = []
 
             result = Clipboard._try_get_clip_files()
             assert result == []
 
     async def test_file_type_detected_via_polling(self):
-        """Test that file content type is detected during polling with mocked paste_file_list."""
+        """Test that file content type is detected during polling with mocked paste_paths."""
         changes: List[Tuple[str, ClipboardType]] = []
 
         async def on_change(content: str, content_type: ClipboardType):
@@ -1238,7 +1238,7 @@ class TestFileListDetection:
         with (
             patch("input.clipboard._base.paste", side_effect=dynamic_paste),
             patch(
-                "input.clipboard._base.paste_file_list", side_effect=dynamic_file_list
+                "input.clipboard._base.paste_paths", side_effect=dynamic_file_list
             ),
         ):
             listener = Clipboard(
@@ -1281,7 +1281,7 @@ class TestFileListDetection:
         with (
             patch("input.clipboard._base.paste", side_effect=dynamic_paste),
             patch(
-                "input.clipboard._base.paste_file_list", side_effect=dynamic_file_list
+                "input.clipboard._base.paste_paths", side_effect=dynamic_file_list
             ),
         ):
             listener = Clipboard(
@@ -1317,7 +1317,7 @@ class TestFileListDetection:
 
         with (
             patch("input.clipboard._base.paste", side_effect=dynamic_paste),
-            patch("input.clipboard._base.paste_file_list", return_value=[]),
+            patch("input.clipboard._base.paste_paths", return_value=[]),
         ):
             listener = Clipboard(
                 on_change=on_change,
@@ -1359,7 +1359,7 @@ class TestFileListDetection:
         with (
             patch("input.clipboard._base.paste", side_effect=dynamic_paste),
             patch(
-                "input.clipboard._base.paste_file_list", side_effect=dynamic_file_list
+                "input.clipboard._base.paste_paths", side_effect=dynamic_file_list
             ),
         ):
             # Listener that only monitors TEXT - FILE should be ignored
@@ -1377,7 +1377,7 @@ class TestFileListDetection:
             assert len(changes) == 0
 
     async def test_file_list_exception_during_polling(self):
-        """Test that an exception in paste_file_list during polling is handled gracefully."""
+        """Test that an exception in paste_paths during polling is handled gracefully."""
         changes: List[Tuple[str, ClipboardType]] = []
 
         async def on_change(content: str, content_type: ClipboardType):
@@ -1395,8 +1395,8 @@ class TestFileListDetection:
         with (
             patch("input.clipboard._base.paste", side_effect=dynamic_paste),
             patch(
-                "input.clipboard._base.paste_file_list",
-                side_effect=Exception("paste_file_list crash"),
+                "input.clipboard._base.paste_paths",
+                side_effect=Exception("paste_paths crash"),
             ),
         ):
             listener = Clipboard(
@@ -1444,7 +1444,7 @@ class TestFileListDetection:
         with (
             patch("input.clipboard._base.paste", side_effect=dynamic_paste),
             patch(
-                "input.clipboard._base.paste_file_list", side_effect=dynamic_file_list
+                "input.clipboard._base.paste_paths", side_effect=dynamic_file_list
             ),
         ):
             listener = Clipboard(
