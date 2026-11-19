@@ -1,17 +1,14 @@
 #!/usr/bin/env bash
 #
-# Bundle the Nuitka standalone dist into an AppImage.
+# Bundle the Nuitka standalone dist + the Tauri GUI into an AppImage.
 #
-# The AppImage is a portable cousin of the .deb produced by ``make_deb.sh``:
-# same Perpetua.dist payload, same install dir layout under ``usr/``, but
-# packaged as a single relocatable .AppImage file instead of a system
-# package. The bundle does NOT carry the udev rules — first-launch tells the
-# user to run ``scripts/enable_uinput.sh`` once with sudo.
+# Everything not in scripts/appimage-excludelist.txt must be carried. Three
+# kinds of dependency, only the first visible to ldd: DT_NEEDED (collected to
+# a fixpoint), dlopen'd by soname (DLOPEN_SONAMES), external executables
+# (EXTERNAL_BINARIES).
 #
-# Requires:
-#   - appimagetool (downloaded automatically into .build/ if missing)
-#   - the Nuitka dist already built (run ``poetry run python build.py
-#     --skip-gui`` first)
+# Requires: patchelf, appimagetool (fetched into .build/ if absent), and the
+# dist already built (``poetry run python build.py --skip-gui``).
 #
 set -euo pipefail
 umask 022
@@ -21,6 +18,12 @@ APP_DISPLAY_NAME="Perpetua"
 BINARY_NAME="Perpetua"
 HOMEPAGE="https://github.com/fizzi01/Perpetua"
 DESCRIPTION_SHORT="Cross-platform mouse, keyboard, and clipboard sharing"
+
+# Class 2: dlopen'd by soname, so no ELF names them. libei/liboeffis come
+# from snegg's ctypes bindings, libayatana from libappindicator-sys.
+DLOPEN_SONAMES=(libei.so.1 liboeffis.so.1 libayatana-appindicator3.so.1)
+# Class 3: looked up on PATH at runtime.
+EXTERNAL_BINARIES=(dumpkeys)
 
 VERSION="$(grep -m1 '^version\s*=\s*"' pyproject.toml | sed -E 's/^version\s*=\s*"([^"]+)"/\1/')"
 ARCH_DEB="$(dpkg --print-architecture 2>/dev/null || true)"
@@ -37,6 +40,7 @@ BUILD_DIR=".build/${RUST_TARGET}/release"
 DIST_DIR="${BUILD_DIR}/${APP_DISPLAY_NAME}.dist"
 APPDIR=".build/${APP_NAME}-${VERSION}-${ARCH}.AppDir"
 APPIMAGE_OUT=".build/${APP_DISPLAY_NAME}-${VERSION}-${ARCH}.AppImage"
+EXCLUDELIST="scripts/appimage-excludelist.txt"
 
 ICON_SRC="src-gui/src-tauri/icons/icon.png"
 
@@ -44,11 +48,15 @@ ICON_SRC="src-gui/src-tauri/icons/icon.png"
 [ -f "pyproject.toml" ] || { echo "error: run from project root" >&2; exit 1; }
 [ -n "$VERSION" ] || { echo "error: could not parse version" >&2; exit 1; }
 [ -d "$DIST_DIR" ] || { echo "error: $DIST_DIR not found (build the daemon first)" >&2; exit 1; }
+[ -f "$EXCLUDELIST" ] || { echo "error: $EXCLUDELIST not found" >&2; exit 1; }
+command -v patchelf >/dev/null || { echo "error: patchelf not installed" >&2; exit 1; }
+command -v ldd >/dev/null || { echo "error: ldd not available" >&2; exit 1; }
 
-# Acquire appimagetool. We pin to the continuous release because there's no
-# stable tag stream; the binary is statically linked so the architecture
-# parameter only affects squashfs metadata, not portability of the produced
-# AppImage payload.
+# Build-host property: the same script must produce both triplets.
+MULTIARCH="$(ls -d /usr/lib/*-linux-gnu* 2>/dev/null | head -1 | xargs -r basename || true)"
+: "${MULTIARCH:=$(uname -m)-linux-gnu}"
+
+# Pinned to "continuous": there is no stable tag stream.
 APPIMAGETOOL=".build/appimagetool-${ARCH}.AppImage"
 if [ ! -x "$APPIMAGETOOL" ]; then
   echo "Fetching appimagetool…"
@@ -68,20 +76,119 @@ mkdir -p \
   "$APPDIR/usr/share/icons/hicolor/256x256/apps" \
   "$APPDIR/usr/share/metainfo"
 
+BUNDLE="$APPDIR/usr/lib/${APP_DISPLAY_NAME}"
+
 # ── Payload ───────────────────────────────────────────────────────────────────
-# Perpetua.dist is already self-contained (Nuitka --standalone). We stage it
-# under usr/lib/Perpetua/ and expose the binary via a thin AppRun wrapper.
-cp -a "$DIST_DIR/." "$APPDIR/usr/lib/${APP_DISPLAY_NAME}/"
+cp -a "$DIST_DIR/." "$BUNDLE/"
 
 find "$APPDIR" -type d -exec chmod 755 {} +
 find "$APPDIR" -type f -exec chmod 644 {} +
-find "$APPDIR/usr/lib/${APP_DISPLAY_NAME}" \
-  -type f \( -name "$BINARY_NAME" -o -name "_perpetua" \) \
-  -exec chmod 755 {} +
+find "$BUNDLE" -type f \( -name "$BINARY_NAME" -o -name "_perpetua" \) -exec chmod 755 {} +
 
-# Provide a /usr/bin entry so the AppImage works the same as the .deb when
-# extracted via ``--appimage-extract`` and dropped into ``/opt``.
+# Matches the .deb layout, so an extracted AppDir drops into /opt unchanged.
 ln -sf "../lib/${APP_DISPLAY_NAME}/${BINARY_NAME}" "$APPDIR/usr/bin/${APP_NAME}"
+
+# ── Helpers ───────────────────────────────────────────────────────────────────
+is_elf() {
+  [ -f "$1" ] && [ "$(head -c4 "$1" 2>/dev/null | od -An -tx1 | tr -d ' \n')" = "7f454c46" ]
+}
+excluded() {
+  grep -qx -- "$1" "$EXCLUDELIST" && return 0
+  case "$1" in ld-linux*|linux-vdso*) return 0 ;; esac
+  return 1
+}
+have() { find "$APPDIR" -name "$1" -print -quit | grep -q .; }
+soname_path() { ldconfig -p | sed -n 's/.*=> //p' | grep -E "/$1\$" | head -1 || true; }
+
+# ── WebKit helper processes ───────────────────────────────────────────────────
+# Separate processes, not linked into libwebkit2gtk: the collector cannot see
+# them. Search only existing dirs - /usr/lib64 is absent on arm64, and find's
+# exit 1 would die silently through the command substitution.
+WK_SEARCH_DIRS=()
+for d in /usr/lib /usr/lib64 /usr/libexec; do
+  if [ -d "$d" ]; then
+    WK_SEARCH_DIRS+=("$d")
+  fi
+done
+if [ "${#WK_SEARCH_DIRS[@]}" -eq 0 ]; then
+  echo "error: none of /usr/lib /usr/lib64 /usr/libexec exist" >&2
+  exit 1
+fi
+WK_SRC="$(find "${WK_SEARCH_DIRS[@]}" -maxdepth 3 -type d -name 'webkit2gtk-4.1' 2>/dev/null | head -1 || true)"
+[ -n "$WK_SRC" ] || { echo "error: webkit2gtk-4.1 helper dir not found" >&2; exit 1; }
+WK_DEST="$APPDIR/usr/lib/${MULTIARCH}/webkit2gtk-4.1"
+mkdir -p "$WK_DEST/injected-bundle"
+cp "$WK_SRC/WebKitNetworkProcess" "$WK_SRC/WebKitWebProcess" "$WK_DEST/"
+cp "$WK_SRC/injected-bundle/libwebkit2gtkinjectedbundle.so" "$WK_DEST/injected-bundle/"
+chmod 755 "$WK_DEST/WebKitNetworkProcess" "$WK_DEST/WebKitWebProcess"
+echo "WebKit helpers staged from $WK_SRC"
+
+# ── Class 2: dlopen'd sonames ─────────────────────────────────────────────────
+for soname in "${DLOPEN_SONAMES[@]}"; do
+  src="$(soname_path "$soname")"
+  [ -n "$src" ] || { echo "error: $soname not found on the build host" >&2; exit 1; }
+  cp "$(readlink -f "$src")" "$BUNDLE/$soname"
+  echo "dlopen dep: $soname <- $src"
+done
+
+# ── Class 3: external executables ─────────────────────────────────────────────
+for exe in "${EXTERNAL_BINARIES[@]}"; do
+  src="$(command -v "$exe" || true)"
+  [ -n "$src" ] || { echo "error: $exe not found on the build host (install kbd)" >&2; exit 1; }
+  cp "$(readlink -f "$src")" "$BUNDLE/$exe"
+  chmod 755 "$BUNDLE/$exe"
+  echo "external binary: $exe <- $src"
+done
+
+# ── Class 1: transitive closure, to a fixpoint ────────────────────────────────
+# A collected library brings its own deps, so rescan until a pass adds nothing.
+echo "Collecting link-time dependencies…"
+for iter in $(seq 1 10); do
+  find "$APPDIR" -type f > .build/.appimage-elflist
+  while read -r elf; do
+    is_elf "$elf" || continue
+    ldd "$elf" 2>/dev/null | awk '$2=="=>" && $3 ~ /^\// {print $1" "$3}' |
+      while read -r soname path; do
+        excluded "$soname" && continue
+        have "$soname" && continue
+        cp "$(readlink -f "$path")" "$BUNDLE/$soname" 2>/dev/null && echo "ADDED $soname"
+        : # the loop's status must not depend on the last cp
+      done
+  done < .build/.appimage-elflist | { grep '^ADDED' || true; } | sort -u > .build/.appimage-added
+  added="$(wc -l < .build/.appimage-added)"
+  echo "  pass ${iter}: +${added}"
+  if [ "$added" -eq 0 ]; then
+    break
+  fi
+done
+rm -f .build/.appimage-elflist .build/.appimage-added
+
+# ── rpath ─────────────────────────────────────────────────────────────────────
+# --force-rpath writes DT_RPATH, not DT_RUNPATH: only RPATH is inherited by
+# transitive deps, without which the collected libraries cannot find each other.
+patchelf --force-rpath --set-rpath '$ORIGIN' "$BUNDLE/$BINARY_NAME"
+rpath_n=0
+for so in "$BUNDLE"/*.so*; do
+  [ -f "$so" ] || continue
+  patchelf --force-rpath --set-rpath '$ORIGIN' "$so" 2>/dev/null && rpath_n=$((rpath_n + 1))
+done
+for helper in "$WK_DEST/WebKitNetworkProcess" "$WK_DEST/WebKitWebProcess"; do
+  patchelf --force-rpath --set-rpath "\$ORIGIN/../../${APP_DISPLAY_NAME}" "$helper"
+done
+patchelf --force-rpath --set-rpath "\$ORIGIN/../../../${APP_DISPLAY_NAME}" \
+  "$WK_DEST/injected-bundle/libwebkit2gtkinjectedbundle.so"
+echo "rpath set on ${rpath_n} bundled libraries"
+
+# ── WebKit's compile-time absolute paths ──────────────────────────────────────
+# WebKit hardcodes its helper path and ignores WEBKIT_EXEC_PATH. "/usr" ->
+# "././" is the same length (no offsets shift) and relative to the CWD AppRun sets.
+for so in "$BUNDLE"/libwebkit2gtk-4.1.so* "$BUNDLE"/libjavascriptcoregtk-4.1.so*; do
+  [ -f "$so" ] || continue
+  before="$(stat -c%s "$so")"
+  sed -i -e 's|/usr|././|g' "$so"
+  after="$(stat -c%s "$so")"
+  [ "$before" = "$after" ] || { echo "error: $(basename "$so") changed size" >&2; exit 1; }
+done
 
 # ── Icon ──────────────────────────────────────────────────────────────────────
 if [ ! -f "$ICON_SRC" ]; then
@@ -132,30 +239,31 @@ cat > "$APPDIR/usr/share/metainfo/${APP_NAME}.metainfo.xml" <<EOF
 EOF
 
 # ── AppRun ────────────────────────────────────────────────────────────────────
-# Nuitka --standalone resolves bundled .so via ``$ORIGIN`` rpath, so the
-# binary works as-is from any path. We still ``cd`` to the bundle dir before
-# exec so any relative resource lookup keeps working.
 cat > "$APPDIR/AppRun" <<'EOF'
 #!/usr/bin/env bash
 HERE="$(dirname "$(readlink -f "${0}")")"
+export APPDIR="${HERE}"
 BUNDLE="${HERE}/usr/lib/Perpetua"
+
+# pynput finds the bundled dumpkeys here; without it input/keyboard won't import.
 export PATH="${BUNDLE}:${PATH}"
-# Don't override LD_LIBRARY_PATH: the Nuitka rpath already handles it and
-# leaking $ORIGIN-derived paths breaks child processes (e.g. xdg-open).
+
+# WebKit's helper path was rewritten to "././...", relative to the CWD.
+cd "${HERE}/usr" || exit 1
+
+# No LD_LIBRARY_PATH: DT_RPATH handles it, and child processes stay clean.
 exec "${BUNDLE}/Perpetua" "$@"
 EOF
 chmod 755 "$APPDIR/AppRun"
 
 # ── Build ─────────────────────────────────────────────────────────────────────
 echo "Building ${APPIMAGE_OUT}…"
-# appimagetool is itself an AppImage and tries to self-mount via FUSE, 
-# ``--appimage-extract-and-run`` makes it unpack to a temp dir
-# and run the AppRun directly.
-# ARCH env var is honoured by appimagetool to set runtime image arch.
-ARCH="$ARCH" "$APPIMAGETOOL" --appimage-extract-and-run --no-appstream "$APPDIR" "$APPIMAGE_OUT"
+# appimagetool is itself an AppImage; --appimage-extract-and-run avoids FUSE.
+ARCH="$ARCH" "$APPIMAGETOOL" --appimage-extract-and-run "$APPDIR" "$APPIMAGE_OUT"
 
 echo ""
 echo "  AppImage ready: $APPIMAGE_OUT"
+echo "  Bundled libs:   $(find "$BUNDLE" -name '*.so*' | wc -l)"
 echo "  Size:           $(du -sh "$APPIMAGE_OUT" | cut -f1)"
 echo "  Run with:       chmod +x $APPIMAGE_OUT && ./$APPIMAGE_OUT"
 echo "  First run note: keyboard input needs udev rules; run"

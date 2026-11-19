@@ -221,7 +221,10 @@ jobs:
             libssl-dev libtiff-dev libgtk-3-dev libxdo-dev \
             libwebkit2gtk-4.1-dev libayatana-appindicator3-dev librsvg2-dev \
             automake libtool fakeroot patchelf \
-            python3.12 python3.12-venv python3.12-dev python3-pip pipx
+            python3.12 python3.12-venv python3.12-dev python3-pip pipx \
+            libei1 liboeffis1 kbd
+          # Build deps: make_appimage.sh copies them into the bundle. Nothing
+          # links against them, so the -dev packages don't pull them in.
           # Node ${{ env.NODE_VERSION }} from NodeSource (the apt default is
           # too old for the Tauri JS toolchain we use).
           curl -fsSL https://deb.nodesource.com/setup_${{ env.NODE_VERSION }}.x | bash -
@@ -286,8 +289,10 @@ jobs:
           chmod +x ${{ matrix.build-output }}/Perpetua.dist/_perpetua
           bash scripts/make_deb.sh
           bash scripts/make_appimage.sh
-          cp .build/perpetua_*.deb       "${{ matrix.build-output }}/${{ matrix.archive-name }}.deb"
-          cp .build/Perpetua-*.AppImage  "${{ matrix.build-output }}/${{ matrix.archive-name }}.AppImage"
+          cp .build/perpetua_*.deb "${{ matrix.build-output }}/${{ matrix.archive-name }}.deb"
+          # Keep make_appimage.sh's name: the AppImage catalog requires
+          # Name-Version-arch.AppImage.
+          cp .build/Perpetua-*.AppImage "${{ matrix.build-output }}/"
 
       - name: Upload .deb
         uses: actions/upload-artifact@v6
@@ -300,7 +305,7 @@ jobs:
         uses: actions/upload-artifact@v6
         with:
           name: ${{ matrix.archive-name }}-appimage
-          path: ${{ matrix.build-output }}/${{ matrix.archive-name }}.AppImage
+          path: ${{ matrix.build-output }}/Perpetua-*.AppImage
           if-no-files-found: error
 
       - name: Upload Nuitka dist (input for RPM packaging)
@@ -373,54 +378,78 @@ jobs:
       fail-fast: false
       matrix:
         include:
-          - label: ubuntu-24.04
+          - label: deb-ubuntu-24.04
             container: ubuntu:24.04
             kind: deb
             install: apt-get update && apt-get install -y --no-install-recommends ./pkg.deb
-          - label: debian-trixie
+          - label: deb-debian-trixie
             container: debian:trixie-slim
             kind: deb
             install: apt-get update && apt-get install -y --no-install-recommends ./pkg.deb
-          - label: fedora-latest
+          - label: rpm-fedora
             container: fedora:latest
             kind: rpm
             install: dnf install -y ./pkg.rpm
-          - label: archlinux
+          # Three distros: "portable" is the claim under test.
+          - label: appimage-ubuntu-24.04
+            container: ubuntu:24.04
+            kind: appimage
+            install: ":"
+          - label: appimage-fedora
+            container: fedora:latest
+            kind: appimage
+            install: ":"
+          - label: appimage-archlinux
             container: archlinux:latest
             kind: appimage
-            install: ":"  # AppImage is portable; no install step
+            install: ":"
 
     env:
       DEBIAN_FRONTEND: noninteractive
 
     steps:
-      - name: Prepare container (needs tools to download + inspect)
-        # For deb/rpm we install only the inspection tools — the package
-        # manager pulls the runtime libs (gtk3 / webkit2gtk-4.1 / glib /
-        # cairo / libsoup / libei / appindicator) via the package's
-        # Depends/Requires when we install ``pkg.deb`` / ``pkg.rpm``.
-        # For the AppImage case there's no package metadata, so we install
-        # the same runtime libs by hand
+      - name: Prepare container
+        # deb/rpm pull their runtime libs through their own Depends/Requires,
+        # which is part of what this job verifies.
+        #
+        # For the AppImage install ONLY what the excludelist says every host
+        # provides, plus Xvfb. Installing gtk3/webkit2gtk/libei here would
+        # make the test tautological. libGLESv2 is in the list though absent
+        # from the excludelist: libglvnd dlopens it, and shipping ours beside
+        # the host's libGLdispatch is the ABI split the excludelist prevents.
         run: |
           set -eux
           if command -v apt-get >/dev/null; then
             apt-get update
-            apt-get install -y --no-install-recommends ca-certificates file libc-bin
+            apt-get install -y --no-install-recommends ca-certificates file libc-bin git xvfb xauth
+            if [ "${{ matrix.kind }}" = "appimage" ]; then
+              apt-get install -y --no-install-recommends \
+                libgl1 libegl1 libgles2 libglx-mesa0 libfontconfig1 \
+                libfreetype6 libharfbuzz0b libwayland-client0 libx11-6 \
+                libxext6 libxrender1 zlib1g
+            fi
           elif command -v dnf >/dev/null; then
-            dnf install -y file glibc
+            dnf install -y file glibc git xorg-x11-server-Xvfb xorg-x11-xauth
+            if [ "${{ matrix.kind }}" = "appimage" ]; then
+              dnf install -y mesa-libGL libglvnd-egl libglvnd-gles \
+                fontconfig freetype harfbuzz libwayland-client libX11 \
+                libXext libXrender zlib
+            fi
           elif command -v pacman >/dev/null; then
-            pacman -Syu --noconfirm \
-              file fuse2 libei \
-              webkit2gtk-4.1 libsoup3 gtk3 cairo pango glib2 gdk-pixbuf2 \
-              libayatana-appindicator openssl
+            pacman -Syu --noconfirm file glibc git xorg-server-xvfb xorg-xauth
+            if [ "${{ matrix.kind }}" = "appimage" ]; then
+              pacman -S --noconfirm libglvnd fontconfig freetype2 harfbuzz \
+                wayland libx11 libxext libxrender zlib
+            fi
           fi
+          git config --global --add safe.directory '*'
+
+      - name: Checkout (for the excludelist)
+        uses: actions/checkout@v6
 
       - name: Download artifact
-        # NOTE: smoke tests run on x86_64 runners only, so we deliberately
-        # exercise the x86_64 packages. The aarch64 .deb/.rpm/.AppImage are
-        # built and released but NOT smoke-tested here (would need arm runners
-        # or qemu-user). Covered manually via scripts/verify_packages.sh
-        # --arch aarch64.
+        # x86_64 runners only; aarch64 artifacts are released untested here.
+        # Cover them with scripts/verify_packages.sh --arch aarch64.
         uses: actions/download-artifact@v7
         with:
           name: Perpetua-Linux-x86_64-${{ matrix.kind }}
@@ -440,36 +469,101 @@ jobs:
         if: matrix.kind != 'appimage'
         run: ${{ matrix.install }}
 
-      - name: Verify binaries resolve all shared libs
+      - name: Verify every bundled ELF resolves its libraries
+        shell: bash
         run: |
-          set -eux
+          set -eu
           if [ "${{ matrix.kind }}" = "appimage" ]; then
             chmod +x pkg.AppImage
             # FUSE may be unavailable in the container; --appimage-extract
             # works without it.
             ./pkg.AppImage --appimage-extract >/dev/null
-            ROOT=squashfs-root/usr/lib/Perpetua
+            ROOT=squashfs-root
           else
             ROOT=/opt/Perpetua
           fi
 
-          # We check both binaries. Nuitka
-          # ``--standalone`` bundles Python's pure-Python files and most
-          # ``.so`` extensions link against at load time, so we have to verify both.
+          # Scan every ELF, not just the two binaries: any Nuitka extension
+          # or WebKit helper can be the one that fails to load. Excludelist
+          # sonames may be missing here - this is a bare container.
+          : > unresolved.txt
+          while IFS= read -r f; do
+            [ "$(head -c4 "$f" | od -An -tx1 | tr -d ' \n')" = "7f454c46" ] || continue
+            for soname in $(ldd "$f" 2>/dev/null | awk '/not found/ {print $1}'); do
+              grep -qx -- "$soname" scripts/appimage-excludelist.txt && continue
+              echo "$f: $soname" >> unresolved.txt
+            done
+          done < <(find "$ROOT" -type f)
+
+          if [ -s unresolved.txt ]; then
+            sort -u -o unresolved.txt unresolved.txt
+            while read -r line; do
+              echo "::error::unresolved on ${{ matrix.label }}: $line"
+            done < unresolved.txt
+            exit 1
+          fi
+          echo "OK: all non-excludelist libs resolved on ${{ matrix.label }}"
+
+      - name: Verify dlopen'd libraries and helper binaries are present
+        # Invisible to ldd, and running the app can't catch them either: the
+        # daemon is a child whose stderr never reaches us. Hence a manifest
+        # check, with the list written here rather than read from
+        # make_appimage.sh - a test must not source its own expectations.
+        if: matrix.kind == 'appimage'
+        shell: bash
+        run: |
+          set -eu
+          BUNDLE=squashfs-root/usr/lib/Perpetua
           fail=0
-          for bin in "$ROOT/Perpetua" "$ROOT/_perpetua"; do
-            [ -f "$bin" ] || { echo "missing: $bin"; fail=1; continue; }
-            file "$bin"
-            # ldd's exit code is unreliable (it returns 0 even with "not
-            # found"), so grep for the marker explicitly.
-            if ldd "$bin" 2>&1 | grep -E 'not found'; then
-              echo "::error::Unresolved shared library in $bin on ${{ matrix.label }}"
-              ldd "$bin" || true
+          for soname in libei.so.1 liboeffis.so.1 libayatana-appindicator3.so.1; do
+            if [ ! -f "$BUNDLE/$soname" ]; then
+              echo "::error::$soname is dlopen'd at runtime but not bundled"
+              fail=1
+            elif ldd "$BUNDLE/$soname" 2>&1 | grep -q 'not found'; then
+              echo "::error::$soname is bundled but does not resolve"
+              ldd "$BUNDLE/$soname" || true
               fail=1
             fi
           done
-          if [ "$fail" -ne 0 ]; then exit 1; fi
-          echo "OK: all libs resolved on ${{ matrix.label }}"
+          for exe in dumpkeys; do
+            if [ ! -x "$BUNDLE/$exe" ]; then
+              echo "::error::$exe is executed by pynput but not bundled"
+              fail=1
+            fi
+          done
+          [ "$fail" -eq 0 ] || exit 1
+          echo "OK: dlopen'd libraries and helper binaries present"
+
+      - name: Launch
+        # Catches what static inspection cannot: a bundle that is complete on
+        # paper but does not run.
+        shell: bash
+        run: |
+          set -eu
+          if [ "${{ matrix.kind }}" = "appimage" ]; then
+            TARGET=squashfs-root/AppRun
+          else
+            TARGET=/opt/Perpetua/Perpetua
+          fi
+          set +e
+          timeout --signal=TERM 30 xvfb-run -a "$TARGET" > launch.log 2>&1
+          rc=$?
+          set -e
+          echo "--- launch log ---"
+          cat launch.log || true
+          echo "------------------"
+          # 124 = still running at the timeout, i.e. healthy.
+          if [ "$rc" -ne 124 ]; then
+            echo "::error::Perpetua exited with $rc on ${{ matrix.label }}"
+            exit 1
+          fi
+          for marker in "cannot open shared object file" "is not installed" "Backend import failed"; do
+            if grep -qi "$marker" launch.log; then
+              echo "::error::Missing runtime dependency on ${{ matrix.label }}: $marker"
+              exit 1
+            fi
+          done
+          echo "OK: launched and stayed up on ${{ matrix.label }}"
   update-release:
     name: Update Release
     if: github.event_name == 'release' || inputs.update-release
