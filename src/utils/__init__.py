@@ -21,9 +21,78 @@ import sys
 import importlib
 import time
 import random
-from typing import Coroutine, Optional, Set
+from typing import Any, Coroutine, NamedTuple, Optional, Set
 
 from utils.logging import get_logger
+
+
+class BackendFailure(NamedTuple):
+    """One platform/backend module that could not be imported."""
+
+    package: str
+    module: str
+    error: str
+
+
+# How a backend import fails: ImportError (module absent, or pynput aborting
+# on dumpkeys), OSError (ctypes dlopen of libei by soname), RuntimeError (one
+# of our placeholders touched at import time). Anything else is a bug, not a
+# packaging defect, and must stay loud.
+BACKEND_IMPORT_ERRORS = (ImportError, OSError, RuntimeError)
+
+# Drained by the daemon once a GUI connects: a backend that cannot be imported
+# is almost always a packaging defect and must not degrade silently.
+BACKEND_FAILURES: list[BackendFailure] = []
+
+
+def backend_failures() -> list[BackendFailure]:
+    """Every backend import failure recorded so far."""
+    return list(BACKEND_FAILURES)
+
+
+def record_backend_failure(package: str, module: str, error: str) -> BackendFailure:
+    """Record and log a backend import failure."""
+    failure = BackendFailure(package, module, error)
+    BACKEND_FAILURES.append(failure)
+    get_logger("utils.backend").error(
+        "Backend import failed", package=package, module=module, error=error
+    )
+    return failure
+
+
+class _UnavailableMeta(type):
+    """Raises on any use of a placeholder, including attribute access."""
+
+    def __getattr__(cls, item: str) -> Any:
+        raise RuntimeError(cls._reason)
+
+    def __call__(cls, *args: Any, **kwargs: Any) -> Any:
+        raise RuntimeError(cls._reason)
+
+
+def unavailable_symbol(name: str, reason: str) -> type:
+    """Build a placeholder that raises ``reason`` the first time it is used."""
+    return _UnavailableMeta(
+        f"Unavailable{name}", (), {"_reason": reason, "__doc__": reason}
+    )
+
+
+class _UnavailableModule:
+    """Stand-in for a platform module that failed to import.
+
+    The daemon owns the IPC socket: if it dies here the GUI has nothing to
+    talk to and no way to say why. Attributes hand back placeholders that
+    raise when the feature is used.
+    """
+
+    def __init__(self, package: str, reason: str) -> None:
+        self._package = package
+        self._reason = reason
+
+    def __getattr__(self, name: str) -> Any:
+        if name.startswith("__"):
+            raise AttributeError(name)
+        return unavailable_symbol(name, f"{self._package}.{name}: {self._reason}")
 
 
 def backend_module(package: str, platform_map: Optional[dict] = None):
@@ -58,13 +127,19 @@ def backend_module(package: str, platform_map: Optional[dict] = None):
     try:
         module = importlib.import_module(f".{module_name}", package=package)
         return module
-    except ImportError as e:
+    except BACKEND_IMPORT_ERRORS as e:
         # Fallback on _base if specific module not found
         try:
             module = importlib.import_module("._base", package=package)
             return module
-        except ImportError:
-            raise ImportError(f"Unable to load module for {platform} ({e})")
+        except BACKEND_IMPORT_ERRORS:
+            # Both the platform module and ``_base`` are gone: ``_base`` often
+            # re-imports the same backend, so it is no fallback for a missing
+            # system library. Degrade instead of raising - see
+            # ``_UnavailableModule``.
+            reason = f"unable to load module for {platform} ({type(e).__name__}: {e})"
+            record_backend_failure(package, module_name, reason)
+            return _UnavailableModule(package, reason)
 
 
 def export_module_symbols(module, target_globals):

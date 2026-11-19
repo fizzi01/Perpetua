@@ -2,11 +2,14 @@
 #
 # Run the same smoke-test the CI does, but locally via docker.
 #
-# Spins up each target distro in a container, installs the corresponding
-# Perpetua artifact (.deb / .rpm / .AppImage), and verifies that ``ldd``
-# resolves all shared libs of both binaries (the Tauri GUI ``Perpetua``
-# and the Nuitka daemon ``_perpetua``). Pure read-only against the local
-# filesystem; the only state mutated is short-lived docker containers.
+# Spins up each target distro in a container, installs the artifact, and
+# checks that every bundled ELF resolves, that the dlopen'd libraries and
+# helper binaries are present, and that the app launches under Xvfb.
+#
+# For the AppImage the container gets ONLY what the excludelist covers;
+# pre-installing gtk3/webkit2gtk/libei would make the test tautological.
+#
+# Read-only against the local filesystem; only docker containers are created.
 #
 # Usage:
 #   scripts/verify_packages.sh [--arch ARCH] [--distros LIST] [--keep]
@@ -18,7 +21,8 @@
 #                     (Apple Silicon, ARM workstation, qemu-user
 #                     installed).
 #   --distros LIST    Comma-separated subset of {ubuntu,debian,fedora,
-#                     opensuse,arch}. Default: ubuntu,debian,fedora.
+#                     opensuse,ubuntu-appimage,fedora-appimage,arch}.
+#                     Default: every one of them except opensuse.
 #   --artifacts DIR   Where to find the .deb/.rpm/.AppImage. Default:
 #                     scans both per-arch build dirs and the .build/ root
 #                     for renamed CI artifacts.
@@ -32,7 +36,7 @@ set -euo pipefail
 
 # ── Args ──────────────────────────────────────────────────────────────────────
 ARCH="x86_64"
-DISTROS_RAW="ubuntu,debian,fedora"
+DISTROS_RAW="ubuntu,debian,fedora,ubuntu-appimage,fedora-appimage,arch"
 ARTIFACTS_DIR=""
 KEEP=0
 
@@ -43,7 +47,7 @@ while [ $# -gt 0 ]; do
     --artifacts)  ARTIFACTS_DIR="$2"; shift 2 ;;
     --keep)       KEEP=1; shift ;;
     -h|--help)
-      sed -n '2,30p' "$0"; exit 0 ;;
+      sed -n '2,45p' "$0"; exit 0 ;;
     *)
       echo "error: unknown flag $1" >&2; exit 2 ;;
   esac
@@ -153,40 +157,58 @@ echo "  .AppImage  = ${APPIMAGE:-(missing)}"
 echo ""
 
 # ── Distro matrix ─────────────────────────────────────────────────────────────
-# Each entry: ``<label>|<image>|<kind>|<install-cmd>|<prep-cmd>``
 # Kind selects which artifact to feed (deb / rpm / appimage).
-# Prep-cmd installs minimal inspection tools and (for the AppImage case)
-# the runtime libs that ``apt`` / ``dnf`` would otherwise pull via Depends.
+# Inspection tools + Xvfb for the launch check.
+APT_BASE_PREP='apt-get update -qq && apt-get install -y --no-install-recommends ca-certificates file libc-bin xvfb xauth'
+DNF_BASE_PREP='dnf install -y file glibc xorg-x11-server-Xvfb xorg-x11-xauth'
+PACMAN_BASE_PREP='pacman -Syu --noconfirm file glibc xorg-server-xvfb xorg-xauth'
+
+# What the excludelist assumes every host provides. libGLESv2 is here though
+# absent from that list: libglvnd dlopens it, so no ELF in the bundle names it.
+APT_BASELINE_DESKTOP='apt-get install -y --no-install-recommends libgl1 libegl1 libgles2 libglx-mesa0 libfontconfig1 libfreetype6 libharfbuzz0b libwayland-client0 libx11-6 libxext6 libxrender1 zlib1g'
+DNF_BASELINE_DESKTOP='dnf install -y mesa-libGL libglvnd-egl libglvnd-gles fontconfig freetype harfbuzz libwayland-client libX11 libXext libXrender zlib'
+PACMAN_BASELINE_DESKTOP='pacman -S --noconfirm libglvnd fontconfig freetype2 harfbuzz wayland libx11 libxext libxrender zlib'
+
 declare -A DISTRO_IMAGE  DISTRO_KIND  DISTRO_PREP  DISTRO_INSTALL
 DISTRO_IMAGE[ubuntu]="ubuntu:24.04"
 DISTRO_KIND[ubuntu]="deb"
-DISTRO_PREP[ubuntu]='apt-get update -qq && apt-get install -y --no-install-recommends ca-certificates file libc-bin'
+DISTRO_PREP[ubuntu]="$APT_BASE_PREP"
 DISTRO_INSTALL[ubuntu]='apt-get install -y --no-install-recommends /pkg.deb'
 
 DISTRO_IMAGE[debian]="debian:trixie-slim"
 DISTRO_KIND[debian]="deb"
-DISTRO_PREP[debian]='apt-get update -qq && apt-get install -y --no-install-recommends ca-certificates file libc-bin'
+DISTRO_PREP[debian]="$APT_BASE_PREP"
 DISTRO_INSTALL[debian]='apt-get install -y --no-install-recommends /pkg.deb'
 
 DISTRO_IMAGE[fedora]="fedora:latest"
 DISTRO_KIND[fedora]="rpm"
-DISTRO_PREP[fedora]='dnf install -y file glibc'
+DISTRO_PREP[fedora]="$DNF_BASE_PREP"
 DISTRO_INSTALL[fedora]='dnf install -y /pkg.rpm'
 
 DISTRO_IMAGE[opensuse]="opensuse/tumbleweed:latest"
 DISTRO_KIND[opensuse]="rpm"
-DISTRO_PREP[opensuse]='zypper -n install file glibc'
+DISTRO_PREP[opensuse]='zypper -n install file glibc xorg-x11-server-Xvfb xauth'
 # zypper refuses local rpms by default unless we point at the file
 # explicitly with --no-gpg-checks.
 DISTRO_INSTALL[opensuse]='zypper -n --no-gpg-checks install --allow-unsigned-rpm /pkg.rpm'
 
+DISTRO_IMAGE[ubuntu-appimage]="ubuntu:24.04"
+DISTRO_KIND[ubuntu-appimage]="appimage"
+DISTRO_PREP[ubuntu-appimage]="$APT_BASE_PREP && $APT_BASELINE_DESKTOP"
+DISTRO_INSTALL[ubuntu-appimage]=':'   # AppImage is self-contained
+
+DISTRO_IMAGE[fedora-appimage]="fedora:latest"
+DISTRO_KIND[fedora-appimage]="appimage"
+DISTRO_PREP[fedora-appimage]="$DNF_BASE_PREP && $DNF_BASELINE_DESKTOP"
+DISTRO_INSTALL[fedora-appimage]=':'
+
 DISTRO_IMAGE[arch]="archlinux:latest"
 DISTRO_KIND[arch]="appimage"
-DISTRO_PREP[arch]='pacman -Syu --noconfirm file fuse2 libei webkit2gtk-4.1 libsoup3 gtk3 cairo pango glib2 gdk-pixbuf2 libayatana-appindicator openssl'
-DISTRO_INSTALL[arch]=':'   # AppImage is self-contained; no install step
+DISTRO_PREP[arch]="$PACMAN_BASE_PREP && $PACMAN_BASELINE_DESKTOP"
+DISTRO_INSTALL[arch]=':'
 
 # ── Verification script that runs inside each container ──────────────────────
-# Stored once and mounted in; no escaping nightmares.
+# Stored once and mounted in.
 TMPDIR="$(mktemp -d)"
 trap 'rm -rf "$TMPDIR"' EXIT
 
@@ -194,29 +216,92 @@ cat > "$TMPDIR/verify.sh" <<'INNER'
 #!/bin/sh
 set -eu
 KIND="$1"
+EXCL=/excludelist.txt
 
 if [ "$KIND" = "appimage" ]; then
   chmod +x /pkg.AppImage
   cd /tmp
+  # --appimage-extract works without FUSE.
   /pkg.AppImage --appimage-extract >/dev/null
-  ROOT=/tmp/squashfs-root/usr/lib/Perpetua
+  ROOT=/tmp/squashfs-root
+  TARGET=/tmp/squashfs-root/AppRun
 else
   ROOT=/opt/Perpetua
+  TARGET=/opt/Perpetua/Perpetua
 fi
 
 fail=0
-for bin in "$ROOT/Perpetua" "$ROOT/_perpetua"; do
-  if [ ! -f "$bin" ]; then
-    echo "  MISSING binary: $bin"
-    fail=1
-    continue
-  fi
-  if ldd "$bin" 2>&1 | grep -E 'not found'; then
-    echo "  ::error:: Unresolved libs in $bin"
-    ldd "$bin" | sed 's/^/    /'
-    fail=1
-  fi
+
+# ── 1. library resolution over every bundled ELF ──────────────────────────────
+# Any Nuitka extension or WebKit helper can be the one that fails to load.
+echo "  [1/3] resolving libraries…"
+: > /tmp/unresolved.txt
+find "$ROOT" -type f | while read -r f; do
+  [ "$(head -c4 "$f" | od -An -tx1 | tr -d ' \n')" = "7f454c46" ] || continue
+  for soname in $(ldd "$f" 2>/dev/null | awk '/not found/ {print $1}'); do
+    grep -qx -- "$soname" "$EXCL" && continue
+    echo "$f: $soname" >> /tmp/unresolved.txt
+  done
 done
+if [ -s /tmp/unresolved.txt ]; then
+  sort -u -o /tmp/unresolved.txt /tmp/unresolved.txt
+  echo "  ::error:: unresolved libraries:"
+  sed 's/^/    /' /tmp/unresolved.txt
+  fail=1
+else
+  echo "        OK"
+fi
+
+# ── 2. dlopen'd libraries and helper binaries ─────────────────────────────────
+# Invisible to ldd, and running the app can't catch them either. The list is
+# written here rather than read from make_appimage.sh: a test must not source
+# its own expectations.
+if [ "$KIND" = "appimage" ]; then
+  echo "  [2/3] dlopen'd libraries + helper binaries…"
+  BUNDLE="$ROOT/usr/lib/Perpetua"
+  manifest_fail=0
+  for soname in libei.so.1 liboeffis.so.1 libayatana-appindicator3.so.1; do
+    if [ ! -f "$BUNDLE/$soname" ]; then
+      echo "  ::error:: $soname is dlopen'd at runtime but not bundled"
+      manifest_fail=1
+    elif ldd "$BUNDLE/$soname" 2>&1 | grep -q 'not found'; then
+      echo "  ::error:: $soname is bundled but does not resolve"
+      manifest_fail=1
+    fi
+  done
+  for exe in dumpkeys; do
+    if [ ! -x "$BUNDLE/$exe" ]; then
+      echo "  ::error:: $exe is executed by pynput but not bundled"
+      manifest_fail=1
+    fi
+  done
+  [ "$manifest_fail" -eq 0 ] && echo "        OK" || fail=1
+else
+  echo "  [2/3] dlopen'd libraries + helper binaries… n/a (package manager owns them)"
+fi
+
+# ── 3. it has to actually start ───────────────────────────────────────────────
+echo "  [3/3] launching…"
+set +e
+timeout --signal=TERM 30 xvfb-run -a "$TARGET" > /tmp/launch.log 2>&1
+rc=$?
+set -e
+# 124 = still running at the timeout, i.e. healthy.
+if [ "$rc" -ne 124 ]; then
+  echo "  ::error:: exited with $rc"
+  sed 's/^/    /' /tmp/launch.log
+  fail=1
+else
+  for marker in "cannot open shared object file" "is not installed" "Backend import failed"; do
+    if grep -qi "$marker" /tmp/launch.log; then
+      echo "  ::error:: missing runtime dependency: $marker"
+      sed 's/^/    /' /tmp/launch.log
+      fail=1
+    fi
+  done
+  [ "$fail" -eq 0 ] && echo "        OK"
+fi
+
 exit "$fail"
 INNER
 chmod +x "$TMPDIR/verify.sh"
@@ -263,6 +348,7 @@ run_one() {
     --name "$cname"
     -v "$(realpath "$pkg"):${target}:ro"
     -v "$TMPDIR/verify.sh:/verify.sh:ro"
+    -v "$(realpath scripts/appimage-excludelist.txt):/excludelist.txt:ro"
     "$image"
     sh -c "set -e
       ${DISTRO_PREP[$label]}
@@ -293,7 +379,7 @@ overall=0
 for d in "${DISTROS[@]}"; do
   d="$(echo "$d" | tr -d ' ')"
   [ -z "$d" ] && continue
-  printf "  %-10s %s\n" "$d" "${RESULT[$d]:-(not run)}"
+  printf "  %-18s %s\n" "$d" "${RESULT[$d]:-(not run)}"
   case "${RESULT[$d]:-}" in
     PASS|SKIP*) : ;;
     *) overall=1 ;;

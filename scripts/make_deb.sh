@@ -229,7 +229,8 @@ Depends: libc6,
  libglib2.0-0 | libglib2.0-0t64,
  libgdk-pixbuf-2.0-0,
  libayatana-appindicator3-1,
- libssl3 | libssl3t64
+ libssl3 | libssl3t64,
+ kbd
 Recommends: liboeffis1, xclip, wl-clipboard
 Description: ${DESCRIPTION_SHORT}
 ${DESCRIPTION_LONG}

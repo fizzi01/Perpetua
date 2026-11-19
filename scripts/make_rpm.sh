@@ -171,6 +171,8 @@ Requires:       glib2
 Requires:       gdk-pixbuf2
 Requires:       libayatana-appindicator-gtk3
 Requires:       openssl-libs
+# pynput shells out to dumpkeys to read the keymap.
+Requires:       kbd
 Recommends:     xclip
 Recommends:     wl-clipboard
 Recommends:     liboeffis

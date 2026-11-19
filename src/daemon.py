@@ -969,6 +969,21 @@ class Daemon:
     async def wait_for_shutdown(self):
         await self._shutdown_event.wait()
 
+    async def _report_backend_failures(self) -> None:
+        """Tell the GUI about input backends that could not be imported.
+
+        On connect, not at startup: NotificationManager drops anything sent
+        before a GUI is attached.
+        """
+        from utils import backend_failures
+
+        for failure in backend_failures():
+            await self._notification_manager.notify_warning(
+                warning=f"Input backend unavailable: {failure.error}",
+                context=failure.package,
+                module=failure.module,
+            )
+
     async def _handle_client_connection(
         self, reader: asyncio.StreamReader, writer: asyncio.StreamWriter
     ):
@@ -1018,6 +1033,7 @@ class Daemon:
                 info="Connected to daemon", version=ApplicationConfig.version
             )
             await self._send_to_client(welcome)
+            await self._report_backend_failures()
 
             buff = bytearray()
             # ``scan_from`` marks how far into ``buff`` we've already scanned
