@@ -45,7 +45,7 @@ Built with Python using uvloop (macOS/Linux) and winloop (Windows) as event loop
   - **Debian / Ubuntu**: `sudo dpkg -i perpetua_*.deb` (or `sudo apt install ./perpetua_*.deb`).
   - **Fedora / RHEL / openSUSE**: `sudo dnf install perpetua-*.rpm` (or `sudo rpm -i`).
   - **Arch Linux**: install `perpetua-bin` from the AUR (see [`scripts/aur/PKGBUILD`](scripts/aur/PKGBUILD)).
-  - **Any distro**: download the `Perpetua-*.AppImage`, `chmod +x`, and run it. The AppImage doesn't install udev rules, run [`scripts/enable_uinput.sh`](scripts/enable_uinput.sh) once with `sudo` for keyboard input to work.
+  - **Any distro**: download the `Perpetua-*.AppImage`, `chmod +x`, and run it. An AppImage has no install step, so the udev rules keyboard injection needs are installed on first run — see [Input permissions on Linux](#input-permissions-on-linux).
 
   Baseline: `glibc >= 2.39` (Ubuntu 24.04, Fedora 40, Debian 13, Arch). The `libei` and `liboeffis` runtime libs are required for Wayland InputCapture on GNOME/KDE; the `.deb` declares them as `Depends:` / `Recommends:`, the `.rpm` mirrors this.
 
@@ -53,6 +53,15 @@ The GUI will guide you through choosing server or client mode and the initial co
 
 > [!NOTE]
 > **macOS:** Perpetua requires Accessibility permissions and Local Network access (Privacy & Security). At first launch, macOS will show prompts to grant these permissions. You can also manage permissions manually in System Settings > Privacy & Security.
+
+### Input permissions on Linux
+
+Perpetua injects keyboard and mouse events through `/dev/uinput`, which needs two udev rules. No distribution ships them, so they have to be installed once per machine.
+
+**The `.deb` and `.rpm` packages install them for you.** With the AppImage, pick either:
+
+- **in the app** — the first launch shows a *Permission required* screen with an **Install permissions** button. One click, your administrator password, done. No reboot and no logout: the rules take effect in the running session.
+- **from a terminal** — `./Perpetua-*.AppImage --install-udev-rules`.
 
 ### First-Time Setup
 

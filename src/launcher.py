@@ -116,14 +116,31 @@ class DaemonRunner:
                 print(e)
 
 
+def _run_udev_setup() -> int:
+    """Handle ``--install-udev-rules``: one-shot setup, no daemon, no GUI."""
+    if not IS_LINUX:
+        print("--install-udev-rules is only supported on Linux", file=sys.stderr)
+        return 2
+
+    from utils.permissions._linux import install_udev_rules
+
+    # On a terminal the sudo fallback is legitimate.
+    ok, detail = install_udev_rules(interactive=True)
+    print(detail, file=sys.stdout if ok else sys.stderr)
+    return 0 if ok else 1
+
+
 def main():
-    from utils.screen import Screen
-
-    Screen.hide_icon()
-
     parser = ArgumentParser(description="Perpetua Daemon")
     DaemonArguments(parent=parser)
     args = parser.parse_args()
+
+    if args.install_udev_rules:
+        sys.exit(_run_udev_setup())
+
+    from utils.screen import Screen
+
+    Screen.hide_icon()
 
     daemon = None
     try:

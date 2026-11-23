@@ -79,6 +79,8 @@ package() {
   # Permissions
   chmod 755 "${pkgdir}/opt/Perpetua/Perpetua"
   [ -f "${pkgdir}/opt/Perpetua/_perpetua" ] && chmod 755 "${pkgdir}/opt/Perpetua/_perpetua"
+  [ -f "${pkgdir}/opt/Perpetua/enable_uinput.sh" ] && \
+    chmod 755 "${pkgdir}/opt/Perpetua/enable_uinput.sh"
 
   # NOTE: We deliberately do NOT install the udev rules from
   # ``scripts/enable_uinput.sh`` here — AUR policy frowns on packages
@@ -86,11 +88,12 @@ package() {
   # for a one-time ``sudo`` invocation; the install message below reminds
   # them on first install.
   install -Dm644 /dev/stdin "${pkgdir}/usr/share/doc/${pkgname}/README.install" <<EOF
-Perpetua needs access to /dev/uinput and the input group to inject keyboard
-events. Run once with sudo:
+Perpetua needs two udev rules to inject keyboard events through /dev/uinput.
+Install them once, either from the "Install permissions" button the app shows
+on first launch, or with:
 
-    curl -fsSL ${url}/raw/master/scripts/enable_uinput.sh | sudo bash
+    sudo sh /opt/Perpetua/enable_uinput.sh
 
-Then log out and back in so the new group membership takes effect.
+No reboot and no logout: the rules take effect in the running session.
 EOF
 }

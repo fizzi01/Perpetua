@@ -24,6 +24,8 @@ DESCRIPTION_SHORT="Cross-platform mouse, keyboard, and clipboard sharing"
 DLOPEN_SONAMES=(libei.so.1 liboeffis.so.1 libayatana-appindicator3.so.1)
 # Class 3: looked up on PATH at runtime.
 EXTERNAL_BINARIES=(dumpkeys)
+# Installed at runtime, not at install time: an AppImage has no postinst.
+SETUP_SCRIPT="enable_uinput.sh"
 
 VERSION="$(grep -m1 '^version\s*=\s*"' pyproject.toml | sed -E 's/^version\s*=\s*"([^"]+)"/\1/')"
 ARCH_DEB="$(dpkg --print-architecture 2>/dev/null || true)"
@@ -84,6 +86,13 @@ cp -a "$DIST_DIR/." "$BUNDLE/"
 find "$APPDIR" -type d -exec chmod 755 {} +
 find "$APPDIR" -type f -exec chmod 644 {} +
 find "$BUNDLE" -type f \( -name "$BINARY_NAME" -o -name "_perpetua" \) -exec chmod 755 {} +
+
+# ── Privileged setup script ───────────────────────────────────────────────────
+# No postinst in an AppImage: the rules are installed at runtime, so the
+# script must sit next to the daemon, where the permission check looks.
+[ -f "scripts/${SETUP_SCRIPT}" ] || {
+  echo "error: scripts/${SETUP_SCRIPT} not found" >&2; exit 1; }
+install -m 0755 "scripts/${SETUP_SCRIPT}" "$BUNDLE/${SETUP_SCRIPT}"
 
 # Matches the .deb layout, so an extracted AppDir drops into /opt unchanged.
 ln -sf "../lib/${APP_DISPLAY_NAME}/${BINARY_NAME}" "$APPDIR/usr/bin/${APP_NAME}"
@@ -248,6 +257,12 @@ BUNDLE="${HERE}/usr/lib/Perpetua"
 # pynput finds the bundled dumpkeys here; without it input/keyboard won't import.
 export PATH="${BUNDLE}:${PATH}"
 
+# No postinst in an AppImage: the udev rules are installed on demand. The
+# script elevates itself and copies itself out of this FUSE mount.
+if [ "${1:-}" = "--install-udev-rules" ]; then
+  exec "${BUNDLE}/enable_uinput.sh" configure
+fi
+
 # WebKit's helper path was rewritten to "././...", relative to the CWD.
 cd "${HERE}/usr" || exit 1
 
@@ -266,5 +281,6 @@ echo "  AppImage ready: $APPIMAGE_OUT"
 echo "  Bundled libs:   $(find "$BUNDLE" -name '*.so*' | wc -l)"
 echo "  Size:           $(du -sh "$APPIMAGE_OUT" | cut -f1)"
 echo "  Run with:       chmod +x $APPIMAGE_OUT && ./$APPIMAGE_OUT"
-echo "  First run note: keyboard input needs udev rules; run"
-echo "                  scripts/enable_uinput.sh once with sudo."
+echo "  First run:      keyboard input needs udev rules. Either click"
+echo "                  \"Install permissions\" in the app, or run once:"
+echo "                    ./$(basename "$APPIMAGE_OUT") --install-udev-rules"

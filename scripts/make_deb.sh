@@ -88,6 +88,10 @@ find "$DEB_ROOT" -type f -exec chmod 644 {} +
 find "$DEB_ROOT${INSTALL_PREFIX}" -type f \( -name "$BINARY_NAME" -o -name "_perpetua" \) \
   -exec chmod 755 {} +
 
+# Also next to the daemon, not just as the maintainer script: that is where
+# the permission check looks when the rules need reinstalling later.
+install -m 0755 "scripts/enable_uinput.sh" "$DEB_ROOT${INSTALL_PREFIX}/enable_uinput.sh"
+
 # ── Symlink in PATH ─────────────────────────────────────────────────────────
 ln -sf "${INSTALL_PREFIX}/${BINARY_NAME}" "$DEB_ROOT/usr/bin/${APP_NAME}"
 

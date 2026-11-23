@@ -234,7 +234,7 @@ fail=0
 
 # ── 1. library resolution over every bundled ELF ──────────────────────────────
 # Any Nuitka extension or WebKit helper can be the one that fails to load.
-echo "  [1/3] resolving libraries…"
+echo "  [1/4] resolving libraries…"
 : > /tmp/unresolved.txt
 find "$ROOT" -type f | while read -r f; do
   [ "$(head -c4 "$f" | od -An -tx1 | tr -d ' \n')" = "7f454c46" ] || continue
@@ -257,7 +257,7 @@ fi
 # written here rather than read from make_appimage.sh: a test must not source
 # its own expectations.
 if [ "$KIND" = "appimage" ]; then
-  echo "  [2/3] dlopen'd libraries + helper binaries…"
+  echo "  [2/4] dlopen'd libraries + helper binaries…"
   BUNDLE="$ROOT/usr/lib/Perpetua"
   manifest_fail=0
   for soname in libei.so.1 liboeffis.so.1 libayatana-appindicator3.so.1; do
@@ -275,13 +275,42 @@ if [ "$KIND" = "appimage" ]; then
       manifest_fail=1
     fi
   done
+  # The AppImage has no postinst: without this the udev rules cannot be
+  # installed at all.
+  if [ ! -x "$BUNDLE/enable_uinput.sh" ]; then
+    echo "  ::error:: enable_uinput.sh is needed at runtime but not bundled"
+    manifest_fail=1
+  fi
   [ "$manifest_fail" -eq 0 ] && echo "        OK" || fail=1
 else
-  echo "  [2/3] dlopen'd libraries + helper binaries… n/a (package manager owns them)"
+  echo "  [2/4] dlopen'd libraries + helper binaries… n/a (package manager owns them)"
 fi
 
-# ── 3. it has to actually start ───────────────────────────────────────────────
-echo "  [3/3] launching…"
+# ── 3. the udev rules install from the AppImage's own entry point ────────────
+# A 2-line pkexec shim stands in for polkit; the container is already root.
+# This also catches AppRun running the GUI instead of handling the flag.
+if [ "$KIND" = "appimage" ]; then
+  echo "  [3/4] AppRun --install-udev-rules…"
+  printf '#!/bin/sh\nexec "$@"\n' > /usr/local/bin/pkexec
+  chmod 755 /usr/local/bin/pkexec
+  rm -f /etc/udev/rules.d/01-perpetua-keyboard.rules /etc/udev/rules.d/12-input.rules
+  set +e
+  timeout 60 "$ROOT/AppRun" --install-udev-rules > /tmp/udev.log 2>&1
+  udev_rc=$?
+  set -e
+  if [ "$udev_rc" -ne 0 ] || [ ! -f /etc/udev/rules.d/01-perpetua-keyboard.rules ]; then
+    echo "  ::error:: --install-udev-rules failed (exit $udev_rc)"
+    sed 's/^/    /' /tmp/udev.log
+    fail=1
+  else
+    echo "        OK"
+  fi
+else
+  echo "  [3/4] udev rules… n/a (the postinst already ran them)"
+fi
+
+# ── 4. it has to actually start ───────────────────────────────────────────────
+echo "  [4/4] launching…"
 set +e
 timeout --signal=TERM 30 xvfb-run -a "$TARGET" > /tmp/launch.log 2>&1
 rc=$?

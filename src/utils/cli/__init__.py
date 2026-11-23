@@ -45,4 +45,10 @@ def DaemonArguments(
     parser.add_argument(
         "--log-terminal", action="store_true", help="Log only to stdout"
     )
+    parser.add_argument(
+        "--install-udev-rules",
+        action="store_true",
+        help="Linux only: install the udev rules required for keyboard "
+        "injection, then exit",
+    )
     return parser
