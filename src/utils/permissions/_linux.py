@@ -27,6 +27,8 @@ from typing import List, Optional, Tuple
 from . import _base
 from ._base import PermissionType, PermissionStatus, PermissionResult
 
+IS_LINUX = sys.platform.startswith("linux")
+
 UINPUT_RULE_PATH = "/etc/udev/rules.d/01-perpetua-keyboard.rules"
 TTY_RULE_PATH = "/etc/udev/rules.d/12-input.rules"
 
