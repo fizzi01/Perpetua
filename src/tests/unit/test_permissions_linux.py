@@ -28,7 +28,11 @@ from argparse import ArgumentParser
 import pytest
 
 from utils.cli import DaemonArguments
-from utils.permissions import _linux
+try:
+    from utils.permissions import _linux
+except ImportError:
+    pytest.skip("Linux-only tests", allow_module_level=True)
+    
 from utils.permissions._base import PermissionStatus, PermissionType
 
 
@@ -57,7 +61,7 @@ def completed(monkeypatch):
 
     return _install
 
-@pytest.mark.skipif(not _linux.IS_LINUX, reason="Linux-only tests")
+
 class TestResolveScript:
     def test_found_next_to_the_executable(self, tmp_path, monkeypatch):
         script = tmp_path / "enable_uinput.sh"
@@ -84,7 +88,7 @@ class TestResolveScript:
 
         assert resolved is not None and resolved.name == "enable_uinput.sh"
 
-@pytest.mark.skipif(not _linux.IS_LINUX, reason="Linux-only tests")
+
 class TestEscalationAvailable:
     def test_root_needs_no_prompt(self, monkeypatch):
         monkeypatch.setattr(_linux, "_is_root", lambda: True)
@@ -110,7 +114,7 @@ class TestEscalationAvailable:
 
         assert _linux.escalation_available() is False
 
-@pytest.mark.skipif(not _linux.IS_LINUX, reason="Linux-only tests")
+
 class TestInstall:
     def test_runs_the_script(self, fake_script, completed, monkeypatch):
         monkeypatch.setattr(_linux, "escalation_available", lambda: True)
@@ -221,7 +225,7 @@ class TestInstall:
         assert _linux._install_lock.acquire(blocking=False)
         _linux._install_lock.release()
 
-@pytest.mark.skipif(not _linux.IS_LINUX, reason="Linux-only tests")
+
 class TestHasInputAccess:
     @staticmethod
     def _state(monkeypatch, *, uinput, dumpkeys=True, console=True, tty_rule=True):
@@ -258,7 +262,7 @@ class TestHasInputAccess:
 
         assert _linux._has_input_access() is True
 
-@pytest.mark.skipif(not _linux.IS_LINUX, reason="Linux-only tests")
+
 class TestCheckPermission:
     def test_denied_is_requestable_when_we_can_elevate(self, monkeypatch):
         monkeypatch.setattr(_linux, "_has_input_access", lambda: False)
@@ -282,7 +286,7 @@ class TestCheckPermission:
         assert result.can_request is False
         assert _linux.MANUAL_INSTRUCTIONS in result.message
 
-@pytest.mark.skipif(not _linux.IS_LINUX, reason="Linux-only tests")
+
 class TestRequestPermission:
     def test_granted_is_a_no_op(self, monkeypatch):
         """An already-granted permission must not raise a dialog."""
@@ -347,7 +351,7 @@ class TestRequestPermission:
 
         assert not called
 
-@pytest.mark.skipif(not _linux.IS_LINUX, reason="Linux-only tests")
+
 class TestCliFlag:
     def test_flag_is_declared_in_daemon_arguments(self):
         """The flag belongs to the daemon binary, not to the launcher parser."""
