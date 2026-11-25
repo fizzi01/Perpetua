@@ -1143,6 +1143,112 @@ class TestDaemonShutdown:
 
 
 @pytest.mark.anyio
+class TestMessageFraming:
+    """Frame layout: 4-byte big-endian length, payload, newline trailer."""
+
+    @staticmethod
+    def _payload_of_length(length: int) -> bytes:
+        """A JSON command payload of exactly ``length`` bytes."""
+        head = b'{"command":"ping","params":{"pad":"'
+        tail = b'"}}'
+        pad = length - len(head) - len(tail)
+        assert pad >= 0
+        return head + b"x" * pad + tail
+
+    @classmethod
+    def _framed(cls, payload: bytes) -> bytes:
+        return len(payload).to_bytes(4, "big") + payload + b"\n"
+
+    def test_round_trips_what_prepare_wrote(self):
+        """The encoder and the parser agree on the layout."""
+        frame = Daemon.prepare_msg_bytes({"command": "ping", "params": {}})
+        assert frame[:4] == (len(frame) - 5).to_bytes(4, "big")
+        assert frame.endswith(b"\n")
+
+        messages, read = Daemon.parse_msg_bytes(frame)
+        assert read == len(frame)
+        assert messages == [{"command": "ping", "params": {}}]
+
+    @pytest.mark.parametrize("length", [2737, 2560, 2815, 266, 522])
+    def test_length_whose_bytes_contain_a_newline(self, length):
+        """A length holding 0x0A is ordinary now that it leads the frame.
+
+        Under the old layout the length trailed the payload, so the reader
+        had to scan for the newline and stopped inside the prefix: lengths
+        such as 2737 (0x00000AB1), or any length == 10 mod 256, lost the
+        whole frame.
+        """
+        payload = self._payload_of_length(length)
+        assert b"\n" in len(payload).to_bytes(4, "big")
+
+        messages, read = Daemon.parse_msg_bytes(self._framed(payload))
+
+        assert read == length + 5
+        assert len(messages) == 1
+        assert messages[0]["command"] == "ping"
+
+    def test_back_to_back_frames(self):
+        first = self._payload_of_length(2737)
+        second = _encoder.encode({"command": "status", "params": {}})
+
+        messages, read = Daemon.parse_msg_bytes(
+            self._framed(first) + self._framed(second)
+        )
+
+        assert read == len(first) + len(second) + 10
+        assert [m["command"] for m in messages] == ["ping", "status"]
+
+    def test_partial_frame_is_not_consumed(self):
+        """A frame split across reads waits for the rest of its bytes."""
+        frame = self._framed(self._payload_of_length(2737))
+
+        messages, read = Daemon.parse_msg_bytes(frame[:-1])
+        assert messages == []
+        assert read == 0
+
+        messages, read = Daemon.parse_msg_bytes(frame)
+        assert len(messages) == 1
+        assert read == len(frame)
+
+    def test_complete_frame_before_a_partial_one_is_consumed(self):
+        """A half-arrived frame must not hold back the one before it."""
+        whole = self._framed(self._payload_of_length(266))
+        partial = self._framed(self._payload_of_length(2737))[:-50]
+
+        messages, read = Daemon.parse_msg_bytes(whole + partial)
+
+        assert len(messages) == 1
+        assert read == len(whole)
+
+    @pytest.mark.parametrize(
+        "junk",
+        [b"invalid json\n", b'{"command":"ping","params":{}}\n', b"\n\n\n\n\n\n"],
+    )
+    def test_malformed_input_is_reported(self, junk):
+        """Garbage must be reported, not held forever waiting for bytes.
+
+        Swallowing it would leave the sender waiting for a reply that never
+        comes, which wedges the connection.
+        """
+        with pytest.raises(ValueError):
+            Daemon.parse_msg_bytes(junk)
+
+    def test_absurd_length_is_refused_rather_than_buffered(self):
+        """A corrupt length must not drive an unbounded allocation."""
+        frame = (Daemon.MAX_FRAME_BYTES + 1).to_bytes(4, "big") + b"payload\n"
+
+        with pytest.raises(ValueError):
+            Daemon.parse_msg_bytes(frame)
+
+    def test_missing_trailer_is_reported(self):
+        """Length and trailer disagreeing means the stream is out of sync."""
+        frame = bytearray(self._framed(self._payload_of_length(266)))
+        frame[-1] = ord("x")
+
+        with pytest.raises(ValueError):
+            Daemon.parse_msg_bytes(bytes(frame))
+
+
 class TestEdgeCases:
     """Test edge cases and boundary conditions."""
 
@@ -1186,7 +1292,9 @@ class TestEdgeCases:
         # Should handle all commands
         await asyncio.sleep(0.5)
         data = await reader.read(16384)
-        responses = data.decode("utf-8").strip().split("\n")
+        # The stream is binary-framed: decoding it as UTF-8 only happens to
+        # work while no length prefix holds a byte above 0x7F.
+        responses, _ = Daemon.parse_msg_bytes(data)
 
         # Should have received multiple responses
         assert len(responses) > 0

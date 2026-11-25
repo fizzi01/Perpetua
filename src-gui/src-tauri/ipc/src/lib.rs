@@ -16,11 +16,11 @@ You should have received a copy of the GNU General Public License
 along with this program. If not, see <https://www.gnu.org/licenses/>.
 */
 
-use bytes::{Buf, BufMut, BytesMut};
+use bytes::{BufMut, BytesMut};
 use futures::sink::SinkExt;
 use log;
 use std::sync::Arc;
-use std::{cmp, io, str};
+use std::{io, str};
 use tokio::sync::{Mutex, MutexGuard};
 use tokio::time::{Duration, timeout};
 use tokio_stream::StreamExt;
@@ -40,33 +40,37 @@ pub mod paths;
 pub use event::{CommandEvent, EventType, NotificationEvent};
 pub use event::{EventParser, Parser};
 
+/// Codec for the daemon IPC framing: `4-byte big-endian length + payload + b'\n'`.
+///
+/// The length comes first so a reader never has to search for the frame
+/// boundary: it takes the count, then exactly that many bytes. An earlier
+/// layout put the length *after* the payload, which forced a scan for the
+/// trailing newline -- and a length whose big-endian bytes contain 0x0A
+/// (2560..=2815, or any length == 10 mod 256) made that scan stop inside the
+/// prefix and drop the frame.
+///
+/// The trailing newline is kept as an integrity marker: a frame that does not
+/// end on one means the stream is out of sync, which is reported rather than
+/// guessed at.
 pub struct EventLinesCodec {
-    // Stored index of the next index to examine for a `\n` character.
-    // This is used to optimize searching.
-    // For example, if `decode` was called with `abc`, it would hold `3`,
-    // because that is the next index to examine.
-    // The next time `decode` is called with `abcde\n`, the method will
-    // only look at `de\n` before returning.
-    next_index: usize,
-
-    /// The maximum length for a given line. If `usize::MAX`, lines will be
-    /// read until a `\n` character is reached.
+    /// Largest payload accepted, as a guard against a corrupt length.
     max_length: usize,
-
-    /// Are we currently discarding the remainder of a line which was over
-    /// the length limit?
-    is_discarding: bool,
 }
 
 impl EventLinesCodec {
     pub fn new() -> EventLinesCodec {
         EventLinesCodec {
-            next_index: 0,
-            max_length: usize::MAX,
-            is_discarding: false,
+            max_length: MAX_FRAME_BYTES,
         }
     }
 }
+
+/// Generous ceiling on one payload: large enough for any status snapshot,
+/// small enough that a corrupt length cannot drive an unbounded allocation.
+pub const MAX_FRAME_BYTES: usize = 16 * 1024 * 1024;
+
+/// Bytes a frame adds to its payload: the 4-byte length and the trailer.
+const FRAME_OVERHEAD: usize = 5;
 
 fn utf8(buf: &[u8]) -> Result<&str, io::Error> {
     str::from_utf8(buf)
@@ -86,88 +90,43 @@ impl Decoder for EventLinesCodec {
     type Error = LinesCodecError;
 
     fn decode(&mut self, buf: &mut BytesMut) -> Result<Option<String>, LinesCodecError> {
-        loop {
-            // Determine how far into the buffer we'll search for a newline. If
-            // there's no max_length set, we'll read to the end of the buffer.
-            let read_to = cmp::min(self.max_length.saturating_add(1), buf.len());
-
-            let newline_offset = buf[self.next_index..read_to]
-                .iter()
-                .position(|b| *b == b'\n');
-
-            match (self.is_discarding, newline_offset) {
-                (true, Some(offset)) => {
-                    // If we found a newline, discard up to that offset and
-                    // then stop discarding. On the next iteration, we'll try
-                    // to read a line normally.
-                    buf.advance(offset + self.next_index + 1);
-                    self.is_discarding = false;
-                    self.next_index = 0;
-                }
-                (true, None) => {
-                    // Otherwise, we didn't find a newline, so we'll discard
-                    // everything we read. On the next iteration, we'll continue
-                    // discarding up to max_len bytes unless we find a newline.
-                    buf.advance(read_to);
-                    self.next_index = 0;
-                    if buf.is_empty() {
-                        return Ok(None);
-                    }
-                }
-                (false, Some(offset)) => {
-                    // Found a line!
-                    let newline_index = offset + self.next_index;
-                    self.next_index = 0;
-                    let line = buf.split_to(newline_index + 1);
-                    // Remove the newline character
-                    let line = &line[..line.len() - 1];
-                    // Check if the line has at least 4 bytes for length prefix
-                    if line.len() < 4 {
-                        return Ok(None);
-                    }
-                    // Validate the line by reading the last 4 bytes to extract the length prefix
-                    let len_prefix = &line[line.len() - 4..];
-
-                    // Get the actual line content excluding the length prefix and newline
-                    let line = &line[..line.len() - 4];
-                    // Now check if the length prefix matches the actual line length
-                    let expected_len = u32::from_be_bytes(len_prefix.try_into().unwrap()) as usize;
-                    let actual_len = line.len(); // Exclude the length prefix
-                    if expected_len != actual_len {
-                        // Before advance we need to check if buf has enough data
-                        if buf.len() < read_to {
-                            return Ok(None);
-                        }
-
-                        // Discard the line if lengths do not match
-                        buf.advance(read_to);
-                        self.next_index = 0;
-                        if buf.is_empty() {
-                            return Ok(None);
-                        }
-                    }
-
-                    let line = without_carriage_return(line);
-                    let line = utf8(line)?;
-
-                    return Ok(Some(line.to_string()));
-                }
-                (false, None) if buf.len() > self.max_length => {
-                    // Reached the maximum length without finding a
-                    // newline, return an error and start discarding on the
-                    // next call.
-                    self.is_discarding = true;
-                    return Err(LinesCodecError::MaxLineLengthExceeded);
-                }
-                (false, None) => {
-                    // We didn't find a line or reach the length limit, so the next
-                    // call will resume searching at the current offset.
-                    self.next_index = read_to;
-                    return Ok(None);
-                }
-            }
+        if buf.len() < FRAME_OVERHEAD {
+            return Ok(None);
         }
+
+        let declared = u32::from_be_bytes(buf[..4].try_into().unwrap()) as usize;
+        if declared > self.max_length {
+            return Err(desync(format!(
+                "frame of {declared} bytes exceeds the {} byte limit",
+                self.max_length
+            )));
+        }
+
+        // The trailer sits right after the payload; without it the frame is
+        // simply not here yet.
+        let trailer = 4 + declared;
+        if buf.len() <= trailer {
+            return Ok(None);
+        }
+        if buf[trailer] != b'\n' {
+            // The length and the trailer disagree, so the stream is out of
+            // sync and no later byte can be trusted to start a frame.
+            return Err(desync(format!(
+                "frame of {declared} bytes is not newline-terminated"
+            )));
+        }
+
+        let frame = buf.split_to(trailer + 1);
+        let line = without_carriage_return(&frame[4..trailer]);
+        Ok(Some(utf8(line)?.to_string()))
     }
+}
+
+fn desync(detail: String) -> LinesCodecError {
+    LinesCodecError::Io(io::Error::new(
+        io::ErrorKind::InvalidData,
+        format!("IPC stream out of sync: {detail}"),
+    ))
 }
 
 impl<T> Encoder<T> for EventLinesCodec
@@ -178,11 +137,10 @@ where
 
     fn encode(&mut self, line: T, buf: &mut BytesMut) -> Result<(), LinesCodecError> {
         let line = line.as_ref();
-        buf.reserve(line.len() + 1);
+        buf.reserve(line.len() + FRAME_OVERHEAD);
+        // Length first, so the reader never has to search for the boundary.
+        buf.put(&(line.len() as u32).to_be_bytes()[..]);
         buf.put(line.as_bytes());
-        // Put line length prefix encoded as big-endian
-        let len_prefix = (line.len() as u32).to_be_bytes();
-        buf.put(&len_prefix[..]);
         buf.put_u8(b'\n');
         Ok(())
     }
@@ -410,6 +368,119 @@ mod tests {
     use super::{ConnectionHandler, DataListener};
     use crate::connection::{ConnectionError, connect};
     use tokio::time::Duration;
+
+    use super::{EventLinesCodec, MAX_FRAME_BYTES};
+    use bytes::{BufMut, BytesMut};
+    use tokio_util::codec::{Decoder, Encoder};
+
+    /// Frame a payload: 4-byte big-endian length, payload, trailer.
+    fn framed(payload: &str) -> BytesMut {
+        let mut buf = BytesMut::new();
+        buf.put(&(payload.len() as u32).to_be_bytes()[..]);
+        buf.put(payload.as_bytes());
+        buf.put_u8(b'\n');
+        buf
+    }
+
+    fn payload_of_length(length: usize) -> String {
+        let head = "{\"event_type\":\"command_success\",\"pad\":\"";
+        let tail = "\"}";
+        format!(
+            "{}{}{}",
+            head,
+            "x".repeat(length - head.len() - tail.len()),
+            tail
+        )
+    }
+
+    #[test]
+    fn round_trips_what_the_encoder_wrote() {
+        let payload = payload_of_length(2737);
+        let mut buf = BytesMut::new();
+        let mut codec = EventLinesCodec::new();
+        codec.encode(payload.as_str(), &mut buf).unwrap();
+
+        assert_eq!(&buf[..4], &(payload.len() as u32).to_be_bytes()[..]);
+        assert_eq!(
+            codec.decode(&mut buf).unwrap().as_deref(),
+            Some(payload.as_str())
+        );
+        assert!(buf.is_empty());
+    }
+
+    #[test]
+    fn decodes_a_length_whose_bytes_contain_a_newline() {
+        // 2737 == 0x00000AB1. Under the old layout the length sat after the
+        // payload and that 0x0A was mistaken for the frame trailer.
+        for length in [2737usize, 2560, 2815, 266] {
+            let payload = payload_of_length(length);
+            assert!((payload.len() as u32).to_be_bytes().contains(&b'\n'));
+            let mut buf = framed(&payload);
+            let mut codec = EventLinesCodec::new();
+            assert_eq!(
+                codec.decode(&mut buf).unwrap().as_deref(),
+                Some(payload.as_str()),
+                "length {length}"
+            );
+            assert!(buf.is_empty(), "leftover bytes for length {length}");
+        }
+    }
+
+    #[test]
+    fn decodes_back_to_back_frames() {
+        let first = payload_of_length(2737);
+        let second = "{\"event_type\":\"pong\"}".to_string();
+        let mut buf = framed(&first);
+        buf.unsplit(framed(&second));
+
+        let mut codec = EventLinesCodec::new();
+        assert_eq!(
+            codec.decode(&mut buf).unwrap().as_deref(),
+            Some(first.as_str())
+        );
+        assert_eq!(
+            codec.decode(&mut buf).unwrap().as_deref(),
+            Some(second.as_str())
+        );
+        assert_eq!(codec.decode(&mut buf).unwrap(), None);
+    }
+
+    #[test]
+    fn a_partial_frame_is_kept_until_complete() {
+        let payload = payload_of_length(2737);
+        let full = framed(&payload);
+        let mut buf = BytesMut::from(&full[..full.len() - 1]);
+
+        let mut codec = EventLinesCodec::new();
+        assert_eq!(codec.decode(&mut buf).unwrap(), None);
+
+        buf.put_u8(b'\n');
+        assert_eq!(
+            codec.decode(&mut buf).unwrap().as_deref(),
+            Some(payload.as_str())
+        );
+    }
+
+    #[test]
+    fn a_missing_trailer_is_reported_not_guessed_at() {
+        let payload = "{\"event_type\":\"pong\"}";
+        let mut buf = framed(payload);
+        let trailer = buf.len() - 1;
+        buf[trailer] = b'x';
+
+        let mut codec = EventLinesCodec::new();
+        assert!(codec.decode(&mut buf).is_err());
+    }
+
+    #[test]
+    fn an_absurd_length_is_refused_rather_than_buffered() {
+        let mut buf = BytesMut::new();
+        buf.put(&((MAX_FRAME_BYTES + 1) as u32).to_be_bytes()[..]);
+        buf.put(&b"payload\n"[..]);
+
+        let mut codec = EventLinesCodec::new();
+        assert!(codec.decode(&mut buf).is_err());
+    }
 
     #[tokio::test]
     async fn test_connection_handler_and_connectio() {

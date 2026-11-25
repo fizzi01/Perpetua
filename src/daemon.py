@@ -238,6 +238,11 @@ class Daemon:
 
     MAX_CONNECTIONS = 1
     BUFFER_SIZE = 16384
+    # Generous ceiling on one payload: large enough for any status snapshot,
+    # small enough that a corrupt length cannot drive an unbounded allocation.
+    MAX_FRAME_BYTES = 16 * 1024 * 1024
+    # Bytes a frame adds to its payload: the 4-byte length and the trailer.
+    FRAME_OVERHEAD = 5
     # Cap concurrent commands so an abusive client can't spam the
     # fire-and-forget task set unbounded.
     MAX_CONCURRENT_COMMANDS = 16
@@ -1036,12 +1041,6 @@ class Daemon:
             await self._report_backend_failures()
 
             buff = bytearray()
-            # ``scan_from`` marks how far into ``buff`` we've already scanned
-            # for a frame trailer without success. Without it, a frame that
-            # arrives across many small reads forces a full re-scan of the
-            # buffer every cycle (O(N²)). On a successful parse it resets
-            # to 0 because ``del buff[:bytes_read]`` shifts everything.
-            scan_from = 0
             while self._running and not reader.at_eof():
                 try:
                     data = await asyncio.wait_for(
@@ -1054,18 +1053,11 @@ class Daemon:
 
                     buff.extend(data)
 
-                    commands_data, bytes_read = self.parse_msg_bytes(buff, scan_from)
+                    commands_data, bytes_read = self.parse_msg_bytes(buff)
 
                     if bytes_read > 0:
                         # In-place clear keeps the bytearray's allocation.
                         del buff[:bytes_read]
-                        scan_from = 0
-                    else:
-                        # No new frame parsed: next iteration only needs to
-                        # search the bytes we haven't looked at yet. Leave
-                        # 4 bytes of slack so a trailer split exactly on
-                        # the read boundary is still picked up.
-                        scan_from = max(0, len(buff) - 4)
 
                     for command_data in commands_data:
                         try:
@@ -1126,42 +1118,45 @@ class Daemon:
             message_bytes = Daemon._encoder.encode(data)
         else:
             message_bytes = Daemon._encoder.encode(data.to_dict())
+        # Length first, so the reader never has to search for the boundary.
         length_prefix = len(message_bytes).to_bytes(4, byteorder="big")
-        return message_bytes + length_prefix + b"\n"
+        return length_prefix + message_bytes + b"\n"
 
     @staticmethod
-    def parse_msg_bytes(
-        data: "bytes | bytearray", scan_from: int = 0
-    ) -> tuple[list[dict], int]:
-        """Parse a buffer of length-prefixed, newline-delimited messages.
+    def parse_msg_bytes(data: "bytes | bytearray") -> tuple[list[dict], int]:
+        """Parse a buffer of framed messages.
 
-        ``scan_from`` is a hint - bytes before it have already been
-        searched for a trailer and contain no newline. Used to avoid
-        re-scanning the whole buffer when a frame straddles several
-        reads. Returns ``(parsed_messages, bytes_consumed)``.
+        A frame is ``4-byte big-endian length + payload + b"\\n"``. The
+        length leads, so the payload bounds are known before reading it and
+        no byte of the frame is ever searched for. Returns
+        ``(parsed_messages, bytes_consumed)``; a trailing partial frame is
+        left for the next read.
         """
         offset = 0
         d_len = len(data)
+        lines = []
         try:
-            if d_len <= 5:
-                return [], 0
-            lines = []
-            search_from = max(scan_from, 4)
-            while offset < d_len - 5:
-                if offset + 4 > d_len:
-                    raise ValueError("Incomplete length prefix")
-                idx = data.find(b"\n", max(search_from, offset + 4))
-                if idx == -1:
-                    # Partial trailer — wait for more bytes.
+            while d_len - offset >= Daemon.FRAME_OVERHEAD:
+                msg_length = int.from_bytes(
+                    data[offset : offset + 4], byteorder="big"
+                )
+                if msg_length > Daemon.MAX_FRAME_BYTES:
+                    raise ValueError(
+                        f"Frame of {msg_length} bytes exceeds the "
+                        f"{Daemon.MAX_FRAME_BYTES} byte limit"
+                    )
+                trailer = offset + 4 + msg_length
+                if trailer >= d_len:
+                    # Payload or trailer still in flight.
                     break
-                length_bytes = data[idx - 4 : idx]
-                msg_length = int.from_bytes(length_bytes, byteorder="big")
-                msg_data = data[offset : offset + msg_length]
-                lines.append(Daemon._decoder.decode(msg_data))
-                offset += msg_length + 5
-                # After the first hit ``search_from`` is no longer ahead
-                # of ``offset``; reset so the next find starts there.
-                search_from = offset
+                if data[trailer] != 0x0A:
+                    # Length and trailer disagree: the stream is out of sync
+                    # and no later byte can be trusted to start a frame.
+                    raise ValueError(
+                        f"Frame of {msg_length} bytes is not newline-terminated"
+                    )
+                lines.append(Daemon._decoder.decode(data[offset + 4 : trailer]))
+                offset = trailer + 1
             return lines, offset
         except msgspec.DecodeError as e:
             raise ValueError(f"Invalid msgspec data ({e})")
