@@ -30,7 +30,7 @@ import pytest
 from utils.cli import DaemonArguments
 try:
     from utils.permissions import _linux
-except ImportError:
+except (ImportError, ModuleNotFoundError):
     pytest.skip("Linux-only tests", allow_module_level=True)
     
 from utils.permissions._base import PermissionStatus, PermissionType
