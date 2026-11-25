@@ -321,7 +321,11 @@ if [ "$rc" -ne 124 ]; then
   sed 's/^/    /' /tmp/launch.log
   fail=1
 else
-  for marker in "cannot open shared object file" "is not installed" "Backend import failed"; do
+  # The last two are version-skew between bundled libraries and host modules:
+  # both were real, both are fixed by GIO_MODULE_DIR / bundled gst plugins.
+  for marker in "cannot open shared object file" "is not installed" \
+                "Backend import failed" "g_variant_builder_init_static" \
+                "appsink not found"; do
     if grep -qi "$marker" /tmp/launch.log; then
       echo "  ::error:: missing runtime dependency: $marker"
       sed 's/^/    /' /tmp/launch.log

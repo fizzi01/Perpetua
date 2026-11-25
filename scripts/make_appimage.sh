@@ -28,6 +28,12 @@ EXTERNAL_BINARIES=(dumpkeys)
 SETUP_SCRIPT="enable_uinput.sh"
 
 VERSION="$(grep -m1 '^version\s*=\s*"' pyproject.toml | sed -E 's/^version\s*=\s*"([^"]+)"/\1/')"
+# The window's identity on both X11 (WM_CLASS) and Wayland (app_id). The
+# desktop entry must be named after it or neither the dock nor the launcher
+# can match a running window to its icon. Read from the Tauri config so the
+# two cannot drift apart.
+APP_ID="$(grep -m1 '"identifier"' src-gui/src-tauri/tauri.conf.json |
+          sed -E 's/.*"identifier"[[:space:]]*:[[:space:]]*"([^"]+)".*/\1/')"
 ARCH_DEB="$(dpkg --print-architecture 2>/dev/null || true)"
 case "${ARCH_DEB:-$(uname -m)}" in
   amd64|x86_64)   ARCH="x86_64"; RUST_TARGET="x86_64-unknown-linux-gnu" ;;
@@ -49,6 +55,7 @@ ICON_SRC="src-gui/src-tauri/icons/icon.png"
 # ── Preflight ─────────────────────────────────────────────────────────────────
 [ -f "pyproject.toml" ] || { echo "error: run from project root" >&2; exit 1; }
 [ -n "$VERSION" ] || { echo "error: could not parse version" >&2; exit 1; }
+[ -n "$APP_ID" ] || { echo "error: could not parse the Tauri identifier" >&2; exit 1; }
 [ -d "$DIST_DIR" ] || { echo "error: $DIST_DIR not found (build the daemon first)" >&2; exit 1; }
 [ -f "$EXCLUDELIST" ] || { echo "error: $EXCLUDELIST not found" >&2; exit 1; }
 command -v patchelf >/dev/null || { echo "error: patchelf not installed" >&2; exit 1; }
@@ -94,6 +101,10 @@ find "$BUNDLE" -type f \( -name "$BINARY_NAME" -o -name "_perpetua" \) -exec chm
   echo "error: scripts/${SETUP_SCRIPT} not found" >&2; exit 1; }
 install -m 0755 "scripts/${SETUP_SCRIPT}" "$BUNDLE/${SETUP_SCRIPT}"
 
+# GIO scans this directory instead of the host's: the host's gvfs modules are
+# built against a newer glib than the one bundled here and fail to load.
+mkdir -p "$BUNDLE/gio/modules"
+
 # Matches the .deb layout, so an extracted AppDir drops into /opt unchanged.
 ln -sf "../lib/${APP_DISPLAY_NAME}/${BINARY_NAME}" "$APPDIR/usr/bin/${APP_NAME}"
 
@@ -131,6 +142,21 @@ cp "$WK_SRC/WebKitNetworkProcess" "$WK_SRC/WebKitWebProcess" "$WK_DEST/"
 cp "$WK_SRC/injected-bundle/libwebkit2gtkinjectedbundle.so" "$WK_DEST/injected-bundle/"
 chmod 755 "$WK_DEST/WebKitNetworkProcess" "$WK_DEST/WebKitWebProcess"
 echo "WebKit helpers staged from $WK_SRC"
+
+# ── GStreamer plugins ─────────────────────────────────────────────────────────
+# WebKit's media backend dlopen's these by directory, so ldd never sees them.
+# Carrying the core library without its plugins is the worst of both worlds:
+# the bundled core would scan the host's plugin directory, whose plugins are
+# built against the host's GStreamer ("element appsink not found").
+GST_SRC="$(find /usr/lib /usr/lib64 -maxdepth 2 -type d -name 'gstreamer-1.0' 2>/dev/null |
+           grep -v '/include/' | head -1 || true)"
+[ -n "$GST_SRC" ] || {
+  echo "error: gstreamer-1.0 plugin dir not found on the build host" >&2; exit 1; }
+mkdir -p "$BUNDLE/gstreamer-1.0"
+cp "$GST_SRC"/*.so "$BUNDLE/gstreamer-1.0/" 2>/dev/null || true
+gst_n="$(find "$BUNDLE/gstreamer-1.0" -name '*.so' | wc -l)"
+[ "$gst_n" -gt 0 ] || { echo "error: no GStreamer plugins copied from $GST_SRC" >&2; exit 1; }
+echo "gstreamer plugins: ${gst_n} <- $GST_SRC"
 
 # ── Class 2: dlopen'd sonames ─────────────────────────────────────────────────
 for soname in "${DLOPEN_SONAMES[@]}"; do
@@ -181,6 +207,10 @@ for so in "$BUNDLE"/*.so*; do
   [ -f "$so" ] || continue
   patchelf --force-rpath --set-rpath '$ORIGIN' "$so" 2>/dev/null && rpath_n=$((rpath_n + 1))
 done
+for plugin in "$BUNDLE"/gstreamer-1.0/*.so; do
+  [ -f "$plugin" ] || continue
+  patchelf --force-rpath --set-rpath '$ORIGIN/..' "$plugin" 2>/dev/null || true
+done
 for helper in "$WK_DEST/WebKitNetworkProcess" "$WK_DEST/WebKitWebProcess"; do
   patchelf --force-rpath --set-rpath "\$ORIGIN/../../${APP_DISPLAY_NAME}" "$helper"
 done
@@ -211,7 +241,7 @@ cp "$ICON_SRC" "$APPDIR/${APP_NAME}.png"
 ln -sf "${APP_NAME}.png" "$APPDIR/.DirIcon"
 
 # ── .desktop (one copy at root, one under usr/share) ─────────────────────────
-cat > "$APPDIR/${APP_NAME}.desktop" <<EOF
+cat > "$APPDIR/${APP_ID}.desktop" <<EOF
 [Desktop Entry]
 Type=Application
 Name=${APP_DISPLAY_NAME}
@@ -221,23 +251,23 @@ Exec=${APP_NAME}
 Icon=${APP_NAME}
 Terminal=false
 StartupNotify=true
-StartupWMClass=${APP_DISPLAY_NAME}
+StartupWMClass=${APP_ID}
 Categories=Network;Utility;
 Keywords=mouse;keyboard;clipboard;sharing;kvm;
 EOF
-cp "$APPDIR/${APP_NAME}.desktop" "$APPDIR/usr/share/applications/${APP_NAME}.desktop"
+cp "$APPDIR/${APP_ID}.desktop" "$APPDIR/usr/share/applications/${APP_ID}.desktop"
 
 # ── AppStream metainfo ────────────────────────────────────────────────────────
 cat > "$APPDIR/usr/share/metainfo/${APP_NAME}.metainfo.xml" <<EOF
 <?xml version="1.0" encoding="UTF-8"?>
 <component type="desktop-application">
-  <id>${APP_NAME}</id>
+  <id>${APP_ID}</id>
   <name>${APP_DISPLAY_NAME}</name>
   <summary>${DESCRIPTION_SHORT}</summary>
   <metadata_license>MIT</metadata_license>
   <project_license>GPL-3.0-or-later</project_license>
   <description><p>${DESCRIPTION_SHORT}.</p></description>
-  <launchable type="desktop-id">${APP_NAME}.desktop</launchable>
+  <launchable type="desktop-id">${APP_ID}.desktop</launchable>
   <url type="homepage">${HOMEPAGE}</url>
   <provides><binary>${BINARY_NAME}</binary></provides>
   <releases>
@@ -248,8 +278,11 @@ cat > "$APPDIR/usr/share/metainfo/${APP_NAME}.metainfo.xml" <<EOF
 EOF
 
 # ── AppRun ────────────────────────────────────────────────────────────────────
-cat > "$APPDIR/AppRun" <<'EOF'
-#!/usr/bin/env bash
+# APP_ID is interpolated; everything below is literal.
+{
+  echo '#!/usr/bin/env bash'
+  echo "APP_ID=\"${APP_ID}\""
+  cat <<'EOF'
 HERE="$(dirname "$(readlink -f "${0}")")"
 export APPDIR="${HERE}"
 BUNDLE="${HERE}/usr/lib/Perpetua"
@@ -257,18 +290,87 @@ BUNDLE="${HERE}/usr/lib/Perpetua"
 # pynput finds the bundled dumpkeys here; without it input/keyboard won't import.
 export PATH="${BUNDLE}:${PATH}"
 
+# Our own module directory, empty on purpose: GIO would otherwise load the
+# host's gvfs modules, which are built against a newer glib than the bundled
+# one and abort with an undefined symbol.
+export GIO_MODULE_DIR="${BUNDLE}/gio/modules"
+
+# Same reason: our GStreamer core must load our plugins, never the host's.
+export GST_PLUGIN_SYSTEM_PATH_1_0="${BUNDLE}/gstreamer-1.0"
+export GST_PLUGIN_PATH_1_0="${BUNDLE}/gstreamer-1.0"
+
 # No postinst in an AppImage: the udev rules are installed on demand. The
 # script elevates itself and copies itself out of this FUSE mount.
 if [ "${1:-}" = "--install-udev-rules" ]; then
   exec "${BUNDLE}/enable_uinput.sh" configure
 fi
 
+# Desktop integration. Without an entry on the host there is nothing for the
+# launcher and the dock to take the name and icon from; the entry is named
+# after APP_ID because that is what both X11 (WM_CLASS) and Wayland (app_id)
+# match a running window against.
+data_home="${XDG_DATA_HOME:-$HOME/.local/share}"
+desktop_entry="${data_home}/applications/${APP_ID}.desktop"
+installed_icon="${data_home}/icons/hicolor/256x256/apps/${APP_ID}.png"
+
+remove_desktop_integration() {
+  rm -f "$desktop_entry" "$installed_icon"
+  command -v update-desktop-database >/dev/null 2>&1 &&
+    update-desktop-database "${data_home}/applications" >/dev/null 2>&1
+  echo "perpetua: desktop integration removed."
+}
+
+install_desktop_integration() {
+  # $APPIMAGE is the only path that outlives the process; an extracted AppDir
+  # has none, so there is nothing stable to point an entry at.
+  [ -n "${APPIMAGE:-}" ] || return 0
+  mkdir -p "$(dirname "$desktop_entry")" "$(dirname "$installed_icon")" || return 0
+  cp -f "${HERE}/usr/share/icons/hicolor/256x256/apps/perpetua.png" \
+        "$installed_icon" 2>/dev/null || return 0
+
+  # Absolute Icon= on purpose: it skips icon-theme lookup, which needs a cache
+  # refresh the desktop may not have done yet.
+  new_entry="$(cat <<DESKTOP
+[Desktop Entry]
+Type=Application
+Name=Perpetua
+GenericName=Input Sharing
+Comment=Cross-platform mouse, keyboard, and clipboard sharing
+Exec="${APPIMAGE}"
+Icon=${installed_icon}
+Terminal=false
+StartupNotify=true
+StartupWMClass=${APP_ID}
+Categories=Network;Utility;
+Keywords=mouse;keyboard;clipboard;sharing;kvm;
+DESKTOP
+)"
+  # Rewrite only on a change, so a moved or updated AppImage is picked up
+  # without touching the file on every single launch.
+  if [ "$(cat "$desktop_entry" 2>/dev/null)" != "$new_entry" ]; then
+    printf '%s\n' "$new_entry" > "$desktop_entry" || return 0
+    command -v update-desktop-database >/dev/null 2>&1 &&
+      update-desktop-database "${data_home}/applications" >/dev/null 2>&1
+  fi
+}
+
+case "${1:-}" in
+  --remove-desktop-integration) remove_desktop_integration; exit 0 ;;
+  --no-desktop-integration)     shift ;;
+  *) [ -n "${PERPETUA_NO_DESKTOP_INTEGRATION:-}" ] || install_desktop_integration ;;
+esac
+
 # WebKit's helper path was rewritten to "././...", relative to the CWD.
 cd "${HERE}/usr" || exit 1
 
+# exec -a sets argv[0], which is where GTK takes g_get_prgname() from, and
+# with it the Wayland app_id and the X11 WM_CLASS. Without it the window
+# advertises a name no desktop entry is called, and the dock shows the
+# generic icon.
 # No LD_LIBRARY_PATH: DT_RPATH handles it, and child processes stay clean.
-exec "${BUNDLE}/Perpetua" "$@"
+exec -a "${APP_ID}" "${BUNDLE}/Perpetua" "$@"
 EOF
+} > "$APPDIR/AppRun"
 chmod 755 "$APPDIR/AppRun"
 
 # ── Build ─────────────────────────────────────────────────────────────────────
