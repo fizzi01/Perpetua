@@ -82,6 +82,10 @@ find "$STAGE${INSTALL_PREFIX}" \
   -type f \( -name "$BINARY_NAME" -o -name "_perpetua" \) \
   -exec chmod 755 {} +
 
+# Also next to the daemon, not just as the maintainer script: that is where
+# the permission check looks when the rules need reinstalling later.
+install -m 0755 "scripts/enable_uinput.sh" "$STAGE${INSTALL_PREFIX}/enable_uinput.sh"
+
 ln -sf "${INSTALL_PREFIX}/${BINARY_NAME}" "$STAGE/usr/bin/${APP_NAME}"
 
 if [ -f "$ICON_SRC" ]; then
@@ -171,6 +175,8 @@ Requires:       glib2
 Requires:       gdk-pixbuf2
 Requires:       libayatana-appindicator-gtk3
 Requires:       openssl-libs
+# pynput shells out to dumpkeys to read the keymap.
+Requires:       kbd
 Recommends:     xclip
 Recommends:     wl-clipboard
 Recommends:     liboeffis

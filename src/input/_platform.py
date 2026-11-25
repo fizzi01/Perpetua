@@ -20,6 +20,13 @@ from os import environ
 from sys import platform
 from typing import Any, Callable, NamedTuple
 
+from utils import (
+    BACKEND_IMPORT_ERRORS,
+    backend_failures,
+    record_backend_failure,
+    unavailable_symbol,
+)
+
 
 def is_linux() -> bool:
     return platform.startswith("linux")
@@ -94,7 +101,12 @@ def resolve_backend(
             component, name = rule.pynput_force
             environ[f"PYNPUT_BACKEND_{component.upper()}"] = name
 
-        mod = import_module(rule.module, package)
+        try:
+            mod = import_module(rule.module, package)
+        except BACKEND_IMPORT_ERRORS as exc:
+            # A backend import must never abort process start; see utils.
+            record_backend_failure(package, rule.module, f"{type(exc).__name__}: {exc}")
+            continue
 
         for export_name, attr_name in rule.symbols.items():
             exports.setdefault(export_name, getattr(mod, attr_name))
@@ -102,4 +114,19 @@ def resolve_backend(
         for key, name in rule.names.items():
             backend.setdefault(key, name)
 
+    # Symbols no surviving rule provided become stubs that raise on first use,
+    # so the failure surfaces where the feature is exercised, not at import.
+    for rule in rules:
+        for export_name in rule.symbols:
+            if export_name not in exports:
+                exports[export_name] = _unavailable(package, export_name)
+        for key in rule.names:
+            backend.setdefault(key, "unavailable")
+
     return backend, exports
+
+
+def _unavailable(package: str, symbol: str) -> type:
+    """Build a placeholder for a symbol no backend could provide."""
+    causes = "; ".join(f.error for f in backend_failures()) or "no rule matched"
+    return unavailable_symbol(symbol, f"{package}.{symbol} is unavailable: {causes}")

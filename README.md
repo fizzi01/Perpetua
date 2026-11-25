@@ -45,7 +45,7 @@ Built with Python using uvloop (macOS/Linux) and winloop (Windows) as event loop
   - **Debian / Ubuntu**: `sudo dpkg -i perpetua_*.deb` (or `sudo apt install ./perpetua_*.deb`).
   - **Fedora / RHEL / openSUSE**: `sudo dnf install perpetua-*.rpm` (or `sudo rpm -i`).
   - **Arch Linux**: install `perpetua-bin` from the AUR (see [`scripts/aur/PKGBUILD`](scripts/aur/PKGBUILD)).
-  - **Any distro**: download the `Perpetua-*.AppImage`, `chmod +x`, and run it. The AppImage doesn't install udev rules, run [`scripts/enable_uinput.sh`](scripts/enable_uinput.sh) once with `sudo` for keyboard input to work.
+  - **Any distro**: download the `Perpetua-*.AppImage`, `chmod +x`, and run it.
 
   Baseline: `glibc >= 2.39` (Ubuntu 24.04, Fedora 40, Debian 13, Arch). The `libei` and `liboeffis` runtime libs are required for Wayland InputCapture on GNOME/KDE; the `.deb` declares them as `Depends:` / `Recommends:`, the `.rpm` mirrors this.
 
