@@ -247,6 +247,10 @@ class _EiConnection:
 
     def _reset(self):
         self._device = None
+        # The compositor offers relative and absolute pointers as separate
+        # devices; warps go to the absolute one, in its regions' space.
+        self._abs_device = None
+        self.regions: list[tuple[int, int, int, int, float]] = []
         self._sender: Sender | None = None
         self._oeffis: Oeffis | None = None
         self._paused = threading.Event()
@@ -266,6 +270,13 @@ class _EiConnection:
             if self._error is not None:
                 raise self._error
             return self._device
+
+    @property
+    def abs_device(self):
+        with _conn_lock:
+            if self._error is not None:
+                raise self._error
+            return self._abs_device
 
     @property
     def paused(self) -> bool:
@@ -354,29 +365,54 @@ class _EiConnection:
         self._sender = _ei_from_fd(Sender, eis_fd, "perpetua-mouse-controller")
         poller.register(self._sender.fd, _select.POLLIN)
 
-        # Seat bind and device acquisition loop
+        # Seat bind and device acquisition loop. Take one relative and one
+        # absolute pointer; stop once both are resumed, or once the device
+        # list has been quiet for a while (a compositor may offer only one).
         seat_bound = False
-        device = None
+        rel = absolute = None
+        resumed: set[int] = set()
+        quiet = 0
         for _ in range(100):
+            got = False
             if poller.poll(100):
                 self._sender.dispatch()
             for event in self._sender.events:
+                got = True
                 etype = _event_type(event)
                 if etype == EventType.SEAT_ADDED and not seat_bound:
                     event.seat.bind(_CONTROLLER_CAPABILITIES)
                     seat_bound = True
-                elif etype == EventType.DEVICE_ADDED and device is None:
-                    device = event.device
-                    device.start_emulating(0)
-                elif etype == EventType.DEVICE_RESUMED and device is not None:
-                    caps = device.capabilities
-                    self._has_pointer = DeviceCapability.POINTER in caps
-                    self._has_pointer_abs = DeviceCapability.POINTER_ABSOLUTE in caps
-                    self._device = device
-                    self._start_dispatch()
+                elif etype == EventType.DEVICE_ADDED:
+                    dev = event.device
+                    caps = dev.capabilities
+                    if absolute is None and DeviceCapability.POINTER_ABSOLUTE in caps:
+                        absolute = dev
+                        self.regions = _device_regions(dev)
+                    elif rel is None and DeviceCapability.POINTER in caps:
+                        rel = dev
+                    else:
+                        continue
+                    dev.start_emulating(0)
+                elif etype == EventType.DEVICE_RESUMED:
+                    resumed.add(id(event.device))
+            wanted = [d for d in (rel, absolute) if d is not None]
+            done = [d for d in wanted if id(d) in resumed]
+            if wanted and len(done) == len(wanted):
+                quiet = 0 if got else quiet + 1
+                if (rel is not None and absolute is not None) or quiet >= 5:
+                    self._adopt(rel, absolute)
                     return
 
         raise RuntimeError("libei: no device received after seat bind")
+
+    def _adopt(self, rel, absolute) -> None:
+        primary = rel if rel is not None else absolute
+        caps = primary.capabilities
+        self._has_pointer = DeviceCapability.POINTER in caps
+        self._has_pointer_abs = DeviceCapability.POINTER_ABSOLUTE in caps
+        self._abs_device = absolute
+        self._device = primary
+        self._start_dispatch()
 
     def _start_dispatch(self):
         self._dispatch_thread = threading.Thread(
@@ -413,8 +449,9 @@ class _EiConnection:
 
                     elif etype == EventType.DEVICE_RESUMED:
                         self._paused.clear()
-                        if self._device is not None:
-                            self._device.start_emulating(0)
+                        for dev in (self._device, self._abs_device):
+                            if dev is not None:
+                                dev.start_emulating(0)
 
                     elif etype == EventType.DEVICE_REMOVED:
                         # Null the device and set the error atomically so the
@@ -423,6 +460,7 @@ class _EiConnection:
                         # instead of this reason).
                         with _conn_lock:
                             self._device = None
+                            self._abs_device = None
                             self._error = RuntimeError(
                                 "libei: device removed by compositor"
                             )
@@ -431,6 +469,7 @@ class _EiConnection:
                     elif etype == EventType.DISCONNECT:
                         with _conn_lock:
                             self._device = None
+                            self._abs_device = None
                             self._error = RuntimeError(
                                 "libei: disconnected by compositor"
                             )
@@ -619,6 +658,11 @@ class _RemoteDesktopLink:
             except Exception as exc:
                 self._logger.debug("failure listener raised", error=str(exc))
 
+    def current_regions(self) -> list[tuple[int, int, int, int, float]]:
+        with self._lock:
+            conn = self._conn if self._state is _LinkState.ACTIVE else None
+        return list(conn.regions) if conn is not None else []
+
     def reset(self) -> None:
         """Forget a denial so the next ``connection()`` asks again."""
         with self._lock:
@@ -670,6 +714,34 @@ def shutdown_connection() -> None:
     _link.close()
 
 
+def _device_regions(device) -> list[tuple[int, int, int, int, float]]:
+    """``(x, y, w, h, physical_scale)`` per region, in logical pixels.
+
+    The space ``pointer_motion_absolute`` takes, scaling already applied: the
+    right geometry for the client's monitors, unlike ``wl_output`` modes.
+    """
+    regions, idx = [], 0
+    while True:
+        r = libei.device_get_region(device._cobject, idx)
+        if not r:
+            return regions
+        regions.append(
+            (
+                int(libei.region_get_x(r)),
+                int(libei.region_get_y(r)),
+                int(libei.region_get_width(r)),
+                int(libei.region_get_height(r)),
+                float(libei.region_get_physical_scale(r)),
+            )
+        )
+        idx += 1
+
+
+def remote_desktop_regions() -> list[tuple[int, int, int, int, float]]:
+    """Regions of the live RemoteDesktop session, or [] (never starts one)."""
+    return _link.current_regions()
+
+
 def _scroll_discrete(device, dx: int, dy: int):
     libei.device_scroll_discrete(device._cobject, dx, dy)
 
@@ -700,12 +772,17 @@ class MouseController:
         x, y = int(value[0]), int(value[1])
         conn = self._live()
         if conn is not None:
-            device = conn.device
-            if conn._has_pointer and not conn._has_pointer_abs:
-                device.pointer_motion(float(x - self._x), float(y - self._y))
+            absolute = conn.abs_device
+            if absolute is not None:
+                absolute.pointer_motion_absolute(float(x), float(y))
+                absolute.frame(_now_us())
             else:
-                device.pointer_motion_absolute(float(x), float(y))
-            device.frame(_now_us())
+                device = conn.device
+                if conn._has_pointer and not conn._has_pointer_abs:
+                    device.pointer_motion(float(x - self._x), float(y - self._y))
+                else:
+                    device.pointer_motion_absolute(float(x), float(y))
+                device.frame(_now_us())
         self._x = x
         self._y = y
 

@@ -1562,3 +1562,100 @@ class TestConsentWait:
 
 class StopTest(Exception):
     """Ends ``connect()`` right after the EIS fd was obtained."""
+
+
+class TestDeviceAcquisition:
+    """The compositor offers relative and absolute pointers as two devices."""
+
+    _conn = TestConsentWait._conn
+
+    @staticmethod
+    def _device(libei, *caps):
+        dev = MagicMock()
+        dev.capabilities = set(caps)
+        return dev
+
+    @staticmethod
+    def _event(etype, **kw):
+        ev = MagicMock(**kw)
+        ev.event_type = etype
+        return ev
+
+    def _connect_with(self, libei, monkeypatch, batches):
+        conn = self._conn(libei, monkeypatch, [True])
+        sender = MagicMock()
+        sender.events = []
+        feed = iter(batches)
+
+        def dispatch():
+            sender.events = next(feed, [])
+
+        sender.dispatch.side_effect = dispatch
+        monkeypatch.setattr(libei, "_ei_from_fd", MagicMock(return_value=sender))
+        monkeypatch.setattr(libei._EiConnection, "_start_dispatch", MagicMock())
+        conn.connect(consent_timeout=5)
+        return conn
+
+    def test_both_pointers_are_taken_and_the_regions_read(self, libei, monkeypatch):
+        ET, DC = libei.EventType, libei.DeviceCapability
+        rel = self._device(libei, DC.POINTER, DC.BUTTON, DC.SCROLL)
+        absolute = self._device(libei, DC.POINTER_ABSOLUTE, DC.BUTTON, DC.SCROLL)
+        region = object()
+        libei.libei.device_get_region.side_effect = lambda c, i: (
+            region if i == 0 else None
+        )
+        libei.libei.region_get_x.return_value = 0
+        libei.libei.region_get_y.return_value = 0
+        libei.libei.region_get_width.return_value = 960
+        libei.libei.region_get_height.return_value = 576
+        libei.libei.region_get_physical_scale.return_value = 1.333
+
+        conn = self._connect_with(
+            libei,
+            monkeypatch,
+            [
+                [self._event(ET.SEAT_ADDED, seat=MagicMock())],
+                # The relative pointer is ready before the absolute one is
+                # even announced: stopping there would lose the warp device.
+                [self._event(ET.DEVICE_ADDED, device=rel)],
+                [self._event(ET.DEVICE_RESUMED, device=rel)],
+                [self._event(ET.DEVICE_ADDED, device=absolute)],
+                [self._event(ET.DEVICE_RESUMED, device=absolute)],
+            ],
+        )
+
+        assert conn._device is rel, "buttons and relative motion"
+        assert conn._abs_device is absolute
+        assert conn.regions == [(0, 0, 960, 576, 1.333)]
+
+    def test_a_single_device_is_enough_once_the_list_is_quiet(self, libei, monkeypatch):
+        ET, DC = libei.EventType, libei.DeviceCapability
+        absolute = self._device(libei, DC.POINTER_ABSOLUTE, DC.BUTTON)
+        libei.libei.device_get_region.side_effect = lambda c, i: None
+
+        conn = self._connect_with(
+            libei,
+            monkeypatch,
+            [
+                [self._event(ET.SEAT_ADDED, seat=MagicMock())],
+                [self._event(ET.DEVICE_ADDED, device=absolute)],
+                [self._event(ET.DEVICE_RESUMED, device=absolute)],
+            ],
+        )
+
+        assert conn._device is absolute and conn._abs_device is absolute
+
+
+class TestWarpUsesTheAbsoluteDevice:
+    def test_position_goes_to_the_absolute_device(self, libei):
+        conn = MagicMock(paused=False)
+        link = MagicMock()
+        link.connection.return_value = conn
+        controller = object.__new__(libei.MouseController)
+        controller._x = controller._y = 0
+        controller._link = link
+
+        controller.position = (640, 400)
+
+        conn.abs_device.pointer_motion_absolute.assert_called_once_with(640.0, 400.0)
+        conn.device.pointer_motion.assert_not_called()
