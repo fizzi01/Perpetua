@@ -1105,3 +1105,218 @@ class TestUnknownEventTypes:
         # the connection would look healthy with nobody dispatching it.
         assert conn._device is None
         assert "disconnected" in str(conn._error)
+
+
+def _wait_until(predicate, timeout=2.0):
+    deadline = time.monotonic() + timeout
+    while time.monotonic() < deadline:
+        if predicate():
+            return True
+        time.sleep(0.005)
+    return False
+
+
+class _FakeConn:
+    """Stands in for ``_EiConnection``; ``outcome`` decides what connect() does."""
+
+    def __init__(self, outcome=None, gate=None):
+        self.outcome = outcome
+        self.gate = gate
+        self._error = None
+        self._device = None
+        self._closing = False
+        self.closed = False
+
+    def connect(self, consent_timeout):
+        if self.gate is not None:
+            self.gate.wait(2)
+        if self.outcome is not None:
+            raise self.outcome
+        self._device = MagicMock()
+
+    def close(self):
+        self.closed = True
+
+
+class TestRemoteDesktopLink:
+    """Client RemoteDesktop session: off-thread connect, capped retries, and a
+    terminal DENIED that only ``reset()`` (a user action) clears."""
+
+    @staticmethod
+    def _link(libei, outcomes, monkeypatch=None):
+        """A link whose n-th connection attempt gets ``outcomes[n]``."""
+        made = []
+
+        def factory():
+            outcome = outcomes[min(len(made), len(outcomes) - 1)]
+            conn = outcome if isinstance(outcome, _FakeConn) else _FakeConn(outcome)
+            made.append(conn)
+            return conn
+
+        link = libei._RemoteDesktopLink(connection_factory=factory)
+        link._retry_at = 0.0
+        return link, made
+
+    def test_connection_never_blocks_the_caller(self, libei):
+        gate = threading.Event()
+        link, made = self._link(libei, [_FakeConn(gate=gate)])
+
+        started = time.monotonic()
+        assert link.connection() is None
+        assert time.monotonic() - started < 0.1
+        assert link.state is libei._LinkState.CONNECTING
+
+        gate.set()
+        assert _wait_until(lambda: link.state is libei._LinkState.ACTIVE)
+        assert link.connection() is made[0]
+
+    def test_a_refusal_denies_at_once_and_asks_nothing_more(self, libei):
+        link, made = self._link(libei, [libei._ConsentRefused("no")])
+        heard = []
+        link.add_failure_listener(heard.append)
+
+        link.connection()
+        assert _wait_until(lambda: link.state is libei._LinkState.DENIED)
+        for _ in range(5):
+            assert link.connection() is None
+
+        assert len(made) == 1
+        assert heard == ["no"]
+        assert made[0].closed
+
+    def test_an_unanswered_dialog_denies(self, libei):
+        link, _ = self._link(libei, [libei._ConsentTimeout("not answered")])
+        link.connection()
+        assert _wait_until(lambda: link.state is libei._LinkState.DENIED)
+        assert link.denied_reason == "not answered"
+
+    def test_transient_failures_are_capped(self, libei):
+        link, made = self._link(libei, [RuntimeError("flaky")])
+        heard = []
+        link.add_failure_listener(heard.append)
+
+        for _ in range(libei._RemoteDesktopLink.MAX_TRANSIENT_FAILURES * 3):
+            link._retry_at = 0.0
+            link.connection()
+            _wait_until(lambda: link.state is not libei._LinkState.CONNECTING)
+            if link.state is libei._LinkState.DENIED:
+                break
+
+        assert link.state is libei._LinkState.DENIED
+        assert len(made) == libei._RemoteDesktopLink.MAX_TRANSIENT_FAILURES
+        assert len(heard) == 1
+
+    def test_a_transient_failure_waits_out_the_backoff(self, libei):
+        link, made = self._link(libei, [RuntimeError("flaky")])
+        link.connection()
+        assert _wait_until(lambda: link.state is libei._LinkState.IDLE)
+
+        link.connection()  # retry not due yet
+        assert len(made) == 1
+        assert link._retry_at > time.monotonic()
+
+    def test_reset_after_a_denial_asks_again(self, libei):
+        link, made = self._link(libei, [libei._ConsentRefused("no"), _FakeConn()])
+        link.connection()
+        assert _wait_until(lambda: link.state is libei._LinkState.DENIED)
+
+        link.reset()
+        link.connection()
+        assert _wait_until(lambda: link.state is libei._LinkState.ACTIVE)
+        assert len(made) == 2
+
+    def test_a_session_dropped_by_the_compositor_is_reopened(self, libei):
+        link, made = self._link(libei, [_FakeConn(), _FakeConn()])
+        link.connection()
+        assert _wait_until(lambda: link.state is libei._LinkState.ACTIVE)
+
+        made[0]._error = RuntimeError("libei: disconnected by compositor")
+        assert link.connection() is None
+        assert _wait_until(lambda: link.state is libei._LinkState.ACTIVE)
+        assert link.connection() is made[1]
+        assert made[0].closed
+
+    def test_close_abandons_an_attempt_in_flight(self, libei):
+        gate = threading.Event()
+        link, made = self._link(libei, [_FakeConn(gate=gate)])
+        link.connection()
+        assert _wait_until(lambda: link._pending is not None)
+
+        link.close()
+        assert made[0]._closing
+        gate.set()
+
+        assert _wait_until(lambda: made[0].closed)
+        assert link.connection() is not made[0]
+
+
+class TestControllerWithoutSession:
+    def test_input_before_the_grant_is_dropped_quietly(self, libei):
+        # Used to raise _PortalBackoff on every event, logged at mouse rate.
+        controller = libei.MouseController.__new__(libei.MouseController)
+        controller._x = controller._y = 0
+        controller._link = MagicMock()
+        controller._link.connection.return_value = None
+
+        controller.move(5, 5)
+        controller.position = (10, 10)
+        controller.scroll(0, 1)
+
+        assert (controller._x, controller._y) == (10, 10)
+
+
+class TestConsentWait:
+    """``_EiConnection.connect`` up to the EIS fd: the consent dialog."""
+
+    def _conn(self, libei, monkeypatch, dispatch):
+        DisconnectedError = sys.modules["snegg.oeffis"].DisconnectedError
+        answers = iter(dispatch) if isinstance(dispatch, list) else None
+
+        class _Oeffis:
+            """Like snegg: eis_fd raises until dispatch() has returned True."""
+
+            fd = 3
+            connected = False
+
+            def dispatch(self):
+                if isinstance(dispatch, Exception):
+                    raise dispatch
+                result = next(answers) if answers is not None else dispatch()
+                self.connected = self.connected or result
+                return result
+
+            @property
+            def eis_fd(self):
+                if not self.connected:
+                    raise DisconnectedError(None)
+                return 42
+
+        oeffis = _Oeffis()
+        libei.Oeffis.create.return_value = oeffis
+        poller = MagicMock()
+        poller.poll.return_value = [(0, 1)]
+        monkeypatch.setattr(libei._select, "poll", lambda: poller)
+        return libei._EiConnection()
+
+    def test_a_closed_session_is_a_refusal(self, libei, monkeypatch):
+        DisconnectedError = sys.modules["snegg.oeffis"].DisconnectedError
+        conn = self._conn(libei, monkeypatch, DisconnectedError("cancelled"))
+        with pytest.raises(libei._ConsentRefused):
+            conn.connect(consent_timeout=5)
+
+    def test_waiting_for_the_answer_is_not_a_failure(self, libei, monkeypatch):
+        # dispatch() is False while the dialog is open. Reading eis_fd then
+        # raised DisconnectedError, which read as a refusal.
+        conn = self._conn(libei, monkeypatch, [False, False, True])
+        monkeypatch.setattr(libei, "_ei_from_fd", MagicMock(side_effect=StopTest))
+        with pytest.raises(StopTest):
+            conn.connect(consent_timeout=5)
+
+    def test_an_unanswered_dialog_times_out(self, libei, monkeypatch):
+        conn = self._conn(libei, monkeypatch, lambda: False)
+        with pytest.raises(libei._ConsentTimeout):
+            conn.connect(consent_timeout=0.05)
+
+
+class StopTest(Exception):
+    """Ends ``connect()`` right after the EIS fd was obtained."""

@@ -294,7 +294,7 @@ class _EiConnection:
         self._sender = None
         self._oeffis = None
 
-    def connect(self):
+    def connect(self, consent_timeout: float = 300.0):
         if self._device is not None:
             return
 
@@ -304,27 +304,29 @@ class _EiConnection:
         self._oeffis = Oeffis.create(devices=DeviceType.POINTER)
         poller.register(self._oeffis.fd, _select.POLLIN)
 
-        # Obtain EIS fd
+        # Obtain EIS fd. This wait *is* the consent dialog, so it is bounded by
+        # how long a human may take, not by how fast a portal answers.
         eis_fd = None
-        for _ in range(50):
-            if poller.poll(200):
-                try:
-                    self._oeffis.dispatch()
-                except (DisconnectedError, SessionClosedError) as exc:
-                    raise RuntimeError(
-                        f"libei: portal rejected connection: {exc}"
-                    ) from exc
-                try:
+        deadline = time.monotonic() + consent_timeout
+        while eis_fd is None:
+            if self._closing:
+                raise RuntimeError("libei: connect aborted")
+            if time.monotonic() >= deadline:
+                raise _ConsentTimeout(
+                    f"RemoteDesktop permission dialog not answered within "
+                    f"{consent_timeout:.0f}s"
+                )
+            if not poller.poll(200):
+                continue
+            try:
+                # eis_fd raises until dispatch() has returned True, so it is
+                # only read after that.
+                if self._oeffis.dispatch():
                     eis_fd = self._oeffis.eis_fd
-                    if eis_fd is not None:
-                        break
-                except (DisconnectedError, SessionClosedError) as exc:
-                    raise RuntimeError(f"libei: portal disconnected: {exc}") from exc
-                except AttributeError:
-                    continue
-
-        if eis_fd is None:
-            raise RuntimeError("libei: failed to obtain EIS fd from portal")
+            except (DisconnectedError, SessionClosedError) as exc:
+                raise _ConsentRefused(
+                    f"RemoteDesktop permission refused: {exc or 'session closed'}"
+                ) from exc
 
         poller.unregister(self._oeffis.fd)
 
@@ -417,66 +419,217 @@ class _EiConnection:
             _restore_stderr(saved_stderr)
 
 
-_conn: _EiConnection | None = None
 _conn_lock = threading.Lock()
 
 
-def _get_connection() -> _EiConnection:
-    global _conn
-    with _conn_lock:
-        if _conn is None:
-            # Build locally and publish the singleton ONLY after connect()
-            # succeeds. A connect() that raises (e.g. the RemoteDesktop portal
-            # isn't authorized yet) must not leave a half-initialized instance
-            # (_device=None, _error=None) cached: that would make _ensure_conn
-            # believe the connection is healthy and hand out a None device
-            # forever, until the process restarts.
-            conn = _EiConnection()
-            conn.connect()
-            _conn = conn
-        return _conn
+class _ConsentRefused(RuntimeError):
+    """The portal closed the session before granting it: the user said no."""
 
 
-def _reconnect() -> _EiConnection:
-    global _conn
-    with _conn_lock:
-        # Close the outgoing one first: a bare replacement leaked its portal
-        # session and its dispatch thread on every reconnect.
-        stale, _conn = _conn, None
-    if stale is not None:
+class _ConsentTimeout(RuntimeError):
+    """Nobody answered the permission dialog in time."""
+
+
+class _LinkState(enum.Enum):
+    IDLE = "idle"
+    CONNECTING = "connecting"
+    ACTIVE = "active"
+    DENIED = "denied"
+
+
+class _RemoteDesktopLink:
+    """The client's one RemoteDesktop session.
+
+    Every new session is a consent dialog, possibly on a machine with no
+    peripherals, so: the session is opened off the caller's thread (the wait
+    is a human answering), kept for the daemon's lifetime, and given up on
+    (``DENIED``) as soon as only the user can fix it - a refusal, an
+    unanswered dialog, or ``MAX_TRANSIENT_FAILURES`` in a row. ``DENIED``
+    asks nothing more until ``reset()``, which only an explicit user action
+    (a new client connection) may call. Failure listeners hear it once.
+    """
+
+    MAX_TRANSIENT_FAILURES = 5
+    CONSENT_TIMEOUT = 300.0
+    _RETRY_MIN = 1.0
+    _RETRY_MAX = 30.0
+
+    def __init__(self, connection_factory=None):
+        self._factory = connection_factory or _EiConnection
+        self._lock = threading.Lock()
+        self._state = _LinkState.IDLE
+        self._conn: _EiConnection | None = None
+        self._pending: _EiConnection | None = None
+        self._generation = 0
+        self._transient_failures = 0
+        self._retry_at = 0.0
+        self._backoff = ExponentialBackoff(
+            initial_delay=self._RETRY_MIN, max_delay=self._RETRY_MAX
+        )
+        self.denied_reason: str | None = None
+        self._listeners: list = []
+        self._logger = get_logger(self.__class__.__name__)
+
+    @property
+    def state(self) -> _LinkState:
+        return self._state
+
+    def add_failure_listener(self, callback) -> None:
+        with self._lock:
+            if callback not in self._listeners:
+                self._listeners.append(callback)
+
+    def remove_failure_listener(self, callback) -> None:
+        with self._lock:
+            if callback in self._listeners:
+                self._listeners.remove(callback)
+
+    def connection(self) -> "_EiConnection | None":
+        """The live connection, or None. Never blocks.
+
+        Starts an attempt in the background when none is running and one is
+        due; a session the compositor dropped counts as due immediately.
+        """
+        stale = None
+        with self._lock:
+            conn = self._conn
+            if self._state is _LinkState.ACTIVE:
+                if (
+                    conn is not None
+                    and conn._error is None
+                    and conn._device is not None
+                ):
+                    return conn
+                self._logger.warning(
+                    "RemoteDesktop session lost",
+                    reason=str(conn._error) if conn is not None else None,
+                )
+                stale, self._conn = conn, None
+                self._state = _LinkState.IDLE
+            due = self._state is _LinkState.IDLE and time.monotonic() >= self._retry_at
+            if due:
+                self._state = _LinkState.CONNECTING
+                generation = self._generation
+        if stale is not None:
+            _close_quietly(stale)
+        if due:
+            threading.Thread(
+                target=self._attempt,
+                args=(generation,),
+                name="libei-remote-desktop-connect",
+                daemon=True,
+            ).start()
+        return None
+
+    def _attempt(self, generation: int) -> None:
+        conn = self._factory()
+        with self._lock:
+            if generation != self._generation:
+                return
+            self._pending = conn
+        self._logger.info("Requesting RemoteDesktop session")
         try:
-            stale.close()
-        except Exception:
-            pass
-    with _conn_lock:
-        conn = _EiConnection()
-        conn.connect()
-        _conn = conn
-        return conn
+            conn.connect(consent_timeout=self.CONSENT_TIMEOUT)
+        except (_ConsentRefused, _ConsentTimeout) as exc:
+            _close_quietly(conn)
+            self._deny(generation, str(exc))
+            return
+        except Exception as exc:
+            _close_quietly(conn)
+            with self._lock:
+                if generation != self._generation:
+                    return
+                self._pending = None
+                self._transient_failures += 1
+                failures = self._transient_failures
+                if failures < self.MAX_TRANSIENT_FAILURES:
+                    delay = self._backoff.get_next_delay()
+                    self._retry_at = time.monotonic() + delay
+                    self._state = _LinkState.IDLE
+            if failures < self.MAX_TRANSIENT_FAILURES:
+                self._logger.warning(
+                    "RemoteDesktop session failed, will retry",
+                    error=str(exc),
+                    attempt=failures,
+                    retry_in_s=round(delay, 1),
+                )
+                return
+            self._deny(generation, f"{failures} failed attempts, last: {exc}")
+            return
+
+        with self._lock:
+            if generation != self._generation:
+                stale = conn
+            else:
+                stale = None
+                self._pending = None
+                self._conn = conn
+                self._state = _LinkState.ACTIVE
+                self._transient_failures = 0
+                self._backoff.reset()
+        if stale is not None:
+            _close_quietly(stale)
+            return
+        self._logger.info("RemoteDesktop session active")
+
+    def _deny(self, generation: int, reason: str) -> None:
+        with self._lock:
+            if generation != self._generation:
+                return
+            self._pending = None
+            self._state = _LinkState.DENIED
+            self.denied_reason = reason
+            listeners = list(self._listeners)
+        self._logger.warning("RemoteDesktop input injection unavailable", reason=reason)
+        for callback in listeners:
+            try:
+                callback(reason)
+            except Exception as exc:
+                self._logger.debug("failure listener raised", error=str(exc))
+
+    def reset(self) -> None:
+        """Forget a denial so the next ``connection()`` asks again."""
+        with self._lock:
+            if self._state is not _LinkState.DENIED:
+                return
+            self._state = _LinkState.IDLE
+            self._transient_failures = 0
+            self._retry_at = 0.0
+            self._backoff.reset()
+            self.denied_reason = None
+
+    def close(self) -> None:
+        """Close the session and abandon any attempt in flight."""
+        with self._lock:
+            self._generation += 1
+            conn, self._conn = self._conn, None
+            pending, self._pending = self._pending, None
+            if self._state is not _LinkState.DENIED:
+                self._state = _LinkState.IDLE
+            self._retry_at = 0.0
+        if pending is not None:
+            pending._closing = True  # makes connect() give up at its next poll
+        if conn is not None:
+            _close_quietly(conn)
+
+
+def _close_quietly(conn: "_EiConnection") -> None:
+    try:
+        conn.close()
+    except Exception:
+        pass
+
+
+_link = _RemoteDesktopLink()
+
+
+def remote_desktop_link() -> _RemoteDesktopLink:
+    return _link
 
 
 def shutdown_connection() -> None:
-    """Close the module-wide RemoteDesktop connection, if any.
-
-    The singleton used to survive ``Server.stop()``, so the next start was
-    handed a connection whose compositor session had already been torn down.
-    """
-    global _conn
-    with _conn_lock:
-        conn, _conn = _conn, None
-    if conn is not None:
-        try:
-            conn.close()
-        except Exception:
-            pass
-
-
-class _PortalBackoff(RuntimeError):
-    """The portal is known-unavailable and we are waiting out the retry delay.
-
-    Distinct from a real connection error so callers can drop the event
-    quietly instead of logging a failure per mouse move.
-    """
+    """Close the module-wide RemoteDesktop connection, if any."""
+    _link.close()
 
 
 def _scroll_discrete(device, dx: int, dy: int):
@@ -486,60 +639,19 @@ def _scroll_discrete(device, dx: int, dy: int):
 class MouseController:
     """Emulates pointer input through the RemoteDesktop portal via libei."""
 
-    # A failed connect() can spend up to ~20 s polling the portal. Without a
-    # floor between attempts that cost was paid on *every* mouse event, which
-    # freezes the injection path far worse than the missing portal itself.
-    _RECONNECT_MIN_INTERVAL = 1.0
-    _RECONNECT_MAX_INTERVAL = 30.0
-
     def __init__(self):
         self._x = 0
         self._y = 0
-        self._logger = get_logger(self.__class__.__name__)
-        self._reconnect_backoff = ExponentialBackoff(
-            initial_delay=self._RECONNECT_MIN_INTERVAL,
-            max_delay=self._RECONNECT_MAX_INTERVAL,
-        )
-        self._reconnect_at = 0.0
-        # Best-effort: if the RemoteDesktop portal isn't ready yet (common right
-        # after enabling sharing), don't abort client startup. _ensure_conn
-        # establishes the connection lazily on the first injection and keeps
-        # retrying until the portal becomes available.
-        try:
-            self._conn = _get_connection()
-        except Exception as exc:
-            self._conn = None
-            self._logger.warning("libei connection deferred", error=str(exc))
+        self._link = _link
+        # Starts the session in the background; input arriving before it is
+        # granted is dropped, never queued and never blocking the caller.
+        self._link.connection()
 
-    def _ensure_conn(self) -> "_EiConnection":
-        """Return a live connection, (re)connecting lazily if needed.
-
-        Reconnects when there is no connection yet (deferred at startup), when
-        the previous one errored, or when the compositor tore the device down.
-        Returns a non-None connection, or raises: either the real underlying
-        error, or ``_PortalBackoff`` while waiting out the retry interval.
-        """
-        if (
-            self._conn is not None
-            and self._conn._error is None
-            and self._conn._device is not None
-        ):
-            return self._conn
-
-        now = time.monotonic()
-        if now < self._reconnect_at:
-            raise _PortalBackoff(
-                f"libei portal unavailable, retrying in {self._reconnect_at - now:.1f}s"
-            )
-        try:
-            self._conn = _reconnect()
-        except Exception:
-            delay = self._reconnect_backoff.get_next_delay()
-            self._reconnect_at = time.monotonic() + delay
-            raise
-        self._reconnect_backoff.reset()
-        self._reconnect_at = 0.0
-        return self._conn
+    def _live(self) -> "_EiConnection | None":
+        conn = self._link.connection()
+        if conn is None or conn.paused:
+            return None
+        return conn
 
     @property
     def position(self) -> tuple[int, int]:
@@ -548,10 +660,8 @@ class MouseController:
     @position.setter
     def position(self, value: tuple[int, int]):
         x, y = int(value[0]), int(value[1])
-        # Ensure the connection first (lazy connect / self-heal); using the
-        # returned local keeps the paused/capability reads on a non-None value.
-        conn = self._ensure_conn()
-        if not conn.paused:
+        conn = self._live()
+        if conn is not None:
             device = conn.device
             if conn._has_pointer and not conn._has_pointer_abs:
                 device.pointer_motion(float(x - self._x), float(y - self._y))
@@ -565,8 +675,8 @@ class MouseController:
         dx, dy = int(dx), int(dy)
         self._x += dx
         self._y += dy
-        conn = self._ensure_conn()
-        if not conn.paused:
+        conn = self._live()
+        if conn is not None:
             device = conn.device
             if conn._has_pointer:
                 device.pointer_motion(float(dx), float(dy))
@@ -576,18 +686,14 @@ class MouseController:
 
     def press(self, button: Button):
         code = ButtonToEcodeMap.get(button.name)
-        if code is None:
-            return
-        conn = self._ensure_conn()
-        if not conn.paused:
+        conn = self._live() if code is not None else None
+        if conn is not None:
             conn.device.button_button(code, True).frame(_now_us())
 
     def release(self, button: Button):
         code = ButtonToEcodeMap.get(button.name)
-        if code is None:
-            return
-        conn = self._ensure_conn()
-        if not conn.paused:
+        conn = self._live() if code is not None else None
+        if conn is not None:
             conn.device.button_button(code, False).frame(_now_us())
 
     def click(self, button: Button, count: int = 1):
@@ -598,8 +704,8 @@ class MouseController:
     def scroll(self, dx: int, dy: int):
         if not (dx or dy):
             return
-        conn = self._ensure_conn()
-        if not conn.paused:
+        conn = self._live()
+        if conn is not None:
             # 1 wheel click = 120 hi-res units
             device = conn.device
             _scroll_discrete(device, int(dx) * 120, int(dy) * 120)

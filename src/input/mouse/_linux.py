@@ -469,6 +469,53 @@ class ClientMouseController(_base.ClientMouseController):
     MOVEMENT_HISTORY_N_THRESHOLD = 4
     MOVEMENT_HISTORY_LEN = 5
 
-    # No stop() override: the RemoteDesktop session is kept for the daemon's
-    # lifetime, since each new session is a new consent dialog. A session the
-    # compositor dropped meanwhile is reopened by MouseController._ensure_conn.
+    # stop() deliberately leaves the RemoteDesktop session open: it is kept
+    # for the daemon's lifetime, since each new session is a new consent
+    # dialog. A session the compositor dropped is reopened by the link.
+
+    def __init__(self, *args, **kwargs):
+        self._rd_link = _remote_desktop_link()
+        if self._rd_link is not None:
+            # A new controller means the user (re)started the client: that is
+            # the explicit action that may ask for consent again after a denial.
+            self._rd_link.reset()
+        self._loop: Optional[asyncio.AbstractEventLoop] = None
+        super().__init__(*args, **kwargs)
+
+    async def start(self):
+        result = await super().start()
+        if self._rd_link is not None:
+            self._loop = asyncio.get_running_loop()
+            self._rd_link.add_failure_listener(self._on_input_permission_denied)
+            if self._rd_link.denied_reason is not None:
+                # Denied while this controller was stopped: nobody heard it.
+                self._on_input_permission_denied(self._rd_link.denied_reason)
+        return result
+
+    async def stop(self):
+        if self._rd_link is not None:
+            self._rd_link.remove_failure_listener(self._on_input_permission_denied)
+        return await super().stop()
+
+    def _on_input_permission_denied(self, reason: str) -> None:
+        """Called from the link's connect thread."""
+        loop = self._loop
+        if loop is None or loop.is_closed():
+            return
+        asyncio.run_coroutine_threadsafe(
+            self.event_bus.dispatch(
+                event_type=BusEventType.CLIENT_INPUT_PERMISSION_DENIED, data=reason
+            ),
+            loop,
+        )
+
+
+def _remote_desktop_link():
+    """The libei RemoteDesktop link, or None where injection doesn't use it."""
+    if not (is_wayland() and (is_gnome() or is_kde())):
+        return None
+    try:
+        from .backend._libei import remote_desktop_link
+    except Exception:
+        return None
+    return remote_desktop_link()

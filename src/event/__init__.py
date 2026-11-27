@@ -66,6 +66,11 @@ class BusEventType(IntEnum):
     # handlers re-read ``Screen`` directly (``data=None``).
     LOCAL_MONITORS_UPDATED = 13
 
+    # Client side: the compositor will not let us inject input (consent
+    # refused, dialog unanswered, or repeated failures). ``data`` is the
+    # reason string. The client service stops; only the user can retry.
+    CLIENT_INPUT_PERMISSION_DENIED = 14
+
 
 class BusEvent(ABC):
     """Base class for events dispatched on the EventBus."""

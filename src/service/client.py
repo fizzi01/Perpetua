@@ -1901,6 +1901,11 @@ class Client:
 
     async def _initialize_components(self):
         """Initialize enabled components based on configuration"""
+        # ``cleanup()`` clears the bus listeners, so subscribe on every start.
+        self.event_bus.subscribe(
+            event_type=BusEventType.CLIENT_INPUT_PERMISSION_DENIED,
+            callback=self._on_input_permission_denied,
+        )
         # Initialize stream components based on enabled streams
         await self._enable_command_stream()
         await self._enable_mouse_stream()
@@ -2125,6 +2130,26 @@ class Client:
             )
         )
         return None
+
+    async def _on_input_permission_denied(self, reason: Optional[str] = None):
+        """The compositor won't let us inject input: stop, don't retry.
+
+        Retrying would put another consent dialog on a machine that may have
+        no peripherals to answer it; reconnecting from the GUI is the retry.
+        """
+        if not self._running:
+            return
+        self._logger.warning(
+            "Input injection not permitted, stopping client", reason=reason
+        )
+        await self._send_notification(
+            ServiceErrorEvent(
+                service_name="client",
+                error=f"input permission denied: {reason}",
+                reason="input_permission_denied",
+            )
+        )
+        await self.stop()
 
     async def _on_disconnected(self, client: ClientObj):
         """Handle disconnection from server event"""

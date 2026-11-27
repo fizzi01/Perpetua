@@ -32,6 +32,7 @@ from unittest.mock import AsyncMock, MagicMock, patch
 import pytest
 
 from event import (
+    BusEventType,
     ClientTopologyCommandEvent,
     CrossScreenCommandEvent,
     MouseEvent,
@@ -463,22 +464,33 @@ class TestServerStopClosesTheLibeiConnection:
         stub.shutdown_connection.assert_called_once()
 
 
-class TestClientStopKeepsTheRemoteDesktopSession:
+class TestClientRemoteDesktopLink:
+    """The client's RemoteDesktop session outlives a server disconnect, and a
+    denial reaches the client service as a bus event."""
+
+    @staticmethod
+    def _controller(link):
+        from input.mouse import _linux
+
+        controller = object.__new__(_linux.ClientMouseController)
+        controller._rd_link = link
+        controller._loop = None
+        controller.event_bus = AsyncMock()
+        return controller
+
     @pytest.mark.anyio
     async def test_client_stop_does_not_close_the_portal_session(self):
-        # Each new RemoteDesktop session is a new consent dialog on the client,
-        # so a disconnect from the server must not tear it down.
+        # Each new session is a new consent dialog on the client.
         import sys
         import types
 
-        from input.mouse import _base, _linux
+        from input.mouse import _base
 
         stub = types.ModuleType("input.mouse.backend._libei")
         stub.shutdown_connection = MagicMock()
-        controller = object.__new__(_linux.ClientMouseController)
+        link = MagicMock()
+        controller = self._controller(link)
         with ExitStack() as stack:
-            for p in _patch_wayland_geometry():
-                stack.enter_context(p)
             stack.enter_context(patch.dict(sys.modules, {stub.__name__: stub}))
             stack.enter_context(
                 patch.object(_base.ClientMouseController, "stop", AsyncMock())
@@ -486,3 +498,47 @@ class TestClientStopKeepsTheRemoteDesktopSession:
             await controller.stop()
 
         stub.shutdown_connection.assert_not_called()
+        link.close.assert_not_called()
+        link.remove_failure_listener.assert_called_once()
+
+    @pytest.mark.anyio
+    async def test_a_denial_from_the_connect_thread_reaches_the_bus(self):
+        import asyncio
+        import threading
+
+        from input.mouse import _base
+
+        link = MagicMock(denied_reason=None)
+        controller = self._controller(link)
+        with patch.object(_base.ClientMouseController, "start", AsyncMock()):
+            await controller.start()
+        listener = link.add_failure_listener.call_args.args[0]
+
+        thread = threading.Thread(target=listener, args=("refused",))
+        thread.start()
+        thread.join()
+        for _ in range(50):
+            if controller.event_bus.dispatch.await_count:
+                break
+            await asyncio.sleep(0.01)
+
+        controller.event_bus.dispatch.assert_awaited_once_with(
+            event_type=BusEventType.CLIENT_INPUT_PERMISSION_DENIED, data="refused"
+        )
+
+    @pytest.mark.anyio
+    async def test_a_denial_while_stopped_is_reported_on_the_next_start(self):
+        import asyncio
+
+        from input.mouse import _base
+
+        link = MagicMock(denied_reason="nobody answered")
+        controller = self._controller(link)
+        with patch.object(_base.ClientMouseController, "start", AsyncMock()):
+            await controller.start()
+        for _ in range(50):
+            if controller.event_bus.dispatch.await_count:
+                break
+            await asyncio.sleep(0.01)
+
+        controller.event_bus.dispatch.assert_awaited_once()
