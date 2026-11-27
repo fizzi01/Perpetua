@@ -1068,3 +1068,40 @@ class TestUpdateClientsPayload:
 
         cmd = listener._cmd_queue.get_nowait()
         assert cmd["clients"] == {}
+
+
+class TestUnknownEventTypes:
+    """libei >= 1.x emits events snegg's enum lacks (EI_EVENT_SYNC = 91, seen
+    on GNOME 50); ``event.event_type`` raises ValueError on them."""
+
+    @staticmethod
+    def _unknown_event():
+        event = MagicMock()
+        type(event).event_type = property(
+            lambda self: (_ for _ in ()).throw(
+                ValueError("91 is not a valid EventType")
+            )
+        )
+        return event
+
+    def test_event_type_is_none_for_an_unknown_value(self, libei):
+        assert libei._event_type(self._unknown_event()) is None
+
+    def test_dispatch_loop_skips_it_and_still_sees_the_disconnect(
+        self, libei, monkeypatch
+    ):
+        disconnect = MagicMock(event_type=libei.EventType.DISCONNECT)
+        conn = libei._EiConnection()
+        conn._sender = MagicMock()
+        conn._sender.events = [self._unknown_event(), disconnect]
+        conn._device = MagicMock()
+        poller = MagicMock()
+        poller.poll.return_value = [(0, 1)]
+        monkeypatch.setattr(libei._select, "poll", lambda: poller)
+
+        conn._dispatch_loop()
+
+        # An escaping ValueError would end the thread with _error still None:
+        # the connection would look healthy with nobody dispatching it.
+        assert conn._device is None
+        assert "disconnected" in str(conn._error)

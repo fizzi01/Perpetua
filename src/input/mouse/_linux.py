@@ -469,17 +469,6 @@ class ClientMouseController(_base.ClientMouseController):
     MOVEMENT_HISTORY_N_THRESHOLD = 4
     MOVEMENT_HISTORY_LEN = 5
 
-    async def stop(self):
-        await super().stop()
-        if not (is_wayland() and (is_gnome() or is_kde())):
-            return
-        # Close the RemoteDesktop portal session used for injection. It lives
-        # in a module-level singleton, so without this it outlives the client
-        # service and the next start is handed a connection whose compositor
-        # session is already gone.
-        try:
-            from .backend._libei import shutdown_connection
-
-            shutdown_connection()
-        except Exception as exc:
-            self._logger.debug("libei connection shutdown failed", error=str(exc))
+    # No stop() override: the RemoteDesktop session is kept for the daemon's
+    # lifetime, since each new session is a new consent dialog. A session the
+    # compositor dropped meanwhile is reopened by MouseController._ensure_conn.

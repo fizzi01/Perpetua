@@ -51,6 +51,18 @@ def _ei_from_fd(cls, fd: int, name: str):
         return cls.create_for_fd(fd, name=name)
 
 
+def _event_type(event) -> EventType | None:
+    """The event's type, or None for one snegg's enum doesn't know.
+
+    libei >= 1.x sends EI_EVENT_PONG/EI_EVENT_SYNC (90/91), on which
+    ``event.event_type`` raises ValueError (seen on GNOME 50 / libei 1.5).
+    """
+    try:
+        return event.event_type
+    except ValueError:
+        return None
+
+
 def _suppress_libei_stderr():
     """Redirect stderr fd to /dev/null to silence libei C-level debug spam."""
     try:
@@ -327,15 +339,14 @@ class _EiConnection:
             if poller.poll(100):
                 self._sender.dispatch()
             for event in self._sender.events:
-                if event.event_type == EventType.SEAT_ADDED and not seat_bound:
+                etype = _event_type(event)
+                if etype == EventType.SEAT_ADDED and not seat_bound:
                     event.seat.bind(_CONTROLLER_CAPABILITIES)
                     seat_bound = True
-                elif event.event_type == EventType.DEVICE_ADDED and device is None:
+                elif etype == EventType.DEVICE_ADDED and device is None:
                     device = event.device
                     device.start_emulating(0)
-                elif (
-                    event.event_type == EventType.DEVICE_RESUMED and device is not None
-                ):
+                elif etype == EventType.DEVICE_RESUMED and device is not None:
                     caps = device.capabilities
                     self._has_pointer = DeviceCapability.POINTER in caps
                     self._has_pointer_abs = DeviceCapability.POINTER_ABSOLUTE in caps
@@ -373,7 +384,7 @@ class _EiConnection:
                     break
 
                 for event in self._sender.events:
-                    etype = event.event_type
+                    etype = _event_type(event)
 
                     if etype == EventType.DEVICE_PAUSED:
                         self._paused.set()
@@ -803,7 +814,7 @@ def _wait_for_seat(receiver, logger, keep_waiting=None):
             receiver.dispatch()
 
         for event in receiver.events:
-            etype = event.event_type
+            etype = _event_type(event)
 
             if etype == EventType.SEAT_ADDED:
                 event.seat.bind(_LISTENER_CAPABILITIES)
@@ -1459,11 +1470,7 @@ class MouseListener:
 
     def _handle_ei_event(self, event, session: _CaptureSession, logger):
         """Process a single EIS event."""
-        try:
-            etype = event.event_type
-        except Exception:
-            return None
-
+        etype = _event_type(event)
         try:
             if etype == EventType.POINTER_MOTION:
                 if session.captured:

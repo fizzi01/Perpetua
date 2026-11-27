@@ -461,3 +461,28 @@ class TestServerStopClosesTheLibeiConnection:
             assert wayland_listener.stop() is True
 
         stub.shutdown_connection.assert_called_once()
+
+
+class TestClientStopKeepsTheRemoteDesktopSession:
+    @pytest.mark.anyio
+    async def test_client_stop_does_not_close_the_portal_session(self):
+        # Each new RemoteDesktop session is a new consent dialog on the client,
+        # so a disconnect from the server must not tear it down.
+        import sys
+        import types
+
+        from input.mouse import _base, _linux
+
+        stub = types.ModuleType("input.mouse.backend._libei")
+        stub.shutdown_connection = MagicMock()
+        controller = object.__new__(_linux.ClientMouseController)
+        with ExitStack() as stack:
+            for p in _patch_wayland_geometry():
+                stack.enter_context(p)
+            stack.enter_context(patch.dict(sys.modules, {stub.__name__: stub}))
+            stack.enter_context(
+                patch.object(_base.ClientMouseController, "stop", AsyncMock())
+            )
+            await controller.stop()
+
+        stub.shutdown_connection.assert_not_called()
