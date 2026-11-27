@@ -577,6 +577,7 @@ class MessageExchange:
         target: Optional[str] = None,
         server_uid: Optional[str] = None,
         monitors: Optional[List[Dict[str, Any]]] = None,
+        capabilities: Optional[Dict[str, Any]] = None,
     ):
         """Send handshake message.
 
@@ -595,6 +596,7 @@ class MessageExchange:
             target=target,
             server_uid=server_uid,
             monitors=monitors,
+            capabilities=capabilities,
         )
         await self._send_message(message)
 

@@ -112,6 +112,22 @@ class Screen(_base.Screen):
 
     @classmethod
     def _monitors_wayland(cls) -> "list[MonitorInfo] | None":
+        """Wayland monitors: libei regions when a RemoteDesktop session is live.
+
+        ``wl_output`` modes are physical pixels placed at logical origins, so
+        any scaling makes rectangles overlap. The regions of the injection
+        device are logical, scaled, and in the very space absolute motion
+        uses. ``wl_output`` still provides ids and names, matched by origin,
+        so saved placements keep pointing at the same monitor.
+        """
+        outputs = cls._monitors_wl_output() or []
+        regions = _ei_regions()
+        if not regions:
+            return outputs or None
+        return _merge_regions(outputs, regions)
+
+    @classmethod
+    def _monitors_wl_output(cls) -> "list[MonitorInfo] | None":
         """Enumerate wl_output globals, reading geometry (origin + mode)."""
         try:
             import wayland as _wayland
@@ -263,3 +279,48 @@ class Screen(_base.Screen):
     @classmethod
     def hide_icon(cls):
         pass
+
+
+def _ei_regions() -> list[tuple[int, int, int, int, float]]:
+    try:
+        from input.mouse.backend._libei import remote_desktop_regions
+    except Exception:
+        return []
+    try:
+        return remote_desktop_regions()
+    except Exception:
+        return []
+
+
+def _merge_regions(
+    outputs: list[MonitorInfo], regions: list[tuple[int, int, int, int, float]]
+) -> list[MonitorInfo]:
+    by_origin = {(o.min_x, o.min_y): o for o in outputs}
+    next_id = max((o.monitor_id for o in outputs), default=-1) + 1
+    merged = []
+    for x, y, w, h, scale in sorted(regions, key=lambda r: (r[1], r[0])):
+        output = by_origin.get((x, y))
+        if output is not None:
+            monitor_id, name, primary = (
+                output.monitor_id,
+                output.name,
+                output.is_primary,
+            )
+        else:
+            monitor_id, name, primary = next_id, "", False
+            next_id += 1
+        merged.append(
+            MonitorInfo(
+                monitor_id=monitor_id,
+                min_x=x,
+                min_y=y,
+                max_x=x + w,
+                max_y=y + h,
+                is_primary=primary,
+                name=name,
+                scaling_factor=scale,
+            )
+        )
+    if merged and not any(m.is_primary for m in merged):
+        merged[0] = MonitorInfo(**{**merged[0].to_dict(), "is_primary": True})
+    return merged

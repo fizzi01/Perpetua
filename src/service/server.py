@@ -22,6 +22,7 @@ import asyncio
 import errno
 import socket
 import sys
+import threading
 
 from typing import Optional, Dict, List, Tuple, Callable, Awaitable
 
@@ -36,6 +37,7 @@ from event.notification import (
     ClientConnectedEvent as ClientConnectedNotification,
     ClientDisconnectedEvent as ClientDisconnectedNotification,
     ConfigSavedEvent,
+    InputConsentEvent,
     MonitorTopologyChangedEvent,
     OtpGeneratedEvent,
     PairingRequestEvent,
@@ -47,6 +49,7 @@ from event import (
     BusEventType,
     ClientConnectedEvent,
     ClientDisconnectedEvent,
+    ClientInputConsentEvent,
     ClientLayoutUpdatedEvent,
     ClientMonitorsUpdatedEvent,
     ClientStreamReconnectedEvent,
@@ -834,6 +837,7 @@ class Server:
                 client_uid=client.uid,
                 edge_bindings=edge_bindings,
                 intra_client_bindings=intra_client_bindings,
+                client_monitors=[m.to_dict() for m in client.monitors],
             ),
         )
 
@@ -975,6 +979,7 @@ class Server:
                         client_uid=client.uid,
                         edge_bindings=edge_bindings,
                         intra_client_bindings=intra_client_bindings,
+                        client_monitors=[m.to_dict() for m in client.monitors],
                     ),
                 )
             except Exception as e:
@@ -1710,7 +1715,11 @@ class Server:
                     if asyncio.iscoroutinefunction(component.stop):
                         tasks.append(asyncio.create_task(component.stop()))
                     else:
-                        component.stop()
+                        tasks.append(
+                            asyncio.create_task(
+                                self._stop_sync_component(component_name, component)
+                            )
+                        )
             except Exception as e:
                 self._logger.error(
                     "Error stopping component",
@@ -1744,6 +1753,60 @@ class Server:
         self._running = False
         self._logger.info("Server stopped")
 
+    # A synchronous component stop that blocks longer than this is treated as
+    # stuck: we log it and carry on with the rest of the shutdown rather than
+    # letting one component hold the whole service (and the daemon's command
+    # socket) hostage.
+    SYNC_STOP_TIMEOUT = 5.0
+
+    async def _stop_sync_component(self, component_name: str, component):
+        """Run a blocking ``component.stop()`` off the event-loop thread.
+
+        On a daemon thread, not the default executor: a stop that never
+        returns (a thread joined inside a blocking portal call) would hold an
+        executor worker, and ``shutdown_default_executor`` would hang exit on it.
+        """
+        loop = asyncio.get_running_loop()
+        done: asyncio.Future = loop.create_future()
+
+        def _settle(exc):
+            if done.done():
+                return
+            if exc is None:
+                done.set_result(None)
+            else:
+                done.set_exception(exc)
+
+        def _run():
+            try:
+                component.stop()
+            except Exception as exc:
+                error = exc
+            else:
+                error = None
+            try:
+                loop.call_soon_threadsafe(_settle, error)
+            except RuntimeError:
+                pass  # loop already closed: nobody is waiting
+
+        threading.Thread(
+            target=_run, name=f"stop-{component_name}", daemon=True
+        ).start()
+        try:
+            await asyncio.wait_for(done, timeout=self.SYNC_STOP_TIMEOUT)
+        except asyncio.TimeoutError:
+            self._logger.warning(
+                "Component did not stop in time; continuing shutdown",
+                component=component_name,
+                timeout=self.SYNC_STOP_TIMEOUT,
+            )
+        except Exception as e:
+            self._logger.error(
+                "Error stopping component",
+                component=component_name,
+                error=str(e),
+            )
+
     def cleanup(self):
         self._logger.info("Cleaning up resources...")
         self._components.clear()
@@ -1756,6 +1819,19 @@ class Server:
 
     def is_running(self) -> bool:
         return self._running
+
+    def abandon(self) -> None:
+        """Treat a stop that timed out as done.
+
+        A cancelled ``stop()`` leaves ``_running`` set, and the daemon then
+        refuses to start the other service. Whatever is still stuck is logged
+        by the stop path; it can't be waited for here.
+        """
+        self._running = False
+        try:
+            self.cleanup()
+        except Exception as e:
+            self._logger.warning("Cleanup after abandoned stop failed", error=str(e))
 
     async def _initialize_streams(self):
         # All stream handlers must exist before any starts so event
@@ -1820,6 +1896,10 @@ class Server:
         self.event_bus.subscribe(
             event_type=BusEventType.CLIENT_MONITORS_UPDATED,
             callback=self._on_client_monitors_updated,
+        )
+        self.event_bus.subscribe(
+            event_type=BusEventType.CLIENT_INPUT_CONSENT_CHANGED,
+            callback=self._on_client_input_consent,
         )
 
         await self._enable_mouse_stream()
@@ -1988,6 +2068,40 @@ class Server:
         if clipboard_stream:
             await clipboard_stream.stop()
 
+    def _fit_placements_to_monitors(self, client: ClientObj, server_monitors) -> bool:
+        """Give each placement its client monitor's current size.
+
+        A placement is sized from the monitor when the admin places it, so a
+        later resolution or scale change on the client has to reach it here;
+        the editor draws the stored size. The workspace position stays.
+        """
+        from utils.screen import resize_placement
+
+        sizes = {m.monitor_id: (m.width, m.height) for m in client.monitors or []}
+        changed = False
+        fitted: list[dict] = []
+        for p in client.placements or []:
+            try:
+                size = sizes.get(int(p.get("client_monitor_id")))
+            except (TypeError, ValueError):
+                size = None
+            if (
+                size is not None
+                and size[0] > 0
+                and size[1] > 0
+                and (p.get("width"), p.get("height")) != size
+            ):
+                p = resize_placement(p, size[0], size[1], server_monitors)
+                changed = True
+            fitted.append(p)
+        if changed:
+            client.placements = fitted
+            self._logger.info(
+                "Placements resized to the client's monitors",
+                client=client.get_net_id(),
+            )
+        return changed
+
     async def _on_client_connected(self, client: ClientObj, streams: list[int]):
         # Same binding list drives forward routing (server listener) and
         # reverse routing (pushed via the CLIENT_TOPOLOGY command).
@@ -2004,6 +2118,15 @@ class Server:
             server_monitors = Screen.get_monitors_cached()
         except Exception:
             server_monitors = []
+        # The handshake replaced the monitor list; sizes may have changed
+        # while the client was away. save_config below persists the fit.
+        if self._fit_placements_to_monitors(client, server_monitors):
+            try:
+                self.clients_manager.update_client(client)
+            except Exception as e:
+                self._logger.warning(
+                    "Failed to update resized placements", error=str(e)
+                )
         edge_bindings = [
             eb.to_dict() for eb in client.get_edge_bindings(server_monitors)
         ]
@@ -2016,6 +2139,8 @@ class Server:
                 streams=streams,
                 edge_bindings=edge_bindings,
                 intra_client_bindings=intra_client_bindings,
+                client_monitors=[m.to_dict() for m in client.monitors],
+                cursor_feedback=client.cursor_feedback,
             ),
         )
         await self.save_config()
@@ -2054,6 +2179,31 @@ class Server:
         await self.event_bus.dispatch(
             event_type=BusEventType.CLIENT_STREAM_RECONNECTED,
             data=ClientStreamReconnectedEvent(client_uid=client.uid, streams=streams),
+        )
+
+    async def _on_client_input_consent(
+        self, data: Optional[ClientInputConsentEvent]
+    ) -> None:
+        """Show the admin, at the server, why a client isn't taking input yet."""
+        if data is None or not data.client_uid:
+            return
+        client = self.config.get_client(uid=data.client_uid)
+        if client is None:
+            return
+        self._logger.info(
+            "Client input consent",
+            client=client.get_net_id(),
+            state=data.state,
+            reason=data.reason,
+        )
+        await self._send_notification(
+            InputConsentEvent(
+                state=data.state,
+                reason=data.reason,
+                client_uid=client.uid,
+                client_name=client.get_net_id(),
+                source="server",
+            )
         )
 
     async def _on_client_monitors_updated(
@@ -2119,10 +2269,13 @@ class Server:
 
         client.monitors = new_monitors
 
+        try:
+            server_monitors = Screen.get_monitors_cached()
+        except Exception:
+            server_monitors = []
+
         # Drop placements whose ``client_monitor_id`` is no longer
-        # advertised. Other placements survive untouched - the OS
-        # bbox may have changed but the workspace target stays the
-        # same until the admin opens the layout editor.
+        # advertised; the rest follow their monitor's new size.
         known_ids = {m.monitor_id for m in new_monitors}
         orphans: list[dict] = []
         kept: list[dict] = []
@@ -2151,6 +2304,7 @@ class Server:
 
         if orphans:
             client.placements = kept
+        self._fit_placements_to_monitors(client, server_monitors)
 
         try:
             self.clients_manager.update_client(client)
@@ -2170,10 +2324,6 @@ class Server:
         # Refresh the listener's edge-binding cache so the next
         # crossing routes against the new monitor topology.
         try:
-            server_monitors = Screen.get_monitors_cached()
-        except Exception:
-            server_monitors = []
-        try:
             edge_bindings = [
                 eb.to_dict() for eb in client.get_edge_bindings(server_monitors)
             ]
@@ -2184,6 +2334,7 @@ class Server:
                     client_uid=client.uid,
                     edge_bindings=edge_bindings,
                     intra_client_bindings=intra_client_bindings,
+                    client_monitors=[m.to_dict() for m in client.monitors],
                 ),
             )
         except Exception as e:

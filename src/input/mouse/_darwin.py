@@ -947,7 +947,7 @@ class ClientMouseController(_base.ClientMouseController):
         self._immobile_moves = 0
         CGWarpMouseCursorPosition((float(x), float(y)))
 
-    def _inject_relative(self, dx: int, dy: int) -> tuple[int, int]:
+    def _inject_relative(self, dx: int, dy: int) -> None:
         """Deliver relative motion the way a physical mouse does.
 
         The delta goes to the ``IOHIDSystem`` via ``IOHIDPostEvent``, which sits
@@ -971,14 +971,8 @@ class ClientMouseController(_base.ClientMouseController):
         through a CGEvent). Falling back to a CGEvent for drags instead - which
         is what this did at first - reintroduced the absolute position, so
         holding a button in a game made the grabbed cursor drift again.
-
-        The return value is the displacement the cursor *actually took*, which
-        the OS decides here: it is measured from the position observed at the
-        previous injection, so a grabbed (immobile) cursor correctly reports no
-        travel to ``_accumulate_inward_travel``.
         """
         pos = self._cursor_position()
-        applied = (0, 0)
         if pos is not None:
             if self._last_seen_pos is not None:
                 applied = (
@@ -1012,7 +1006,7 @@ class ClientMouseController(_base.ClientMouseController):
             hid_type = _NX_MOUSEMOVED
 
         if _hid_injector.post(dx, dy, hid_type):
-            return applied
+            return
         if _hid_injector.failure is not None:
             # Drains the reason, so this reports once per degradation rather
             # than once per event.
@@ -1020,7 +1014,8 @@ class ClientMouseController(_base.ClientMouseController):
 
         try:
             if pos is None:
-                return super()._inject_relative(dx, dy)
+                super()._inject_relative(dx, dy)
+                return
             # Clamp to the desktop. A CGEvent carries an absolute location, and
             # the position we read back is the one we posted, not the one the
             # cursor ended up at: pushing past a screen edge would compound
@@ -1045,7 +1040,6 @@ class ClientMouseController(_base.ClientMouseController):
             CGEventSetIntegerValueField(event, kCGMouseEventDeltaX, int(dx))
             CGEventSetIntegerValueField(event, kCGMouseEventDeltaY, int(dy))
             CGEventPost(kCGHIDEventTap, event)
-            return applied
         except Exception as e:
             self._logger.error("relative CGEvent injection failed", error=str(e))
-            return super()._inject_relative(dx, dy)
+            super()._inject_relative(dx, dy)

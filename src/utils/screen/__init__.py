@@ -30,6 +30,7 @@ from ._monitor import (
     compute_edge_bindings,
     compute_intra_client_bindings,
     reconcile_bindings_with_client_monitors,
+    resize_placement,
 )
 
 if TYPE_CHECKING:
@@ -54,4 +55,5 @@ __all__ = [
     "EdgeBinding",
     "compute_edge_bindings",
     "compute_intra_client_bindings",
+    "resize_placement",
 ]

@@ -31,6 +31,7 @@ import {
     ClientStatus,
     CommandType,
     EventType,
+    InputConsent,
     NetworkInterfacesResult,
     ServerChoice,
     ServerFound,
@@ -188,7 +189,7 @@ export function ClientTab({onStatusChange, state}: ClientTabProps) {
         return otpSubmittedPairingKeyRef.current === currentPairingKeyRef.current;
     };
 
-    const addNotification = (type: Notification['type'], message: string, description?: string) => {
+    const addNotification = (type: Notification['type'], message: string, description?: string, durationMs = 4000) => {
         if (!notificationsMounted.current) return;
         const newNotification: Notification = {
             id: `client-notification-${++notificationSequence.current}`,
@@ -200,7 +201,7 @@ export function ClientTab({onStatusChange, state}: ClientTabProps) {
         const timer = setTimeout(() => {
             notificationTimers.current.delete(timer);
             if (notificationsMounted.current) setNotifications(prev => prev.filter(n => n.id !== newNotification.id));
-        }, 4000);
+        }, durationMs);
         notificationTimers.current.add(timer);
     };
 
@@ -348,7 +349,23 @@ export function ClientTab({onStatusChange, state}: ClientTabProps) {
                 let res = event.data as ServiceError;
                 if (!res) return;
                 if (res.service_name.toLowerCase() !== 'client') return;
+                if (res.reason === 'input_permission_denied') {
+                    addNotification('error', 'Remote control not allowed', `${res.error}. Connect again to be asked again.`, 10000);
+                    return;
+                }
                 addNotification('error', 'Connection Error', res.error || 'An unknown error occurred during connection');
+            });
+
+            // Wayland: the system asks once whether this computer may be
+            // controlled; the answer is remembered across restarts.
+            subscribe(EventType.InputConsent, false, (event) => {
+                const info = event.data as InputConsent | undefined;
+                if (!info) return;
+                if (info.state === 'pending') {
+                    addNotification('info', 'Allow remote control', 'Accept the system dialog on this computer (first time only).', 15000);
+                } else if (info.state === 'granted') {
+                    addNotification('success', 'Remote control allowed');
+                }
             });
 
             // The stored CA cert no longer verifies (server regenerated its

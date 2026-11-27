@@ -55,6 +55,7 @@ import {
     ClientObj,
     CommandType,
     EventType,
+    InputConsent,
     NetworkInterfaceInfo,
     NetworkInterfacesResult,
     OtpInfo,
@@ -279,7 +280,7 @@ export function ServerTab({onStatusChange, state}: ServerTabProps) {
         });
     }, [state.pending_approvals]);
 
-    const addNotification = (type: Notification['type'], message: string, description?: string) => {
+    const addNotification = (type: Notification['type'], message: string, description?: string, durationMs = 4000) => {
         if (!notificationsMounted.current) return;
         const newNotification: Notification = {
             id: `server-notification-${++notificationSequence.current}`,
@@ -291,7 +292,7 @@ export function ServerTab({onStatusChange, state}: ServerTabProps) {
         const timer = setTimeout(() => {
             notificationTimers.current.delete(timer);
             if (notificationsMounted.current) setNotifications(prev => prev.filter(n => n.id !== newNotification.id));
-        }, 4000);
+        }, durationMs);
         notificationTimers.current.add(timer);
     };
 
@@ -693,6 +694,21 @@ export function ServerTab({onStatusChange, state}: ServerTabProps) {
                 const info = event.data as ClientRejected | undefined;
                 if (!info || !info.peer_ip) return;
                 clientCallbacks.current?.rejected(info);
+            });
+
+            // A Wayland client is asking, or was asked, for remote input
+            // consent. The dialog is on the client, the admin is usually here.
+            subscribe(EventType.InputConsent, false, (event) => {
+                const info = event.data as InputConsent | undefined;
+                if (!info) return;
+                const who = info.client_name || 'Client';
+                if (info.state === 'pending') {
+                    addNotification('warning', `${who} needs permission`, 'Accept the remote control dialog on that computer (first time only).', 15000);
+                } else if (info.state === 'granted') {
+                    addNotification('success', `${who}: remote control allowed`);
+                } else if (info.state === 'denied') {
+                    addNotification('error', `${who}: remote control not allowed`, `${info.reason || 'Permission denied'}. Reconnect the client to ask again.`, 10000);
+                }
             });
 
             // Server monitor hot-plug/topology change. The daemon already

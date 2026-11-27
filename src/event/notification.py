@@ -129,6 +129,8 @@ class NotificationEventType(str, Enum):
     # Permission events (macOS Accessibility / Input Monitoring gate)
     PERMISSIONS_REQUIRED = "permissions_required"
     PERMISSIONS_GRANTED = "permissions_granted"
+    # Wayland RemoteDesktop consent on a client: pending / granted / denied.
+    INPUT_CONSENT = "input_consent"
 
     # General events
     STATUS_UPDATE = "status_update"
@@ -936,6 +938,42 @@ class PermissionsRequiredEvent(NotificationEvent):
             data=data,
             source="daemon",
             message="Required system permissions are missing",
+        )
+
+
+@dataclass
+class InputConsentEvent(NotificationEvent):
+    """A client's remote input consent changed.
+
+    On the client ``client_name`` is None and the dialog is on this machine;
+    on the server it names the client whose dialog it is.
+    """
+
+    def __init__(
+        self,
+        state: str,
+        reason: Optional[str] = None,
+        client_uid: Optional[str] = None,
+        client_name: Optional[str] = None,
+        source: str = "client",
+    ):
+        data = {
+            "state": state,
+            "reason": reason,
+            "client_uid": client_uid,
+            "client_name": client_name,
+        }
+        where = client_name or "this computer"
+        messages = {
+            "pending": f"Remote control needs permission: accept the system dialog on {where}",
+            "granted": f"Remote control allowed on {where}",
+            "denied": reason or f"Remote control was not allowed on {where}",
+        }
+        super().__init__(
+            event_type=NotificationEventType.INPUT_CONSENT,
+            data=data,
+            source=source,
+            message=messages.get(state, state),
         )
 
 

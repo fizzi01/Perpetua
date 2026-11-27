@@ -26,58 +26,88 @@ import asyncio
 
 from typing import Optional
 
-from input._platform import is_wayland, is_gnome, is_kde
+from input._platform import (
+    cursor_feedback_available,
+    input_capture_available,
+    is_wayland,
+    remote_desktop_available,
+)
+from input.utils import ScreenEdge
 from . import _base
 
 from event import (
     BusEventType,
     MouseEvent,
     ActiveScreenChangedEvent,
-    CrossScreenCommandEvent,
     ClientConnectedEvent,
     ClientDisconnectedEvent,
 )
 from utils.logging import Logger
-from utils.screen import Screen
 
 
 class ServerMouseListener(_base.ServerMouseListener):
     """Linux mouse listener (Wayland barrier mode or X11 pynput)."""
 
-    # Offset from screen edge (normalized)
-    _EDGE_OFFSET = 0.02
     MOVEMENT_HISTORY_N_THRESHOLD = 4
     MOVEMENT_HISTORY_LEN = 5
 
+    # Barrier edge names as reported by the InputCapture portal, mapped to
+    # the shared ``ScreenEdge`` enum so the Wayland path can reuse the
+    # base spatial resolver.
+    _STRING_TO_SCREEN_EDGE: dict[str, ScreenEdge] = {
+        "left": ScreenEdge.LEFT,
+        "right": ScreenEdge.RIGHT,
+        "top": ScreenEdge.TOP,
+        "bottom": ScreenEdge.BOTTOM,
+    }
+
     def __init__(self, *args, **kwargs):
-        self._barrier_mode = is_wayland() and (is_gnome() or is_kde())
+        self._barrier_mode = is_wayland() and input_capture_available()
         super().__init__(*args, **kwargs)
 
         if self._barrier_mode:
             # UID of the captured client; None while the server owns the cursor.
             self._active_client_barrier: Optional[str] = None
-            self._barrier_screen_size: tuple[int, int] = Screen.get_size()
-            # Edge -> UID map rebuilt from _edge_bindings_by_client whenever
-            # bindings change; resolves the edge name from the backend.
-            self._edge_to_uid: dict[str, str] = {}
+            # Last activation already logged as unroutable (log dedupe only).
+            self._last_rejected_activation: int = 0
 
             self.event_bus.subscribe(
                 event_type=BusEventType.SCREEN_CHANGE_GUARD,
                 callback=self._on_screen_change_guard_wayland,
             )
 
-    def _refresh_edge_to_uid(self) -> dict[str, bool]:
-        """Rebuild edge -> UID map from _edge_bindings_by_client and return
-        the {edge: True} snapshot the barrier backend expects. First binding
-        wins on edge collisions; per-axis partitioning is X11-only."""
-        edge_to_uid: dict[str, str] = {}
-        for client_uid, bindings in self._edge_bindings_by_client.items():
-            for b in bindings:
-                edge = b.get("server_edge")
-                if edge and edge not in edge_to_uid:
-                    edge_to_uid[edge] = client_uid
-        self._edge_to_uid = edge_to_uid
-        return {edge: True for edge in edge_to_uid}
+    def _active_edges(self) -> set[str]:
+        """Server edges that currently lead to a client.
+
+        Deliberately coarse: the whole edge, not the portion the client monitor
+        abuts. The compositor holds a barrier on every edge regardless (the
+        backend arms all four once at session setup and never touches them
+        again), so this only says which activations are worth acting on. The
+        *portion* is enforced one step further in, by
+        ``_resolve_cross_screen_target``, against the binding's own
+        ``server_axis_start/end``.
+        """
+        by_id = {m.monitor_id: m for m in self._monitor_layout.monitors}
+        edges: set[str] = set()
+
+        for bindings in self._edge_bindings_by_client.values():
+            for binding in bindings:
+                edge = str(binding.get("server_edge") or "")
+                if edge not in self._STRING_TO_SCREEN_EDGE:
+                    continue
+                if binding.get("server_monitor_id") not in by_id:
+                    continue
+                start = max(0.0, min(1.0, float(binding.get("server_axis_start", 0.0))))
+                end = max(0.0, min(1.0, float(binding.get("server_axis_end", 1.0))))
+                if end <= start:
+                    continue
+                edges.add(edge)
+
+        return edges
+
+    def _refresh_edge_state(self) -> dict:
+        """Edge state for the backend: which edges lead to a client."""
+        return {"edges": {edge: True for edge in sorted(self._active_edges())}}
 
     def _create_listener(self):
         if self._barrier_mode:
@@ -88,6 +118,7 @@ class ServerMouseListener(_base.ServerMouseListener):
                 on_click=self._on_barrier_click,
                 on_scroll=self._on_barrier_scroll,
                 on_barrier=self._on_barrier_hit,
+                on_state=self._on_barrier_state,
             )
         return super()._create_listener()
 
@@ -111,7 +142,7 @@ class ServerMouseListener(_base.ServerMouseListener):
             self._listener = self._create_listener()
 
         self._listener.start()
-        self._listener.update_clients(self._refresh_edge_to_uid())
+        self._listener.update_clients(self._refresh_edge_state())
 
         self._logger.debug("Wayland barrier mode started")
         return True
@@ -124,6 +155,14 @@ class ServerMouseListener(_base.ServerMouseListener):
     def _stop_barrier(self) -> bool:
         if self._listener:
             self._listener.stop()
+        # It is a portal session plus a libei dispatch thread
+        # without this it outlives the service.
+        try:
+            from .backend._libei import shutdown_connection
+
+            shutdown_connection()
+        except Exception as exc:
+            self._logger.debug("libei connection shutdown failed", error=str(exc))
         self._logger.debug("Wayland barrier mode stopped")
         return True
 
@@ -135,7 +174,10 @@ class ServerMouseListener(_base.ServerMouseListener):
     async def _on_client_connected(self, data: Optional[ClientConnectedEvent]):
         await super()._on_client_connected(data)
         if self._barrier_mode and data is not None and self._listener:
-            self._listener.update_clients(self._refresh_edge_to_uid())
+            # A client connecting is the user asking for capture, even onto an
+            # edge already bound (reconnecting after cancelling the dialog).
+            # One command, so one dialog at most.
+            self._listener.update_clients(self._refresh_edge_state(), requested=True)
 
     async def _on_client_disconnected(self, data: Optional[ClientDisconnectedEvent]):
         if self._barrier_mode and data is not None:
@@ -155,14 +197,26 @@ class ServerMouseListener(_base.ServerMouseListener):
         await super()._on_client_disconnected(data)
 
         if self._barrier_mode and data is not None and self._listener:
-            self._listener.update_clients(self._refresh_edge_to_uid())
+            self._listener.update_clients(self._refresh_edge_state())
 
     async def _on_client_layout_updated(self, data):
-        # Refresh edge->UID and the barrier backend's edge set so the new
-        # topology takes effect immediately (mirrors X11 hot-reload).
+        # Refresh the edge filter so a newly bound edge takes effect
+        # immediately, without waiting for a reconnect. Mirrors the X11
+        # hot-reload.
         await super()._on_client_layout_updated(data)
         if self._barrier_mode and data is not None and self._listener:
-            self._listener.update_clients(self._refresh_edge_to_uid())
+            self._listener.update_clients(self._refresh_edge_state())
+
+    async def _on_local_monitors_updated(self, data):
+        """Refresh the edge filter after a *server* monitor hotplug.
+
+        The active edges are derived from ``_monitor_layout``, which the base
+        handler has just replaced: a binding whose server monitor is gone no
+        longer contributes an edge, and one on a new monitor starts to.
+        """
+        await super()._on_local_monitors_updated(data)
+        if self._barrier_mode and self._listener:
+            self._listener.update_clients(self._refresh_edge_state())
 
     async def _on_screen_change_guard_wayland(self, data):
         """Handle SCREEN_CHANGE_GUARD on Wayland.
@@ -204,7 +258,9 @@ class ServerMouseListener(_base.ServerMouseListener):
                 y=y,
             )
             if self._listener:
-                self._listener.disable_capture(x, y)
+                # This release repositions the cursor onto the server edge, so the
+                # recapture it provokes is spurious and must be swallowed.
+                self._listener.disable_capture(x, y, suppress_recapture=True)
             self._active_client_barrier = None
             await self.event_bus.dispatch(
                 event_type=BusEventType.ACTIVE_SCREEN_CHANGED,
@@ -212,6 +268,47 @@ class ServerMouseListener(_base.ServerMouseListener):
             )
 
         await asyncio.sleep(0)
+
+    def _on_barrier_state(self, healthy: bool, reason):
+        """Capture-session health, reported from the backend thread.
+
+        Logged at warning level so a session that died and is being retried is
+        visible: it used to fail silently, leaving a server that looked healthy
+        while no edge could be crossed. ``is_alive()`` reflects the same state,
+        which is what lets the service layer restart the listener.
+        """
+        if healthy:
+            if reason:
+                self._logger.info("Wayland capture idle", reason=reason)
+            else:
+                self._logger.info("Wayland capture session healthy")
+            return
+        if getattr(self._listener, "capture_blocked", False):
+            # Stood down waiting on the user: nothing is being retried, so this
+            # is not "unavailable for a moment" and must not read as one.
+            self._logger.error(
+                "Wayland capture stopped asking for permission; allow input "
+                "capture in the system dialog, then reconnect a client",
+                reason=reason,
+            )
+        else:
+            self._logger.warning("Wayland capture session unavailable", reason=reason)
+        if self._loop is not None and not self._loop.is_closed():
+            asyncio.run_coroutine_threadsafe(self._on_capture_lost(), self._loop)
+
+    async def _on_capture_lost(self):
+        """The cursor can't be on a client once capture is gone: hand it back.
+
+        Runs on the loop, which owns ``_active_client_barrier``, and announces
+        the change so the rest of the server stops routing to that client.
+        """
+        if self._active_client_barrier is None:
+            return
+        self._active_client_barrier = None
+        await self.event_bus.dispatch(
+            event_type=BusEventType.ACTIVE_SCREEN_CHANGED,
+            data=ActiveScreenChangedEvent(active_screen=None),
+        )
 
     def _on_barrier_move(self, dx, dy):
         asyncio.run_coroutine_threadsafe(
@@ -246,33 +343,71 @@ class ServerMouseListener(_base.ServerMouseListener):
         )
 
     async def _on_barrier_activated(self, edge: str, cursor_x: float, cursor_y: float):
-        """Dispatch cross-screen events when a barrier is hit. Resolves edge to
-        target UID via _edge_to_uid (Wayland-equivalent of the X11 spatial path)."""
-        target_uid = self._edge_to_uid.get(edge)
-        if not target_uid or target_uid not in self._active_clients:
-            return
+        """Dispatch cross-screen events when a barrier is hit.
 
+        ``cursor_x/cursor_y`` come from the InputCapture portal in absolute
+        desktop coordinates, which is exactly what
+        ``_resolve_cross_screen_target`` wants - so this path resolves the
+        target through the same spatial EdgeBinding lookup as every other
+        backend instead of the edge->UID collapse it used to do. That is
+        what makes the per-axis partitioning, the ``client_monitor_id`` and
+        the ``client_edge`` available here, and going through
+        ``_send_activation_packets`` is what gives the client the topology
+        it needs to route back to the server at all.
+        """
         if self._active_client_barrier is not None:
             return
 
-        self._active_client_barrier = target_uid
+        screen_edge = self._STRING_TO_SCREEN_EDGE.get(edge)
+        if screen_edge is None:
+            return
 
-        off = self._EDGE_OFFSET
-        sw, sh = self._barrier_screen_size
+        # Barrier mode has no pynput move path, so the activation point is the
+        # only observation of the server cursor between returns.
+        self._note_server_cursor(cursor_x, cursor_y)
+
+        resolved = self._resolve_cross_screen_target(
+            edge=screen_edge,
+            cursor_x=cursor_x,
+            cursor_y=cursor_y,
+        )
+        if resolved is None:
+            # Nothing is placed at this point on this edge. Do NOT cross: a
+            # binding covers only the portion of the edge its client monitor
+            # abuts (``server_axis_start/end``), and honouring an activation
+            # outside that range would teleport the cursor to a client that
+            # isn't there. The compositor holds a whole-edge barrier on every
+            # edge, so this is a routine branch, not an error path - it is the
+            # only thing enforcing the bound portion of an edge.
+            # One line per activation, not per tick: a user leaning on an
+            # unbound stretch of edge re-triggers this continuously.
+            activation_id = (
+                self._listener.current_activation_id if self._listener else 0
+            )
+            if activation_id != self._last_rejected_activation:
+                self._last_rejected_activation = activation_id
+                self._logger.debug(
+                    "[BARRIER_ACT] no binding at activation point; releasing",
+                    edge=edge,
+                    cx=cursor_x,
+                    cy=cursor_y,
+                )
+            # The compositor is holding the pointer at the barrier right now -
+            # returning without releasing would strand it there. No recapture
+            # suppression: this release doesn't move the cursor, and swallowing
+            # the next activation would eat a legitimate crossing.
+            if self._listener:
+                self._listener.disable_capture()
+            return
+
+        target_uid, binding, server_axis_norm = resolved
+
         mouse_event = MouseEvent(x=0, y=0, action=MouseEvent.POSITION_ACTION)
+        client_monitor_id, client_entry_edge = self._apply_landing_to_event(
+            mouse_event, screen_edge, binding, server_axis_norm
+        )
 
-        if edge == "left":
-            mouse_event.x = 1.0 - off
-            mouse_event.y = cursor_y / sh if sh else 0.5
-        elif edge == "right":
-            mouse_event.x = off
-            mouse_event.y = cursor_y / sh if sh else 0.5
-        elif edge == "top":
-            mouse_event.x = cursor_x / sw if sw else 0.5
-            mouse_event.y = 1.0 - off
-        elif edge == "bottom":
-            mouse_event.x = cursor_x / sw if sw else 0.5
-            mouse_event.y = off
+        self._active_client_barrier = target_uid
 
         self._logger.debug(
             "[BARRIER_ACT] SENDING position",
@@ -280,6 +415,9 @@ class ServerMouseListener(_base.ServerMouseListener):
             y=round(mouse_event.y, 4),
             client_uid=target_uid,
             edge=edge,
+            entry_edge=client_entry_edge,
+            monitor=client_monitor_id,
+            resolved=binding is not None,
         )
 
         try:
@@ -287,16 +425,12 @@ class ServerMouseListener(_base.ServerMouseListener):
                 event_type=BusEventType.ACTIVE_SCREEN_CHANGED,
                 data=ActiveScreenChangedEvent(active_screen=target_uid),
             )
-            # Carry landing coords on the activation packet so POSITION_ACTION
-            # on the mouse stream can't race CLIENT_ACTIVE on the client.
-            await self.command_stream.send(
-                CrossScreenCommandEvent(
-                    target=target_uid,
-                    x=mouse_event.x,
-                    y=mouse_event.y,
-                )
+            await self._send_activation_packets(
+                target_uid,
+                mouse_event,
+                client_monitor_id,
+                client_entry_edge,
             )
-            await self.stream.send(mouse_event)
         except Exception as e:
             self._logger.error("Error dispatching cross-screen event", error=str(e))
             self._active_client_barrier = None
@@ -305,10 +439,36 @@ class ServerMouseListener(_base.ServerMouseListener):
 class ServerMouseController(_base.ServerMouseController):
     """Linux server-side mouse controller."""
 
+    def __init__(self, *args, **kwargs):
+        self._barrier_mode = is_wayland() and input_capture_available()
+        super().__init__(*args, **kwargs)
+
+    def _create_controller(self):
+        """No controller in barrier mode - the portal owns the placement.
+
+        Building one would open a RemoteDesktop portal session plus a libei
+        dispatch thread that nothing then uses, and leave them running past
+        ``Server.stop()``.
+        """
+        if self._barrier_mode:
+            return None
+        return super()._create_controller()
+
     async def _on_active_screen_changed(self, data: Optional[ActiveScreenChangedEvent]):
         """
         Activate only when the active screen becomes None.
         """
+        if self._barrier_mode:
+            # On Wayland the InputCapture portal is the ONLY authority for
+            # the return landing: ``portal.release(x, y)`` places the cursor
+            # while releasing the capture. Writing it again here would go
+            # through the libei RemoteDesktop controller, whose position is a
+            # virtual accumulator seeded at (0, 0) that nothing ever syncs to
+            # the real pointer on a server (the user's physical mouse moves
+            # the cursor without libei's knowledge). That second write
+            # therefore commands an arbitrary displacement and is what kept
+            # the cursor off the real monitor border after a return.
+            return
         if data is not None:
             active_screen = data.active_screen
             if active_screen is None:
@@ -325,4 +485,65 @@ class ClientMouseController(_base.ClientMouseController):
     MOVEMENT_HISTORY_N_THRESHOLD = 4
     MOVEMENT_HISTORY_LEN = 5
 
-    pass
+    # stop() deliberately leaves the RemoteDesktop session open: it is kept
+    # for the daemon's lifetime, since each new session is a new consent
+    # dialog. A session the compositor dropped is reopened by the link.
+
+    def __init__(self, *args, **kwargs):
+        self._rd_link = _remote_desktop_link()
+        if self._rd_link is not None:
+            # A new controller means the user (re)started the client: that is
+            # the explicit action that may ask for consent again after a denial.
+            self._rd_link.reset()
+        self._loop: Optional[asyncio.AbstractEventLoop] = None
+        # On GNOME/KDE Wayland the libei sender can't read the cursor back:
+        # the server tracks it and sends ABSOLUTE positions instead.
+        self.CURSOR_FEEDBACK = cursor_feedback_available()
+        super().__init__(*args, **kwargs)
+
+    async def start(self):
+        result = await super().start()
+        if self._rd_link is not None:
+            self._loop = asyncio.get_running_loop()
+            self._rd_link.add_failure_listener(self._on_input_permission_denied)
+            self._rd_link.add_consent_listener(self._on_input_consent)
+            if self._rd_link.denied_reason is not None:
+                # Denied while this controller was stopped: nobody heard it.
+                self._on_input_permission_denied(self._rd_link.denied_reason)
+            elif self._rd_link.awaiting_consent:
+                # The dialog opened before this controller was listening.
+                self._on_input_consent(self._rd_link.CONSENT_PENDING)
+        return result
+
+    async def stop(self):
+        if self._rd_link is not None:
+            self._rd_link.remove_failure_listener(self._on_input_permission_denied)
+            self._rd_link.remove_consent_listener(self._on_input_consent)
+        return await super().stop()
+
+    def _on_input_permission_denied(self, reason: str) -> None:
+        """Called from the link's connect thread."""
+        self._dispatch_threadsafe(BusEventType.CLIENT_INPUT_PERMISSION_DENIED, reason)
+
+    def _on_input_consent(self, state: str) -> None:
+        """Called from the link's connect thread."""
+        self._dispatch_threadsafe(BusEventType.CLIENT_INPUT_CONSENT, state)
+
+    def _dispatch_threadsafe(self, event_type: BusEventType, data) -> None:
+        loop = self._loop
+        if loop is None or loop.is_closed():
+            return
+        asyncio.run_coroutine_threadsafe(
+            self.event_bus.dispatch(event_type=event_type, data=data), loop
+        )
+
+
+def _remote_desktop_link():
+    """The libei RemoteDesktop link, or None where injection doesn't use it."""
+    if not (is_wayland() and remote_desktop_available()):
+        return None
+    try:
+        from .backend._libei import remote_desktop_link
+    except Exception:
+        return None
+    return remote_desktop_link()

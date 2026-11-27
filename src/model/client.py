@@ -138,6 +138,9 @@ class ClientObj:
         self.ssl = ssl
         self.conn_socket = conn_socket
         self.is_connected = is_connected
+        # Set from the handshake on every connection, never persisted: False
+        # means the client can't read its cursor and the server tracks it.
+        self.cursor_feedback: bool = True
         self.additional_params = (
             additional_params if additional_params is not None else {}
         )

@@ -909,11 +909,11 @@ class Daemon:
                     self._connected_client_writer = None
 
         if self._server:
-            await self._server.stop()
+            await self._stop_service_bounded("server", self._server)
             self._server = None
 
         if self._client:
-            await self._client.stop()
+            await self._stop_service_bounded("client", self._client)
             self._client = None
 
         if self._socket_server:
@@ -944,6 +944,35 @@ class Daemon:
         # FORCE_EXIT_ENV_VAR — masking a stuck shutdown as success lies
         # about it and loses state on the way out.
         threading.Thread(target=self.delayed_exit, daemon=True).start()
+
+    # Ceiling on a single service teardown. Past this we stop waiting and say
+    # which service is stuck: an unbounded await here meant one wedged
+    # component (a blocking xdg-desktop-portal call, say) hung the whole
+    # shutdown and left the process alive with no explanation.
+    SERVICE_STOP_TIMEOUT = 15.0
+
+    async def _stop_service_bounded(self, name: str, service) -> bool:
+        """Stop a service, giving up after ``SERVICE_STOP_TIMEOUT``.
+
+        Returns whether it stopped cleanly. Either way the service is marked
+        stopped afterwards, so a wedged stop can't block starting the other one.
+        """
+        try:
+            await asyncio.wait_for(service.stop(), timeout=self.SERVICE_STOP_TIMEOUT)
+            return True
+        except asyncio.TimeoutError:
+            self._logger.error(
+                "Service did not stop in time",
+                service=name,
+                timeout=self.SERVICE_STOP_TIMEOUT,
+            )
+        except Exception as e:
+            self._logger.error("Error stopping service", service=name, error=str(e))
+        try:
+            service.abandon()
+        except Exception as e:
+            self._logger.error("Error abandoning service", service=name, error=str(e))
+        return False
 
     def delayed_exit(self):
         time.sleep(self.DELAYED_EXIT_TIMEOUT)
@@ -1394,8 +1423,14 @@ class Daemon:
             return
 
         try:
-            await self._server.stop()
+            stopped = await self._stop_service_bounded("server", self._server)
             self._state["server"].stop()
+            if not stopped:
+                await self._notification_manager.notify_command_error(
+                    command,
+                    "Server did not stop cleanly; see the daemon log",
+                )
+                return
             await self._notification_manager.notify_command_success(
                 command, "Server stopped successfully"
             )
@@ -1470,7 +1505,24 @@ class Daemon:
             return
 
         try:
-            res = await self._client.stop()
+            # Bounded like the server path: a stop that never returns would
+            # otherwise wedge the command socket with no reply to the GUI.
+            try:
+                res = await asyncio.wait_for(
+                    self._client.stop(), timeout=self.SERVICE_STOP_TIMEOUT
+                )
+            except asyncio.TimeoutError:
+                self._logger.error(
+                    "Service did not stop in time",
+                    service="client",
+                    timeout=self.SERVICE_STOP_TIMEOUT,
+                )
+                self._client.abandon()
+                self._state["client"].stop()
+                await self._notification_manager.notify_command_error(
+                    command, "Client did not stop cleanly; see the daemon log"
+                )
+                return
             if not res:
                 await self._notification_manager.notify_command_error(
                     command, "Failed to stop client"

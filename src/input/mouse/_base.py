@@ -42,11 +42,33 @@ from event.bus import EventBus
 from network.stream import StreamType
 from network.stream.handler import StreamHandler
 
-from utils.logging import get_logger
+from utils.logging import Logger, get_logger
 from utils.screen import Screen
 from input.utils import ScreenEdge, EdgeDetector, ButtonMapping
 
 from .backend import MouseListener, MouseController, Button, BACKEND
+from ._routing import (
+    AbsolutePointerTracker,
+    Position,
+    Return,
+    lookup_return_to_server,
+    resolve_intra_warp,
+)
+from model.monitor import MonitorInfo
+
+
+def _parse_monitors(raw) -> list[MonitorInfo]:
+    monitors = []
+    for entry in raw or []:
+        try:
+            monitors.append(
+                entry
+                if isinstance(entry, MonitorInfo)
+                else MonitorInfo.from_dict(entry)
+            )
+        except (KeyError, TypeError, ValueError):
+            continue
+    return monitors
 
 
 class ServerMouseListener(object):
@@ -60,6 +82,10 @@ class ServerMouseListener(object):
     # (px) the server cursor must move inward off the just-returned edge
     # before a crossing through it is allowed again.
     RECROSS_UNLOCK_MARGIN = 12
+    # Minimum spacing between the recurring ``[RECROSS_GATE]`` lines. The lock
+    # is evaluated on every cursor tick (>100 Hz); the transitions (armed,
+    # released, blocked) are logged regardless of it.
+    RECROSS_GATE_LOG_INTERVAL = 0.25
 
     def __init__(
         self,
@@ -80,6 +106,15 @@ class ServerMouseListener(object):
         # against the same data.
         self._edge_bindings_by_client: dict[str, list[dict]] = {}
         self._intra_bindings_by_client: dict[str, list[dict]] = {}
+
+        # Clients that can't read their own cursor (Wayland): the server keeps
+        # their cursor and the mouse stream sends them absolute positions.
+        self._client_monitors: dict[str, list[MonitorInfo]] = {}
+        self._no_feedback_clients: set[str] = set()
+        self._pointer_tracker = AbsolutePointerTracker()
+        self._tracked_client: Optional[str] = None
+        if hasattr(type(self.stream), "set_outbound_filter"):
+            self.stream.set_outbound_filter(self._route_for_client)
 
         # Copy-on-write snapshots consumed by the pynput-thread hot path
         # (on_move -> _resolve_cross_screen_target) without locking. Writers
@@ -143,6 +178,8 @@ class ServerMouseListener(object):
         # the inward check uses the right bbox on multi-monitor servers.
         self._recross_locked_edge: Optional[ScreenEdge] = None
         self._recross_locked_monitor = None
+        # Rate limit for the recurring ``[RECROSS_GATE]`` diagnostic.
+        self._last_recross_gate_log: float = 0.0
 
         self._logger = get_logger(self.__class__.__name__)
 
@@ -159,10 +196,9 @@ class ServerMouseListener(object):
         self._hotkey_cycle_index = -1
 
         self._active_client_uid: Optional[str] = None
-        # Fallback "from" anchor for the directional hotkey resolver when
-        # ``MouseController().position`` fails or the cursor is on a
-        # client (OS position is stale). Seeded to the virtual desktop
-        # centre so the first press has a plausible default.
+        # "From" anchor for the directional hotkey resolver (see
+        # ``_note_server_cursor``). Seeded to the virtual desktop centre so the
+        # first press, before any observation, has a plausible default.
         cx = (self._screen_bbox[0] + self._screen_bbox[2]) // 2
         cy = (self._screen_bbox[1] + self._screen_bbox[3]) // 2
         self._last_server_cursor_pos: tuple[float, float] = (float(cx), float(cy))
@@ -324,6 +360,13 @@ class ServerMouseListener(object):
                     getattr(data, "intra_client_bindings", []) or []
                 )
                 self._rebuild_snapshots()
+            self._client_monitors[client_uid] = _parse_monitors(
+                getattr(data, "client_monitors", None)
+            )
+            if getattr(data, "cursor_feedback", True):
+                self._no_feedback_clients.discard(client_uid)
+            else:
+                self._no_feedback_clients.add(client_uid)
 
         await asyncio.sleep(0)
 
@@ -338,6 +381,10 @@ class ServerMouseListener(object):
             self._edge_bindings_by_client.pop(client_uid, None)
             self._intra_bindings_by_client.pop(client_uid, None)
             self._rebuild_snapshots()
+            self._client_monitors.pop(client_uid, None)
+            self._no_feedback_clients.discard(client_uid)
+            if self._tracked_client == client_uid:
+                self._stop_tracking()
 
             if not self._active_clients:
                 self._listening = False
@@ -361,6 +408,11 @@ class ServerMouseListener(object):
                     getattr(data, "intra_client_bindings", []) or []
                 )
                 self._rebuild_snapshots()
+                monitors = getattr(data, "client_monitors", None)
+                if monitors:
+                    self._client_monitors[data.client_uid] = _parse_monitors(monitors)
+        if self._tracked_client == data.client_uid:
+            self._load_tracker_topology(data.client_uid)
 
         # Stranded-active recovery: if the client the cursor is CURRENTLY
         # on just lost every server-abutting edge binding (a placed
@@ -430,23 +482,10 @@ class ServerMouseListener(object):
         if data is None:
             return
 
-        # When a client is active the OS cursor position is stale (it
-        # holds the server's last position before the crossing); refresh
-        # from the controller only while the server still owns the cursor.
+        # The anchor, never a live read: the controller this replaced was
+        # consulted only while a client was active, i.e. only while the OS
+        # position is stale. See ``_note_server_cursor``.
         x, y = self._last_server_cursor_pos
-        if self._listening:
-            try:
-                from input.mouse.backend import MouseController
-
-                pos = MouseController().position
-                if pos and len(pos) == 2:
-                    x, y = float(pos[0]), float(pos[1])
-                    self._last_server_cursor_pos = (x, y)
-            except Exception as e:
-                self._logger.debug(
-                    "hotkey resolver controller refresh failed",
-                    error=str(e),
-                )
 
         client_uid = self.resolve_neighbour(data.edge, x, y)
         if not client_uid:
@@ -495,6 +534,8 @@ class ServerMouseListener(object):
             return
 
         active_screen = data.active_screen
+        if self._tracked_client is not None and active_screen != self._tracked_client:
+            self._stop_tracking()
 
         if active_screen is not None:
             with self._server_state_lock:
@@ -512,14 +553,42 @@ class ServerMouseListener(object):
             # generates 1-2 ``on_move`` events before the OS clamps
             # against the screen bound, so requiring fresh samples would
             # starve the edge detector.
-            self._listening = False
-            self._active_client_uid = None
             # ...but that retained, edge-ward history means the very next
             # ``on_move`` could re-cross on the same edge. Lock re-crossing
             # through the returned-to edge until the cursor moves inward.
-            self._arm_recross_lock(data.x, data.y)
+            # Armed before ``_listening`` drops: ``on_move`` runs on the
+            # listener thread and checks edges as soon as it reads False.
+            landing_x, landing_y = self._absolute_landing(data.x, data.y)
+            self._arm_recross_lock(landing_x, landing_y)
+            if landing_x >= 0:
+                self._note_server_cursor(landing_x, landing_y)
+            self._listening = False
+            self._active_client_uid = None
 
         await asyncio.sleep(0)
+
+    def _absolute_landing(self, x: float, y: float) -> tuple[float, float]:
+        """The client's return landing, in absolute desktop pixels.
+
+        It arrives normalised over the server's virtual desktop - the same value
+        ``ServerMouseController.position_cursor`` denormalises to place the
+        cursor. ``(-1, -1)`` means "no landing" and passes through.
+        """
+        if x < 0 or y < 0:
+            return -1.0, -1.0
+        min_x, min_y, max_x, max_y, width, height = self._bbox_span()
+        return (
+            max(min_x, min(max_x - 1, min_x + x * width)),
+            max(min_y, min(max_y - 1, min_y + y * height)),
+        )
+
+    def _note_server_cursor(self, x: float, y: float) -> None:
+        """Record the position the directional hotkey resolves from.
+
+        Only called while the server owns the cursor: on a client the local
+        position means nothing, and the pre-crossing point is the right anchor.
+        """
+        self._last_server_cursor_pos = (float(x), float(y))
 
     def _arm_recross_lock(self, x: float, y: float) -> None:
         """Lock re-crossing through the server edge the cursor returned to.
@@ -550,21 +619,56 @@ class ServerMouseListener(object):
             edge = ScreenEdge.BOTTOM
         self._recross_locked_edge = edge
         self._recross_locked_monitor = monitor if edge is not None else None
+        self._log_recross_gate("ARMED" if edge else "not armed", x, y, throttle=False)
 
-    def _recross_lock_blocks(self, edge: ScreenEdge, x: float, y: float) -> bool:
-        """Whether a crossing through ``edge`` is currently suppressed.
+    def _log_recross_gate(
+        self, state: str, x: float, y: float, *, throttle: bool = True
+    ) -> None:
+        """Emit the discriminating state of the re-cross lock.
 
-        Clears the lock once the cursor has moved inward past
-        ``RECROSS_UNLOCK_MARGIN`` from the locked edge (so a later
-        deliberate re-cross through the same edge works), then reports
-        whether the pending crossing is the still-locked edge.
+        The lock decides from the locked edge, the locked monitor and the
+        cursor position, and logged none of them - so an edge that had gone
+        uncrossable was indistinguishable from one with no binding behind it.
+        The counterpart of ``[RETURN_GATE]`` on the client.
+
+        Reading the line, in the order the values fail:
+
+        - ``ARMED`` naming an edge the cursor did not return through - the
+          landing coords are wrong (they arrive normalised; see
+          ``_absolute_landing``) or the wrong monitor was resolved.
+        - ``BLOCKED`` repeating while the user pushes at the locked edge with
+          no ``RELEASED`` in between - the cursor never went ``margin`` px
+          inward, which is the only thing that clears the lock.
+        - no line at all while a crossing does not fire - the lock is not the
+          reason; look at edge detection and the binding lookup.
+        """
+        if not self._logger.is_enabled_for(Logger.DEBUG):
+            return
+        if throttle:
+            now = time()
+            if now - self._last_recross_gate_log < self.RECROSS_GATE_LOG_INTERVAL:
+                return
+            self._last_recross_gate_log = now
+        monitor = self._recross_locked_monitor
+        self._logger.debug(
+            f"[RECROSS_GATE] {state} locked={self._recross_locked_edge} "
+            f"pos=({int(x)}, {int(y)}) margin={self.RECROSS_UNLOCK_MARGIN} "
+            f"monitor={getattr(monitor, 'monitor_id', None)}"
+        )
+
+    def _release_recross_lock(self, x: float, y: float) -> None:
+        """Clear the lock once the cursor has moved inward off the locked edge.
+
+        Evaluated on every move, not only at an edge: mid-screen is where
+        "moved inward" first becomes true, and mid-screen is not an edge.
+        Releasing it only on an edge-detected tick made the edge the cursor
+        returned through uncrossable until some *other* edge was touched.
         """
         locked = self._recross_locked_edge
         if locked is None:
-            return False
+            return
         monitor = self._recross_locked_monitor
         m = self.RECROSS_UNLOCK_MARGIN
-        moved_inward = False
         if monitor is None:
             moved_inward = True
         elif locked == ScreenEdge.LEFT:
@@ -573,13 +677,19 @@ class ServerMouseListener(object):
             moved_inward = x < monitor.max_x - 1 - m
         elif locked == ScreenEdge.TOP:
             moved_inward = y > monitor.min_y + m
-        elif locked == ScreenEdge.BOTTOM:
+        else:  # BOTTOM
             moved_inward = y < monitor.max_y - 1 - m
-        if moved_inward:
-            self._recross_locked_edge = None
-            self._recross_locked_monitor = None
-            return False
-        return edge == locked
+        if not moved_inward:
+            self._log_recross_gate("still locked", x, y)
+            return
+        # Log before clearing, so the line still names the edge it released.
+        self._log_recross_gate("RELEASED", x, y, throttle=False)
+        self._recross_locked_edge = None
+        self._recross_locked_monitor = None
+
+    def _recross_lock_blocks(self, edge: ScreenEdge) -> bool:
+        """Whether a crossing through ``edge`` is currently suppressed."""
+        return edge is not None and edge == self._recross_locked_edge
 
     def _screen_size_valid(self) -> bool:
         return self._screen_size[0] > 0 and self._screen_size[1] > 0
@@ -642,7 +752,13 @@ class ServerMouseListener(object):
                     continue
                 s_start = b.get("server_axis_start", 0.0)
                 s_end = b.get("server_axis_end", 0.0)
-                if s_start <= axis_norm < s_end:
+                # ``axis_norm`` is clamped to [0, 1], so a binding spanning the
+                # whole edge (``s_end == 1.0``) must treat its end as
+                # inclusive: an activation reported at the far corner yields
+                # exactly 1.0 and a half-open test rejects it - releasing the
+                # cursor at the one point the user most obviously meant to
+                # cross.
+                if s_start <= axis_norm and (axis_norm < s_end or s_end >= 1.0):
                     matches.append(client_uid)
                     if first_match is None:
                         first_match = (client_uid, b, axis_norm)
@@ -659,6 +775,185 @@ class ServerMouseListener(object):
                     candidates=list(matches),
                 )
         return first_match
+
+    def _apply_landing_to_event(
+        self,
+        mouse_event: MouseEvent,
+        edge: ScreenEdge,
+        binding: dict,
+        server_axis_norm: float,
+    ) -> tuple[Optional[int], Optional[str]]:
+        """Fill ``mouse_event`` with the client-space landing for a crossing.
+
+        Shared by every backend that resolves a crossing through an
+        EdgeBinding: the pynput ``on_move`` path and the Wayland
+        InputCapture barrier path. Returns
+        ``(client_monitor_id, client_entry_edge)`` for the activation packet.
+
+        Kept free of any import beyond what ``on_move`` already needs: it
+        runs on the pynput listener thread, which must stay off the
+        EdgeBinding import path.
+        """
+        target_monitor_id = binding.get("client_monitor_id")
+        if target_monitor_id is not None:
+            target_monitor_id = int(target_monitor_id)
+
+        # Linear map from server-edge axis_norm to client-edge axis_norm.
+        c_start = binding.get("client_axis_start", 0.0)
+        c_end = binding.get("client_axis_end", 0.0)
+        s_start = binding.get("server_axis_start", 0.0)
+        s_end = binding.get("server_axis_end", 0.0)
+        span = s_end - s_start
+        if span > 0:
+            local = (server_axis_norm - s_start) / span
+            if local < 0.0:
+                local = 0.0
+            elif local > 1.0:
+                local = 1.0
+            client_axis_norm = c_start + local * (c_end - c_start)
+        else:
+            client_axis_norm = c_start
+
+        # ``(x, y)`` is normalised over the destination client monitor's
+        # bbox, not the full client virtual desktop - the client
+        # denormalises against ``_active_target_bbox``. The landing sits
+        # exactly ON the entry edge (0 / 1): the client's outward-push
+        # gate, not an inset, is what stops it bouncing straight back
+        # (see ``_accumulate_outward_push``).
+        if edge == ScreenEdge.LEFT:
+            mouse_event.x = 1
+            mouse_event.y = client_axis_norm
+        elif edge == ScreenEdge.RIGHT:
+            mouse_event.x = 0
+            mouse_event.y = client_axis_norm
+        elif edge == ScreenEdge.TOP:
+            mouse_event.x = client_axis_norm
+            mouse_event.y = 1
+        elif edge == ScreenEdge.BOTTOM:
+            mouse_event.x = client_axis_norm
+            mouse_event.y = 0
+
+        # ``client_edge`` is the client-space edge the cursor enters
+        # through; forwarded to the client so it can lock return-to-server
+        # against that edge until the cursor moves inward.
+        return target_monitor_id, binding.get("client_edge")
+
+    # -- clients without cursor feedback ------------------------------------
+
+    def _load_tracker_topology(self, client_uid: str) -> None:
+        self._pointer_tracker.set_topology(
+            self._client_monitors.get(client_uid) or [],
+            self._edge_bindings_by_client.get(client_uid) or [],
+            self._intra_bindings_by_client.get(client_uid) or [],
+            self._screen_bbox,
+        )
+
+    def _start_tracking(
+        self,
+        client_uid: str,
+        client_monitor_id: Optional[int],
+        x_norm: float,
+        y_norm: float,
+        entry_edge: Optional[str],
+    ) -> None:
+        self._load_tracker_topology(client_uid)
+        self._pointer_tracker.activate(client_monitor_id, x_norm, y_norm, entry_edge)
+        self._tracked_client = client_uid if self._pointer_tracker.active else None
+
+    def _stop_tracking(self) -> None:
+        self._pointer_tracker.deactivate()
+        self._tracked_client = None
+
+    async def _route_for_client(self, data, client):
+        """Mouse-stream filter: relative moves become absolute for a client
+        without cursor feedback, and the server decides when it returns.
+
+        Runs in the stream's single sender task, so moves are applied in order.
+        Everything else passes through untouched.
+        """
+        if (
+            client is None
+            or client.uid not in self._no_feedback_clients
+            or not isinstance(data, MouseEvent)
+            or data.action != MouseEvent.MOVE_ACTION
+        ):
+            return data
+        if self._tracked_client != client.uid:
+            # Activations that bypass _send_activation_packets (hotkey
+            # cycle) start at the centre of the client's first monitor.
+            self._start_tracking(client.uid, None, -1, -1, None)
+            if self._tracked_client is None:
+                return None  # no monitor known yet: nowhere to put it
+        result = self._pointer_tracker.move(data.dx, data.dy)
+        if isinstance(result, Position):
+            return MouseEvent(x=result.x, y=result.y, action=MouseEvent.ABSOLUTE_ACTION)
+        if isinstance(result, Return):
+            self._tracked_client = None
+            # The same two steps as the return hotkey, with the landing the
+            # client would have sent itself.
+            await self.event_bus.dispatch(
+                event_type=BusEventType.SCREEN_CHANGE_GUARD,
+                data=ActiveScreenChangedEvent(
+                    active_screen=None,
+                    source=client.uid,
+                    position=(result.x, result.y),
+                ),
+            )
+            await self.command_stream.send(ForceScreenChangeCommandEvent())
+        return None
+
+    async def _send_activation_packets(
+        self,
+        screen: str,
+        mouse_event: MouseEvent,
+        client_monitor_id: Optional[int] = None,
+        client_entry_edge: Optional[str] = None,
+    ):
+        """Send everything a client needs to become the active screen.
+
+        The topology push is NOT optional: without ``edge_bindings`` and
+        ``server_bbox`` the client's ``_lookup_return_to_server`` bails on
+        its first guard and the cursor can never come back to the server.
+        Every crossing path must go through here - the Wayland barrier path
+        used to hand-roll the two sends below and omit the topology, which
+        is exactly how it lost its return path.
+        """
+        bindings = self._edge_bindings_by_client.get(screen) or []
+        intra_bindings = self._intra_bindings_by_client.get(screen) or []
+        if screen in self._no_feedback_clients:
+            self._start_tracking(
+                screen,
+                client_monitor_id,
+                mouse_event.x,
+                mouse_event.y,
+                client_entry_edge,
+            )
+        if bindings or intra_bindings:
+            await self.command_stream.send(
+                ClientTopologyCommandEvent(
+                    target=screen,
+                    edge_bindings=bindings,
+                    server_bbox=self._screen_bbox,
+                    intra_client_bindings=intra_bindings,
+                )
+            )
+
+        # Carry the landing coords on the activation packet itself: the
+        # mouse stream can outrun the command stream and a POSITION_ACTION
+        # delivered before ``_is_active`` flips True is silently dropped,
+        # leaving the cursor at screen centre. The parallel POSITION_ACTION
+        # below is kept for old clients that don't read ``position_x/_y``
+        # off CLIENT_ACTIVE - idempotent on new clients.
+        await self.command_stream.send(
+            CrossScreenCommandEvent(
+                target=screen,
+                client_monitor_id=client_monitor_id,
+                x=mouse_event.x,
+                y=mouse_event.y,
+                entry_edge=client_entry_edge,
+            )
+        )
+        await self.stream.send(mouse_event)
 
     def resolve_neighbour(
         self,
@@ -695,17 +990,16 @@ class ServerMouseListener(object):
                     self._movement_history.append((x, y))
                 except Exception:
                     pass
-                # Only update the cached anchor while NOT listening: when
-                # the cursor is on a client the OS position is the
-                # server's last-known-before-crossing position, not the
-                # client's live cursor.
-                self._last_server_cursor_pos = (float(x), float(y))
+                self._note_server_cursor(x, y)
             history_ready = (
                 should_buffer
                 and len(self._movement_history) >= self.MOVEMENT_HISTORY_N_THRESHOLD
             )
 
         if not self._listening:
+            # Unconditionally, and before the edge test: the lock is released by
+            # moving inward, which happens where no edge is detected.
+            self._release_recross_lock(x, y)
             if history_ready:
                 edge = EdgeDetector.is_at_edge(
                     movement_history=self._movement_history,
@@ -718,9 +1012,9 @@ class ServerMouseListener(object):
                     return True
 
                 # Suppress an immediate re-cross through the edge the cursor
-                # just returned to (the retained history is still edge-ward);
-                # the lock clears once the cursor has moved inward off it.
-                if self._recross_lock_blocks(edge, x, y):
+                # just returned to: the retained history is still edge-ward.
+                if self._recross_lock_blocks(edge):
+                    self._log_recross_gate(f"BLOCKED edge={edge}", x, y)
                     return True
 
                 mouse_event = MouseEvent(x=x, y=y, action=MouseEvent.POSITION_ACTION)
@@ -733,44 +1027,9 @@ class ServerMouseListener(object):
                 if resolved is None:
                     return True
                 target_screen, binding, server_axis_norm = resolved
-                target_monitor_id = binding.get("client_monitor_id")
-                if target_monitor_id is not None:
-                    target_monitor_id = int(target_monitor_id)
-
-                # Linear map from server-edge axis_norm to client-edge
-                # axis_norm. Inlined here to keep the pynput thread off
-                # the EdgeBinding import path.
-                c_start = binding.get("client_axis_start", 0.0)
-                c_end = binding.get("client_axis_end", 0.0)
-                s_start = binding.get("server_axis_start", 0.0)
-                s_end = binding.get("server_axis_end", 0.0)
-                span = s_end - s_start
-                if span > 0:
-                    local = (server_axis_norm - s_start) / span
-                    if local < 0.0:
-                        local = 0.0
-                    elif local > 1.0:
-                        local = 1.0
-                    client_axis_norm = c_start + local * (c_end - c_start)
-                else:
-                    client_axis_norm = c_start
-
-                # ``(x, y)`` is normalised over the destination
-                # client monitor's bbox, not the full client virtual
-                # desktop - the client denormalises against
-                # ``_active_target_bbox``.
-                if edge == ScreenEdge.LEFT:
-                    mouse_event.x = 1
-                    mouse_event.y = client_axis_norm
-                elif edge == ScreenEdge.RIGHT:
-                    mouse_event.x = 0
-                    mouse_event.y = client_axis_norm
-                elif edge == ScreenEdge.TOP:
-                    mouse_event.x = client_axis_norm
-                    mouse_event.y = 1
-                elif edge == ScreenEdge.BOTTOM:
-                    mouse_event.x = client_axis_norm
-                    mouse_event.y = 0
+                target_monitor_id, client_entry_edge = self._apply_landing_to_event(
+                    mouse_event, edge, binding, server_axis_norm
+                )
 
                 # Mark the crossing in-flight synchronously BEFORE
                 # scheduling: pynput fires ``on_move`` back to back, and
@@ -782,10 +1041,6 @@ class ServerMouseListener(object):
                 # dead loop would leave the listener wedged.
                 with self._server_state_lock:
                     self._handling_cross_screen = True
-                # ``client_edge`` is the client-space edge the cursor enters
-                # through; forwarded to the client so it can lock return-to-
-                # server against that edge until the cursor moves inward.
-                client_entry_edge = binding.get("client_edge")
                 if not self._schedule_async(
                     self._handle_cross_screen(
                         edge,
@@ -859,38 +1114,13 @@ class ServerMouseListener(object):
                     data=ActiveScreenChangedEvent(active_screen=screen),
                 )
 
-                # Push the topology to the activating client so it can
-                # resolve return-to-server crossings AND enforce the
-                # workspace topology over its OS-level monitor adjacency.
-                bindings = self._edge_bindings_by_client.get(screen) or []
-                intra_bindings = self._intra_bindings_by_client.get(screen) or []
-                if bindings or intra_bindings:
-                    await self.command_stream.send(
-                        ClientTopologyCommandEvent(
-                            target=screen,
-                            edge_bindings=bindings,
-                            server_bbox=self._screen_bbox,
-                            intra_client_bindings=intra_bindings,
-                        )
-                    )
-
-                # Carry the landing coords on the activation packet
-                # itself: the mouse stream can outrun the command stream
-                # and a POSITION_ACTION delivered before ``_is_active``
-                # flips True is silently dropped, leaving the cursor at
-                # screen centre. The parallel POSITION_ACTION below is
-                # kept for old clients that don't read ``position_x/_y``
-                # off CLIENT_ACTIVE - idempotent on new clients.
-                await self.command_stream.send(
-                    CrossScreenCommandEvent(
-                        target=screen,
-                        client_monitor_id=client_monitor_id,
-                        x=mouse_event.x,
-                        y=mouse_event.y,
-                        entry_edge=client_entry_edge,
-                    )
+                # Topology push + activation packet + landing position.
+                await self._send_activation_packets(
+                    screen,
+                    mouse_event,
+                    client_monitor_id,
+                    client_entry_edge,
                 )
-                await self.stream.send(mouse_event)
                 await asyncio.sleep(0)
 
         except Exception as e:
@@ -954,7 +1184,7 @@ class ServerMouseController(object):
         # any of them when control returns from a client.
         self._screen_bbox: tuple[int, int, int, int] = Screen.get_virtual_bbox()
 
-        self._controller = MouseController()
+        self._controller = self._create_controller()
         self._logger = get_logger(self.__class__.__name__)
 
         self._logger.info(
@@ -970,6 +1200,16 @@ class ServerMouseController(object):
             event_type=BusEventType.LOCAL_MONITORS_UPDATED,
             callback=self._on_local_monitors_updated,
         )
+
+    def _create_controller(self):
+        """The controller used to place the server cursor on a return.
+
+        A hook so a backend that never positions the cursor itself can skip
+        building one - on Wayland that avoids opening a RemoteDesktop portal
+        session (and its dispatch thread) that would go completely unused.
+        Returning ``None`` is allowed; ``position_cursor`` no-ops then.
+        """
+        return MouseController()
 
     async def _on_local_monitors_updated(self, data):
         """Refresh the virtual-desktop bbox after a local monitor hotplug.
@@ -1008,6 +1248,8 @@ class ServerMouseController(object):
 
     def position_cursor(self, x: float | int, y: float | int):
         """Place the cursor from normalised ``(x, y)`` over the virtual desktop bbox."""
+        if self._controller is None:
+            return
         try:
             min_x, min_y, max_x, max_y = self._screen_bbox
             width = max_x - min_x
@@ -1051,21 +1293,23 @@ class ClientMouseController(object):
     # resumes the moment the cursor moves again. Backends that always apply
     # the delta (Windows, Linux, the macOS CGEvent fallback) never reach this.
     IMMOBILE_MOVES_BEFORE_HOLD = 3
-    # Hysteresis for the entry-edge return lock. After a crossing the cursor
-    # lands ON the entry edge, which is also the edge used to return to the
-    # server; a single reverse HID jitter would otherwise bounce control
-    # straight back. Return-to-server through the entry edge is gated by the
-    # LAG-FREE ``_inward_travel`` (net perpendicular offset from that edge,
-    # accumulated from the injected deltas - not the async, laggy cursor
-    # read-back that misleads edge detection on fast motion):
-    #   - it arms only once the cursor has genuinely moved inward past
-    #     ``RETURN_ARM_MARGIN`` (kills the at-landing jitter);
-    #   - once armed, the return fires only when the cursor has come back to
-    #     within ``RETURN_RELEASE_MARGIN`` of the edge (so a cursor sitting far
-    #     inside can't be bounced back by a stray reverse delta while the OS
-    #     read-back still reports the edge).
-    RETURN_ARM_MARGIN = 12
-    RETURN_RELEASE_MARGIN = 4
+    # Pixels of outward push, REQUESTED while the cursor is already held against
+    # the entry edge, that hand control back to the server. It is a physical
+    # quantity: how hard the user has to lean into the wall, in the units the
+    # server speaks. At a typical 6 px per move that is two deliberate ticks -
+    # far more than the single stray reverse delta a landing can produce.
+    #
+    # See ``_accumulate_outward_push`` for why the *requested* delta is the
+    # signal and the applied one cannot be.
+    RETURN_PUSH_MARGIN = 12
+    #: Whether ``_cursor_position()`` reads the real cursor. False (Wayland)
+    #: means the server tracks it, sends ABSOLUTE positions and decides the
+    #: return, so ``_check_edge`` never runs on a position we can't see.
+    CURSOR_FEEDBACK = True
+    # Minimum spacing between ``[RETURN_GATE]`` lines. The gate is evaluated on
+    # every cursor tick (>100 Hz), and the point of the line is the state, not
+    # the count.
+    RETURN_GATE_LOG_INTERVAL = 0.25
 
     def __init__(
         self,
@@ -1112,18 +1356,16 @@ class ClientMouseController(object):
         # the cursor pinned at ``x = monitor.min_x`` can't trigger the
         # return-to-server crossing.
         self._last_move_delta: tuple[int, int] = (0, 0)
-        # Return-to-server lockout (hysteretic). After a crossing the cursor
-        # lands ON the entry edge, which is also the edge used to return to the
-        # server. ``_return_locked_edge`` names that edge; ``_inward_travel`` is
-        # the lag-free net perpendicular offset from it (accumulated from the
-        # injected HID deltas, never the async cursor read-back), and
-        # ``_return_armed`` latches once the cursor has genuinely entered past
-        # ``RETURN_ARM_MARGIN``. The entry-edge return then fires only when the
-        # offset falls back to ``RETURN_RELEASE_MARGIN`` - see
-        # ``_accumulate_inward_travel`` and the gate in ``_check_edge``.
+        # Return-to-server lockout. After a crossing the cursor lands ON the
+        # entry edge, which is also the edge used to return to the server, so
+        # the two have to be told apart. ``_return_locked_edge`` names that
+        # edge; ``_outward_push`` is how far the user has asked to go past it
+        # while the cursor was already held there - never negative, reset the
+        # moment the cursor is anywhere else. See ``_accumulate_outward_push``.
         self._return_locked_edge: Optional[ScreenEdge] = None
-        self._inward_travel: int = 0
-        self._return_armed: bool = False
+        self._outward_push: int = 0
+        # Rate limit for the ``[RETURN_GATE]`` diagnostic.
+        self._last_return_gate_log: float = 0.0
         # Server's virtual desktop bbox - return-to-server (x, y) is
         # normalised over this.
         self._server_bbox: Optional[tuple[int, int, int, int]] = None
@@ -1334,8 +1576,14 @@ class ClientMouseController(object):
                     self._move_cursor(event.x, event.y, event.dx, event.dy)
                     # Routing is meaningless while the OS is withholding our
                     # motion - see ``IMMOBILE_MOVES_BEFORE_HOLD``.
-                    if self._immobile_moves < self.IMMOBILE_MOVES_BEFORE_HOLD:
+                    if (
+                        self.CURSOR_FEEDBACK
+                        and self._immobile_moves < self.IMMOBILE_MOVES_BEFORE_HOLD
+                    ):
                         await self._check_edge()
+                elif event.action == MouseEvent.ABSOLUTE_ACTION:
+                    # The server owns this cursor and has already routed it.
+                    self._warp_cursor(event.x, event.y)
                 elif event.action == MouseEvent.POSITION_ACTION:
                     # Position multiple times so absolute placement
                     # converges across platforms. A read-back check can't
@@ -1344,7 +1592,8 @@ class ClientMouseController(object):
                     # note in ServerMouseController._on_active_screen_changed).
                     for _ in range(10):
                         await self._position_cursor(event.x, event.y)
-                    await self._check_edge()
+                    if self.CURSOR_FEEDBACK:
+                        await self._check_edge()
                 elif event.action == MouseEvent.CLICK_ACTION:
                     self._click(event.button, event.is_pressed)
                 elif event.action == MouseEvent.SCROLL_ACTION:
@@ -1384,8 +1633,8 @@ class ClientMouseController(object):
         self._immobile_moves = 0
 
         # Lock return-to-server against the edge the cursor entered through
-        # (server-supplied, else inferred from the landing coords) until it
-        # travels inward - see ``_accumulate_inward_travel``.
+        # (server-supplied, else inferred from the landing coords) until the
+        # user pushes back out through it - see ``_accumulate_outward_push``.
         self._return_locked_edge = (
             self._resolve_entry_edge(
                 getattr(data, "entry_edge", None),
@@ -1395,8 +1644,7 @@ class ClientMouseController(object):
             if data is not None
             else None
         )
-        self._inward_travel = 0
-        self._return_armed = False
+        self._outward_push = 0
 
         self._is_active = True
         self._cross_screen_event.clear()
@@ -1424,8 +1672,7 @@ class ClientMouseController(object):
         self._last_known_monitor_id = None
         self._last_move_delta = (0, 0)
         self._return_locked_edge = None
-        self._inward_travel = 0
-        self._return_armed = False
+        self._outward_push = 0
         self._last_move_ts = 0.0
         self._last_seen_pos = None
         self._immobile_moves = 0
@@ -1464,58 +1711,43 @@ class ClientMouseController(object):
             return ScreenEdge.BOTTOM
         return None
 
-    def _accumulate_inward_travel(self, dx: int, dy: int) -> None:
-        """Track the cursor's offset from the entry edge from a lag-free delta.
+    #: Outward unit vector per entry edge, in screen coordinates. Only the
+    #: perpendicular component of a move can express "further out through this
+    #: edge"; motion along the edge is irrelevant to the question.
+    _OUTWARD_AXIS = {
+        ScreenEdge.LEFT: ("x", -1),
+        ScreenEdge.RIGHT: ("x", 1),
+        ScreenEdge.TOP: ("y", -1),
+        ScreenEdge.BOTTOM: ("y", 1),
+    }
 
-        Maintains ``_inward_travel`` = net signed displacement along the axis
-        perpendicular to ``_return_locked_edge`` (direction/angle-agnostic: a
-        diagonal move contributes only its perpendicular component, movement
-        parallel to the edge contributes nothing). Because the landing sits on
-        the edge, this IS the cursor's perpendicular offset from it - clamped to
-        ``[0, monitor span]`` so it stays faithful to the OS-clamped cursor
-        (never reset to 0 by a margin): an edge-ward jitter reduces the net so
-        the offset keeps tracking the true distance from the edge. Once it reaches
-        ``RETURN_ARM_MARGIN`` the cursor has genuinely entered, so the return
-        lock is *armed*; the actual return is then gated on the offset falling
-        back to ``RETURN_RELEASE_MARGIN`` in ``_check_edge`` (hysteresis). This
-        never trusts the async, laggy OS read-back, so a fast crossing that
-        parks the cursor far inside can't be bounced back to the server.
+    def _accumulate_outward_push(self, dx: int, dy: int) -> None:
+        """Record how hard the user is asking to leave through the entry edge.
+
+        ``_check_edge`` only lets it survive while the
+        cursor is actually held against ``_return_locked_edge``. A move that
+        points back inside is the user changing their mind and zeroes it, as
+        does leaving the edge at all.
         """
         edge = self._return_locked_edge
         if edge is None:
             return
-        min_x, min_y, max_x, max_y = self._active_target_bbox
-        if edge == ScreenEdge.LEFT:
-            self._inward_travel += dx
-            span = max_x - min_x
-        elif edge == ScreenEdge.RIGHT:
-            self._inward_travel -= dx
-            span = max_x - min_x
-        elif edge == ScreenEdge.TOP:
-            self._inward_travel += dy
-            span = max_y - min_y
-        elif edge == ScreenEdge.BOTTOM:
-            self._inward_travel -= dy
-            span = max_y - min_y
-        else:
+        axis = self._OUTWARD_AXIS.get(edge)
+        if axis is None:
             return
-        # Clamp to the perpendicular extent of the active monitor. The ceiling
-        # is load-bearing for the backends that credit the RAW delta (Windows,
-        # Linux): the cursor is pinned by the OS at the screen edges, but the
-        # server keeps forwarding deltas while the user pushes, so without it
-        # the offset diverges far past the monitor and a real return sweep can
-        # never bring it back into the release band (control gets stuck on the
-        # client). Where the applied displacement is MEASURED instead (macOS)
-        # the offset stops growing on its own - the OS swallows the delta at
-        # the edge, so ``applied`` is (0, 0) - and the ceiling is belt and
-        # braces. The 0 floor is needed everywhere: it self-resyncs, since
-        # pushing into the entry edge drives the offset to 0 so the return gate
-        # reliably opens there. Skip on a degenerate bbox, else the floor would
-        # cap arming at 0.
-        if span > 0:
-            self._inward_travel = max(0, min(span, self._inward_travel))
-        if self._inward_travel >= self.RETURN_ARM_MARGIN:
-            self._return_armed = True
+        name, sign = axis
+        outward = (dx if name == "x" else dy) * sign
+        if outward < 0:
+            self._outward_push = 0  # pushing back inside: changed their mind
+        elif outward > 0:
+            # Capped at the margin: this is a gesture detector.
+            # Nothing is served by remembering a push bigger than the
+            # one that already fires the return.
+            self._outward_push = min(
+                self._outward_push + outward, self.RETURN_PUSH_MARGIN
+            )
+        # outward == 0 is motion purely along the edge: it neither asks to leave
+        # nor takes it back, so the gesture continues unchanged.
 
     async def _on_client_topology_updated(
         self, data: Optional[ClientTopologyUpdatedEvent]
@@ -1688,67 +1920,12 @@ class ClientMouseController(object):
         """
         if monitor is None:
             return None
-        candidates = self._intra_by_src.get(monitor.monitor_id)
-        if not candidates:
-            return None
         edge_str = self._EDGE_TO_STRING_CLIENT.get(edge)
         if edge_str is None:
             return None
-
-        m_w = max(1, monitor.max_x - monitor.min_x)
-        m_h = max(1, monitor.max_y - monitor.min_y)
-        if edge == ScreenEdge.LEFT or edge == ScreenEdge.RIGHT:
-            axis_norm = (y - monitor.min_y) / m_h
-        else:
-            axis_norm = (x - monitor.min_x) / m_w
-        axis_norm = max(0.0, min(1.0, axis_norm))
-
-        for b in candidates:
-            if b.get("src_edge") != edge_str:
-                continue
-            s_start = b.get("src_axis_start", 0.0)
-            s_end = b.get("src_axis_end", 0.0)
-            if s_end <= s_start or not (s_start <= axis_norm < s_end):
-                continue
-
-            local = (axis_norm - s_start) / (s_end - s_start)
-            if local < 0.0:
-                local = 0.0
-            elif local > 1.0:
-                local = 1.0
-            d_start = b.get("dst_axis_start", 0.0)
-            d_end = b.get("dst_axis_end", 0.0)
-            dst_axis = d_start + local * (d_end - d_start)
-
-            dst_id = int(b.get("dst_monitor_id", -1))
-            dst_edge = b.get("dst_edge")
-            d_min_x = int(b.get("dst_monitor_min_x", 0))
-            d_min_y = int(b.get("dst_monitor_min_y", 0))
-            d_max_x = int(b.get("dst_monitor_max_x", 0))
-            d_max_y = int(b.get("dst_monitor_max_y", 0))
-            d_w = max(1, d_max_x - d_min_x)
-            d_h = max(1, d_max_y - d_min_y)
-
-            # Land JUST INSIDE the destination edge so the next tick
-            # doesn't re-trigger the same warp from the other side.
-            if dst_edge == "right":
-                target_x = d_max_x - 2
-                target_y = d_min_y + dst_axis * d_h
-            elif dst_edge == "left":
-                target_x = d_min_x + 1
-                target_y = d_min_y + dst_axis * d_h
-            elif dst_edge == "bottom":
-                target_x = d_min_x + dst_axis * d_w
-                target_y = d_max_y - 2
-            elif dst_edge == "top":
-                target_x = d_min_x + dst_axis * d_w
-                target_y = d_min_y + 1
-            else:
-                continue
-
-            return dst_id, target_x, target_y, dst_edge
-
-        return None
+        return resolve_intra_warp(
+            self._intra_by_src.get(monitor.monitor_id) or (), monitor, edge_str, x, y
+        )
 
     def _has_intra_binding_between(
         self, src_monitor_id: int, dst_monitor_id: int
@@ -1800,75 +1977,12 @@ class ClientMouseController(object):
         ``monitor`` in the OS, so ``find_monitor_at(x, y)`` would return
         the WRONG monitor for the lookup.
         """
-        if not self._edge_bindings or monitor is None or self._server_bbox is None:
-            return None
         edge_str = self._EDGE_TO_STRING_CLIENT.get(edge)
         if edge_str is None:
             return None
-
-        m_w = max(1, monitor.max_x - monitor.min_x)
-        m_h = max(1, monitor.max_y - monitor.min_y)
-        if edge == ScreenEdge.LEFT or edge == ScreenEdge.RIGHT:
-            axis_norm = (y - monitor.min_y) / m_h
-        else:
-            axis_norm = (x - monitor.min_x) / m_w
-        axis_norm = max(0.0, min(1.0, axis_norm))
-
-        for b in self._edge_bindings:
-            if b.get("client_monitor_id") != monitor.monitor_id:
-                continue
-            if b.get("client_edge") != edge_str:
-                continue
-            c_start = b.get("client_axis_start", 0.0)
-            c_end = b.get("client_axis_end", 0.0)
-            c_span = c_end - c_start
-            if c_span <= 0 or not (c_start <= axis_norm < c_end):
-                continue
-
-            local_norm = (axis_norm - c_start) / c_span
-            s_start = b.get("server_axis_start", 0.0)
-            s_end = b.get("server_axis_end", 0.0)
-            server_axis = s_start + local_norm * (s_end - s_start)
-
-            s_min_x = int(b.get("server_monitor_min_x", 0))
-            s_min_y = int(b.get("server_monitor_min_y", 0))
-            s_max_x = int(b.get("server_monitor_max_x", 0))
-            s_max_y = int(b.get("server_monitor_max_y", 0))
-            s_edge = b.get("server_edge")
-            s_w = max(1, s_max_x - s_min_x)
-            s_h = max(1, s_max_y - s_min_y)
-            edge_margin = 6
-            if s_edge == "right":
-                target_x = s_max_x - edge_margin
-                target_y = s_min_y + server_axis * s_h
-            elif s_edge == "left":
-                target_x = s_min_x + edge_margin
-                target_y = s_min_y + server_axis * s_h
-            elif s_edge == "bottom":
-                target_x = s_min_x + server_axis * s_w
-                target_y = s_max_y - edge_margin
-            elif s_edge == "top":
-                target_x = s_min_x + server_axis * s_w
-                target_y = s_min_y + edge_margin
-            else:
-                continue
-
-            bx0, by0, bx1, by1 = self._server_bbox
-            bw = max(1, bx1 - bx0)
-            bh = max(1, by1 - by0)
-            x_norm = (target_x - bx0) / bw
-            y_norm = (target_y - by0) / bh
-            if x_norm < 0.0:
-                x_norm = 0.0
-            elif x_norm > 1.0:
-                x_norm = 1.0
-            if y_norm < 0.0:
-                y_norm = 0.0
-            elif y_norm > 1.0:
-                y_norm = 1.0
-            return x_norm, y_norm
-
-        return None
+        return lookup_return_to_server(
+            self._edge_bindings, self._server_bbox, monitor, edge_str, x, y
+        )
 
     def _clamp_cursor_to_monitor(self, monitor) -> None:
         """Bring the cursor back INSIDE ``monitor`` when it has actually left it.
@@ -1974,31 +2088,38 @@ class ClientMouseController(object):
                 if edge is None:
                     edge = self._detect_edge_via_delta(x, y, current_monitor)
 
+                # The push only counts while the cursor is still held against
+                # the edge it was asked to leave through. ``edge`` says exactly
+                # that - both detectors report an edge only for a cursor at the
+                # bound moving that way - so anywhere else (mid-screen, or a
+                # different edge) the gesture is over and starts from zero.
+                # This is the whole reset rule: no decay, no threshold.
+                if edge != self._return_locked_edge:
+                    self._outward_push = 0
+
                 if edge is None or self._is_dragging:
                     return None
 
-                # Gate return-to-server through the entry edge on the lag-free
-                # ``_inward_travel`` (see ``_accumulate_inward_travel``), NOT the
-                # laggy OS read-back that drives ``edge``: allow it only once the
-                # cursor has genuinely entered (armed) AND has come back to
-                # within ``RETURN_RELEASE_MARGIN`` of the edge. This kills both
-                # the at-landing jitter and the fast-motion bounce (cursor far
-                # inside while the read-back still says the edge). Returns
-                # through any OTHER edge fire immediately. The OS-drift path
-                # (``_handle_os_drift`` above) and intra-client warps below are
-                # intentionally NOT gated - drift is a real OS transition and
-                # warps route within this client, not back to the server.
-                entry_gate_open = edge != self._return_locked_edge or (
-                    self._return_armed
-                    and self._inward_travel <= self.RETURN_RELEASE_MARGIN
+                # Returning through the ENTRY edge needs a deliberate push
+                # against it, because the crossing left the cursor sitting on
+                # that same edge and the leftover motion must not read as an
+                # attempt to leave. Returns through any OTHER edge fire
+                # immediately - the user walked there, which is deliberate
+                # enough. The OS-drift path (``_handle_os_drift`` above) and
+                # intra-client warps below are intentionally NOT gated: drift is
+                # a real OS transition and warps route within this client.
+                entry_gate_open = (
+                    edge != self._return_locked_edge
+                    or self._outward_push >= self.RETURN_PUSH_MARGIN
                 )
+                self._log_return_gate(edge, x, y, entry_gate_open)
                 if entry_gate_open and await self._try_return_to_server(edge, x, y):
                     return await asyncio.sleep(0)
 
                 if self._try_intra_client_warp_sync(edge, x, y, current_monitor):
                     return None
 
-                if current_monitor is not None:
+                if current_monitor is not None and not self._pushing_out_at_edge(edge):
                     self._clamp_cursor_to_monitor(current_monitor)
                     self._movement_history.clear()
                 return None
@@ -2007,6 +2128,71 @@ class ClientMouseController(object):
             self._logger.error("failed to dispatch screen event", error=str(e))
         finally:
             self._checking_edge = False
+
+    def _pushing_out_at_edge(self, edge: Optional[ScreenEdge]) -> bool:
+        """True while the user is pushing OUTWARD against the locked entry edge.
+
+        There is nothing to correct in that state and correcting it is actively
+        harmful: the OS is already holding the cursor at the desktop bound, and
+        ``_clamp_cursor_to_monitor`` warping it back inside emits - on libei,
+        where a warp is a real motion rather than a silent placement - an inward
+        move that physically cancels the user's outward push, every tick. Which
+        is exactly the rule ``input/mouse/CLAUDE.md`` states: never contend with
+        the OS for the cursor at a desktop bound, it shows.
+
+        On a Wayland client this is also the difference between a reachable and
+        an unreachable return gate: the position ``_check_edge`` reads there is
+        libei's virtual accumulator, so a clamp keeps undoing the very push
+        ``_outward_push`` needs in order to reach the margin.
+        """
+        return (
+            edge is not None
+            and edge == self._return_locked_edge
+            and self._outward_push > 0
+        )
+
+    def _log_return_gate(
+        self, edge: ScreenEdge, x: float, y: float, gate_open: bool
+    ) -> None:
+        """Emit the discriminating state of the return-to-server gate.
+
+        The gate decides from four values and used to log none of them, so a
+        return that never fires was indistinguishable from a return whose
+        binding lookup came back empty. Rate-limited, and only while an entry
+        edge is locked, so it can ship enabled at debug level.
+
+        Reading the line, in the order the values fail:
+
+        - ``edge`` never showing the locked edge while the user pushes at it -
+          the problem is edge detection, not the gate, and ``push`` staying 0
+          is a *symptom* of that (it resets on every tick that reports another
+          edge or none).
+        - ``edge`` correct but ``push`` not climbing - the relative branch of
+          ``_move_cursor`` isn't running, or the server is sending no outward
+          component on the perpendicular axis.
+        - ``push`` at the margin with ``open=True`` but ``resolved=None`` - no
+          edge binding matched, typically the binding's ``client_monitor_id``
+          not matching this client's real ``monitor``.
+        """
+        if self._return_locked_edge is None:
+            return
+        now = time()
+        if now - self._last_return_gate_log < self.RETURN_GATE_LOG_INTERVAL:
+            return
+        self._last_return_gate_log = now
+        try:
+            resolved = self._resolve_return_to_server(edge, x, y)
+        except Exception:
+            resolved = None
+        self._logger.debug(
+            "[RETURN_GATE] "
+            f"edge={edge} locked={self._return_locked_edge} "
+            f"push={self._outward_push}/{self.RETURN_PUSH_MARGIN} "
+            f"open={gate_open} "
+            f"resolved={resolved} pos=({int(x)}, {int(y)}) "
+            f"bindings={len(self._edge_bindings)} "
+            f"monitor={self._active_monitor_id}"
+        )
 
     async def _handle_os_drift(self, x: float, y: float, current_monitor) -> bool:
         """Detect/consume unauthorised OS-driven monitor transitions.
@@ -2132,9 +2318,22 @@ class ClientMouseController(object):
         # A warp parks the cursor just inside ``dst_edge`` - the same
         # on-the-edge situation as a fresh landing - so re-arm the
         # return lock against it until the cursor travels inward again.
-        self._return_locked_edge = self._STRING_TO_EDGE_CLIENT.get(dst_edge)
-        self._inward_travel = 0
-        self._return_armed = False
+        #
+        # An unmapped ``dst_edge`` must NOT clear the lock: ``None`` disables the
+        # entry gate entirely, so the gate would then be unconditionally open and
+        # the return would ride on a missing mapping rather than on the user's
+        # push. Keep the previous edge locked and say so.
+        mapped_dst_edge = self._STRING_TO_EDGE_CLIENT.get(dst_edge)
+        if mapped_dst_edge is None:
+            self._logger.debug(
+                "intra-client warp destination edge not recognised; "
+                "keeping the current return lock",
+                dst_edge=str(dst_edge),
+                locked_edge=str(self._return_locked_edge),
+            )
+        else:
+            self._return_locked_edge = mapped_dst_edge
+        self._outward_push = 0
         return True
 
     async def _position_cursor(self, x: float | int, y: float | int):
@@ -2174,13 +2373,8 @@ class ClientMouseController(object):
             # RAW delta: it is a direction hint for ``_detect_edge_via_delta``,
             # not a measure of displacement.
             self._last_move_delta = (dx, dy)
-            # Inject first, then advance the return lockout from what the
-            # backend actually applied to the cursor - under a pointer lock
-            # macOS pins the event, so the raw delta would credit travel the
-            # cursor never made, saturate ``_inward_travel`` and latch
-            # ``_return_armed`` (see ``_accumulate_inward_travel``).
-            applied = self._inject_relative(dx, dy)
-            self._accumulate_inward_travel(*applied)
+            self._inject_relative(dx, dy)
+            self._accumulate_outward_push(dx, dy)
         else:
             try:
                 min_x, min_y, max_x, max_y = self._active_target_bbox
@@ -2268,14 +2462,8 @@ class ClientMouseController(object):
         self._immobile_moves = 0
         self._controller.position = (x, y)
 
-    def _inject_relative(self, dx: int, dy: int) -> tuple[int, int]:
+    def _inject_relative(self, dx: int, dy: int) -> None:
         """Inject a relative pointer motion of ``(dx, dy)``.
-
-        Returns the displacement actually applied to the visible cursor,
-        which is what ``_move_cursor`` feeds to ``_accumulate_inward_travel``
-        - a backend whose motion the OS may withhold (macOS under a game's
-        cursor grab) must report what really happened, or the return-lock
-        offset drifts away from the real cursor position.
 
         The default implementation delegates to pynput's ``Controller.move``.
         On macOS and Windows pynput implements this as an *absolute* warp
@@ -2288,7 +2476,6 @@ class ClientMouseController(object):
         (libei) already moves relatively and uses this default.
         """
         self._controller.move(dx=dx, dy=dy)
-        return (dx, dy)
 
     def _click(self, button: int | None, is_pressed: bool):
         """Forward press/release to the OS, tagging multi-click sequences.

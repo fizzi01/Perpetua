@@ -45,9 +45,12 @@ from event.notification import (
     StreamDisabledEvent,
     ServerChoiceNeededEvent,
     ServiceErrorEvent,
+    InputConsentEvent,
 )
 from event import (
     BusEventType,
+    ClientInputConsentCommandEvent,
+    ClientInputConsentEvent,
     ClientMonitorsUpdateCommandEvent,
     ClientStreamReconnectedEvent,
 )
@@ -152,6 +155,8 @@ class Client:
         self._components = {}
         self._running = False
         self._connected = False
+        # Last RemoteDesktop consent state heard from the input layer.
+        self._input_consent: Optional[str] = None
 
         # Monitor-change watcher: polls the OS monitor list and pushes
         # the new layout to the server over the command stream when it
@@ -1163,6 +1168,13 @@ class Client:
         sig.sort()
         return tuple(sig)
 
+    def _own_uid(self) -> str:
+        return (
+            (self.main_client.uid if self.main_client else "")
+            or self.config.get_uid()
+            or ""
+        )
+
     async def _push_monitor_update(self, monitors) -> bool:
         """Send the current monitor list to the server over the command stream.
 
@@ -1179,11 +1191,7 @@ class Client:
             )
             return False
 
-        client_uid = (
-            (self.main_client.uid if self.main_client else "")
-            or self.config.get_uid()
-            or ""
-        )
+        client_uid = self._own_uid()
         if not client_uid:
             self._logger.warning(
                 "Cannot push monitor update: client uid not assigned yet"
@@ -1835,6 +1843,16 @@ class Client:
         """Check if client is running"""
         return self._running or self._is_starting.is_set()
 
+    def abandon(self) -> None:
+        """Treat a stop that timed out as done (see ``Server.abandon``)."""
+        self._is_starting.clear()
+        self._running = False
+        self._connected = False
+        try:
+            self.cleanup()
+        except Exception as e:
+            self._logger.warning("Cleanup after abandoned stop failed", error=str(e))
+
     def is_connected(self) -> bool:
         """Check if connected to server"""
         return self._connected
@@ -1901,6 +1919,15 @@ class Client:
 
     async def _initialize_components(self):
         """Initialize enabled components based on configuration"""
+        # ``cleanup()`` clears the bus listeners, so subscribe on every start.
+        self.event_bus.subscribe(
+            event_type=BusEventType.CLIENT_INPUT_PERMISSION_DENIED,
+            callback=self._on_input_permission_denied,
+        )
+        self.event_bus.subscribe(
+            event_type=BusEventType.CLIENT_INPUT_CONSENT,
+            callback=self._on_input_consent,
+        )
         # Initialize stream components based on enabled streams
         await self._enable_command_stream()
         await self._enable_mouse_stream()
@@ -2114,6 +2141,10 @@ class Client:
         # Dispatch event
         await self.event_bus.dispatch(event_type=BusEventType.CLIENT_ACTIVE, data=None)
 
+        if self._input_consent == ClientInputConsentEvent.PENDING:
+            # The dialog opened before the command stream could carry it.
+            await self._report_input_consent(self._input_consent)
+
         await self.save_config()
 
         self._logger.info("Connected to server", server=client.get_net_id())
@@ -2125,6 +2156,68 @@ class Client:
             )
         )
         return None
+
+    async def _on_input_permission_denied(self, reason: Optional[str] = None):
+        """The compositor won't let us inject input: stop, don't retry.
+
+        Retrying would put another consent dialog on a machine that may have
+        no peripherals to answer it; reconnecting from the GUI is the retry.
+        """
+        if not self._running:
+            return
+        reason = reason or "Remote input permission was denied"
+        self._logger.warning(
+            "Input injection not permitted, stopping client", reason=reason
+        )
+        self._input_consent = None
+        await self._send_notification(
+            ServiceErrorEvent(
+                service_name="client",
+                error=reason,
+                reason="input_permission_denied",
+            )
+        )
+        # stop() drops whatever is still queued: flush so the server hears why.
+        await self._report_input_consent(
+            ClientInputConsentEvent.DENIED, reason=reason, flush=True
+        )
+        await self.stop()
+
+    async def _on_input_consent(self, state: Optional[str] = None):
+        """The RemoteDesktop dialog opened on this machine, or was accepted."""
+        if not self._running or state not in (
+            ClientInputConsentEvent.PENDING,
+            ClientInputConsentEvent.GRANTED,
+        ):
+            return
+        self._input_consent = state
+        await self._send_notification(InputConsentEvent(state=state))
+        await self._report_input_consent(state)
+
+    async def _report_input_consent(
+        self, state: str, reason: Optional[str] = None, flush: bool = False
+    ) -> None:
+        """Tell the server, whose GUI is where the user of a KVM usually is.
+
+        Before the command stream runs this is a no-op; ``_on_connected``
+        repeats a pending state once it does.
+        """
+        command_stream = self._stream_handlers.get(StreamType.COMMAND)
+        client_uid = self._own_uid()
+        if command_stream is None or not command_stream.is_active() or not client_uid:
+            return
+        try:
+            await command_stream.send(
+                ClientInputConsentCommandEvent(
+                    client_uid=client_uid, state=state, reason=reason
+                )
+            )
+            if flush:
+                await command_stream.flush()
+        except Exception as e:
+            self._logger.warning(
+                "Failed to report input consent", state=state, error=str(e)
+            )
 
     async def _on_disconnected(self, client: ClientObj):
         """Handle disconnection from server event"""
