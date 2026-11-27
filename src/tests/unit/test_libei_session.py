@@ -33,6 +33,12 @@ from unittest.mock import MagicMock
 
 import pytest
 
+# The libei backend is Linux-only; macOS keeps these for local runs, since
+# select.poll and device numbers exist there too. Windows has neither.
+pytestmark = pytest.mark.skipif(
+    sys.platform == "win32", reason="libei backend: POSIX-only primitives"
+)
+
 
 def _install_snegg_stubs(monkeypatch):
     """Minimal stand-ins for the modules ``_libei`` imports at module level."""
