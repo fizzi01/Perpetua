@@ -273,7 +273,10 @@ class ServerMouseListener(_base.ServerMouseListener):
         which is what lets the service layer restart the listener.
         """
         if healthy:
-            self._logger.info("Wayland capture session healthy")
+            if reason:
+                self._logger.info("Wayland capture idle", reason=reason)
+            else:
+                self._logger.info("Wayland capture session healthy")
             return
         if getattr(self._listener, "capture_blocked", False):
             # Stood down waiting on the user: nothing is being retried, so this

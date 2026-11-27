@@ -1164,6 +1164,34 @@ class TestReconnectSchedule:
         assert listener._active_edges == {"left"}
 
 
+class TestIdleIsNotASession:
+    def test_no_client_reports_idle_not_a_live_session(self, libei, logger):
+        # "healthy" with no session read as one being up before any client.
+        states = []
+        listener = libei.MouseListener(
+            on_state=lambda ok, why: states.append((ok, why))
+        )
+        listener._is_running = True
+
+        listener.update_clients({"edges": {}})
+        listener._idle_wait(logger)
+
+        assert states == [(True, libei._IDLE_REASON)]
+
+    def test_a_live_session_reports_no_reason(self, libei, logger):
+        states = []
+        listener = libei.MouseListener(
+            on_state=lambda ok, why: states.append((ok, why))
+        )
+        listener._is_running = True
+        listener._active_edges = {"right"}
+        listener._create_session_once = MagicMock(return_value=MagicMock())
+
+        listener._open_session(logger)
+
+        assert states == [(True, None)]
+
+
 class TestHealthReporting:
     def test_idle_with_no_edges_counts_as_alive(self, libei):
         listener = libei.MouseListener()

@@ -993,6 +993,10 @@ def _wait_for_seat(receiver, logger, keep_waiting=None) -> bool:
 _NO_SESSION = object()  # sentinel: no session yet (distinct from None = quit)
 _IN_FLIGHT = object()  # sentinel: another thread holds the dialog; nothing asked
 
+#: ``on_state(True, _IDLE_REASON)``: healthy, but no session because no client
+#: is bound yet. A bare ``True`` means a live session.
+_IDLE_REASON = "no client bound"
+
 
 #: Held for one ``_CaptureSession.create``, process-wide: two permission dialogs
 #: must never be on screen at once, and a listener rebuilt after ``Server.cleanup()``
@@ -1350,7 +1354,7 @@ class MouseListener:
         """
         if not self._active_edges:
             self._reconnect_pending = False
-            self._notify_state(True, None)
+            self._notify_state(True, _IDLE_REASON)
             return
         if delay is None:
             delay = self._backoff.get_next_delay()
@@ -1382,7 +1386,7 @@ class MouseListener:
             self._active_edges = new_edges
             if not new_edges:
                 self._reconnect_pending = False
-                self._notify_state(True, None)
+                self._notify_state(True, _IDLE_REASON)
                 return _NO_SESSION
             if not (cmd.get("requested") or new_edges - previous):
                 # Same or fewer edges: layout chatter or another client
