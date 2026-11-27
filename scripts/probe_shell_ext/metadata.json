@@ -1,0 +1,6 @@
+{
+  "uuid": "perpetua-pointer-probe@federicoizzi.com",
+  "name": "Perpetua pointer probe",
+  "description": "Probe only: exposes the global pointer position on the session bus.",
+  "shell-version": ["45", "46", "47", "48", "49", "50", "51"]
+}
