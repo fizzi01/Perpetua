@@ -137,9 +137,6 @@ class ServerMouseListener(_base.ServerMouseListener):
             self._listener = self._create_listener()
 
         self._listener.start()
-        # No ``request_capture()`` here: ``update_clients`` already asks for a
-        # session once an edge is bound, and the stand-down that matters is
-        # forgiven on client connect. A second escape hatch only doubles dialogs.
         self._listener.update_clients(self._refresh_edge_state())
 
         self._logger.debug("Wayland barrier mode started")
@@ -172,12 +169,10 @@ class ServerMouseListener(_base.ServerMouseListener):
     async def _on_client_connected(self, data: Optional[ClientConnectedEvent]):
         await super()._on_client_connected(data)
         if self._barrier_mode and data is not None and self._listener:
-            self._listener.update_clients(self._refresh_edge_state())
-            # A client connecting is the user asking for capture. ``update_clients``
-            # only forgives a refusal when the edge *set* changed, so reconnecting
-            # the same client onto the same edge - the obvious thing to try after
-            # cancelling the dialog by mistake - would otherwise leave capture off.
-            self._listener.request_capture()
+            # A client connecting is the user asking for capture, even onto an
+            # edge already bound (reconnecting after cancelling the dialog).
+            # One command, so one dialog at most.
+            self._listener.update_clients(self._refresh_edge_state(), requested=True)
 
     async def _on_client_disconnected(self, data: Optional[ClientDisconnectedEvent]):
         if self._barrier_mode and data is not None:
@@ -290,9 +285,22 @@ class ServerMouseListener(_base.ServerMouseListener):
             )
         else:
             self._logger.warning("Wayland capture session unavailable", reason=reason)
-        # The cursor can't be on a client if capture is gone; drop the local
-        # belief so a later activation isn't rejected by the in-flight guard.
+        if self._loop is not None and not self._loop.is_closed():
+            asyncio.run_coroutine_threadsafe(self._on_capture_lost(), self._loop)
+
+    async def _on_capture_lost(self):
+        """The cursor can't be on a client once capture is gone: hand it back.
+
+        Runs on the loop, which owns ``_active_client_barrier``, and announces
+        the change so the rest of the server stops routing to that client.
+        """
+        if self._active_client_barrier is None:
+            return
         self._active_client_barrier = None
+        await self.event_bus.dispatch(
+            event_type=BusEventType.ACTIVE_SCREEN_CHANGED,
+            data=ActiveScreenChangedEvent(active_screen=None),
+        )
 
     def _on_barrier_move(self, dx, dy):
         asyncio.run_coroutine_threadsafe(

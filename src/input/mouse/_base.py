@@ -504,15 +504,17 @@ class ServerMouseListener(object):
             # generates 1-2 ``on_move`` events before the OS clamps
             # against the screen bound, so requiring fresh samples would
             # starve the edge detector.
-            self._listening = False
-            self._active_client_uid = None
             # ...but that retained, edge-ward history means the very next
             # ``on_move`` could re-cross on the same edge. Lock re-crossing
             # through the returned-to edge until the cursor moves inward.
+            # Armed before ``_listening`` drops: ``on_move`` runs on the
+            # listener thread and checks edges as soon as it reads False.
             landing_x, landing_y = self._absolute_landing(data.x, data.y)
             self._arm_recross_lock(landing_x, landing_y)
             if landing_x >= 0:
                 self._note_server_cursor(landing_x, landing_y)
+            self._listening = False
+            self._active_client_uid = None
 
         await asyncio.sleep(0)
 

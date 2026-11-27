@@ -26,6 +26,9 @@ import Xlib.display
 from Xlib import display
 
 from input.utils import _wrap
+from utils.logging import get_logger
+
+_logger = get_logger("UInputMouseListener")
 
 
 def _check_and_initialize():
@@ -204,16 +207,14 @@ class MouseListener(threading.Thread):
                         for event in dev.read():
                             self._handle_event(dev, event)
         except Exception as e:
-            print(f"MouseListener error: {e}")
+            _logger.error("uinput listener error", error=str(e))
         finally:
             for dev in self._devices:
-                print(f"Ungrab: {dev.path}  ({dev.name})")
                 try:
                     dev.ungrab()
                 except Exception:
                     pass
             if self._ui:
-                print("Closing UInput device")
                 self._ui.close()
             self._cleanup_done.set()
 

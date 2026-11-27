@@ -26,12 +26,14 @@ may be held at all.
 
 from tests.unit import _MOCK_PYNPUT
 
+import asyncio
 from contextlib import ExitStack
 from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
 
 from event import (
+    ActiveScreenChangedEvent,
     BusEventType,
     ClientTopologyCommandEvent,
     CrossScreenCommandEvent,
@@ -447,6 +449,90 @@ class TestDirectionalHotkeyRaisesNoDialog:
         await wayland_listener._on_barrier_activated("right", SCREEN_W - 1.0, 300.0)
 
         assert wayland_listener._last_server_cursor_pos == (SCREEN_W - 1.0, 300.0)
+
+
+class TestClientConnectAsksOnce:
+    @pytest.mark.anyio
+    async def test_connect_is_a_single_requested_update(self, wayland_listener):
+        # update_clients followed by request_capture was two dialogs per connect.
+        with patch.object(
+            type(wayland_listener).__mro__[1], "_on_client_connected", AsyncMock()
+        ):
+            await wayland_listener._on_client_connected(MagicMock())
+
+        backend = wayland_listener._listener
+        backend.update_clients.assert_called_once()
+        assert backend.update_clients.call_args.kwargs == {"requested": True}
+        backend.request_capture.assert_not_called()
+
+    @pytest.mark.anyio
+    async def test_a_layout_edit_is_not_a_request(self, wayland_listener):
+        with patch.object(
+            type(wayland_listener).__mro__[1], "_on_client_layout_updated", AsyncMock()
+        ):
+            await wayland_listener._on_client_layout_updated(MagicMock())
+
+        assert wayland_listener._listener.update_clients.call_args.kwargs == {}
+
+
+class TestCaptureLost:
+    """Losing the session hands the cursor back on the loop, and says so."""
+
+    @pytest.mark.anyio
+    async def test_the_active_client_is_dropped_with_an_event(self, wayland_listener):
+        wayland_listener._loop = asyncio.get_running_loop()
+        wayland_listener._listener.capture_blocked = False
+        wayland_listener._active_client_barrier = CLIENT_UID
+
+        # From the capture thread, as the backend does.
+        await asyncio.to_thread(
+            wayland_listener._on_barrier_state, False, "EIS disconnected"
+        )
+        for _ in range(50):
+            if wayland_listener._active_client_barrier is None:
+                break
+            await asyncio.sleep(0.01)
+
+        assert wayland_listener._active_client_barrier is None
+        events = [
+            c.kwargs["data"]
+            for c in wayland_listener.event_bus.dispatch.await_args_list
+            if c.kwargs.get("event_type") == BusEventType.ACTIVE_SCREEN_CHANGED
+        ]
+        assert len(events) == 1 and events[0].active_screen is None
+
+    @pytest.mark.anyio
+    async def test_nothing_is_announced_when_the_server_had_the_cursor(
+        self, wayland_listener
+    ):
+        wayland_listener._active_client_barrier = None
+
+        await wayland_listener._on_capture_lost()
+
+        wayland_listener.event_bus.dispatch.assert_not_awaited()
+
+
+class TestRecrossLockOrdering:
+    @pytest.mark.anyio
+    async def test_the_lock_is_armed_before_listening_drops(self, wayland_listener):
+        # on_move runs on another thread and checks edges as soon as it reads
+        # _listening False; the lock has to be there by then.
+        seen = []
+        arm = wayland_listener._arm_recross_lock
+
+        def _arm(x, y):
+            seen.append(wayland_listener._listening)
+            arm(x, y)
+
+        wayland_listener._arm_recross_lock = _arm
+        wayland_listener._listening = True
+
+        await wayland_listener._on_active_screen_changed(
+            ActiveScreenChangedEvent(active_screen=None, position=(0.999, 0.5))
+        )
+
+        assert seen == [True]
+        assert wayland_listener._listening is False
 
 
 class TestServerStopClosesTheLibeiConnection:

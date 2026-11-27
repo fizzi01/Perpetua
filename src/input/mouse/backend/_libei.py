@@ -63,26 +63,48 @@ def _event_type(event) -> EventType | None:
         return None
 
 
-def _suppress_libei_stderr():
-    """Redirect stderr fd to /dev/null to silence libei C-level debug spam."""
-    try:
-        devnull = os.open(os.devnull, os.O_WRONLY)
-        saved = os.dup(2)
-        os.dup2(devnull, 2)
-        os.close(devnull)
-        return saved
-    except OSError:
-        return None
+#: fd 2 is process-wide, so the redirect is reference-counted: the first holder
+#: saves the real stderr and only the last one restores it, whatever order the
+#: capture threads exit in.
+_STDERR_LOCK = threading.Lock()
+_stderr_holders = 0
+_stderr_saved: int | None = None
 
 
-def _restore_stderr(saved_fd):
-    """Restore stderr from a saved fd."""
-    if saved_fd is not None:
+def _suppress_libei_stderr() -> bool:
+    """Point fd 2 at /dev/null to silence libei's C-level debug spam.
+
+    Returns whether this call holds the redirect (pass it to ``_restore_stderr``).
+    """
+    global _stderr_holders, _stderr_saved
+    with _STDERR_LOCK:
+        if _stderr_holders == 0:
+            try:
+                devnull = os.open(os.devnull, os.O_WRONLY)
+                saved = os.dup(2)
+                os.dup2(devnull, 2)
+                os.close(devnull)
+            except OSError:
+                return False
+            _stderr_saved = saved
+        _stderr_holders += 1
+        return True
+
+
+def _restore_stderr(held: bool) -> None:
+    global _stderr_holders, _stderr_saved
+    if not held:
+        return
+    with _STDERR_LOCK:
+        _stderr_holders -= 1
+        if _stderr_holders or _stderr_saved is None:
+            return
         try:
-            os.dup2(saved_fd, 2)
-            os.close(saved_fd)
+            os.dup2(_stderr_saved, 2)
+            os.close(_stderr_saved)
         except OSError:
             pass
+        _stderr_saved = None
 
 
 # Portal failures that mean "the user has not granted access", where retrying
@@ -759,6 +781,8 @@ class _CaptureSession:
         "ignore_next_activation",
         "armed_edges",
         "dead",
+        "enabled",
+        "seat_bound",
     )
 
     def __init__(self, portal, receiver, barrier_map, poller, armed_edges):
@@ -779,6 +803,10 @@ class _CaptureSession:
         # portal call can succeed, and calling one anyway is the most likely
         # way to wedge on a blocking D-Bus round trip.
         self.dead: bool = False
+        # False only for a session approved after its listener stopped: it was
+        # parked before ``enable()``, so no barrier can capture the pointer.
+        self.enabled: bool = True
+        self.seat_bound: bool = False
 
     @classmethod
     def create(cls, logger, keep_waiting=None) -> "_CaptureSession | None":
@@ -796,19 +824,20 @@ class _CaptureSession:
         try:
             portal = InputCapturePortal()
             zones, eis_fd, bmap_list = cls._setup(portal)
-            logger.debug(f"Session created: zones={zones} edges={list(_ALL_EDGES)}")
+            logger.debug("Capture session created", zones=zones)
 
             receiver = _ei_from_fd(Receiver, eis_fd, "perpetua-cursor-capture")
-
-            portal.enable()
-            _wait_for_seat(receiver, logger, keep_waiting)
-
             poller = _select.poll()
             poller.register(receiver.fd, _select.POLLIN)
-
             barrier_map = {bid: edge for bid, edge in bmap_list}
             session = cls(portal, receiver, barrier_map, poller, _ALL_EDGES)
-            logger.debug(f"Barriers armed by setup(): barrier_map={barrier_map}")
+
+            if keep_waiting is not None and not keep_waiting():
+                # Approved after stop(): keep the grant for the next listener,
+                # but don't enable barriers nobody would release.
+                session.enabled = False
+                return session
+            session.activate(logger, keep_waiting)
             return session
 
         except Exception as exc:
@@ -828,8 +857,15 @@ class _CaptureSession:
                 raise _PortalNotAuthorised(reason) from exc
             if _is_setup_timeout(reason):
                 raise _PortalDialogUnanswered(reason) from exc
-            logger.error(f"Session setup failed: {reason}")
+            logger.error("Capture session setup failed", reason=reason)
             return None
+
+    def activate(self, logger, keep_waiting=None) -> None:
+        """Enable the barriers and bind the EIS seat."""
+        self.portal.enable()
+        self.enabled = True
+        if not self.seat_bound:
+            self.seat_bound = _wait_for_seat(self.receiver, logger, keep_waiting)
 
     @staticmethod
     def _setup(portal):
@@ -910,8 +946,8 @@ class _CaptureSession:
         return abs_x, abs_y
 
 
-def _wait_for_seat(receiver, logger, keep_waiting=None):
-    """Wait for the EIS seat and bind capabilities.
+def _wait_for_seat(receiver, logger, keep_waiting=None) -> bool:
+    """Wait for the EIS seat and bind capabilities; return whether it was bound.
 
     ``keep_waiting`` is polled before starting and on every iteration, so a
     ``stop()`` during this 10-second wait aborts it: otherwise the capture
@@ -919,8 +955,7 @@ def _wait_for_seat(receiver, logger, keep_waiting=None):
     timeout and outlive the service that owns it.
     """
     if keep_waiting is not None and not keep_waiting():
-        logger.debug("EIS seat wait skipped (stopping)")
-        return
+        return False
 
     poller = _select.poll()
     poller.register(receiver.fd, _select.POLLIN)
@@ -930,8 +965,7 @@ def _wait_for_seat(receiver, logger, keep_waiting=None):
 
     for _ in range(100):  # 10 seconds max
         if keep_waiting is not None and not keep_waiting():
-            logger.debug("EIS seat wait aborted (stopping)")
-            return
+            return seat_bound
         if poller.poll(100):
             receiver.dispatch()
 
@@ -941,32 +975,49 @@ def _wait_for_seat(receiver, logger, keep_waiting=None):
             if etype == EventType.SEAT_ADDED:
                 event.seat.bind(_LISTENER_CAPABILITIES)
                 receiver.dispatch()
-                logger.debug("EIS seat bound (all capabilities)")
                 seat_bound = True
 
-            elif etype == EventType.DEVICE_ADDED:
-                logger.debug(f"EIS device: {event.device}")
-
             elif etype == EventType.DEVICE_RESUMED:
-                logger.debug("EIS device resumed (ready)")
                 device_ready = True
 
         if seat_bound and device_ready:
-            return
+            return True
 
     if not seat_bound:
         logger.warning("EIS seat wait timed out (no SEAT_ADDED)")
     elif not device_ready:
         logger.warning("EIS seat bound but no DEVICE_RESUMED (continuing)")
+    return seat_bound
 
 
 _NO_SESSION = object()  # sentinel: no session yet (distinct from None = quit)
+_IN_FLIGHT = object()  # sentinel: another thread holds the dialog; nothing asked
 
 
 #: Held for one ``_CaptureSession.create``, process-wide: two permission dialogs
 #: must never be on screen at once, and a listener rebuilt after ``Server.cleanup()``
 #: cannot see a previous thread still inside ``setup()``. Not a time floor.
 _CREATE_LOCK = threading.Lock()
+
+#: A session approved after its listener stopped, waiting for the next one, so
+#: a late "Allow" is not answered with a second dialog. Taken under _CREATE_LOCK.
+_PARK_LOCK = threading.Lock()
+_parked_session: "_CaptureSession | None" = None
+
+
+def _park_session(session: "_CaptureSession") -> None:
+    global _parked_session
+    with _PARK_LOCK:
+        previous, _parked_session = _parked_session, session
+    if previous is not None:
+        previous.teardown()
+
+
+def _take_parked_session() -> "_CaptureSession | None":
+    global _parked_session
+    with _PARK_LOCK:
+        session, _parked_session = _parked_session, None
+    return session
 
 
 class MouseListener:
@@ -1008,6 +1059,8 @@ class MouseListener:
     # wedged ``portal.setup()`` before giving up on it. Its own wait is bounded
     # by ``_SETUP_TIMEOUT``, plus room for the teardown that follows.
     _PREVIOUS_THREAD_WAIT = _SETUP_TIMEOUT + 15.0
+    # How soon to look again when another listener holds the dialog.
+    _IN_FLIGHT_RECHECK = 1.0
 
     def __init__(
         self,
@@ -1024,6 +1077,8 @@ class MouseListener:
         self._on_barrier = on_barrier
         self._on_state = on_state
         self._thread: threading.Thread | None = None
+        # start()/stop() run on the loop, a deferred start on its waiter thread.
+        self._lifecycle_lock = threading.RLock()
         self._is_running = False
         self._clients_active = False
         # Edges that currently lead to a client. Barriers are armed on all
@@ -1069,67 +1124,73 @@ class MouseListener:
 
         Returns whether capture is now running or scheduled to.
         """
-        if self._is_running:
-            return True
-        self._start_wanted = True
-        previous = self._thread
-        if previous is not None and previous.is_alive():
-            self._defer_start(previous)
-            return True
-        self._is_running = True
-        self._ready_event.clear()
-        self._thread = threading.Thread(target=self._thread_main, daemon=True)
-        self._thread.start()
+        with self._lifecycle_lock:
+            if self._is_running:
+                return True
+            self._start_wanted = True
+            previous = self._thread
+            if previous is not None and previous.is_alive():
+                self._defer_start(previous)
+                return True
+            self._is_running = True
+            self._ready_event.clear()
+            self._thread = threading.Thread(target=self._thread_main, daemon=True)
+            self._thread.start()
         self._logger.debug("InputCapture listener started")
         return True
 
     def _defer_start(self, previous: threading.Thread):
-        """Start once ``previous`` exits, on a one-shot waiter thread."""
+        """Start once ``previous`` exits, on a one-shot waiter thread.
+
+        Waits as long as the start is still wanted: the previous thread's own
+        wait is bounded (``_SETUP_TIMEOUT`` plus the seat wait), so it does exit.
+        Past ``_PREVIOUS_THREAD_WAIT`` the delay is reported, not given up on.
+        """
         if self._deferred_start:
             return
         self._deferred_start = True
         self._logger.warning(
-            "InputCapture listener start deferred: the previous capture thread "
-            "is still alive (most likely blocked in portal.setup() on an "
-            "unanswered permission dialog); starting as soon as it exits "
-            "rather than running two capture threads"
+            "InputCapture start deferred until the previous capture thread exits",
+            reason="previous thread still in portal setup",
         )
 
         def _wait_and_start():
+            deadline = time.monotonic() + self._PREVIOUS_THREAD_WAIT
+            reported = False
             try:
-                previous.join(timeout=self._PREVIOUS_THREAD_WAIT)
-                if previous.is_alive():
-                    self._logger.error(
-                        "InputCapture listener not started: the previous capture "
-                        "thread is still blocked after "
-                        f"{self._PREVIOUS_THREAD_WAIT:.0f}s"
-                    )
-                    return
+                while self._start_wanted and previous.is_alive():
+                    previous.join(timeout=self._SLEEP_SLICE * 10)
+                    if not reported and time.monotonic() >= deadline:
+                        reported = True
+                        self._logger.error(
+                            "Previous capture thread still blocked; capture waits",
+                            waited_s=round(self._PREVIOUS_THREAD_WAIT),
+                        )
+                        self._notify_state(False, "previous capture thread blocked")
+                with self._lifecycle_lock:
+                    self._deferred_start = False
+                    if not self._start_wanted:
+                        # Stopped while we waited: starting now would raise a
+                        # dialog after an explicit stop.
+                        return
+                    self.start()
             finally:
                 self._deferred_start = False
-            if not self._start_wanted:
-                # Stopped while we waited. Starting now would resurrect capture
-                # after an explicit stop - and raise a dialog for it.
-                self._logger.debug("Deferred start dropped: a stop came first")
-                return
-            self.start()
 
         threading.Thread(target=_wait_and_start, daemon=True).start()
 
     def stop(self):
         """Stop the daemon thread."""
-        # Before the early return: a stop must also cancel a start that is still
-        # waiting for a wedged thread to exit, even though nothing runs yet.
-        self._start_wanted = False
-        if not self._is_running:
-            return
-        self._is_running = False
-        try:
-            self._cmd_queue.put({"type": "quit"})
-        except Exception:
-            pass
-        if self._thread and self._thread.is_alive():
-            self._thread.join(timeout=3)
+        with self._lifecycle_lock:
+            # Before the early return: a stop must also cancel a deferred start.
+            self._start_wanted = False
+            if not self._is_running:
+                return
+            self._is_running = False
+            thread = self._thread
+        self._cmd_queue.put({"type": "quit"})
+        if thread and thread.is_alive():
+            thread.join(timeout=3)
         self._logger.debug("InputCapture listener stopped")
 
     def is_alive(self):
@@ -1161,7 +1222,7 @@ class MouseListener:
         try:
             self._on_state(healthy, reason)
         except Exception as exc:
-            self._logger.debug(f"on_state callback failed: {exc}")
+            self._logger.debug("on_state callback failed", error=str(exc))
 
     def _interruptible_sleep(self, seconds: float) -> bool:
         """Sleep in slices, aborting on stop(). ``False`` means "stop now"."""
@@ -1173,17 +1234,20 @@ class MouseListener:
             time.sleep(min(self._SLEEP_SLICE, remaining))
         return False
 
-    def update_clients(self, state):
+    def update_clients(self, state, requested: bool = False):
         """Update which edges lead to a client.
 
         ``state`` is ``{"edges": {edge: True, ...}}``; a bare ``{edge: True}``
-        mapping is also accepted. This never touches the compositor - the
-        barriers were armed once at session setup and stay put. It updates the
-        Python-side filter, and it is what tells a stood-down listener that the
-        user is asking for capture again.
+        mapping is also accepted. This never touches the compositor: barriers
+        are armed once at session setup. Without a session, ``requested`` (a
+        client connecting) or an edge that wasn't bound before is the user
+        asking for capture, which forgives a stand-down and asks once now. A
+        repeat or a shrink leaves the retry schedule alone.
         """
         edges = state.get("edges") if "edges" in state else state
-        self._cmd_queue.put({"type": "update_clients", "clients": edges or {}})
+        self._cmd_queue.put(
+            {"type": "update_clients", "clients": edges or {}, "requested": requested}
+        )
 
     @property
     def capture_blocked(self) -> bool:
@@ -1193,17 +1257,6 @@ class MouseListener:
         treats it as a transient outage says the wrong thing.
         """
         return self._capture_blocked
-
-    def request_capture(self):
-        """Ask for capture again, forgetting any standing refusal.
-
-        The explicit way back from the stand-down. ``update_clients`` only
-        clears a refusal when the edge set actually *changed*, so reconnecting
-        the same client onto the same edge - the obvious thing to try after
-        cancelling the dialog by mistake - left capture off with no way back
-        short of restarting the daemon.
-        """
-        self._cmd_queue.put({"type": "retry_capture"})
 
     @property
     def current_activation_id(self) -> int:
@@ -1240,7 +1293,7 @@ class MouseListener:
         logger = self._logger
         session: _CaptureSession | None = None
         first_session = True
-        saved_stderr = _suppress_libei_stderr()
+        stderr_held = _suppress_libei_stderr()
 
         try:
             while self._is_running:
@@ -1272,17 +1325,22 @@ class MouseListener:
                     self._schedule_reconnect(logger, "EIS disconnected")
 
         except Exception as exc:
-            logger.error(f"InputCapture thread fatal: {exc}")
+            logger.error("InputCapture thread fatal", error=str(exc))
             self._ready_event.set()
             self._has_session = False
             self._reconnect_pending = False
             self._notify_state(False, f"capture thread died: {exc}")
         finally:
             if session is not None:
-                session.teardown()
+                if session.enabled:
+                    session.teardown()
+                else:
+                    _park_session(session)
+                    logger.info(
+                        "Capture permission granted after stop; kept for next start"
+                    )
             self._has_session = False
-            _restore_stderr(saved_stderr)
-            logger.debug("Thread exiting")
+            _restore_stderr(stderr_held)
 
     def _schedule_reconnect(self, logger, reason: str, delay: float | None = None):
         """Arm the next reconnect attempt, or stand down if nothing to capture.
@@ -1302,8 +1360,9 @@ class MouseListener:
         # The deadline as well as the delay: the two are indistinguishable in the
         # log otherwise, and only the deadline says when the retry really fires.
         logger.warning(
-            f"{reason}; reconnecting in {delay:.1f}s "
-            f"(at monotonic {self._reconnect_at:.1f}, now {now:.1f})"
+            "Capture session unavailable, will retry",
+            reason=reason,
+            retry_in_s=round(delay, 1),
         )
         self._notify_state(False, reason)
 
@@ -1321,32 +1380,18 @@ class MouseListener:
             previous = self._active_edges
             new_edges = set(k for k, v in (cmd.get("clients") or {}).items() if v)
             self._active_edges = new_edges
-            if new_edges:
-                # A fresh client is a good reason to stop waiting out a
-                # backoff: the user is asking for capture right now. A *changed*
-                # edge set is also the only way back from having stood down on
-                # repeated refusals - connecting a client or editing the layout
-                # is an explicit request, so it is worth one more dialog.
-                if new_edges != previous:
-                    self._clear_refusal()
-                self._backoff.reset()
-                self._reconnect_at = 0.0
-                if self._capture_blocked:
-                    return _NO_SESSION
-                return self._open_session(logger, trigger="update_clients")
-            self._reconnect_pending = False
-            self._notify_state(True, None)
-            return _NO_SESSION
-
-        if cmd_type == "retry_capture":
-            # An explicit request for capture: worth one more dialog whatever
-            # the standing state is.
+            if not new_edges:
+                self._reconnect_pending = False
+                self._notify_state(True, None)
+                return _NO_SESSION
+            if not (cmd.get("requested") or new_edges - previous):
+                # Same or fewer edges: layout chatter or another client
+                # leaving. Not a request; the schedule already covers it.
+                return _NO_SESSION
             self._clear_refusal()
             self._backoff.reset()
             self._reconnect_at = 0.0
-            if not self._active_edges:
-                return _NO_SESSION
-            return self._open_session(logger, trigger="request_capture")
+            return self._open_session(logger, trigger="update_clients")
 
         if cmd_type == "quit":
             return None
@@ -1375,6 +1420,16 @@ class MouseListener:
         and the user has not refused it outright.
         """
         session = self._create_session_once(logger, trigger=trigger)
+        if session is _IN_FLIGHT:
+            # Another listener's dialog is on screen. Nothing was asked, so
+            # nothing failed: look again shortly without reporting an outage.
+            self._reconnect_at = time.monotonic() + self._IN_FLIGHT_RECHECK
+            self._reconnect_pending = True
+            return _NO_SESSION
+        if not self._is_running:
+            # Stopped while the dialog was open. The thread exits next and
+            # parks an approved session rather than tearing it down.
+            return session if session is not None else _NO_SESSION
         if session is None:
             if self._capture_blocked:
                 # Standing down: no deadline, nothing pending. Only an explicit
@@ -1412,13 +1467,30 @@ class MouseListener:
         if not _CREATE_LOCK.acquire(blocking=False):
             # Nothing was asked of the user, so this costs no attempt and
             # leaves the refusal state alone.
-            logger.debug(f"[PORTAL_ATTEMPT] skipped trigger={trigger} (in flight)")
-            return None
+            return _IN_FLIGHT
         try:
-            logger.debug(f"[PORTAL_ATTEMPT] trigger={trigger}")
+            parked = self._adopt_parked(logger)
+            if parked is not None:
+                return parked
+            logger.debug("Requesting InputCapture session", trigger=trigger)
             return self._attempt_create(logger)
         finally:
             _CREATE_LOCK.release()
+
+    def _adopt_parked(self, logger) -> "_CaptureSession | None":
+        """Take over a session granted after a previous listener stopped."""
+        session = _take_parked_session()
+        if session is None:
+            return None
+        try:
+            session.activate(logger, keep_waiting=lambda: self._is_running)
+        except Exception as exc:
+            logger.warning("Parked capture session unusable", error=str(exc))
+            session.teardown()
+            return None
+        logger.info("Reusing capture permission granted after the last stop")
+        self._clear_refusal()
+        return session
 
     def _attempt_create(self, logger):
         """The attempt itself, already serialised by the caller."""
@@ -1439,10 +1511,10 @@ class MouseListener:
             self._count_needs_user(logger, str(exc), refused=True)
             return None
         if session is None:
-            # Not a permission problem - clear any stale refusal, otherwise the
-            # first denial makes every later unrelated failure report itself as
-            # "not authorised" and wait out the 30 s ceiling forever.
-            self._clear_refusal()
+            # Not a permission problem: report it as such and use the backoff,
+            # but keep the refusal count - a flaky compositor between two
+            # refusals must not buy a fourth dialog.
+            self._unauthorised = None
             return None
         self._clear_refusal()
         return session
@@ -1450,21 +1522,24 @@ class MouseListener:
     def _count_needs_user(self, logger, detail: str, refused: bool):
         """Count one dialog-class failure and latch the stand-down at the cap."""
         self._needs_user_attempts += 1
-        what = "was refused" if refused else "got no answer to its permission dialog"
+        outcome = "refused" if refused else "unanswered"
         if self._needs_user_attempts >= self._MAX_NEEDS_USER_ATTEMPTS:
-            # Every attempt is another permission dialog in the user's face. Say
-            # so once and stop; connecting a client, editing the layout or
-            # re-enabling the mouse stream will ask again.
+            # Every attempt is another dialog in the user's face. Stop; a client
+            # connecting, or a newly bound edge, asks again (``update_clients``).
             self._capture_blocked = True
             logger.error(
-                f"Wayland input capture {what} {self._needs_user_attempts} times; "
-                "no longer asking. Allow input capture in the system dialog, then "
-                f"reconnect a client to try again ({detail})"
+                "Wayland input capture not permitted; no longer asking until a "
+                "client connects",
+                outcome=outcome,
+                attempts=self._needs_user_attempts,
+                detail=detail,
             )
         else:
             logger.error(
-                f"Wayland input capture {what}; allow input capture in the system "
-                f"dialog to share input with a client ({detail})"
+                "Wayland input capture not permitted; allow it in the system dialog",
+                outcome=outcome,
+                attempts=self._needs_user_attempts,
+                detail=detail,
             )
 
     # active phase (session exists)
@@ -1485,7 +1560,7 @@ class MouseListener:
         try:
             session.receiver.dispatch()
         except Exception as exc:
-            logger.error(f"Receiver dispatch error: {exc}")
+            logger.error("Receiver dispatch error", error=str(exc))
             return "continue"
 
         for event in session.receiver.events:
@@ -1508,9 +1583,6 @@ class MouseListener:
             # Spurious recapture guard
             if session.ignore_next_activation:
                 session.ignore_next_activation = False
-                self._logger.debug(
-                    "[PENDING_ACTIVATION] IGNORED (spurious recapture after release)"
-                )
                 try:
                     session.release_cursor(None, None)
                 except RuntimeError:
@@ -1518,18 +1590,8 @@ class MouseListener:
                 return
 
             edge = session.barrier_map.get(bid)
-            self._logger.debug(
-                f"[PENDING_ACTIVATION] bid={bid} edge={edge} cx={cx} cy={cy} "
-                f"last_aid={session.last_activation_id}"
-            )
-
             if not self._clients_active or edge not in self._active_edges:
-                self._logger.debug(
-                    f"[PENDING_ACTIVATION] REJECTED bid={bid} "
-                    f"clients_active={self._clients_active} edge={edge} "
-                    f"active_edges={self._active_edges} "
-                    f"barrier_map={sorted(session.barrier_map)}"
-                )
+                self._log_rejected(self._logger, bid, edge, session)
                 try:
                     session.release_cursor(None, None)
                 except RuntimeError:
@@ -1537,9 +1599,6 @@ class MouseListener:
                 return
 
             if edge and self._on_barrier:
-                self._logger.debug(
-                    f"[PENDING_ACTIVATION] -> on_barrier({edge}, {cx}, {cy})"
-                )
                 self._current_activation_id = session.last_activation_id
                 self._on_barrier(edge, cx, cy)
 
@@ -1562,7 +1621,6 @@ class MouseListener:
                 # monitor hotplug only changes which activations are acted on
                 # (``_dispatch_pending_activation``, then the binding's axis
                 # range in ``_resolve_cross_screen_target``).
-                logger.debug(f"[EDGES] active={sorted(new_edges)}")
 
             elif cmd_type == "disable_capture":
                 if session.captured:
@@ -1570,7 +1628,6 @@ class MouseListener:
                         cmd,
                         session.portal,
                     )
-                    logger.debug(f"[CMD] release_cursor abs=({cx}, {cy})")
                     # Only a release that *repositions* the cursor near a barrier
                     # can provoke a spurious recapture worth swallowing. Arming
                     # this for every release let a plain reject eat the next
@@ -1582,7 +1639,7 @@ class MouseListener:
                     try:
                         session.release_cursor(cx, cy)
                     except RuntimeError as exc:
-                        logger.error(str(exc))
+                        logger.error("Capture release failed", error=str(exc))
 
             elif cmd_type == "quit":
                 self._is_running = False
@@ -1649,17 +1706,17 @@ class MouseListener:
                 logger.warning("EIS disconnected")
                 session.captured = False
                 session.pending_activation = False
+                # Past this point every portal call but close() (a non-blocking
+                # try_send) would block on a reply that can't come.
+                session.dead = True
                 try:
                     session.portal.close()
                 except Exception:
                     pass
-                # Past this point every portal call would block on a reply
-                # that can't come - and it blocks holding the GIL.
-                session.dead = True
                 return "disconnected"
 
         except Exception as exc:
-            logger.error(f"EI event error: {exc}")
+            logger.error("EI event error", error=str(exc))
 
         return None
 
@@ -1682,10 +1739,21 @@ class MouseListener:
         if (clicks_x or clicks_y) and self._on_scroll:
             self._on_scroll(clicks_x, clicks_y)
 
+    def _log_rejected(self, logger, bid, edge, session: _CaptureSession) -> None:
+        # An unknown barrier id is the signature of a barrier set replaced
+        # behind our back, so the map is logged too.
+        logger.debug(
+            "Activation not routed",
+            barrier_id=bid,
+            edge=edge,
+            clients_active=self._clients_active,
+            active_edges=sorted(self._active_edges),
+            barrier_ids=sorted(session.barrier_map),
+        )
+
     def _handle_start_emulating(self, session: _CaptureSession, logger):
         """Resolve barrier activation on DEVICE_START_EMULATING."""
         session.captured = True
-        logger.debug(f"[EIS] START_EMULATING last_aid={session.last_activation_id}")
 
         # Consume the activation FIRST, even if we are about to ignore this event.
         # Returning before this left ``last_activation_id`` behind the portal's
@@ -1698,30 +1766,21 @@ class MouseListener:
 
         if session.ignore_next_activation:
             session.ignore_next_activation = False
-            logger.debug("[START_EMUL] IGNORED (spurious recapture after release)")
             try:
                 session.release_cursor(None, None)
             except RuntimeError as exc:
-                logger.error(str(exc))
+                logger.error("Capture release failed", error=str(exc))
             return
 
         if activation:
             bid, cx, cy = activation
             edge = session.barrier_map.get(bid)
             if not self._clients_active or edge not in self._active_edges:
-                # This branch used to release with no log output at all, so a
-                # barrier id the map doesn't know - the signature of a barrier
-                # set that was replaced behind our back - was invisible.
-                logger.debug(
-                    f"[START_EMUL] REJECTED bid={bid} edge={edge} "
-                    f"clients_active={self._clients_active} "
-                    f"active_edges={self._active_edges} "
-                    f"barrier_map={sorted(session.barrier_map)}"
-                )
+                self._log_rejected(logger, bid, edge, session)
                 try:
                     session.release_cursor(None, None)
                 except RuntimeError as exc:
-                    logger.error(str(exc))
+                    logger.error("Capture release failed", error=str(exc))
                 return
 
             if edge and self._on_barrier:
