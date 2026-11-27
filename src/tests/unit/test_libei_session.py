@@ -33,10 +33,8 @@ from unittest.mock import MagicMock
 
 import pytest
 
-# The libei backend is Linux-only; macOS keeps these for local runs, since
-# select.poll and device numbers exist there too. Windows has neither.
 pytestmark = pytest.mark.skipif(
-    sys.platform == "win32", reason="libei backend: POSIX-only primitives"
+    sys.platform != "linux", reason="libei backend is Linux-only"
 )
 
 
@@ -1430,8 +1428,9 @@ class TestRemoteDesktopLink:
         for _ in range(5):
             assert link.connection() is None
 
+        # Listeners run after the state is set, outside the lock.
+        assert _wait_until(lambda: heard == ["no"])
         assert len(made) == 1
-        assert heard == ["no"]
         assert made[0].closed
 
     def test_the_technical_cause_goes_to_the_log_not_the_reason(self, libei):
@@ -1466,7 +1465,8 @@ class TestRemoteDesktopLink:
 
         assert link.state is libei._LinkState.DENIED
         assert len(made) == libei._RemoteDesktopLink.MAX_TRANSIENT_FAILURES
-        assert len(heard) == 1
+        # Listeners run after the state is set, outside the lock.
+        assert _wait_until(lambda: len(heard) == 1)
 
     def test_a_dialog_is_announced_then_its_grant(self, libei):
         gate = threading.Event()
