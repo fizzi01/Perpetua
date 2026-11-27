@@ -25,6 +25,8 @@ from event import (
     ActiveScreenChangedEvent,
     ClientMonitorsUpdateCommandEvent,
     ClientMonitorsUpdatedEvent,
+    ClientInputConsentCommandEvent,
+    ClientInputConsentEvent,
     ClientTopologyCommandEvent,
     ClientTopologyUpdatedEvent,
     CrossScreenCommandEvent,
@@ -65,6 +67,8 @@ class CommandHandler:
                 await self.handle_client_topology(event)
             elif event.command == CommandEvent.CLIENT_MONITORS_UPDATE:
                 await self.handle_client_monitors_update(event)
+            elif event.command == CommandEvent.CLIENT_INPUT_CONSENT:
+                await self.handle_client_input_consent(event)
             else:
                 self._logger.warning("Unknown command received", command=event.command)
                 return
@@ -144,5 +148,29 @@ class CommandHandler:
             data=ClientMonitorsUpdatedEvent(
                 client_uid=client_uid,
                 monitors=upd.get_monitors(),
+            ),
+        )
+
+    async def handle_client_input_consent(self, event: CommandEvent):
+        """Server-side dispatch of a client's RemoteDesktop consent state."""
+        upd = ClientInputConsentCommandEvent.from_command_event(event)
+        state = upd.get_state()
+        if not upd.get_client_uid() or state not in (
+            ClientInputConsentEvent.PENDING,
+            ClientInputConsentEvent.GRANTED,
+            ClientInputConsentEvent.DENIED,
+        ):
+            self._logger.warning(
+                "Dropped client input consent",
+                client_uid=upd.get_client_uid(),
+                state=state,
+            )
+            return
+        await self.event_bus.dispatch(
+            event_type=BusEventType.CLIENT_INPUT_CONSENT_CHANGED,
+            data=ClientInputConsentEvent(
+                client_uid=upd.get_client_uid(),
+                state=state,
+                reason=upd.get_reason(),
             ),
         )

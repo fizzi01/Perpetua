@@ -37,6 +37,7 @@ from event.notification import (
     ClientConnectedEvent as ClientConnectedNotification,
     ClientDisconnectedEvent as ClientDisconnectedNotification,
     ConfigSavedEvent,
+    InputConsentEvent,
     MonitorTopologyChangedEvent,
     OtpGeneratedEvent,
     PairingRequestEvent,
@@ -48,6 +49,7 @@ from event import (
     BusEventType,
     ClientConnectedEvent,
     ClientDisconnectedEvent,
+    ClientInputConsentEvent,
     ClientLayoutUpdatedEvent,
     ClientMonitorsUpdatedEvent,
     ClientStreamReconnectedEvent,
@@ -1895,6 +1897,10 @@ class Server:
             event_type=BusEventType.CLIENT_MONITORS_UPDATED,
             callback=self._on_client_monitors_updated,
         )
+        self.event_bus.subscribe(
+            event_type=BusEventType.CLIENT_INPUT_CONSENT_CHANGED,
+            callback=self._on_client_input_consent,
+        )
 
         await self._enable_mouse_stream()
         await self._enable_keyboard_stream()
@@ -2173,6 +2179,31 @@ class Server:
         await self.event_bus.dispatch(
             event_type=BusEventType.CLIENT_STREAM_RECONNECTED,
             data=ClientStreamReconnectedEvent(client_uid=client.uid, streams=streams),
+        )
+
+    async def _on_client_input_consent(
+        self, data: Optional[ClientInputConsentEvent]
+    ) -> None:
+        """Show the admin, at the server, why a client isn't taking input yet."""
+        if data is None or not data.client_uid:
+            return
+        client = self.config.get_client(uid=data.client_uid)
+        if client is None:
+            return
+        self._logger.info(
+            "Client input consent",
+            client=client.get_net_id(),
+            state=data.state,
+            reason=data.reason,
+        )
+        await self._send_notification(
+            InputConsentEvent(
+                state=data.state,
+                reason=data.reason,
+                client_uid=client.uid,
+                client_name=client.get_net_id(),
+                source="server",
+            )
         )
 
     async def _on_client_monitors_updated(

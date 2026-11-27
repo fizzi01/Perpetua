@@ -347,11 +347,12 @@ class _EiConnection:
             except Exception:
                 pass
 
-    def connect(self, consent_timeout: float = 300.0):
+    def connect(self, consent_timeout: float = 300.0, on_dialog=None):
+        """``on_dialog`` is called when the portal is about to ask the user."""
         if self._device is not None:
             return
 
-        eis_fd = self._open_portal_session(consent_timeout)
+        eis_fd = self._open_portal_session(consent_timeout, on_dialog)
 
         poller = _select.poll()
 
@@ -399,7 +400,7 @@ class _EiConnection:
 
         raise RuntimeError("libei: no device received after seat bind")
 
-    def _open_portal_session(self, consent_timeout: float) -> int:
+    def _open_portal_session(self, consent_timeout: float, on_dialog=None) -> int:
         """The EIS fd of a granted session; silent when the saved token holds.
 
         The portal waits for a human, so the wait is bounded by
@@ -417,6 +418,9 @@ class _EiConnection:
         if self._closing:
             raise RuntimeError("libei: connect aborted")
 
+        if token is None and on_dialog is not None:
+            # Without a token the portal always shows its dialog.
+            on_dialog()
         started = time.monotonic()
         try:
             eis_fd, new_token = portal.setup(
@@ -543,7 +547,12 @@ class _RemoteDesktopLink:
     unanswered dialog, or ``MAX_TRANSIENT_FAILURES`` in a row. ``DENIED``
     asks nothing more until ``reset()``, which only an explicit user action
     (a new client connection) may call. Failure listeners hear it once.
+    Consent listeners hear ``CONSENT_PENDING`` when the portal is about to
+    show its dialog, and ``CONSENT_GRANTED`` when that dialog was accepted.
     """
+
+    CONSENT_PENDING = "pending"
+    CONSENT_GRANTED = "granted"
 
     MAX_TRANSIENT_FAILURES = 5
     CONSENT_TIMEOUT = 300.0
@@ -563,7 +572,9 @@ class _RemoteDesktopLink:
             initial_delay=self._RETRY_MIN, max_delay=self._RETRY_MAX
         )
         self.denied_reason: str | None = None
+        self.awaiting_consent = False
         self._listeners: list = []
+        self._consent_listeners: list = []
         self._logger = get_logger(self.__class__.__name__)
 
     @property
@@ -579,6 +590,29 @@ class _RemoteDesktopLink:
         with self._lock:
             if callback in self._listeners:
                 self._listeners.remove(callback)
+
+    def add_consent_listener(self, callback) -> None:
+        with self._lock:
+            if callback not in self._consent_listeners:
+                self._consent_listeners.append(callback)
+
+    def remove_consent_listener(self, callback) -> None:
+        with self._lock:
+            if callback in self._consent_listeners:
+                self._consent_listeners.remove(callback)
+
+    def _notify_consent(self, generation: int, state: str) -> None:
+        with self._lock:
+            if generation != self._generation:
+                return
+            self.awaiting_consent = state == self.CONSENT_PENDING
+            listeners = list(self._consent_listeners)
+        self._logger.info("RemoteDesktop consent", state=state)
+        for callback in listeners:
+            try:
+                callback(state)
+            except Exception as exc:
+                self._logger.debug("consent listener raised", error=str(exc))
 
     def connection(self) -> "_EiConnection | None":
         """The live connection, or None. Never blocks.
@@ -624,8 +658,15 @@ class _RemoteDesktopLink:
                 return
             self._pending = conn
         self._logger.info("Requesting RemoteDesktop session")
+        asked = False
+
+        def on_dialog():
+            nonlocal asked
+            asked = True
+            self._notify_consent(generation, self.CONSENT_PENDING)
+
         try:
-            conn.connect(consent_timeout=self.CONSENT_TIMEOUT)
+            conn.connect(consent_timeout=self.CONSENT_TIMEOUT, on_dialog=on_dialog)
         except (_ConsentRefused, _ConsentTimeout) as exc:
             _close_quietly(conn)
             cause = exc.__cause__
@@ -641,6 +682,7 @@ class _RemoteDesktopLink:
                 if generation != self._generation:
                     return
                 self._pending = None
+                self.awaiting_consent = False
                 self._transient_failures += 1
                 failures = self._transient_failures
                 if failures < self.MAX_TRANSIENT_FAILURES:
@@ -668,6 +710,7 @@ class _RemoteDesktopLink:
             else:
                 stale = None
                 self._pending = None
+                self.awaiting_consent = False
                 self._conn = conn
                 self._state = _LinkState.ACTIVE
                 self._transient_failures = 0
@@ -676,6 +719,8 @@ class _RemoteDesktopLink:
             _close_quietly(stale)
             return
         self._logger.info("RemoteDesktop session active")
+        if asked:
+            self._notify_consent(generation, self.CONSENT_GRANTED)
 
     def _deny(self, generation: int, reason: str, detail: str | None = None) -> None:
         """``reason`` is shown to the user as is; ``detail`` only reaches the log."""
@@ -685,6 +730,7 @@ class _RemoteDesktopLink:
             self._pending = None
             self._state = _LinkState.DENIED
             self.denied_reason = reason
+            self.awaiting_consent = False
             listeners = list(self._listeners)
         self._logger.warning(
             "RemoteDesktop input injection unavailable", reason=reason, detail=detail
@@ -715,6 +761,7 @@ class _RemoteDesktopLink:
         """Close the session and abandon any attempt in flight."""
         with self._lock:
             self._generation += 1
+            self.awaiting_consent = False
             conn, self._conn = self._conn, None
             pending, self._pending = self._pending, None
             if self._state is not _LinkState.DENIED:

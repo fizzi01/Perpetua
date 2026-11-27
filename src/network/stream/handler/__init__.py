@@ -165,6 +165,21 @@ class StreamHandler:
         except asyncio.QueueFull:
             return False
 
+    async def flush(self, timeout: float = 1.0) -> bool:
+        """Wait until the send queue is empty; False if ``timeout`` ran out first.
+
+        For a last message before ``stop()``, which drops whatever is queued.
+        """
+        loop = asyncio.get_running_loop()
+        deadline = loop.time() + timeout
+        while not self._send_queue.empty():
+            if not self._active or loop.time() >= deadline:
+                return False
+            await asyncio.sleep(0.01)
+        # The sender has dequeued the last item; let it reach the transport.
+        await asyncio.sleep(0.05)
+        return True
+
     def _clear_buffer(self):
         """
         Clears the send queue.

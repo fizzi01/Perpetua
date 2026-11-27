@@ -119,6 +119,8 @@ export enum EventType {
     // Permission events (macOS Accessibility / Input Monitoring gate)
     PermissionsRequired,
     PermissionsGranted,
+    // Wayland RemoteDesktop consent on a client (pending / granted / denied)
+    InputConsent,
 
     // General events
     StatusUpdate,
@@ -451,4 +453,13 @@ export interface ServerChoice {
 export interface ServiceError {
     error: string;
     service_name: string;
+    reason?: string;
+}
+
+export interface InputConsent {
+    state: 'pending' | 'granted' | 'denied';
+    reason?: string | null;
+    // Set on the server: the client whose dialog it is.
+    client_uid?: string | null;
+    client_name?: string | null;
 }

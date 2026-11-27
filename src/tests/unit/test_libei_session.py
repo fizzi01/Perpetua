@@ -1357,15 +1357,18 @@ def _wait_until(predicate, timeout=2.0):
 class _FakeConn:
     """Stands in for ``_EiConnection``; ``outcome`` decides what connect() does."""
 
-    def __init__(self, outcome=None, gate=None):
+    def __init__(self, outcome=None, gate=None, dialog=False):
         self.outcome = outcome
         self.gate = gate
+        self.dialog = dialog
         self._error = None
         self._device = None
         self._closing = False
         self.closed = False
 
-    def connect(self, consent_timeout):
+    def connect(self, consent_timeout, on_dialog=None):
+        if self.dialog and on_dialog is not None:
+            on_dialog()
         if self.gate is not None:
             self.gate.wait(2)
         if self.outcome is not None:
@@ -1458,6 +1461,54 @@ class TestRemoteDesktopLink:
         assert link.state is libei._LinkState.DENIED
         assert len(made) == libei._RemoteDesktopLink.MAX_TRANSIENT_FAILURES
         assert len(heard) == 1
+
+    def test_a_dialog_is_announced_then_its_grant(self, libei):
+        gate = threading.Event()
+        link, _ = self._link(libei, [_FakeConn(gate=gate, dialog=True)])
+        heard = []
+        link.add_consent_listener(heard.append)
+
+        link.connection()
+        assert _wait_until(lambda: heard == ["pending"])
+        assert link.awaiting_consent
+
+        gate.set()
+        assert _wait_until(lambda: heard == ["pending", "granted"])
+        assert not link.awaiting_consent
+
+    def test_a_silent_restore_announces_nothing(self, libei):
+        link, _ = self._link(libei, [_FakeConn()])
+        heard = []
+        link.add_consent_listener(heard.append)
+        link.connection()
+        assert _wait_until(lambda: link.state is libei._LinkState.ACTIVE)
+        assert heard == []
+
+    def test_a_refused_dialog_is_no_longer_awaited(self, libei):
+        link, _ = self._link(
+            libei, [_FakeConn(libei._ConsentRefused("no"), dialog=True)]
+        )
+        heard = []
+        link.add_consent_listener(heard.append)
+        link.connection()
+        assert _wait_until(lambda: link.state is libei._LinkState.DENIED)
+        assert heard == ["pending"]
+        assert not link.awaiting_consent
+
+    def test_a_closed_link_drops_a_late_dialog(self, libei):
+        gate = threading.Event()
+        conn = _FakeConn(gate=gate)
+        link, _ = self._link(libei, [conn])
+        heard = []
+        link.add_consent_listener(heard.append)
+        link.connection()
+        assert _wait_until(lambda: link._pending is conn)
+        link.close()
+        conn.dialog = True
+        link._notify_consent(link._generation - 1, "pending")
+        gate.set()
+        assert heard == []
+        assert not link.awaiting_consent
 
     def test_a_transient_failure_waits_out_the_backoff(self, libei):
         link, made = self._link(libei, [RuntimeError("flaky")])
@@ -1600,6 +1651,26 @@ class TestConsentWait:
         assert kwargs["persist"] is True
         assert kwargs["timeout"] == 7
         assert self._store().load("remote_desktop", None) == "t2"
+
+    def test_without_a_token_the_dialog_is_announced_first(self, libei, monkeypatch):
+        order = []
+
+        def setup(**_):
+            order.append("setup")
+            raise StopTest
+
+        conn = self._conn(libei, monkeypatch, setup)
+        with pytest.raises(StopTest):
+            conn.connect(consent_timeout=5, on_dialog=lambda: order.append("dialog"))
+        assert order == ["dialog", "setup"]
+
+    def test_with_a_token_no_dialog_is_announced(self, libei, monkeypatch):
+        self._store().save("remote_desktop", "t1", "com.federicoizzi.Perpetua")
+        conn = self._conn(libei, monkeypatch, StopTest())
+        announced = []
+        with pytest.raises(StopTest):
+            conn.connect(consent_timeout=5, on_dialog=lambda: announced.append(1))
+        assert announced == []
 
     def test_the_app_id_is_registered_before_the_first_portal(self, libei, monkeypatch):
         calls = []

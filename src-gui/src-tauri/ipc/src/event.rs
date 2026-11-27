@@ -121,6 +121,8 @@ pub enum EventType {
     // Permission events (macOS Accessibility / Input Monitoring gate)
     PermissionsRequired,
     PermissionsGranted,
+    // Wayland RemoteDesktop consent on a client (pending / granted / denied)
+    InputConsent,
 
     // General events
     StatusUpdate,

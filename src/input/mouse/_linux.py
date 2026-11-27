@@ -501,26 +501,35 @@ class ClientMouseController(_base.ClientMouseController):
         if self._rd_link is not None:
             self._loop = asyncio.get_running_loop()
             self._rd_link.add_failure_listener(self._on_input_permission_denied)
+            self._rd_link.add_consent_listener(self._on_input_consent)
             if self._rd_link.denied_reason is not None:
                 # Denied while this controller was stopped: nobody heard it.
                 self._on_input_permission_denied(self._rd_link.denied_reason)
+            elif self._rd_link.awaiting_consent:
+                # The dialog opened before this controller was listening.
+                self._on_input_consent(self._rd_link.CONSENT_PENDING)
         return result
 
     async def stop(self):
         if self._rd_link is not None:
             self._rd_link.remove_failure_listener(self._on_input_permission_denied)
+            self._rd_link.remove_consent_listener(self._on_input_consent)
         return await super().stop()
 
     def _on_input_permission_denied(self, reason: str) -> None:
         """Called from the link's connect thread."""
+        self._dispatch_threadsafe(BusEventType.CLIENT_INPUT_PERMISSION_DENIED, reason)
+
+    def _on_input_consent(self, state: str) -> None:
+        """Called from the link's connect thread."""
+        self._dispatch_threadsafe(BusEventType.CLIENT_INPUT_CONSENT, state)
+
+    def _dispatch_threadsafe(self, event_type: BusEventType, data) -> None:
         loop = self._loop
         if loop is None or loop.is_closed():
             return
         asyncio.run_coroutine_threadsafe(
-            self.event_bus.dispatch(
-                event_type=BusEventType.CLIENT_INPUT_PERMISSION_DENIED, data=reason
-            ),
-            loop,
+            self.event_bus.dispatch(event_type=event_type, data=data), loop
         )
 
 

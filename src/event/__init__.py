@@ -71,6 +71,14 @@ class BusEventType(IntEnum):
     # reason string. The client service stops; only the user can retry.
     CLIENT_INPUT_PERMISSION_DENIED = 14
 
+    # Client side: the RemoteDesktop consent dialog is open (``"pending"``)
+    # or was just accepted (``"granted"``). ``data`` is that state string.
+    CLIENT_INPUT_CONSENT = 15
+
+    # Server side: a client reported its consent state over the command
+    # stream. ``data`` is a ``ClientInputConsentEvent``.
+    CLIENT_INPUT_CONSENT_CHANGED = 16
+
 
 class BusEvent(ABC):
     """Base class for events dispatched on the EventBus."""
@@ -255,6 +263,30 @@ class ClientMonitorsUpdatedEvent(BusEvent):
         }
 
 
+class ClientInputConsentEvent(BusEvent):
+    """Server side: a client's RemoteDesktop consent state.
+
+    ``state`` is ``"pending"`` (dialog open on the client), ``"granted"`` or
+    ``"denied"``; ``reason`` is set only for ``"denied"``.
+    """
+
+    PENDING = "pending"
+    GRANTED = "granted"
+    DENIED = "denied"
+
+    def __init__(self, client_uid: str, state: str, reason: Optional[str] = None):
+        self.client_uid = client_uid
+        self.state = state
+        self.reason = reason
+
+    def to_dict(self) -> dict:
+        return {
+            "client_uid": self.client_uid,
+            "state": self.state,
+            "reason": self.reason,
+        }
+
+
 class ClientActiveEvent(BusEvent):
     """Event dispatched on the CLIENT side when the server activates it.
 
@@ -377,6 +409,7 @@ class CommandEvent(Event):
     KEYBOARD_STATE_SYNC = "keyboard_state_sync"
     CLIENT_TOPOLOGY = "client_topology"
     CLIENT_MONITORS_UPDATE = "client_monitors_update"
+    CLIENT_INPUT_CONSENT = "client_input_consent"
 
     def __init__(
         self,
@@ -566,6 +599,45 @@ class ClientMonitorsUpdateCommandEvent(CommandEvent):
                 "monitors": list(self.params.get("monitors") or []),
             },
         }
+
+
+class ClientInputConsentCommandEvent(CommandEvent):
+    """Client-to-server RemoteDesktop consent state (see ``ClientInputConsentEvent``)."""
+
+    def __init__(
+        self,
+        source: str = "",
+        target: str = "server",
+        client_uid: str = "",
+        state: str = "",
+        reason: Optional[str] = None,
+    ):
+        super().__init__(
+            command=CommandEvent.CLIENT_INPUT_CONSENT,
+            source=source,
+            target=target,
+            params={"client_uid": client_uid, "state": state, "reason": reason},
+        )
+
+    def get_client_uid(self) -> str:
+        return str(self.params.get("client_uid") or "")
+
+    def get_state(self) -> str:
+        return str(self.params.get("state") or "")
+
+    def get_reason(self) -> Optional[str]:
+        reason = self.params.get("reason")
+        return str(reason) if reason else None
+
+    @classmethod
+    def from_command_event(cls, event: CommandEvent) -> Self:
+        return cls(
+            source=event.source,
+            target=event.target,
+            client_uid=str(event.params.get("client_uid") or ""),
+            state=str(event.params.get("state") or ""),
+            reason=event.params.get("reason"),
+        )
 
 
 class ForceScreenChangeCommandEvent(CommandEvent):

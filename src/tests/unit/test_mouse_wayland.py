@@ -689,6 +689,52 @@ class TestClientRemoteDesktopLink:
         stub.shutdown_connection.assert_not_called()
         link.close.assert_not_called()
         link.remove_failure_listener.assert_called_once()
+        link.remove_consent_listener.assert_called_once()
+
+    @pytest.mark.anyio
+    async def test_consent_from_the_connect_thread_reaches_the_bus(self):
+        import asyncio
+        import threading
+
+        from input.mouse import _base
+
+        link = MagicMock(denied_reason=None, awaiting_consent=False)
+        controller = self._controller(link)
+        with patch.object(_base.ClientMouseController, "start", AsyncMock()):
+            await controller.start()
+        listener = link.add_consent_listener.call_args.args[0]
+
+        thread = threading.Thread(target=listener, args=("pending",))
+        thread.start()
+        thread.join()
+        for _ in range(50):
+            if controller.event_bus.dispatch.await_count:
+                break
+            await asyncio.sleep(0.01)
+
+        controller.event_bus.dispatch.assert_awaited_once_with(
+            event_type=BusEventType.CLIENT_INPUT_CONSENT, data="pending"
+        )
+
+    @pytest.mark.anyio
+    async def test_a_dialog_opened_before_start_is_reported(self):
+        import asyncio
+
+        from input.mouse import _base
+
+        link = MagicMock(denied_reason=None, awaiting_consent=True)
+        link.CONSENT_PENDING = "pending"
+        controller = self._controller(link)
+        with patch.object(_base.ClientMouseController, "start", AsyncMock()):
+            await controller.start()
+        for _ in range(50):
+            if controller.event_bus.dispatch.await_count:
+                break
+            await asyncio.sleep(0.01)
+
+        controller.event_bus.dispatch.assert_awaited_once_with(
+            event_type=BusEventType.CLIENT_INPUT_CONSENT, data="pending"
+        )
 
     @pytest.mark.anyio
     async def test_a_denial_from_the_connect_thread_reaches_the_bus(self):
@@ -697,7 +743,7 @@ class TestClientRemoteDesktopLink:
 
         from input.mouse import _base
 
-        link = MagicMock(denied_reason=None)
+        link = MagicMock(denied_reason=None, awaiting_consent=False)
         controller = self._controller(link)
         with patch.object(_base.ClientMouseController, "start", AsyncMock()):
             await controller.start()
