@@ -22,6 +22,7 @@ import asyncio
 import errno
 import socket
 import sys
+import threading
 
 from typing import Optional, Dict, List, Tuple, Callable, Awaitable
 
@@ -1757,17 +1758,38 @@ class Server:
     async def _stop_sync_component(self, component_name: str, component):
         """Run a blocking ``component.stop()`` off the event-loop thread.
 
-        These used to be called inline, so anything slow in a stop path froze
-        the loop with it. The Wayland mouse listener is the motivating case: it
-        joins a thread that may be inside a blocking xdg-desktop-portal call,
-        which can take seconds - or never return at all.
+        On a daemon thread, not the default executor: a stop that never
+        returns (a thread joined inside a blocking portal call) would hold an
+        executor worker, and ``shutdown_default_executor`` would hang exit on it.
         """
         loop = asyncio.get_running_loop()
+        done: asyncio.Future = loop.create_future()
+
+        def _settle(exc):
+            if done.done():
+                return
+            if exc is None:
+                done.set_result(None)
+            else:
+                done.set_exception(exc)
+
+        def _run():
+            try:
+                component.stop()
+            except Exception as exc:
+                error = exc
+            else:
+                error = None
+            try:
+                loop.call_soon_threadsafe(_settle, error)
+            except RuntimeError:
+                pass  # loop already closed: nobody is waiting
+
+        threading.Thread(
+            target=_run, name=f"stop-{component_name}", daemon=True
+        ).start()
         try:
-            await asyncio.wait_for(
-                loop.run_in_executor(None, component.stop),
-                timeout=self.SYNC_STOP_TIMEOUT,
-            )
+            await asyncio.wait_for(done, timeout=self.SYNC_STOP_TIMEOUT)
         except asyncio.TimeoutError:
             self._logger.warning(
                 "Component did not stop in time; continuing shutdown",
@@ -1793,6 +1815,19 @@ class Server:
 
     def is_running(self) -> bool:
         return self._running
+
+    def abandon(self) -> None:
+        """Treat a stop that timed out as done.
+
+        A cancelled ``stop()`` leaves ``_running`` set, and the daemon then
+        refuses to start the other service. Whatever is still stuck is logged
+        by the stop path; it can't be waited for here.
+        """
+        self._running = False
+        try:
+            self.cleanup()
+        except Exception as e:
+            self._logger.warning("Cleanup after abandoned stop failed", error=str(e))
 
     async def _initialize_streams(self):
         # All stream handlers must exist before any starts so event

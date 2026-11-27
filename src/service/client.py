@@ -1835,6 +1835,16 @@ class Client:
         """Check if client is running"""
         return self._running or self._is_starting.is_set()
 
+    def abandon(self) -> None:
+        """Treat a stop that timed out as done (see ``Server.abandon``)."""
+        self._is_starting.clear()
+        self._running = False
+        self._connected = False
+        try:
+            self.cleanup()
+        except Exception as e:
+            self._logger.warning("Cleanup after abandoned stop failed", error=str(e))
+
     def is_connected(self) -> bool:
         """Check if connected to server"""
         return self._connected

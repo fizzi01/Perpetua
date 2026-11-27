@@ -954,9 +954,8 @@ class Daemon:
     async def _stop_service_bounded(self, name: str, service) -> bool:
         """Stop a service, giving up after ``SERVICE_STOP_TIMEOUT``.
 
-        Returns whether it stopped cleanly. The caller drops its reference
-        either way - a service we can't stop is not a service we can keep
-        using.
+        Returns whether it stopped cleanly. Either way the service is marked
+        stopped afterwards, so a wedged stop can't block starting the other one.
         """
         try:
             await asyncio.wait_for(service.stop(), timeout=self.SERVICE_STOP_TIMEOUT)
@@ -969,6 +968,10 @@ class Daemon:
             )
         except Exception as e:
             self._logger.error("Error stopping service", service=name, error=str(e))
+        try:
+            service.abandon()
+        except Exception as e:
+            self._logger.error("Error abandoning service", service=name, error=str(e))
         return False
 
     def delayed_exit(self):
@@ -1420,13 +1423,14 @@ class Daemon:
             return
 
         try:
-            if not await self._stop_service_bounded("server", self._server):
+            stopped = await self._stop_service_bounded("server", self._server)
+            self._state["server"].stop()
+            if not stopped:
                 await self._notification_manager.notify_command_error(
                     command,
-                    "Server did not stop in time; see the daemon log",
+                    "Server did not stop cleanly; see the daemon log",
                 )
                 return
-            self._state["server"].stop()
             await self._notification_manager.notify_command_success(
                 command, "Server stopped successfully"
             )
@@ -1513,8 +1517,10 @@ class Daemon:
                     service="client",
                     timeout=self.SERVICE_STOP_TIMEOUT,
                 )
+                self._client.abandon()
+                self._state["client"].stop()
                 await self._notification_manager.notify_command_error(
-                    command, "Client did not stop in time; see the daemon log"
+                    command, "Client did not stop cleanly; see the daemon log"
                 )
                 return
             if not res:
