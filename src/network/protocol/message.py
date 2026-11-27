@@ -540,9 +540,11 @@ class MessageBuilder:
         target: Optional[str] = None,
         server_uid: Optional[str] = None,
         monitors: Optional[List[Dict[str, Any]]] = None,
+        capabilities: Optional[Dict[str, Any]] = None,
     ) -> ProtocolMessage:
         """Create a handshake message with timestamp. ``monitors`` is the
-        optional per-monitor layout; legacy peers ignore unknown keys."""
+        optional per-monitor layout and ``capabilities`` what the client can
+        do (``cursor_feedback``); legacy peers ignore unknown keys."""
         return ProtocolMessage(
             message_type=MessageType.EXCHANGE,
             timestamp=time.time(),
@@ -557,6 +559,7 @@ class MessageBuilder:
                 "additional_params": additional_params or {},
                 "server_uid": server_uid,
                 "monitors": monitors or [],
+                "capabilities": capabilities or {},
             },
             source=source,
             target=target,

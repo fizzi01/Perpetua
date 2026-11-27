@@ -26,7 +26,7 @@ import asyncio
 
 from typing import Optional
 
-from input._platform import is_wayland, is_gnome, is_kde
+from input._platform import cursor_feedback_available, is_wayland, is_gnome, is_kde
 from input.utils import ScreenEdge
 from . import _base
 
@@ -491,6 +491,9 @@ class ClientMouseController(_base.ClientMouseController):
             # the explicit action that may ask for consent again after a denial.
             self._rd_link.reset()
         self._loop: Optional[asyncio.AbstractEventLoop] = None
+        # On GNOME/KDE Wayland the libei sender can't read the cursor back:
+        # the server tracks it and sends ABSOLUTE positions instead.
+        self.CURSOR_FEEDBACK = cursor_feedback_available()
         super().__init__(*args, **kwargs)
 
     async def start(self):

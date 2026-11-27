@@ -160,6 +160,8 @@ class ClientConnectedEvent(BusEvent):
         streams: Optional[list[int]] = None,
         edge_bindings: Optional[list[dict]] = None,
         intra_client_bindings: Optional[list[dict]] = None,
+        client_monitors: Optional[list[dict]] = None,
+        cursor_feedback: bool = True,
     ):
         self.client_uid = client_uid
         self.streams = streams
@@ -167,6 +169,10 @@ class ClientConnectedEvent(BusEvent):
         self.intra_client_bindings: list[dict] = (
             list(intra_client_bindings) if intra_client_bindings else []
         )
+        # Client-space monitor rects, and whether the client can read its own
+        # cursor; False makes the server track it (``AbsolutePointerTracker``).
+        self.client_monitors: list[dict] = list(client_monitors or [])
+        self.cursor_feedback = cursor_feedback
 
     def to_dict(self) -> dict:
         return {
@@ -214,12 +220,14 @@ class ClientLayoutUpdatedEvent(BusEvent):
         client_uid: str,
         edge_bindings: Optional[list[dict]] = None,
         intra_client_bindings: Optional[list[dict]] = None,
+        client_monitors: Optional[list[dict]] = None,
     ):
         self.client_uid = client_uid
         self.edge_bindings: list[dict] = list(edge_bindings) if edge_bindings else []
         self.intra_client_bindings: list[dict] = (
             list(intra_client_bindings) if intra_client_bindings else []
         )
+        self.client_monitors: list[dict] = list(client_monitors or [])
 
     def to_dict(self) -> dict:
         return {
@@ -306,6 +314,9 @@ class MouseEvent(Event):
 
     MOVE_ACTION = "move"
     POSITION_ACTION = "position"
+    # x/y in the client's desktop pixels, sent only to a client without cursor
+    # feedback: the server owns that cursor (``AbsolutePointerTracker``).
+    ABSOLUTE_ACTION = "absolute"
     CLICK_ACTION = "click"
     RCLICK_ACTION = "rclick"
     SCROLL_ACTION = "scroll"

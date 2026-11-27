@@ -47,6 +47,28 @@ from utils.screen import Screen
 from input.utils import ScreenEdge, EdgeDetector, ButtonMapping
 
 from .backend import MouseListener, MouseController, Button, BACKEND
+from ._routing import (
+    AbsolutePointerTracker,
+    Position,
+    Return,
+    lookup_return_to_server,
+    resolve_intra_warp,
+)
+from model.monitor import MonitorInfo
+
+
+def _parse_monitors(raw) -> list[MonitorInfo]:
+    monitors = []
+    for entry in raw or []:
+        try:
+            monitors.append(
+                entry
+                if isinstance(entry, MonitorInfo)
+                else MonitorInfo.from_dict(entry)
+            )
+        except (KeyError, TypeError, ValueError):
+            continue
+    return monitors
 
 
 class ServerMouseListener(object):
@@ -84,6 +106,15 @@ class ServerMouseListener(object):
         # against the same data.
         self._edge_bindings_by_client: dict[str, list[dict]] = {}
         self._intra_bindings_by_client: dict[str, list[dict]] = {}
+
+        # Clients that can't read their own cursor (Wayland): the server keeps
+        # their cursor and the mouse stream sends them absolute positions.
+        self._client_monitors: dict[str, list[MonitorInfo]] = {}
+        self._no_feedback_clients: set[str] = set()
+        self._pointer_tracker = AbsolutePointerTracker()
+        self._tracked_client: Optional[str] = None
+        if hasattr(type(self.stream), "set_outbound_filter"):
+            self.stream.set_outbound_filter(self._route_for_client)
 
         # Copy-on-write snapshots consumed by the pynput-thread hot path
         # (on_move -> _resolve_cross_screen_target) without locking. Writers
@@ -329,6 +360,13 @@ class ServerMouseListener(object):
                     getattr(data, "intra_client_bindings", []) or []
                 )
                 self._rebuild_snapshots()
+            self._client_monitors[client_uid] = _parse_monitors(
+                getattr(data, "client_monitors", None)
+            )
+            if getattr(data, "cursor_feedback", True):
+                self._no_feedback_clients.discard(client_uid)
+            else:
+                self._no_feedback_clients.add(client_uid)
 
         await asyncio.sleep(0)
 
@@ -343,6 +381,10 @@ class ServerMouseListener(object):
             self._edge_bindings_by_client.pop(client_uid, None)
             self._intra_bindings_by_client.pop(client_uid, None)
             self._rebuild_snapshots()
+            self._client_monitors.pop(client_uid, None)
+            self._no_feedback_clients.discard(client_uid)
+            if self._tracked_client == client_uid:
+                self._stop_tracking()
 
             if not self._active_clients:
                 self._listening = False
@@ -366,6 +408,11 @@ class ServerMouseListener(object):
                     getattr(data, "intra_client_bindings", []) or []
                 )
                 self._rebuild_snapshots()
+                monitors = getattr(data, "client_monitors", None)
+                if monitors:
+                    self._client_monitors[data.client_uid] = _parse_monitors(monitors)
+        if self._tracked_client == data.client_uid:
+            self._load_tracker_topology(data.client_uid)
 
         # Stranded-active recovery: if the client the cursor is CURRENTLY
         # on just lost every server-abutting edge binding (a placed
@@ -487,6 +534,8 @@ class ServerMouseListener(object):
             return
 
         active_screen = data.active_screen
+        if self._tracked_client is not None and active_screen != self._tracked_client:
+            self._stop_tracking()
 
         if active_screen is not None:
             with self._server_state_lock:
@@ -789,6 +838,70 @@ class ServerMouseListener(object):
         # against that edge until the cursor moves inward.
         return target_monitor_id, binding.get("client_edge")
 
+    # -- clients without cursor feedback ------------------------------------
+
+    def _load_tracker_topology(self, client_uid: str) -> None:
+        self._pointer_tracker.set_topology(
+            self._client_monitors.get(client_uid) or [],
+            self._edge_bindings_by_client.get(client_uid) or [],
+            self._intra_bindings_by_client.get(client_uid) or [],
+            self._screen_bbox,
+        )
+
+    def _start_tracking(
+        self,
+        client_uid: str,
+        client_monitor_id: Optional[int],
+        x_norm: float,
+        y_norm: float,
+        entry_edge: Optional[str],
+    ) -> None:
+        self._load_tracker_topology(client_uid)
+        self._pointer_tracker.activate(client_monitor_id, x_norm, y_norm, entry_edge)
+        self._tracked_client = client_uid if self._pointer_tracker.active else None
+
+    def _stop_tracking(self) -> None:
+        self._pointer_tracker.deactivate()
+        self._tracked_client = None
+
+    async def _route_for_client(self, data, client):
+        """Mouse-stream filter: relative moves become absolute for a client
+        without cursor feedback, and the server decides when it returns.
+
+        Runs in the stream's single sender task, so moves are applied in order.
+        Everything else passes through untouched.
+        """
+        if (
+            client is None
+            or client.uid not in self._no_feedback_clients
+            or not isinstance(data, MouseEvent)
+            or data.action != MouseEvent.MOVE_ACTION
+        ):
+            return data
+        if self._tracked_client != client.uid:
+            # Activations that bypass _send_activation_packets (hotkey
+            # cycle) start at the centre of the client's first monitor.
+            self._start_tracking(client.uid, None, -1, -1, None)
+            if self._tracked_client is None:
+                return None  # no monitor known yet: nowhere to put it
+        result = self._pointer_tracker.move(data.dx, data.dy)
+        if isinstance(result, Position):
+            return MouseEvent(x=result.x, y=result.y, action=MouseEvent.ABSOLUTE_ACTION)
+        if isinstance(result, Return):
+            self._tracked_client = None
+            # The same two steps as the return hotkey, with the landing the
+            # client would have sent itself.
+            await self.event_bus.dispatch(
+                event_type=BusEventType.SCREEN_CHANGE_GUARD,
+                data=ActiveScreenChangedEvent(
+                    active_screen=None,
+                    source=client.uid,
+                    position=(result.x, result.y),
+                ),
+            )
+            await self.command_stream.send(ForceScreenChangeCommandEvent())
+        return None
+
     async def _send_activation_packets(
         self,
         screen: str,
@@ -807,6 +920,14 @@ class ServerMouseListener(object):
         """
         bindings = self._edge_bindings_by_client.get(screen) or []
         intra_bindings = self._intra_bindings_by_client.get(screen) or []
+        if screen in self._no_feedback_clients:
+            self._start_tracking(
+                screen,
+                client_monitor_id,
+                mouse_event.x,
+                mouse_event.y,
+                client_entry_edge,
+            )
         if bindings or intra_bindings:
             await self.command_stream.send(
                 ClientTopologyCommandEvent(
@@ -1181,6 +1302,10 @@ class ClientMouseController(object):
     # See ``_accumulate_outward_push`` for why the *requested* delta is the
     # signal and the applied one cannot be.
     RETURN_PUSH_MARGIN = 12
+    #: Whether ``_cursor_position()`` reads the real cursor. False (Wayland)
+    #: means the server tracks it, sends ABSOLUTE positions and decides the
+    #: return, so ``_check_edge`` never runs on a position we can't see.
+    CURSOR_FEEDBACK = True
     # Minimum spacing between ``[RETURN_GATE]`` lines. The gate is evaluated on
     # every cursor tick (>100 Hz), and the point of the line is the state, not
     # the count.
@@ -1451,8 +1576,14 @@ class ClientMouseController(object):
                     self._move_cursor(event.x, event.y, event.dx, event.dy)
                     # Routing is meaningless while the OS is withholding our
                     # motion - see ``IMMOBILE_MOVES_BEFORE_HOLD``.
-                    if self._immobile_moves < self.IMMOBILE_MOVES_BEFORE_HOLD:
+                    if (
+                        self.CURSOR_FEEDBACK
+                        and self._immobile_moves < self.IMMOBILE_MOVES_BEFORE_HOLD
+                    ):
                         await self._check_edge()
+                elif event.action == MouseEvent.ABSOLUTE_ACTION:
+                    # The server owns this cursor and has already routed it.
+                    self._warp_cursor(event.x, event.y)
                 elif event.action == MouseEvent.POSITION_ACTION:
                     # Position multiple times so absolute placement
                     # converges across platforms. A read-back check can't
@@ -1461,7 +1592,8 @@ class ClientMouseController(object):
                     # note in ServerMouseController._on_active_screen_changed).
                     for _ in range(10):
                         await self._position_cursor(event.x, event.y)
-                    await self._check_edge()
+                    if self.CURSOR_FEEDBACK:
+                        await self._check_edge()
                 elif event.action == MouseEvent.CLICK_ACTION:
                     self._click(event.button, event.is_pressed)
                 elif event.action == MouseEvent.SCROLL_ACTION:
@@ -1788,67 +1920,12 @@ class ClientMouseController(object):
         """
         if monitor is None:
             return None
-        candidates = self._intra_by_src.get(monitor.monitor_id)
-        if not candidates:
-            return None
         edge_str = self._EDGE_TO_STRING_CLIENT.get(edge)
         if edge_str is None:
             return None
-
-        m_w = max(1, monitor.max_x - monitor.min_x)
-        m_h = max(1, monitor.max_y - monitor.min_y)
-        if edge == ScreenEdge.LEFT or edge == ScreenEdge.RIGHT:
-            axis_norm = (y - monitor.min_y) / m_h
-        else:
-            axis_norm = (x - monitor.min_x) / m_w
-        axis_norm = max(0.0, min(1.0, axis_norm))
-
-        for b in candidates:
-            if b.get("src_edge") != edge_str:
-                continue
-            s_start = b.get("src_axis_start", 0.0)
-            s_end = b.get("src_axis_end", 0.0)
-            if s_end <= s_start or not (s_start <= axis_norm < s_end):
-                continue
-
-            local = (axis_norm - s_start) / (s_end - s_start)
-            if local < 0.0:
-                local = 0.0
-            elif local > 1.0:
-                local = 1.0
-            d_start = b.get("dst_axis_start", 0.0)
-            d_end = b.get("dst_axis_end", 0.0)
-            dst_axis = d_start + local * (d_end - d_start)
-
-            dst_id = int(b.get("dst_monitor_id", -1))
-            dst_edge = b.get("dst_edge")
-            d_min_x = int(b.get("dst_monitor_min_x", 0))
-            d_min_y = int(b.get("dst_monitor_min_y", 0))
-            d_max_x = int(b.get("dst_monitor_max_x", 0))
-            d_max_y = int(b.get("dst_monitor_max_y", 0))
-            d_w = max(1, d_max_x - d_min_x)
-            d_h = max(1, d_max_y - d_min_y)
-
-            # Land JUST INSIDE the destination edge so the next tick
-            # doesn't re-trigger the same warp from the other side.
-            if dst_edge == "right":
-                target_x = d_max_x - 2
-                target_y = d_min_y + dst_axis * d_h
-            elif dst_edge == "left":
-                target_x = d_min_x + 1
-                target_y = d_min_y + dst_axis * d_h
-            elif dst_edge == "bottom":
-                target_x = d_min_x + dst_axis * d_w
-                target_y = d_max_y - 2
-            elif dst_edge == "top":
-                target_x = d_min_x + dst_axis * d_w
-                target_y = d_min_y + 1
-            else:
-                continue
-
-            return dst_id, target_x, target_y, dst_edge
-
-        return None
+        return resolve_intra_warp(
+            self._intra_by_src.get(monitor.monitor_id) or (), monitor, edge_str, x, y
+        )
 
     def _has_intra_binding_between(
         self, src_monitor_id: int, dst_monitor_id: int
@@ -1900,75 +1977,12 @@ class ClientMouseController(object):
         ``monitor`` in the OS, so ``find_monitor_at(x, y)`` would return
         the WRONG monitor for the lookup.
         """
-        if not self._edge_bindings or monitor is None or self._server_bbox is None:
-            return None
         edge_str = self._EDGE_TO_STRING_CLIENT.get(edge)
         if edge_str is None:
             return None
-
-        m_w = max(1, monitor.max_x - monitor.min_x)
-        m_h = max(1, monitor.max_y - monitor.min_y)
-        if edge == ScreenEdge.LEFT or edge == ScreenEdge.RIGHT:
-            axis_norm = (y - monitor.min_y) / m_h
-        else:
-            axis_norm = (x - monitor.min_x) / m_w
-        axis_norm = max(0.0, min(1.0, axis_norm))
-
-        for b in self._edge_bindings:
-            if b.get("client_monitor_id") != monitor.monitor_id:
-                continue
-            if b.get("client_edge") != edge_str:
-                continue
-            c_start = b.get("client_axis_start", 0.0)
-            c_end = b.get("client_axis_end", 0.0)
-            c_span = c_end - c_start
-            if c_span <= 0 or not (c_start <= axis_norm < c_end):
-                continue
-
-            local_norm = (axis_norm - c_start) / c_span
-            s_start = b.get("server_axis_start", 0.0)
-            s_end = b.get("server_axis_end", 0.0)
-            server_axis = s_start + local_norm * (s_end - s_start)
-
-            s_min_x = int(b.get("server_monitor_min_x", 0))
-            s_min_y = int(b.get("server_monitor_min_y", 0))
-            s_max_x = int(b.get("server_monitor_max_x", 0))
-            s_max_y = int(b.get("server_monitor_max_y", 0))
-            s_edge = b.get("server_edge")
-            s_w = max(1, s_max_x - s_min_x)
-            s_h = max(1, s_max_y - s_min_y)
-            edge_margin = 6
-            if s_edge == "right":
-                target_x = s_max_x - edge_margin
-                target_y = s_min_y + server_axis * s_h
-            elif s_edge == "left":
-                target_x = s_min_x + edge_margin
-                target_y = s_min_y + server_axis * s_h
-            elif s_edge == "bottom":
-                target_x = s_min_x + server_axis * s_w
-                target_y = s_max_y - edge_margin
-            elif s_edge == "top":
-                target_x = s_min_x + server_axis * s_w
-                target_y = s_min_y + edge_margin
-            else:
-                continue
-
-            bx0, by0, bx1, by1 = self._server_bbox
-            bw = max(1, bx1 - bx0)
-            bh = max(1, by1 - by0)
-            x_norm = (target_x - bx0) / bw
-            y_norm = (target_y - by0) / bh
-            if x_norm < 0.0:
-                x_norm = 0.0
-            elif x_norm > 1.0:
-                x_norm = 1.0
-            if y_norm < 0.0:
-                y_norm = 0.0
-            elif y_norm > 1.0:
-                y_norm = 1.0
-            return x_norm, y_norm
-
-        return None
+        return lookup_return_to_server(
+            self._edge_bindings, self._server_bbox, monitor, edge_str, x, y
+        )
 
     def _clamp_cursor_to_monitor(self, monitor) -> None:
         """Bring the cursor back INSIDE ``monitor`` when it has actually left it.

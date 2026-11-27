@@ -3139,3 +3139,69 @@ class TestDirectionalHotkeyAnchor:
 
         assert listener._last_server_cursor_pos == (960.0, 540.0)
         assert listener.resolve_neighbour(ScreenEdge.RIGHT, 960.0, 540.0) == "c1"
+
+
+class TestClientWithoutCursorFeedback:
+    """A client that can't read its cursor executes the server's positions."""
+
+    def _make_client(self, event_bus, mock_stream_handler, mock_mouse_controller):
+        with patch(
+            "input.mouse._base.MouseController", return_value=mock_mouse_controller
+        ):
+            c = ClientMouseController(
+                event_bus, mock_stream_handler, mock_stream_handler
+            )
+        c.CURSOR_FEEDBACK = False
+        c._is_active = True
+        return c
+
+    async def _pump(self, c, event):
+        c._running = True
+        await c._queue.put(MagicMock())
+        with patch("input.mouse._base.EventMapper.get_event", return_value=event):
+            worker = asyncio.create_task(c._run_worker())
+            while not c._queue.empty():
+                await asyncio.sleep(0.005)
+            await asyncio.sleep(0.005)
+            c._running = False
+            worker.cancel()
+            try:
+                await worker
+            except asyncio.CancelledError:
+                pass
+
+    @pytest.mark.anyio
+    async def test_an_absolute_event_warps_to_its_pixels(
+        self, event_bus, mock_stream_handler, mock_mouse_controller
+    ):
+        c = self._make_client(event_bus, mock_stream_handler, mock_mouse_controller)
+        with (
+            patch.object(c, "_warp_cursor") as warp,
+            patch.object(c, "_check_edge", new=AsyncMock()) as check,
+        ):
+            await self._pump(
+                c, MouseEvent(x=640, y=400, action=MouseEvent.ABSOLUTE_ACTION)
+            )
+        warp.assert_called_once_with(640, 400)
+        check.assert_not_awaited()
+
+    @pytest.mark.anyio
+    @pytest.mark.parametrize(
+        "event",
+        [
+            MouseEvent(x=-1, y=-1, dx=10, dy=0, action=MouseEvent.MOVE_ACTION),
+            MouseEvent(x=0.0, y=0.5, action=MouseEvent.POSITION_ACTION),
+        ],
+        ids=["move", "position"],
+    )
+    async def test_no_edge_routing_on_a_position_it_cannot_see(
+        self, event_bus, mock_stream_handler, mock_mouse_controller, event
+    ):
+        c = self._make_client(event_bus, mock_stream_handler, mock_mouse_controller)
+        with (
+            patch.object(c, "_move_cursor"),
+            patch.object(c, "_position_cursor", new=AsyncMock()),
+            patch.object(c, "_check_edge", new=AsyncMock()) as check,
+        ):
+            await self._pump(c, event)
+        check.assert_not_awaited()

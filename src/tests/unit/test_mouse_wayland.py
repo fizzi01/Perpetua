@@ -535,6 +535,109 @@ class TestRecrossLockOrdering:
         assert wayland_listener._listening is False
 
 
+class TestServerTracksAClientWithoutFeedback:
+    """The server keeps the cursor of a client that can't read it."""
+
+    @staticmethod
+    async def _connect(listener, feedback=False):
+        from event import ClientConnectedEvent
+        from network.stream import StreamType
+
+        await listener._on_client_connected(
+            ClientConnectedEvent(
+                client_uid=CLIENT_UID,
+                streams=[StreamType.MOUSE],
+                edge_bindings=[_binding()],
+                client_monitors=[
+                    {
+                        "monitor_id": 7,
+                        "min_x": 0,
+                        "min_y": 0,
+                        "max_x": 1280,
+                        "max_y": 800,
+                    }
+                ],
+                cursor_feedback=feedback,
+            )
+        )
+
+    @staticmethod
+    def _client():
+        client = MagicMock()
+        client.uid = CLIENT_UID
+        return client
+
+    @pytest.mark.anyio
+    async def test_moves_become_absolute_after_a_crossing(self, wayland_listener):
+        await self._connect(wayland_listener)
+        await wayland_listener._on_barrier_activated("right", SCREEN_W - 1.0, 540.0)
+
+        out = await wayland_listener._route_for_client(
+            MouseEvent(dx=5, dy=0, action=MouseEvent.MOVE_ACTION), self._client()
+        )
+
+        assert out.action == MouseEvent.ABSOLUTE_ACTION
+        assert (out.x, out.y) == (5, 400)  # landed on the left edge, mid-height
+
+    @pytest.mark.anyio
+    async def test_the_server_decides_the_return(self, wayland_listener):
+        await self._connect(wayland_listener)
+        await wayland_listener._on_barrier_activated("right", SCREEN_W - 1.0, 540.0)
+        wayland_listener.event_bus.dispatch.reset_mock()
+        move = MouseEvent(dx=-5, dy=0, action=MouseEvent.MOVE_ACTION)
+
+        outs = [
+            await wayland_listener._route_for_client(move, self._client())
+            for _ in range(3)
+        ]
+
+        assert outs[-1] is None, "a return sends nothing to the client"
+        guards = [
+            c.kwargs["data"]
+            for c in wayland_listener.event_bus.dispatch.await_args_list
+            if c.kwargs.get("event_type") == BusEventType.SCREEN_CHANGE_GUARD
+        ]
+        assert len(guards) == 1 and guards[0].active_screen is None
+        assert guards[0].x == pytest.approx((SCREEN_W - 6) / SCREEN_W)
+        sent = [c.args[0] for c in wayland_listener.command_stream.send.await_args_list]
+        assert any(type(e).__name__ == "ForceScreenChangeCommandEvent" for e in sent)
+
+    @pytest.mark.anyio
+    async def test_a_client_with_feedback_gets_relative_moves(self, wayland_listener):
+        await self._connect(wayland_listener, feedback=True)
+        move = MouseEvent(dx=5, dy=0, action=MouseEvent.MOVE_ACTION)
+
+        assert await wayland_listener._route_for_client(move, self._client()) is move
+
+    @pytest.mark.anyio
+    async def test_a_hotkey_activation_starts_at_the_centre(self, wayland_listener):
+        await self._connect(wayland_listener)
+
+        out = await wayland_listener._route_for_client(
+            MouseEvent(dx=0, dy=1, action=MouseEvent.MOVE_ACTION), self._client()
+        )
+
+        assert (out.x, out.y) == (640, 401)
+
+    @pytest.mark.anyio
+    async def test_clicks_pass_through(self, wayland_listener):
+        await self._connect(wayland_listener)
+        click = MouseEvent(action=MouseEvent.CLICK_ACTION, is_pressed=True)
+
+        assert await wayland_listener._route_for_client(click, self._client()) is click
+
+    @pytest.mark.anyio
+    async def test_leaving_the_client_stops_tracking(self, wayland_listener):
+        await self._connect(wayland_listener)
+        await wayland_listener._on_barrier_activated("right", SCREEN_W - 1.0, 540.0)
+
+        await wayland_listener._on_active_screen_changed(
+            ActiveScreenChangedEvent(active_screen=None)
+        )
+
+        assert wayland_listener._tracked_client is None
+
+
 class TestServerStopClosesTheLibeiConnection:
     def test_stop_shuts_the_remote_desktop_connection_down(self, wayland_listener):
         # A portal session plus a dispatch thread in a module-level singleton:

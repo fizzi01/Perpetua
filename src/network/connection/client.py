@@ -26,6 +26,7 @@ import os
 import ssl
 from typing import Optional, Callable, Any, Tuple
 
+from input._platform import cursor_feedback_available
 from model.client import ClientsManager, ClientObj
 from model.connection import StreamWrapper, ClientConnection
 
@@ -666,6 +667,7 @@ class ConnectionHandler(BaseConnectionHandler):
                 screen_resolution=self._client_obj.screen_resolution,
                 ssl=self.use_ssl,
                 monitors=monitors_payload,
+                capabilities={"cursor_feedback": cursor_feedback_available()},
             )
 
             self._logger.debug(

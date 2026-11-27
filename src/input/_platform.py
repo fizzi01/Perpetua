@@ -58,6 +58,16 @@ def is_kde() -> bool:
     return _current_desktop() in ("kde", "plasma")
 
 
+def cursor_feedback_available() -> bool:
+    """Whether this machine, as a client, can read its own cursor position.
+
+    False on GNOME/KDE Wayland, where input goes through a libei sender that
+    gets no position back: the server then tracks the cursor and sends
+    absolute positions.
+    """
+    return not (is_linux() and is_wayland() and (is_gnome() or is_kde()))
+
+
 class BackendRule(NamedTuple):
     """Declarative rule for backend resolution.
 

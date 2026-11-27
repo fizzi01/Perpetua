@@ -838,6 +838,10 @@ class ConnectionHandler(BaseConnectionHandler):
                     "screen_resolution", "0x0"
                 )
                 client.additional_params = response.payload.get("additional_params", {})
+                # Runtime, not persisted: a client that can't read its own cursor
+                # gets absolute positions from the server (see _routing).
+                capabilities = response.payload.get("capabilities") or {}
+                client.cursor_feedback = bool(capabilities.get("cursor_feedback", True))
                 # TLS state is the server's policy, not the client's assertion.
                 client.ssl = self.ssl_enabled
                 # Parse monitor list once at ingress; malformed entries are

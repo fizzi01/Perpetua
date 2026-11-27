@@ -835,6 +835,7 @@ class Server:
                 client_uid=client.uid,
                 edge_bindings=edge_bindings,
                 intra_client_bindings=intra_client_bindings,
+                client_monitors=[m.to_dict() for m in client.monitors],
             ),
         )
 
@@ -976,6 +977,7 @@ class Server:
                         client_uid=client.uid,
                         edge_bindings=edge_bindings,
                         intra_client_bindings=intra_client_bindings,
+                        client_monitors=[m.to_dict() for m in client.monitors],
                     ),
                 )
             except Exception as e:
@@ -2088,6 +2090,8 @@ class Server:
                 streams=streams,
                 edge_bindings=edge_bindings,
                 intra_client_bindings=intra_client_bindings,
+                client_monitors=[m.to_dict() for m in client.monitors],
+                cursor_feedback=client.cursor_feedback,
             ),
         )
         await self.save_config()
@@ -2256,6 +2260,7 @@ class Server:
                     client_uid=client.uid,
                     edge_bindings=edge_bindings,
                     intra_client_bindings=intra_client_bindings,
+                    client_monitors=[m.to_dict() for m in client.monitors],
                 ),
             )
         except Exception as e:

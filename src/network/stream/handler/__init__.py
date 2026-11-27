@@ -316,6 +316,7 @@ class _ServerStreamHandler(StreamHandler):
         )
 
         self._active_client: Optional[ClientObj] = None
+        self._outbound_filter = None
         self._send_ready: asyncio.Event = asyncio.Event()
         self.handler_id = (
             handler_id
@@ -409,6 +410,13 @@ class _ServerStreamHandler(StreamHandler):
         """
         pass
 
+    def set_outbound_filter(self, outbound_filter) -> None:
+        """Install ``async (data, client) -> data | None`` before every send.
+
+        It may rewrite an event for the target client or drop it (``None``).
+        """
+        self._outbound_filter = outbound_filter
+
     async def _send_logic(self):
         """
         Core sending logic for the stream handler.
@@ -418,10 +426,16 @@ class _ServerStreamHandler(StreamHandler):
         if self._active_client is None:
             raise AttributeError("Client is not active")
 
+        client = self._active_client
         screen = (
-            self._active_client.get_screen_position()
+            client.get_screen_position()
         )  # Before the first await to avoid missing active client
         data = await self._send_queue.get()
+        if self._outbound_filter is not None:
+            # Runs in the one sender task, so it sees events in send order.
+            data = await self._outbound_filter(data, client)
+            if data is None:
+                return
         # Retake screen in case active client changed during await
         # Only a switch to None can occur here,
         # because we have screen A -> None -> screen B,
