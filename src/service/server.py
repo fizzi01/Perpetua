@@ -2062,6 +2062,40 @@ class Server:
         if clipboard_stream:
             await clipboard_stream.stop()
 
+    def _fit_placements_to_monitors(self, client: ClientObj, server_monitors) -> bool:
+        """Give each placement its client monitor's current size.
+
+        A placement is sized from the monitor when the admin places it, so a
+        later resolution or scale change on the client has to reach it here;
+        the editor draws the stored size. The workspace position stays.
+        """
+        from utils.screen import resize_placement
+
+        sizes = {m.monitor_id: (m.width, m.height) for m in client.monitors or []}
+        changed = False
+        fitted: list[dict] = []
+        for p in client.placements or []:
+            try:
+                size = sizes.get(int(p.get("client_monitor_id")))
+            except (TypeError, ValueError):
+                size = None
+            if (
+                size is not None
+                and size[0] > 0
+                and size[1] > 0
+                and (p.get("width"), p.get("height")) != size
+            ):
+                p = resize_placement(p, size[0], size[1], server_monitors)
+                changed = True
+            fitted.append(p)
+        if changed:
+            client.placements = fitted
+            self._logger.info(
+                "Placements resized to the client's monitors",
+                client=client.get_net_id(),
+            )
+        return changed
+
     async def _on_client_connected(self, client: ClientObj, streams: list[int]):
         # Same binding list drives forward routing (server listener) and
         # reverse routing (pushed via the CLIENT_TOPOLOGY command).
@@ -2078,6 +2112,15 @@ class Server:
             server_monitors = Screen.get_monitors_cached()
         except Exception:
             server_monitors = []
+        # The handshake replaced the monitor list; sizes may have changed
+        # while the client was away. save_config below persists the fit.
+        if self._fit_placements_to_monitors(client, server_monitors):
+            try:
+                self.clients_manager.update_client(client)
+            except Exception as e:
+                self._logger.warning(
+                    "Failed to update resized placements", error=str(e)
+                )
         edge_bindings = [
             eb.to_dict() for eb in client.get_edge_bindings(server_monitors)
         ]
@@ -2195,10 +2238,13 @@ class Server:
 
         client.monitors = new_monitors
 
+        try:
+            server_monitors = Screen.get_monitors_cached()
+        except Exception:
+            server_monitors = []
+
         # Drop placements whose ``client_monitor_id`` is no longer
-        # advertised. Other placements survive untouched - the OS
-        # bbox may have changed but the workspace target stays the
-        # same until the admin opens the layout editor.
+        # advertised; the rest follow their monitor's new size.
         known_ids = {m.monitor_id for m in new_monitors}
         orphans: list[dict] = []
         kept: list[dict] = []
@@ -2227,6 +2273,7 @@ class Server:
 
         if orphans:
             client.placements = kept
+        self._fit_placements_to_monitors(client, server_monitors)
 
         try:
             self.clients_manager.update_client(client)
@@ -2245,10 +2292,6 @@ class Server:
 
         # Refresh the listener's edge-binding cache so the next
         # crossing routes against the new monitor topology.
-        try:
-            server_monitors = Screen.get_monitors_cached()
-        except Exception:
-            server_monitors = []
         try:
             edge_bindings = [
                 eb.to_dict() for eb in client.get_edge_bindings(server_monitors)

@@ -113,6 +113,15 @@ export default function LayoutEditorWindow() {
                         initialPlacementsRef.current = data.placements || [];
                         initialisedRef.current = true;
                         setInitialised(true);
+                    } else {
+                        // A client monitor changed size: take the daemon's resized placement.
+                        const fresh = new Map(
+                            (data.placements || []).map((p) => [`${p.client_uid}:${p.client_monitor_id}`, p]),
+                        );
+                        setPlacements((prev) => prev.map((p) => {
+                            const f = fresh.get(`${p.client_uid}:${p.client_monitor_id}`);
+                            return f && (f.width !== p.width || f.height !== p.height) ? f : p;
+                        }));
                     }
                 },
             );

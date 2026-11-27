@@ -539,6 +539,38 @@ def compute_edge_bindings(
     return out
 
 
+def resize_placement(
+    placement: dict,
+    width: int,
+    height: int,
+    server_monitors: "Iterable[MonitorInfo] | list[MonitorInfo]",
+) -> dict:
+    """``placement`` at a new size, keeping the side that touches the server.
+
+    A placement left of (or above) a server monitor keeps its right (bottom)
+    edge, so it neither overlaps the server when it grows nor detaches when it
+    shrinks. Otherwise the top-left corner stays put.
+    """
+    px = int(placement.get("workspace_x", 0))
+    py = int(placement.get("workspace_y", 0))
+    right = px + int(placement.get("width", 0))
+    bottom = py + int(placement.get("height", 0))
+
+    keep_right = any(
+        abs(right - s.min_x) <= _ABUTMENT_TOLERANCE_PX for s in server_monitors
+    )
+    keep_bottom = any(
+        abs(bottom - s.min_y) <= _ABUTMENT_TOLERANCE_PX for s in server_monitors
+    )
+    return dict(
+        placement,
+        workspace_x=right - width if keep_right else px,
+        workspace_y=bottom - height if keep_bottom else py,
+        width=int(width),
+        height=int(height),
+    )
+
+
 def compute_intra_client_bindings(
     placements: "Iterable[dict] | list[dict]",
     client_monitors: "Iterable[MonitorInfo] | None" = None,
