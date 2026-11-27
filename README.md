@@ -279,7 +279,7 @@ The OTP is just for the initial certificate exchange. During pairing the server 
 The configuration file lives at:
 - macOS: `$HOME/Library/Caches/Perpetua`
 - Windows: `%LOCALAPPDATA%\Perpetua`
-- Linux: `$XDG_CONFIG_HOME/perpetua` (default `$HOME/.config/perpetua`); the daemon also writes log and runtime files under `$XDG_STATE_HOME/perpetua` and `$XDG_RUNTIME_DIR/perpetua`. A legacy `~/.perpetua` directory is migrated on first launch.
+- Linux: `$XDG_CONFIG_HOME/perpetua` (default `$HOME/.config/perpetua`); the daemon also writes log and runtime files under `$XDG_STATE_HOME/perpetua` (default `$HOME/.local/state/perpetua`) and `$XDG_RUNTIME_DIR/perpetua`. A legacy `~/.perpetua` directory is migrated on first launch.
 
 The configuration [json file](#file-structure) is split into three sections: `server`, `client`, and `general`.
 
