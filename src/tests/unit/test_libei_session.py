@@ -58,9 +58,6 @@ def _install_snegg_stubs(monkeypatch):
         SCROLL = 4
         TOUCH = 5
 
-    class _DeviceType:
-        POINTER = 1
-
     ei = types.ModuleType("snegg.ei")
     ei.Sender = MagicMock()
     ei.Receiver = MagicMock()
@@ -70,12 +67,6 @@ def _install_snegg_stubs(monkeypatch):
     c_libei = types.ModuleType("snegg.c.libei")
     c_libei.libei = MagicMock()
 
-    oeffis = types.ModuleType("snegg.oeffis")
-    oeffis.Oeffis = MagicMock()
-    oeffis.DeviceType = _DeviceType
-    oeffis.DisconnectedError = type("DisconnectedError", (Exception,), {})
-    oeffis.SessionClosedError = type("SessionClosedError", (Exception,), {})
-
     evdev = types.ModuleType("evdev")
     evdev.ecodes = types.SimpleNamespace(BTN_LEFT=272, BTN_RIGHT=273, BTN_MIDDLE=274)
 
@@ -84,15 +75,20 @@ def _install_snegg_stubs(monkeypatch):
         ("snegg.ei", ei),
         ("snegg.c", types.ModuleType("snegg.c")),
         ("snegg.c.libei", c_libei),
-        ("snegg.oeffis", oeffis),
         ("evdev", evdev),
     ):
         monkeypatch.setitem(sys.modules, name, mod)
 
 
 @pytest.fixture
-def libei(monkeypatch):
+def libei(monkeypatch, tmp_path):
     _install_snegg_stubs(monkeypatch)
+    from input.mouse.backend import _portal
+
+    # Never the user's real token file, and a fresh registration per test.
+    monkeypatch.setattr(_portal, "_store", _portal.TokenStore(str(tmp_path / "t.json")))
+    monkeypatch.setattr(_portal, "_register_tried", False)
+    monkeypatch.setattr(_portal, "_registered", None)
     monkeypatch.delitem(sys.modules, "input.mouse.backend._libei", raising=False)
     import importlib
 
@@ -364,6 +360,30 @@ class TestSetupTimeout:
         edges, kwargs = portal.calls[0]
         assert edges == list(libei._ALL_EDGES)
         assert kwargs == {"timeout": libei._SETUP_TIMEOUT}
+
+
+class TestCaptureRegistersTheAppId:
+    def test_before_the_capture_portal(self, libei, logger, monkeypatch):
+        # A server-first daemon would otherwise fix the app id with its
+        # InputCapture call, and the client's grants would land elsewhere.
+        calls = []
+        mod = types.ModuleType("pyinputcapture")
+        mod.register_host_app = MagicMock(
+            side_effect=lambda a: calls.append("register")
+        )
+        mod.InputCapturePortal = MagicMock(
+            side_effect=lambda: calls.append("portal") or MagicMock()
+        )
+        monkeypatch.setitem(sys.modules, "pyinputcapture", mod)
+        monkeypatch.setattr(
+            libei._CaptureSession,
+            "_setup",
+            staticmethod(lambda _p: (_ for _ in ()).throw(RuntimeError("boom"))),
+        )
+
+        libei._CaptureSession.create(logger)
+
+        assert calls == ["register", "portal"]
 
 
 class TestUnansweredDialog:
@@ -1355,6 +1375,9 @@ class _FakeConn:
     def close(self):
         self.closed = True
 
+    def abort(self):
+        self._closing = True
+
 
 class TestRemoteDesktopLink:
     """Client RemoteDesktop session: off-thread connect, capped retries, and a
@@ -1495,69 +1518,113 @@ class TestControllerWithoutSession:
         assert (controller._x, controller._y) == (10, 10)
 
 
+def _rd_module(monkeypatch, portal, calls=None):
+    """A ``pyinputcapture`` whose RemoteDesktopPortal() returns ``portal``."""
+    calls = calls if calls is not None else []
+    mod = types.ModuleType("pyinputcapture")
+    mod.register_host_app = MagicMock(side_effect=lambda app: calls.append("register"))
+
+    def _make():
+        calls.append("portal")
+        return portal
+
+    mod.RemoteDesktopPortal = MagicMock(side_effect=_make)
+    monkeypatch.setitem(sys.modules, "pyinputcapture", mod)
+    return mod
+
+
 class TestConsentWait:
     """``_EiConnection.connect`` up to the EIS fd: the consent dialog."""
 
-    def _conn(self, libei, monkeypatch, dispatch):
-        DisconnectedError = sys.modules["snegg.oeffis"].DisconnectedError
-        answers = iter(dispatch) if isinstance(dispatch, list) else None
-
-        class _Oeffis:
-            """Like snegg: eis_fd raises until dispatch() has returned True."""
-
-            fd = 3
-            connected = False
-
-            def dispatch(self):
-                if isinstance(dispatch, Exception):
-                    raise dispatch
-                result = next(answers) if answers is not None else dispatch()
-                self.connected = self.connected or result
-                return result
-
-            @property
-            def eis_fd(self):
-                if not self.connected:
-                    raise DisconnectedError(None)
-                return 42
-
-        oeffis = _Oeffis()
-        libei.Oeffis.create.return_value = oeffis
+    def _conn(self, libei, monkeypatch, outcome, calls=None):
+        portal = MagicMock()
+        if isinstance(outcome, BaseException):
+            portal.setup.side_effect = outcome
+        elif callable(outcome):
+            portal.setup.side_effect = outcome
+        else:
+            portal.setup.return_value = outcome
+        _rd_module(monkeypatch, portal, calls)
         poller = MagicMock()
         poller.poll.return_value = [(0, 1)]
         monkeypatch.setattr(libei._select, "poll", lambda: poller)
-        return libei._EiConnection()
+        conn = libei._EiConnection()
+        conn.test_portal = portal
+        return conn
 
-    def test_a_closed_session_is_a_refusal(self, libei, monkeypatch):
-        DisconnectedError = sys.modules["snegg.oeffis"].DisconnectedError
-        conn = self._conn(libei, monkeypatch, DisconnectedError("cancelled"))
-        with pytest.raises(libei._ConsentRefused):
-            conn.connect(consent_timeout=5)
+    @staticmethod
+    def _store():
+        from input.mouse.backend import _portal
 
-    @pytest.mark.parametrize("message", ["", None])
-    def test_a_refusal_without_a_message_still_reads_cleanly(
-        self, libei, monkeypatch, message
-    ):
-        # The reason is shown in the GUI; snegg's empty message must not leak
-        # into it as a dangling "refused: ".
-        DisconnectedError = sys.modules["snegg.oeffis"].DisconnectedError
-        conn = self._conn(libei, monkeypatch, DisconnectedError(message))
+        return _portal.token_store()
+
+    @pytest.mark.parametrize("message", ["start: Cancelled", ""])
+    def test_a_refusal_reads_cleanly(self, libei, monkeypatch, message):
+        # The reason is shown in the GUI; the portal's text goes to the log.
+        conn = self._conn(libei, monkeypatch, PermissionError(message))
         with pytest.raises(libei._ConsentRefused) as raised:
             conn.connect(consent_timeout=5)
         assert str(raised.value) == "Remote input permission was denied"
 
-    def test_waiting_for_the_answer_is_not_a_failure(self, libei, monkeypatch):
-        # dispatch() is False while the dialog is open. Reading eis_fd then
-        # raised DisconnectedError, which read as a refusal.
-        conn = self._conn(libei, monkeypatch, [False, False, True])
+    def test_a_refusal_forgets_the_token(self, libei, monkeypatch):
+        self._store().save("remote_desktop", "old", "com.federicoizzi.Perpetua")
+        conn = self._conn(libei, monkeypatch, PermissionError("start: Cancelled"))
+        with pytest.raises(libei._ConsentRefused):
+            conn.connect(consent_timeout=5)
+        assert self._store().load("remote_desktop", None) is None
+
+    def test_a_transient_failure_keeps_the_token(self, libei, monkeypatch):
+        self._store().save("remote_desktop", "old", "com.federicoizzi.Perpetua")
+        conn = self._conn(libei, monkeypatch, RuntimeError("connect_to_eis: boom"))
+        with pytest.raises(RuntimeError) as raised:
+            conn.connect(consent_timeout=5)
+        assert not isinstance(raised.value, libei._ConsentRefused)
+        assert self._store().load("remote_desktop", None) == "old"
+
+    def test_an_unanswered_dialog_times_out(self, libei, monkeypatch):
+        conn = self._conn(libei, monkeypatch, TimeoutError("not answered"))
+        with pytest.raises(libei._ConsentTimeout):
+            conn.connect(consent_timeout=5)
+
+    def test_the_saved_token_is_presented_and_the_new_one_kept(
+        self, libei, monkeypatch
+    ):
+        self._store().save("remote_desktop", "t1", "com.federicoizzi.Perpetua")
+        conn = self._conn(libei, monkeypatch, (42, "t2"))
+        monkeypatch.setattr(libei, "_ei_from_fd", MagicMock(side_effect=StopTest))
+        with pytest.raises(StopTest):
+            conn.connect(consent_timeout=7)
+
+        kwargs = conn.test_portal.setup.call_args.kwargs
+        assert kwargs["restore_token"] == "t1"
+        assert kwargs["persist"] is True
+        assert kwargs["timeout"] == 7
+        assert self._store().load("remote_desktop", None) == "t2"
+
+    def test_the_app_id_is_registered_before_the_first_portal(self, libei, monkeypatch):
+        calls = []
+        conn = self._conn(libei, monkeypatch, (42, None), calls)
         monkeypatch.setattr(libei, "_ei_from_fd", MagicMock(side_effect=StopTest))
         with pytest.raises(StopTest):
             conn.connect(consent_timeout=5)
+        assert calls[:2] == ["register", "portal"]
+        sys.modules["pyinputcapture"].register_host_app.assert_called_once_with(
+            "com.federicoizzi.Perpetua"
+        )
 
-    def test_an_unanswered_dialog_times_out(self, libei, monkeypatch):
-        conn = self._conn(libei, monkeypatch, lambda: False)
-        with pytest.raises(libei._ConsentTimeout):
-            conn.connect(consent_timeout=0.05)
+    def test_abort_closes_the_portal_and_drops_a_late_grant(self, libei, monkeypatch):
+        conn = None
+
+        def granted_while_aborting(**_):
+            conn.abort()
+            return 42, "t2"
+
+        conn = self._conn(libei, monkeypatch, granted_while_aborting)
+        with pytest.raises(RuntimeError, match="aborted"):
+            conn.connect(consent_timeout=5)
+        conn.test_portal.close.assert_called()
+        conn.close()
+        assert conn._portal is None
 
 
 class StopTest(Exception):
@@ -1582,7 +1649,7 @@ class TestDeviceAcquisition:
         return ev
 
     def _connect_with(self, libei, monkeypatch, batches):
-        conn = self._conn(libei, monkeypatch, [True])
+        conn = self._conn(libei, monkeypatch, (42, None))
         sender = MagicMock()
         sender.events = []
         feed = iter(batches)

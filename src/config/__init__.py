@@ -28,7 +28,7 @@ import shutil
 import sys
 from collections import OrderedDict
 from dataclasses import dataclass, field
-from typing import Optional, Dict, Any, List, Tuple
+from typing import ClassVar, Optional, Dict, Any, List, Tuple
 import msgspec.json
 import os
 from os import path
@@ -122,6 +122,8 @@ class ApplicationConfig:
 
     service_name: str = "Perpetua"
     app_name: str = "Perpetua"
+    # The Tauri identifier: the .desktop name and the key of portal grants.
+    app_id: ClassVar[str] = "com.federicoizzi.Perpetua"
     mainpath: str = ""  # Main application save path
 
     ssl_path: str = "ssl/"

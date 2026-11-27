@@ -19,7 +19,7 @@
 
 MouseListener uses the InputCapture portal to capture the cursor at
 screen-edge barriers.  MouseController uses the RemoteDesktop portal
-to emulate pointer input via libei.
+(pyinputcapture, with a persistent grant) to emulate pointer input via libei.
 
 Discrete scroll is called through the C bindings because snegg does
 not expose scroll methods on Device.
@@ -35,8 +35,12 @@ import select as _select
 from evdev import ecodes
 from snegg.ei import Sender, EventType, DeviceCapability
 from snegg.c.libei import libei
-from snegg.oeffis import Oeffis, DeviceType, DisconnectedError, SessionClosedError
 
+from input.mouse.backend._portal import (
+    REMOTE_DESKTOP,
+    ensure_host_app_registered,
+    token_store,
+)
 from input.utils import ButtonMapping
 from utils import ExponentialBackoff
 from utils.logging import get_logger
@@ -252,7 +256,7 @@ class _EiConnection:
         self._abs_device = None
         self.regions: list[tuple[int, int, int, int, float]] = []
         self._sender: Sender | None = None
-        self._oeffis: Oeffis | None = None
+        self._portal = None
         self._paused = threading.Event()
         self._error: Exception | None = None
         self._dispatch_thread: threading.Thread | None = None
@@ -296,11 +300,9 @@ class _EiConnection:
         compositor session was already gone.
 
         snegg's ``Sender``/``Receiver`` have no ``close()``: the libei context
-        is refcounted and destroyed when the last Python reference drops, and
-        dropping the ``Oeffis`` context is itself what disconnects the portal
-        session. So the teardown here is mostly about *ordering* - stop the
-        dispatch thread, close the device, then drop the sender before the
-        oeffis (whose destruction invalidates the EIS fd the sender uses).
+        is refcounted and destroyed when the last Python reference drops. So
+        the teardown is about *ordering*: stop the dispatch thread, close the
+        device, drop the sender, then close the portal session.
         """
         self._closing = True
 
@@ -325,41 +327,33 @@ class _EiConnection:
                 pass
 
         self._sender = None
-        self._oeffis = None
+        portal, self._portal = self._portal, None
+        if portal is not None:
+            try:
+                portal.close()
+            except Exception:
+                pass
+
+    def abort(self) -> None:
+        """Give up a ``connect()`` in flight, from any thread.
+
+        Closing the portal ends a wait on the dialog and takes the dialog down.
+        """
+        self._closing = True
+        portal = self._portal
+        if portal is not None:
+            try:
+                portal.close()
+            except Exception:
+                pass
 
     def connect(self, consent_timeout: float = 300.0):
         if self._device is not None:
             return
 
+        eis_fd = self._open_portal_session(consent_timeout)
+
         poller = _select.poll()
-
-        # Portal session
-        self._oeffis = Oeffis.create(devices=DeviceType.POINTER)
-        poller.register(self._oeffis.fd, _select.POLLIN)
-
-        # Obtain EIS fd. This wait *is* the consent dialog, so it is bounded by
-        # how long a human may take, not by how fast a portal answers.
-        eis_fd = None
-        deadline = time.monotonic() + consent_timeout
-        while eis_fd is None:
-            if self._closing:
-                raise RuntimeError("libei: connect aborted")
-            if time.monotonic() >= deadline:
-                raise _ConsentTimeout(
-                    "The remote input permission dialog was not answered in time"
-                )
-            if not poller.poll(200):
-                continue
-            try:
-                # eis_fd raises until dispatch() has returned True, so it is
-                # only read after that.
-                if self._oeffis.dispatch():
-                    eis_fd = self._oeffis.eis_fd
-            except (DisconnectedError, SessionClosedError) as exc:
-                # liboeffis reports a Cancel and a broken portal alike.
-                raise _ConsentRefused("Remote input permission was denied") from exc
-
-        poller.unregister(self._oeffis.fd)
 
         # Libei Sender
         self._sender = _ei_from_fd(Sender, eis_fd, "perpetua-mouse-controller")
@@ -404,6 +398,49 @@ class _EiConnection:
                     return
 
         raise RuntimeError("libei: no device received after seat bind")
+
+    def _open_portal_session(self, consent_timeout: float) -> int:
+        """The EIS fd of a granted session; silent when the saved token holds.
+
+        The portal waits for a human, so the wait is bounded by
+        ``consent_timeout``. The token is single use: the new one is saved
+        straight away, and a refusal forgets it.
+        """
+        from pyinputcapture import RemoteDesktopPortal
+
+        registered = ensure_host_app_registered()
+        store = token_store()
+        token = store.load(REMOTE_DESKTOP, registered)
+
+        portal = RemoteDesktopPortal()
+        self._portal = portal
+        if self._closing:
+            raise RuntimeError("libei: connect aborted")
+
+        started = time.monotonic()
+        try:
+            eis_fd, new_token = portal.setup(
+                restore_token=token, persist=True, timeout=consent_timeout
+            )
+        except PermissionError as exc:
+            store.clear(REMOTE_DESKTOP)
+            raise _ConsentRefused("Remote input permission was denied") from exc
+        except TimeoutError as exc:
+            raise _ConsentTimeout(
+                "The remote input permission dialog was not answered in time"
+            ) from exc
+        if self._closing:
+            raise RuntimeError("libei: connect aborted")
+
+        if new_token:
+            store.save(REMOTE_DESKTOP, new_token, registered)
+        get_logger("_EiConnection").info(
+            "RemoteDesktop session granted",
+            had_token=token is not None,
+            token_saved=bool(new_token),
+            wait_s=round(time.monotonic() - started, 2),
+        )
+        return eis_fd
 
     def _adopt(self, rel, absolute) -> None:
         primary = rel if rel is not None else absolute
@@ -684,7 +721,7 @@ class _RemoteDesktopLink:
                 self._state = _LinkState.IDLE
             self._retry_at = 0.0
         if pending is not None:
-            pending._closing = True  # makes connect() give up at its next poll
+            pending.abort()
         if conn is not None:
             _close_quietly(conn)
 
@@ -897,6 +934,8 @@ class _CaptureSession:
         from pyinputcapture import InputCapturePortal
         from snegg.ei import Receiver
 
+        # Grants are keyed by app id, fixed by the first portal call.
+        ensure_host_app_registered()
         portal = None
         try:
             portal = InputCapturePortal()
