@@ -49,7 +49,7 @@ CLIENT_UID = "client-uid"
 
 
 def _patch_wayland_geometry():
-    """A single 1920x1080 server monitor, on a GNOME Wayland session."""
+    """A single 1920x1080 server monitor, on a Wayland session with InputCapture."""
     layout = MonitorLayout.from_bboxes([(0, 0, SCREEN_W, SCREEN_H)])
     return [
         patch("input.mouse._base.Screen.get_size", return_value=(SCREEN_W, SCREEN_H)),
@@ -59,8 +59,7 @@ def _patch_wayland_geometry():
         ),
         patch("input.mouse._base.Screen.get_monitor_layout", return_value=layout),
         patch("input.mouse._linux.is_wayland", return_value=True),
-        patch("input.mouse._linux.is_gnome", return_value=True),
-        patch("input.mouse._linux.is_kde", return_value=False),
+        patch("input.mouse._linux.input_capture_available", return_value=True),
     ]
 
 

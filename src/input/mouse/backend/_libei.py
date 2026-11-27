@@ -36,7 +36,7 @@ from evdev import ecodes
 from snegg.ei import Sender, EventType, DeviceCapability
 from snegg.c.libei import libei
 
-from input.mouse.backend._portal import (
+from input._portal import (
     REMOTE_DESKTOP,
     ensure_host_app_registered,
     token_store,

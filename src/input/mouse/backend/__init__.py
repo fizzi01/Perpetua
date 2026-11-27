@@ -17,30 +17,34 @@
 
 from input._platform import (
     BackendRule,
+    input_capture_available,
     is_linux,
     is_wayland,
-    is_gnome,
-    is_kde,
+    remote_desktop_available,
     resolve_backend,
 )
 
 _RULES = [
-    # Wayland (libei via XDG Desktop Portal)
-    # Listener: InputCapture portal, Controller: RemoteDesktop portal.
+    # Wayland: libei through the XDG portals, each side on what the portal
+    # offers rather than on the desktop's name.
+    # Listener: InputCapture portal.
     BackendRule(
-        condition=lambda: is_linux() and is_wayland() and (is_gnome() or is_kde()),
+        condition=lambda: is_linux() and is_wayland() and input_capture_available(),
         module="._libei",
-        symbols={
-            "MouseListener": "MouseListener",
-            "MouseController": "MouseController",
-            "Button": "Button",
-        },
-        names={"mouse_listener": "libei", "mouse_controller": "libei"},
+        symbols={"MouseListener": "MouseListener", "Button": "Button"},
+        names={"mouse_listener": "libei"},
     ),
-    # Wayland: other compositors (dummy fallback)
+    # Controller: RemoteDesktop portal with ConnectToEIS.
+    BackendRule(
+        condition=lambda: is_linux() and is_wayland() and remote_desktop_available(),
+        module="._libei",
+        symbols={"MouseController": "MouseController", "Button": "Button"},
+        names={"mouse_controller": "libei"},
+    ),
+    # Wayland: whatever the portal doesn't offer (dummy fallback)
     # TODO: add wlroots (zwlr_virtual_pointer).
     BackendRule(
-        condition=lambda: is_linux() and is_wayland() and not (is_gnome() or is_kde()),
+        condition=lambda: is_linux() and is_wayland(),
         module="._dummy",
         symbols={
             "MouseListener": "MouseListener",

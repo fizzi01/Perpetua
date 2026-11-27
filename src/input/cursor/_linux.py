@@ -33,7 +33,7 @@ from Xlib import X, display as xdisplay, Xatom
 from Xlib.xobject import cursor as xcursor
 
 from event.bus import EventBus
-from input._platform import is_wayland, is_gnome, is_kde
+from input._platform import input_capture_available, is_wayland
 from input.cursor._worker import CursorHandlerWorker as _WorkerBase
 from network.stream.handler import StreamHandler
 from utils.logging import get_logger, Logger
@@ -435,7 +435,7 @@ class CursorHandlerWorker(_WorkerBase):
         debug: bool = False,
         window_class=None,
     ):
-        self._use_wayland = is_wayland() and (is_gnome() or is_kde())
+        self._use_wayland = is_wayland() and input_capture_available()
 
         if self._use_wayland:
             # ServerMouseListener handles everything

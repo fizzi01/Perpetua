@@ -28,7 +28,7 @@ from unittest.mock import MagicMock
 import pytest
 
 from config import ApplicationConfig
-from input.mouse.backend import _portal
+from input import _portal
 
 REPO = Path(__file__).resolve().parents[3]
 

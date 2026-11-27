@@ -15,6 +15,7 @@
 #  along with this program.  If not, see <https://www.gnu.org/licenses/>.
 #
 
+from functools import cache
 from importlib import import_module
 from os import environ
 from sys import platform
@@ -39,33 +40,55 @@ def is_wayland() -> bool:
     )
 
 
-def _current_desktop() -> str:
-    """Return the lowercase XDG_CURRENT_DESKTOP value (first entry)."""
-    raw = environ.get("XDG_CURRENT_DESKTOP", "")
-    return raw.split(":")[0].strip().lower()
+PORTAL_PROBE_TIMEOUT = 2.0
 
 
-def is_gnome() -> bool:
-    return _current_desktop() in ("gnome", "ubuntu", "pop")
+@cache
+def portal_versions() -> dict[str, int]:
+    """Versions of the RemoteDesktop and InputCapture portals; {} off Wayland.
+
+    Asked once per process. Registers the app id first, since the portal ties
+    it to the D-Bus connection on the first call. A portal that cannot be asked
+    offers nothing.
+    """
+    if not (is_linux() and is_wayland()):
+        return {}
+    from utils.logging import get_logger
+
+    log = get_logger("PortalProbe")
+    try:
+        from input._portal import ensure_host_app_registered
+        from pyinputcapture import portal_versions as probe
+
+        ensure_host_app_registered()
+        versions = dict(probe(timeout=PORTAL_PROBE_TIMEOUT))
+    except Exception as exc:
+        log.warning(
+            "Portal capabilities unknown, Wayland input disabled",
+            error=str(exc) or type(exc).__name__,
+        )
+        return {}
+    log.info("Portal capabilities", **versions)
+    return versions
 
 
-def is_wlroots() -> bool:
-    """Compositors based on wlroots (Sway, Hyprland, etc.)."""
-    return _current_desktop() in ("sway", "hyprland", "wayfire", "river", "wlroots")
+def remote_desktop_available() -> bool:
+    """Whether input can be emulated through libei (RemoteDesktop >= 2, ConnectToEIS)."""
+    return portal_versions().get("remote_desktop", 0) >= 2
 
 
-def is_kde() -> bool:
-    return _current_desktop() in ("kde", "plasma")
+def input_capture_available() -> bool:
+    """Whether input can be captured through libei (any InputCapture version)."""
+    return portal_versions().get("input_capture", 0) >= 1
 
 
 def cursor_feedback_available() -> bool:
     """Whether this machine, as a client, can read its own cursor position.
 
-    False on GNOME/KDE Wayland, where input goes through a libei sender that
-    gets no position back: the server then tracks the cursor and sends
-    absolute positions.
+    False when input goes through a libei sender, which gets no position back:
+    the server then tracks the cursor and sends absolute positions.
     """
-    return not (is_linux() and is_wayland() and (is_gnome() or is_kde()))
+    return not remote_desktop_available()
 
 
 class BackendRule(NamedTuple):

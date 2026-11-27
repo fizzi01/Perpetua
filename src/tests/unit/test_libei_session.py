@@ -83,7 +83,7 @@ def _install_snegg_stubs(monkeypatch):
 @pytest.fixture
 def libei(monkeypatch, tmp_path):
     _install_snegg_stubs(monkeypatch)
-    from input.mouse.backend import _portal
+    from input import _portal
 
     # Never the user's real token file, and a fresh registration per test.
     monkeypatch.setattr(_portal, "_store", _portal.TokenStore(str(tmp_path / "t.json")))
@@ -1605,7 +1605,7 @@ class TestConsentWait:
 
     @staticmethod
     def _store():
-        from input.mouse.backend import _portal
+        from input import _portal
 
         return _portal.token_store()
 

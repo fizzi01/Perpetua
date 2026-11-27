@@ -26,7 +26,12 @@ import asyncio
 
 from typing import Optional
 
-from input._platform import cursor_feedback_available, is_wayland, is_gnome, is_kde
+from input._platform import (
+    cursor_feedback_available,
+    input_capture_available,
+    is_wayland,
+    remote_desktop_available,
+)
 from input.utils import ScreenEdge
 from . import _base
 
@@ -57,7 +62,7 @@ class ServerMouseListener(_base.ServerMouseListener):
     }
 
     def __init__(self, *args, **kwargs):
-        self._barrier_mode = is_wayland() and (is_gnome() or is_kde())
+        self._barrier_mode = is_wayland() and input_capture_available()
         super().__init__(*args, **kwargs)
 
         if self._barrier_mode:
@@ -435,7 +440,7 @@ class ServerMouseController(_base.ServerMouseController):
     """Linux server-side mouse controller."""
 
     def __init__(self, *args, **kwargs):
-        self._barrier_mode = is_wayland() and (is_gnome() or is_kde())
+        self._barrier_mode = is_wayland() and input_capture_available()
         super().__init__(*args, **kwargs)
 
     def _create_controller(self):
@@ -535,7 +540,7 @@ class ClientMouseController(_base.ClientMouseController):
 
 def _remote_desktop_link():
     """The libei RemoteDesktop link, or None where injection doesn't use it."""
-    if not (is_wayland() and (is_gnome() or is_kde())):
+    if not (is_wayland() and remote_desktop_available()):
         return None
     try:
         from .backend._libei import remote_desktop_link
