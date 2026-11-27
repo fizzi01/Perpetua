@@ -313,8 +313,7 @@ class _EiConnection:
                 raise RuntimeError("libei: connect aborted")
             if time.monotonic() >= deadline:
                 raise _ConsentTimeout(
-                    f"RemoteDesktop permission dialog not answered within "
-                    f"{consent_timeout:.0f}s"
+                    "The remote input permission dialog was not answered in time"
                 )
             if not poller.poll(200):
                 continue
@@ -324,9 +323,8 @@ class _EiConnection:
                 if self._oeffis.dispatch():
                     eis_fd = self._oeffis.eis_fd
             except (DisconnectedError, SessionClosedError) as exc:
-                raise _ConsentRefused(
-                    f"RemoteDesktop permission refused: {exc or 'session closed'}"
-                ) from exc
+                # liboeffis reports a Cancel and a broken portal alike.
+                raise _ConsentRefused("Remote input permission was denied") from exc
 
         poller.unregister(self._oeffis.fd)
 
@@ -532,7 +530,12 @@ class _RemoteDesktopLink:
             conn.connect(consent_timeout=self.CONSENT_TIMEOUT)
         except (_ConsentRefused, _ConsentTimeout) as exc:
             _close_quietly(conn)
-            self._deny(generation, str(exc))
+            cause = exc.__cause__
+            self._deny(
+                generation,
+                str(exc),
+                detail=_describe(cause) if cause is not None else None,
+            )
             return
         except Exception as exc:
             _close_quietly(conn)
@@ -549,12 +552,16 @@ class _RemoteDesktopLink:
             if failures < self.MAX_TRANSIENT_FAILURES:
                 self._logger.warning(
                     "RemoteDesktop session failed, will retry",
-                    error=str(exc),
+                    error=_describe(exc),
                     attempt=failures,
                     retry_in_s=round(delay, 1),
                 )
                 return
-            self._deny(generation, f"{failures} failed attempts, last: {exc}")
+            self._deny(
+                generation,
+                f"Could not open a remote input session after {failures} attempts",
+                detail=_describe(exc),
+            )
             return
 
         with self._lock:
@@ -572,7 +579,8 @@ class _RemoteDesktopLink:
             return
         self._logger.info("RemoteDesktop session active")
 
-    def _deny(self, generation: int, reason: str) -> None:
+    def _deny(self, generation: int, reason: str, detail: str | None = None) -> None:
+        """``reason`` is shown to the user as is; ``detail`` only reaches the log."""
         with self._lock:
             if generation != self._generation:
                 return
@@ -580,7 +588,9 @@ class _RemoteDesktopLink:
             self._state = _LinkState.DENIED
             self.denied_reason = reason
             listeners = list(self._listeners)
-        self._logger.warning("RemoteDesktop input injection unavailable", reason=reason)
+        self._logger.warning(
+            "RemoteDesktop input injection unavailable", reason=reason, detail=detail
+        )
         for callback in listeners:
             try:
                 callback(reason)
@@ -618,6 +628,12 @@ def _close_quietly(conn: "_EiConnection") -> None:
         conn.close()
     except Exception:
         pass
+
+
+def _describe(exc: BaseException) -> str:
+    # snegg raises some errors with an empty or None message.
+    text = str(exc)
+    return text if text and text != "None" else type(exc).__name__
 
 
 _link = _RemoteDesktopLink()

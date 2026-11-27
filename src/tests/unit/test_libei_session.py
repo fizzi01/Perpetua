@@ -1184,6 +1184,18 @@ class TestRemoteDesktopLink:
         assert heard == ["no"]
         assert made[0].closed
 
+    def test_the_technical_cause_goes_to_the_log_not_the_reason(self, libei):
+        refused = libei._ConsentRefused("Remote input permission was denied")
+        refused.__cause__ = RuntimeError("portal said 2")
+        link, _ = self._link(libei, [refused])
+        link._logger = logger = MagicMock()
+        link.connection()
+        assert _wait_until(lambda: link.state is libei._LinkState.DENIED)
+
+        assert link.denied_reason == "Remote input permission was denied"
+        logged = logger.warning.call_args.kwargs
+        assert logged["detail"] == "portal said 2"
+
     def test_an_unanswered_dialog_denies(self, libei):
         link, _ = self._link(libei, [libei._ConsentTimeout("not answered")])
         link.connection()
@@ -1303,6 +1315,18 @@ class TestConsentWait:
         conn = self._conn(libei, monkeypatch, DisconnectedError("cancelled"))
         with pytest.raises(libei._ConsentRefused):
             conn.connect(consent_timeout=5)
+
+    @pytest.mark.parametrize("message", ["", None])
+    def test_a_refusal_without_a_message_still_reads_cleanly(
+        self, libei, monkeypatch, message
+    ):
+        # The reason is shown in the GUI; snegg's empty message must not leak
+        # into it as a dangling "refused: ".
+        DisconnectedError = sys.modules["snegg.oeffis"].DisconnectedError
+        conn = self._conn(libei, monkeypatch, DisconnectedError(message))
+        with pytest.raises(libei._ConsentRefused) as raised:
+            conn.connect(consent_timeout=5)
+        assert str(raised.value) == "Remote input permission was denied"
 
     def test_waiting_for_the_answer_is_not_a_failure(self, libei, monkeypatch):
         # dispatch() is False while the dialog is open. Reading eis_fd then

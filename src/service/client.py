@@ -2145,7 +2145,7 @@ class Client:
         await self._send_notification(
             ServiceErrorEvent(
                 service_name="client",
-                error=f"input permission denied: {reason}",
+                error=reason or "Remote input permission was denied",
                 reason="input_permission_denied",
             )
         )

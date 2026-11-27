@@ -43,12 +43,12 @@ def _client(running=True):
 async def test_a_denial_notifies_the_gui_and_stops_the_client():
     client = _client()
 
-    await client._on_input_permission_denied("RemoteDesktop permission refused")
+    await client._on_input_permission_denied("Remote input permission was denied")
 
     event = client._send_notification.await_args.args[0]
     assert event.event_type == NotificationEventType.SERVICE_ERROR
     assert event.data["reason"] == "input_permission_denied"
-    assert "refused" in event.data["error"]
+    assert event.data["error"] == "Remote input permission was denied"
     client.stop.assert_awaited_once()
 
 
